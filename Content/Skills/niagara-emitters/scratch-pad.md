@@ -6,45 +6,33 @@ description: Building Niagara emitters from scratch and Scratch-Pad authoring (N
 ## Building Emitters from Scratch
 
 Minimal emitter needs:
-1. **Spawn module** (one of):
-   - Spawn Rate for continuous
-   - Spawn Burst Instantaneous for one-shot
+1. **Spawn module** (one of): Spawn Rate (continuous) or Spawn Burst Instantaneous (one-shot)
 2. **Renderer** (SpriteRenderer minimum)
 3. **Particle Update** modules for behavior
+
+> **Creating the emitter and adding its built-in modules/renderer is an engine `NiagaraToolsets`
+> operation** (create system / add emitter / add module / add renderer / compile). Discover the tools
+> with `describe_toolset("NiagaraToolsets.NiagaraToolset_System")` and call via `call_tool`. Stage
+> still matters: **SpawnRate is an EMITTER module → `EmitterUpdate`, NOT `ParticleUpdate`** (a
+> mis-staged SpawnRate compiles to an INVALID system).
+
+Once the emitter + modules exist, configure spawn rate with the VibeUE rapid-iteration write. Use the
+FULL param name (from `list_rapid_iteration_params`), not a bare `"SpawnRate"`:
 
 ```python
 import unreal
 
-system_path = "/Game/Path/To/NS_YourSystem"  # Your Niagara system
+system_path = "/Game/Path/To/NS_YourSystem"
 
-# Create empty emitter
-unreal.NiagaraService.add_emitter(system_path, "minimal", "MySparks")
-
-# Add spawn. add_module takes EXACTLY 4 args (no trailing name); the 4th is the stage.
-# SpawnRate is an EMITTER module — "EmitterUpdate", NOT "ParticleUpdate" (a mis-staged
-# SpawnRate compiles to an INVALID system). add_module returns False on a bad stage string.
-unreal.NiagaraEmitterService.add_module(
-    system_path, "MySparks",
-    "/Niagara/Modules/Emitter/SpawnRate.SpawnRate",
-    "EmitterUpdate"
-)
-
-# Add renderer
-unreal.NiagaraEmitterService.add_renderer(
-    system_path, "MySparks",
-    "SpriteRenderer", "Sprite", {}
-)
-
-# Configure spawn rate. Use the FULL rapid-iteration param name (from
-# list_rapid_iteration_params), not a bare "SpawnRate" — the bare name won't match.
 unreal.NiagaraService.set_rapid_iteration_param(
     system_path, "MySparks",
     "Constants.MySparks.SpawnRate.SpawnRate", "25"
 )
-
-# Compile to apply
-unreal.NiagaraService.compile_system(system_path)
+# Then compile via the engine NiagaraToolsets tool.
 ```
+
+The rest of THIS doc — the scratch-pad / Custom HLSL graph authoring — is the VibeUE
+`NiagaraScratchPadService` and is fully supported here.
 
 ---
 
@@ -56,11 +44,11 @@ A **scratch-pad module** is a user-authored UNiagaraScript stored inside an emit
 
 | Task | Use |
 |------|-----|
-| Add a built-in module from `/Niagara/Modules/...` | `NiagaraEmitterService.add_module` |
-| Set a value on an existing module input | `NiagaraEmitterService.set_module_input` |
-| Build per-particle math / splat logic in HLSL | **`NiagaraScratchPadService`** |
-| Wire a Custom HLSL node with typed inputs/outputs | **`NiagaraScratchPadService`** |
-| Add Map Get / Map Set / Op / If nodes | **`NiagaraScratchPadService`** |
+| Add a built-in module from `/Niagara/Modules/...` | engine `NiagaraToolsets.*` (via `call_tool`) |
+| Set a value on an existing module input | engine `NiagaraToolsets.*` |
+| Build per-particle math / splat logic in HLSL | **`NiagaraScratchPadService`** (VibeUE) |
+| Wire a Custom HLSL node with typed inputs/outputs | **`NiagaraScratchPadService`** (VibeUE) |
+| Add Map Get / Map Set / Op / If nodes | **`NiagaraScratchPadService`** (VibeUE) |
 
 ### The pipeline (mental model)
 
@@ -185,7 +173,10 @@ If a bare name doesn't resolve, pass the full `Namespace::Op` string.
 
 ### One pattern that fixes most "input not found" errors
 
-When the prior session called `NiagaraEmitterService.set_module_input` with a bare name (`"GridWidth"`) on a `SetVariables` module, it returned NOT FOUND because the pin is actually named `"Module.GridWidth"`. **The service now tries `Module.`, `Output.`, and `Particles.` prefixes automatically** and prints the list of available pin names if none match — so re-run and read the log message.
+Module input names are namespaced: a stack input shown as `GridWidth` is actually the parameter
+`Module.GridWidth`. When a set-module-input call (engine `NiagaraToolsets`) returns NOT FOUND for a
+bare name, try the `Module.` / `Output.` / `Particles.` prefix. Inside a scratch graph, the pin name
+on the Map Get node is likewise `Module.<Name>` — list pins with `get_node_pins` to confirm.
 
 ### What `apply_changes` does
 

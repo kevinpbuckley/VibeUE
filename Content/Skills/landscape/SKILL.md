@@ -46,8 +46,10 @@ keywords:
 
 ## Sub-docs available
 
-This skill is split into the lean index (you are reading it) plus sibling sub-docs. Load
-a sub-doc with `vibeue-skills-manager(action="load", skill_name="landscape/<section>")`:
+This skill is split into the lean index (you are reading it) plus sibling sub-docs. Skills
+load via the engine's `AgentSkillToolset` (`ListSkills` / `GetSkills`) — request
+`landscape/<section>` through `GetSkills`, or read the sibling `*.md` file (it sits next to
+this `SKILL.md` on disk) directly:
 
 | Sub-doc | When to load |
 |---------|--------------|
@@ -297,13 +299,11 @@ Do this in separate steps:
 - **landscape-materials**: Simple landscape materials with `LandscapeLayerBlend` nodes. Good for prototyping with 2-5 layers.
 - **landscape-auto-material**: Production-quality auto-materials using material functions, Runtime Virtual Textures, and material instances (Real_Landscape paradigm). Good for shipping quality.
 
-When you need to create or modify the material applied to a landscape, load the appropriate material skill:
-```python
-# For simple materials:
-vibeue-skills-manager(action="load", skill_name="landscape-materials")
-# For production auto-materials:
-vibeue-skills-manager(action="load", skill_name="landscape-auto-material")
-```
+When you need to create or modify the material applied to a landscape, load the appropriate
+material skill through `GetSkills` (AgentSkillToolset):
+
+- For simple materials: load `landscape-materials`
+- For production auto-materials: load `landscape-auto-material`
 
 > **NOTE**: For landscape material, texture, and layer blending operations, use `LandscapeMaterialService` (load the `landscape-materials` or `landscape-auto-material` skill).
 

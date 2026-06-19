@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/NoExportTypes.h"
+#include "ToolsetRegistry/ToolsetDefinition.h"
 #include "UAnimSequenceService.generated.h"
 
 /**
@@ -543,7 +543,7 @@ struct FAnimationPreviewState
  * - **File**: UAnimSequenceService.h
  */
 UCLASS(BlueprintType)
-class VIBEUE_API UAnimSequenceService : public UObject
+class VIBEUE_API UAnimSequenceService : public UToolsetDefinition
 {
 	GENERATED_BODY()
 
@@ -559,7 +559,7 @@ public:
 	 * @param SkeletonFilter - Optional skeleton path to filter by
 	 * @return Array of animation sequence info structs
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Discovery")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Discovery")
 	static TArray<FAnimSequenceInfo> ListAnimSequences(
 		const FString& SearchPath = TEXT("/Game"),
 		const FString& SkeletonFilter = TEXT(""));
@@ -571,7 +571,7 @@ public:
 	 * @param OutInfo - Output animation info
 	 * @return True if animation was found
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Discovery")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Discovery")
 	static bool GetAnimSequenceInfo(
 		const FString& AnimPath,
 		FAnimSequenceInfo& OutInfo);
@@ -582,7 +582,7 @@ public:
 	 * @param SkeletonPath - Path to the skeleton asset
 	 * @return Array of animation sequence info structs
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Discovery")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Discovery")
 	static TArray<FAnimSequenceInfo> FindAnimationsForSkeleton(const FString& SkeletonPath);
 
 	/**
@@ -592,7 +592,7 @@ public:
 	 * @param SearchPath - Path to search in (default: "/Game")
 	 * @return Array of matching animation info structs
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Discovery")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Discovery")
 	static TArray<FAnimSequenceInfo> SearchAnimations(
 		const FString& NamePattern,
 		const FString& SearchPath = TEXT("/Game"));
@@ -611,7 +611,7 @@ public:
 	 * @param Duration - Duration of the animation in seconds (default: 1.0)
 	 * @return Path to the created animation, or empty string on failure
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Creation")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Creation")
 	static FString CreateFromPose(
 		const FString& SkeletonPath,
 		const FString& AnimName,
@@ -630,7 +630,7 @@ public:
 	 * @param BoneTracks - Array of bone track data with keyframes
 	 * @return Path to the created animation, or empty string on failure
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Creation")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Creation")
 	static FString CreateAnimSequence(
 		const FString& SkeletonPath,
 		const FString& AnimName,
@@ -649,7 +649,7 @@ public:
 	 * @param Time - Time value to set on the keyframe (default: 0.0)
 	 * @return Keyframe with reference pose transform, or default keyframe if bone not found
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Creation")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Creation")
 	static FAnimKeyframe GetReferencePoseKeyframe(
 		const FString& SkeletonPath,
 		const FString& BoneName,
@@ -665,7 +665,7 @@ public:
 	 * @param Yaw - Rotation around Z axis in degrees
 	 * @param OutQuat - Output quaternion representing the rotation
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Helpers")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Helpers")
 	static void EulerToQuat(float Roll, float Pitch, float Yaw, FQuat& OutQuat);
 
 	/**
@@ -677,7 +677,7 @@ public:
 	 * @param B - Second quaternion
 	 * @param OutResult - Output combined rotation
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Helpers")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Helpers")
 	static void MultiplyQuats(const FQuat& A, const FQuat& B, FQuat& OutResult);
 
 	// ============================================================================
@@ -690,7 +690,7 @@ public:
 	 * @param AnimPath - Path to the animation asset
 	 * @return Duration in seconds, or -1 if not found
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Properties")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Properties")
 	static float GetAnimationLength(const FString& AnimPath);
 
 	/**
@@ -699,7 +699,7 @@ public:
 	 * @param AnimPath - Path to the animation asset
 	 * @return Frame rate, or -1 if not found
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Properties")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Properties")
 	static float GetAnimationFrameRate(const FString& AnimPath);
 
 	/**
@@ -708,7 +708,7 @@ public:
 	 * @param AnimPath - Path to the animation asset
 	 * @return Frame count, or -1 if not found
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Properties")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Properties")
 	static int32 GetAnimationFrameCount(const FString& AnimPath);
 
 	/**
@@ -718,7 +718,7 @@ public:
 	 * @param NewFrameRate - New frame rate to set
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Properties")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Properties")
 	static bool SetAnimationFrameRate(const FString& AnimPath, float NewFrameRate);
 
 	/**
@@ -727,7 +727,7 @@ public:
 	 * @param AnimPath - Path to the animation asset
 	 * @return Skeleton asset path, or empty if not found
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Properties")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Properties")
 	static FString GetAnimationSkeleton(const FString& AnimPath);
 
 	/**
@@ -736,7 +736,7 @@ public:
 	 * @param AnimPath - Path to the animation asset
 	 * @return Rate scale, or -1 if not found
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Properties")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Properties")
 	static float GetRateScale(const FString& AnimPath);
 
 	/**
@@ -746,7 +746,7 @@ public:
 	 * @param RateScale - New rate scale value
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Properties")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Properties")
 	static bool SetRateScale(const FString& AnimPath, float RateScale);
 
 	// ============================================================================
@@ -759,7 +759,7 @@ public:
 	 * @param AnimPath - Path to the animation asset
 	 * @return Array of bone names
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|BoneTracks")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|BoneTracks")
 	static TArray<FString> GetAnimatedBones(const FString& AnimPath);
 
 	/**
@@ -772,7 +772,7 @@ public:
 	 * @param OutTransform - Output transform
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|BoneTracks")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|BoneTracks")
 	static bool GetBoneTransformAtTime(
 		const FString& AnimPath,
 		const FString& BoneName,
@@ -790,7 +790,7 @@ public:
 	 * @param OutTransform - Output transform
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|BoneTracks")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|BoneTracks")
 	static bool GetBoneTransformAtFrame(
 		const FString& AnimPath,
 		const FString& BoneName,
@@ -810,7 +810,7 @@ public:
 	 * @param bGlobalSpace - If true, returns global space transforms
 	 * @return Array of bone poses
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Pose")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Pose")
 	static TArray<FBonePose> GetPoseAtTime(
 		const FString& AnimPath,
 		float Time,
@@ -824,7 +824,7 @@ public:
 	 * @param bGlobalSpace - If true, returns global space transforms
 	 * @return Array of bone poses
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Pose")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Pose")
 	static TArray<FBonePose> GetPoseAtFrame(
 		const FString& AnimPath,
 		int32 Frame,
@@ -838,7 +838,7 @@ public:
 	 * @param OutTransform - Output root motion transform
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Pose")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Pose")
 	static bool GetRootMotionAtTime(
 		const FString& AnimPath,
 		float Time,
@@ -851,7 +851,7 @@ public:
 	 * @param OutTransform - Output total root motion transform
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Pose")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Pose")
 	static bool GetTotalRootMotion(
 		const FString& AnimPath,
 		FTransform& OutTransform);
@@ -866,7 +866,7 @@ public:
 	 * @param AnimPath - Path to the animation asset
 	 * @return Array of curve info structs
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Curves")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Curves")
 	static TArray<FAnimCurveInfo> ListCurves(const FString& AnimPath);
 
 	/**
@@ -877,7 +877,7 @@ public:
 	 * @param OutInfo - Output curve info
 	 * @return True if curve was found
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Curves")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Curves")
 	static bool GetCurveInfo(
 		const FString& AnimPath,
 		const FString& CurveName,
@@ -892,7 +892,7 @@ public:
 	 * @param OutValue - Output value
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Curves")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Curves")
 	static bool GetCurveValueAtTime(
 		const FString& AnimPath,
 		const FString& CurveName,
@@ -906,7 +906,7 @@ public:
 	 * @param CurveName - Name of the curve
 	 * @return Array of curve keyframes
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Curves")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Curves")
 	static TArray<FCurveKeyframe> GetCurveKeyframes(
 		const FString& AnimPath,
 		const FString& CurveName);
@@ -919,7 +919,7 @@ public:
 	 * @param bIsMorphTarget - Whether this curve drives a morph target
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Curves")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Curves")
 	static bool AddCurve(
 		const FString& AnimPath,
 		const FString& CurveName,
@@ -932,7 +932,7 @@ public:
 	 * @param CurveName - Name of the curve to remove
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Curves")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Curves")
 	static bool RemoveCurve(
 		const FString& AnimPath,
 		const FString& CurveName);
@@ -945,7 +945,7 @@ public:
 	 * @param Keys - Array of keyframes to set
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Curves")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Curves")
 	static bool SetCurveKeys(
 		const FString& AnimPath,
 		const FString& CurveName,
@@ -960,7 +960,7 @@ public:
 	 * @param Value - Value at this key
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Curves")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Curves")
 	static bool AddCurveKey(
 		const FString& AnimPath,
 		const FString& CurveName,
@@ -977,7 +977,7 @@ public:
 	 * @param AnimPath - Path to the animation asset
 	 * @return Array of notify info structs
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Notifies")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Notifies")
 	static TArray<FAnimNotifyInfo> ListNotifies(const FString& AnimPath);
 
 	/**
@@ -988,7 +988,7 @@ public:
 	 * @param OutInfo - Output notify info
 	 * @return True if notify was found
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Notifies")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Notifies")
 	static bool GetNotifyInfo(
 		const FString& AnimPath,
 		int32 NotifyIndex,
@@ -1003,7 +1003,7 @@ public:
 	 * @param NotifyName - Optional name for the notify
 	 * @return Index of the new notify, or -1 on failure
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Notifies")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Notifies")
 	static int32 AddNotify(
 		const FString& AnimPath,
 		const FString& NotifyClass,
@@ -1020,7 +1020,7 @@ public:
 	 * @param NotifyName - Optional name for the notify
 	 * @return Index of the new notify, or -1 on failure
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Notifies")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Notifies")
 	static int32 AddNotifyState(
 		const FString& AnimPath,
 		const FString& NotifyStateClass,
@@ -1035,7 +1035,7 @@ public:
 	 * @param NotifyIndex - Index of the notify to remove
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Notifies")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Notifies")
 	static bool RemoveNotify(const FString& AnimPath, int32 NotifyIndex);
 
 	/**
@@ -1046,7 +1046,7 @@ public:
 	 * @param NewTime - New trigger time in seconds
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Notifies")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Notifies")
 	static bool SetNotifyTriggerTime(
 		const FString& AnimPath,
 		int32 NotifyIndex,
@@ -1060,7 +1060,7 @@ public:
 	 * @param NewDuration - New duration in seconds
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Notifies")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Notifies")
 	static bool SetNotifyDuration(
 		const FString& AnimPath,
 		int32 NotifyIndex,
@@ -1074,7 +1074,7 @@ public:
 	 * @param TrackIndex - New track index
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Notifies")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Notifies")
 	static bool SetNotifyTrack(
 		const FString& AnimPath,
 		int32 NotifyIndex,
@@ -1090,7 +1090,7 @@ public:
 	 * @param NewName - New notify name
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Notifies")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Notifies")
 	static bool SetNotifyName(
 		const FString& AnimPath,
 		int32 NotifyIndex,
@@ -1104,7 +1104,7 @@ public:
 	 * @param NewColor - New color (RGBA, 0-1 range)
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Notifies")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Notifies")
 	static bool SetNotifyColor(
 		const FString& AnimPath,
 		int32 NotifyIndex,
@@ -1118,7 +1118,7 @@ public:
 	 * @param TriggerChance - Chance to trigger (0.0 = never, 1.0 = always)
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Notifies")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Notifies")
 	static bool SetNotifyTriggerChance(
 		const FString& AnimPath,
 		int32 NotifyIndex,
@@ -1132,7 +1132,7 @@ public:
 	 * @param bTriggerOnServer - True to trigger on dedicated servers
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Notifies")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Notifies")
 	static bool SetNotifyTriggerOnServer(
 		const FString& AnimPath,
 		int32 NotifyIndex,
@@ -1146,7 +1146,7 @@ public:
 	 * @param bTriggerOnFollower - True to trigger on followers
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Notifies")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Notifies")
 	static bool SetNotifyTriggerOnFollower(
 		const FString& AnimPath,
 		int32 NotifyIndex,
@@ -1161,7 +1161,7 @@ public:
 	 * @param WeightThreshold - Minimum blend weight to trigger (0.0-1.0)
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Notifies")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Notifies")
 	static bool SetNotifyTriggerWeightThreshold(
 		const FString& AnimPath,
 		int32 NotifyIndex,
@@ -1176,7 +1176,7 @@ public:
 	 * @param FilterLOD - LOD level to filter from (0 = highest detail)
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Notifies")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Notifies")
 	static bool SetNotifyLODFilter(
 		const FString& AnimPath,
 		int32 NotifyIndex,
@@ -1195,7 +1195,7 @@ public:
 	 * @param AnimPath - Path to the animation asset
 	 * @return Array of track names (index in array corresponds to track index)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|NotifyTracks")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|NotifyTracks")
 	static TArray<FString> ListNotifyTracks(const FString& AnimPath);
 
 	/**
@@ -1205,7 +1205,7 @@ public:
 	 * @param AnimPath - Path to the animation asset
 	 * @return Number of notify tracks (minimum 1), or -1 on failure
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|NotifyTracks")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|NotifyTracks")
 	static int32 GetNotifyTrackCount(const FString& AnimPath);
 
 	/**
@@ -1217,7 +1217,7 @@ public:
 	 * @param TrackName - Informational name (not stored, UE uses track indices)
 	 * @return Next available track index, or -1 on failure
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|NotifyTracks")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|NotifyTracks")
 	static int32 AddNotifyTrack(
 		const FString& AnimPath,
 		const FString& TrackName);
@@ -1232,7 +1232,7 @@ public:
 	 * @param NewName - New name for the track (ignored)
 	 * @return Always false - operation not supported
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|NotifyTracks")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|NotifyTracks")
 	static bool RenameNotifyTrack(
 		const FString& AnimPath,
 		int32 TrackIndex,
@@ -1247,7 +1247,7 @@ public:
 	 * @param TrackIndex - Index of the track to remove
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|NotifyTracks")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|NotifyTracks")
 	static bool RemoveNotifyTrack(
 		const FString& AnimPath,
 		int32 TrackIndex);
@@ -1262,7 +1262,7 @@ public:
 	 * @param AnimPath - Path to the animation asset
 	 * @return Array of sync marker info structs
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|SyncMarkers")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|SyncMarkers")
 	static TArray<FSyncMarkerInfo> ListSyncMarkers(const FString& AnimPath);
 
 	/**
@@ -1273,7 +1273,7 @@ public:
 	 * @param Time - Time in seconds
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|SyncMarkers")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|SyncMarkers")
 	static bool AddSyncMarker(
 		const FString& AnimPath,
 		const FString& MarkerName,
@@ -1287,7 +1287,7 @@ public:
 	 * @param Time - Time of the marker to remove
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|SyncMarkers")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|SyncMarkers")
 	static bool RemoveSyncMarker(
 		const FString& AnimPath,
 		const FString& MarkerName,
@@ -1301,7 +1301,7 @@ public:
 	 * @param NewTime - New time in seconds
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|SyncMarkers")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|SyncMarkers")
 	static bool SetSyncMarkerTime(
 		const FString& AnimPath,
 		int32 MarkerIndex,
@@ -1318,7 +1318,7 @@ public:
 	 * @param NewTime - New time in seconds
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|SyncMarkers")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|SyncMarkers")
 	static bool SetSyncMarkerTimeByName(
 		const FString& AnimPath,
 		const FString& MarkerName,
@@ -1335,7 +1335,7 @@ public:
 	 * @param AnimPath - Path to the animation asset
 	 * @return Additive type as string ("None", "LocalSpace", "MeshSpace")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Additive")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Additive")
 	static FString GetAdditiveAnimType(const FString& AnimPath);
 
 	/**
@@ -1345,7 +1345,7 @@ public:
 	 * @param Type - Type as string ("None", "LocalSpace", "MeshSpace")
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Additive")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Additive")
 	static bool SetAdditiveAnimType(const FString& AnimPath, const FString& Type);
 
 	/**
@@ -1354,7 +1354,7 @@ public:
 	 * @param AnimPath - Path to the animation asset
 	 * @return Path to the base pose animation, or empty if none
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Additive")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Additive")
 	static FString GetAdditiveBasePose(const FString& AnimPath);
 
 	/**
@@ -1364,7 +1364,7 @@ public:
 	 * @param BasePoseAnimPath - Path to the base pose animation
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Additive")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Additive")
 	static bool SetAdditiveBasePose(
 		const FString& AnimPath,
 		const FString& BasePoseAnimPath);
@@ -1379,7 +1379,7 @@ public:
 	 * @param AnimPath - Path to the animation asset
 	 * @return True if root motion is enabled
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|RootMotion")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|RootMotion")
 	static bool GetEnableRootMotion(const FString& AnimPath);
 
 	/**
@@ -1389,7 +1389,7 @@ public:
 	 * @param bEnable - Whether to enable root motion
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|RootMotion")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|RootMotion")
 	static bool SetEnableRootMotion(const FString& AnimPath, bool bEnable);
 
 	/**
@@ -1398,7 +1398,7 @@ public:
 	 * @param AnimPath - Path to the animation asset
 	 * @return Root lock type as string
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|RootMotion")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|RootMotion")
 	static FString GetRootMotionRootLock(const FString& AnimPath);
 
 	/**
@@ -1408,7 +1408,7 @@ public:
 	 * @param LockType - Lock type as string ("RefPose", "AnimFirstFrame", "Zero")
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|RootMotion")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|RootMotion")
 	static bool SetRootMotionRootLock(const FString& AnimPath, const FString& LockType);
 
 	/**
@@ -1417,7 +1417,7 @@ public:
 	 * @param AnimPath - Path to the animation asset
 	 * @return True if force root lock is enabled
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|RootMotion")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|RootMotion")
 	static bool GetForceRootLock(const FString& AnimPath);
 
 	/**
@@ -1427,7 +1427,7 @@ public:
 	 * @param bForce - Whether to force root lock
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|RootMotion")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|RootMotion")
 	static bool SetForceRootLock(const FString& AnimPath, bool bForce);
 
 	// ============================================================================
@@ -1441,7 +1441,7 @@ public:
 	 * @param OutInfo - Output compression info
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Compression")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Compression")
 	static bool GetCompressionInfo(
 		const FString& AnimPath,
 		FAnimCompressionInfo& OutInfo);
@@ -1453,7 +1453,7 @@ public:
 	 * @param CompressionSchemePath - Path to the compression settings asset
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Compression")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Compression")
 	static bool SetCompressionScheme(
 		const FString& AnimPath,
 		const FString& CompressionSchemePath);
@@ -1464,7 +1464,7 @@ public:
 	 * @param AnimPath - Path to the animation asset
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Compression")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Compression")
 	static bool CompressAnimation(const FString& AnimPath);
 
 	// ============================================================================
@@ -1477,7 +1477,7 @@ public:
 	 * @param AnimPath - Path to the animation asset
 	 * @return JSON string with animation data
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Export")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Export")
 	static FString ExportAnimationToJson(const FString& AnimPath);
 
 	/**
@@ -1486,7 +1486,7 @@ public:
 	 * @param AnimPath - Path to the animation asset
 	 * @return Array of source file paths
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Export")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Export")
 	static TArray<FString> GetSourceFiles(const FString& AnimPath);
 
 	// ============================================================================
@@ -1499,7 +1499,7 @@ public:
 	 * @param AnimPath - Path to the animation asset
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Editor")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Editor")
 	static bool OpenAnimationEditor(const FString& AnimPath);
 
 	/**
@@ -1509,7 +1509,7 @@ public:
 	 * @param Time - Time in seconds
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Editor")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Editor")
 	static bool SetPreviewTime(const FString& AnimPath, float Time);
 
 	/**
@@ -1519,7 +1519,7 @@ public:
 	 * @param bLoop - Whether to loop playback
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Editor")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Editor")
 	static bool PlayPreview(const FString& AnimPath, bool bLoop = false);
 
 	/**
@@ -1528,7 +1528,7 @@ public:
 	 * @param AnimPath - Path to the animation asset
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Editor")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Editor")
 	static bool StopPreview(const FString& AnimPath);
 
 	// ============================================================================
@@ -1560,7 +1560,7 @@ public:
 	 *   if result.was_clamped:
 	 *       print("Rotation was clamped to constraints")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Preview")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Preview")
 	static bool PreviewBoneRotation(
 		const FString& AnimPath,
 		const FString& BoneName,
@@ -1588,7 +1588,7 @@ public:
 	 *   ]
 	 *   result = unreal.AnimSequenceService.preview_pose_delta("/Game/Anims/AS_Idle", deltas, "local", 0)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Preview")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Preview")
 	static bool PreviewPoseDelta(
 		const FString& AnimPath,
 		const TArray<FBoneDelta>& BoneDeltas,
@@ -1606,7 +1606,7 @@ public:
 	 *   # Discard previewed changes
 	 *   unreal.AnimSequenceService.cancel_preview("/Game/Anims/AS_Idle")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Preview")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Preview")
 	static bool CancelPreview(const FString& AnimPath);
 
 	/**
@@ -1621,7 +1621,7 @@ public:
 	 *   if state.is_active:
 	 *       print(f"Previewing {state.pending_edit_count} edits")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Preview")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Preview")
 	static bool GetPreviewState(
 		const FString& AnimPath,
 		FAnimationPreviewState& OutState);
@@ -1641,7 +1641,7 @@ public:
 	 *       for violation in result.violation_messages:
 	 *           print(f"Violation: {violation}")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Preview")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Preview")
 	static bool ValidatePose(
 		const FString& AnimPath,
 		bool bUseLearnedConstraints,
@@ -1668,7 +1668,7 @@ public:
 	 *   if result.success:
 	 *       print(f"Baked frames {result.start_frame} to {result.end_frame}")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Preview")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Preview")
 	static bool BakePreviewToKeyframes(
 		const FString& AnimPath,
 		int32 StartFrame,
@@ -1701,7 +1701,7 @@ public:
 	 *       True  # Delta mode
 	 *   )
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Preview")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Preview")
 	static bool ApplyBoneRotation(
 		const FString& AnimPath,
 		const FString& BoneName,
@@ -1735,7 +1735,7 @@ public:
 	 *       []  # All bones
 	 *   )
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Pose")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Pose")
 	static bool CopyPose(
 		const FString& SrcAnimPath,
 		int32 SrcFrame,
@@ -1758,7 +1758,7 @@ public:
 	 *   result = unreal.AnimSequenceService.mirror_pose("/Game/Anims/AS_Wave", 15, "X")
 	 *   print(f"Mirrored {len(result.modified_bones)} bones")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Pose")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Pose")
 	static bool MirrorPose(
 		const FString& AnimPath,
 		int32 Frame,
@@ -1776,7 +1776,7 @@ public:
 	 *   for bone in ref_pose:
 	 *       print(f"{bone.bone_name}: {bone.transform.rotation}")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Pose")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Pose")
 	static TArray<FBonePose> GetReferencePose(const FString& SkeletonPath);
 
 	/**
@@ -1789,7 +1789,7 @@ public:
 	 *   euler = unreal.AnimSequenceService.quat_to_euler(some_quat)
 	 *   print(f"Roll={euler.roll}, Pitch={euler.pitch}, Yaw={euler.yaw}")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Helpers")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Helpers")
 	static void QuatToEuler(const FQuat& Quat, FRotator& OutRotator);
 
 	// ============================================================================
@@ -1813,7 +1813,7 @@ public:
 	 *   if result.success:
 	 *       print("Preview active - check animation editor")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Retarget")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Retarget")
 	static bool RetargetPreview(
 		const FString& AnimPath,
 		const FString& TargetSkeletonPath,
@@ -1851,7 +1851,7 @@ public:
 	 * Note: This spawns a temporary actor, sets the pose, renders to texture,
 	 * and exports to PNG - all without affecting the current viewport or taking screenshots.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Capture")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Capture")
 	static bool CaptureAnimationPose(
 		const FString& AnimPath,
 		float Time,
@@ -1884,7 +1884,7 @@ public:
 	 *   for r in results:
 	 *       print(f"Frame {r.captured_frame}: {r.image_path}")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Capture")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Capture")
 	static TArray<FAnimationPoseCaptureResult> CaptureAnimationSequence(
 		const FString& AnimPath,
 		const FString& OutputDirectory,

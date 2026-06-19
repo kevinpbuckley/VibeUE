@@ -23,5 +23,6 @@ ag.set_state_animation(ABP, MACHINE, "Run", "/Game/Anims/AS_Run", True, 1.0)
 t = ag.add_transition(ABP, MACHINE, "Idle", "Run", 0.2)
 print("transition:", t)
 
-unreal.BlueprintService.compile_blueprint(ABP)
+# Compile is an engine BlueprintTools operation (call_tool), not VibeUE BlueprintService:
+call_tool("editor_toolset.toolsets.blueprint.BlueprintTools", "compile_blueprint", {"blueprint": {"refPath": ABP}})
 unreal.EditorAssetLibrary.save_asset(ABP)

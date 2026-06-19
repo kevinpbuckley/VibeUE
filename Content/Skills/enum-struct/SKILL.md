@@ -1,7 +1,7 @@
 ---
 name: enum-struct
 display_name: Enums and Structs
-description: Create, modify, and introspect UserDefinedEnums and UserDefinedStructs (EnumStructService). Use when the user asks to create a Blueprint enum or struct, add enum values or struct members, or inspect an enum/struct's fields. Pair with data-tables when defining a row struct.
+description: Create, modify, and introspect UserDefinedEnums and UserDefinedStructs (EnumStructService). Use when the user asks to create a Blueprint enum or struct, add enum values or struct members, or inspect an enum/struct's fields. Useful for defining a DataTable row struct.
 vibeue_classes:
   - EnumStructService
   - BlueprintTypeParser
@@ -190,28 +190,26 @@ unreal.EnumStructService.remove_struct_property(struct_path, "SpecialEffects")
 unreal.EnumStructService.add_struct_property(struct_path, "CriticalMultiplier", "float", "2.0")
 ```
 
-### Use Struct in DataTable
+### Use Struct in a DataTable
 
-After creating a struct, you can use it as a row type for DataTables:
+After creating a UserDefinedStruct, it becomes available as a DataTable row type. The struct must
+contain at least one property before it can be used as a row type.
 
 ```python
 import unreal
 
-# First create the struct
+# Create the row struct with EnumStructService
 struct_path = unreal.EnumStructService.create_struct("/Game/Data", "ItemRow")
 unreal.EnumStructService.add_struct_property(struct_path, "ItemName", "FString")
 unreal.EnumStructService.add_struct_property(struct_path, "Value", "int32", "0")
 unreal.EnumStructService.add_struct_property(struct_path, "Icon", "UTexture2D")
-
-# Search for it as a row type
-row_types = unreal.DataTableService.search_row_types("ItemRow")
-if row_types:
-    print(f"Found row type: {row_types[0].name}")
-
-    # Create a DataTable using this struct
-    dt_path = unreal.DataTableService.create_data_table("FItemRow", "/Game/Data", "DT_Items")
-    print(f"Created DataTable: {dt_path}")
 ```
+
+DataTable creation itself is no longer a VibeUE service — it is owned by the engine's native asset
+toolset. Create the DataTable with the engine **`AssetTools`** toolset via `call_tool` (pass the
+`FItemRow` struct as the row structure); run `describe_toolset` on `AssetTools` for the exact action
+name and parameters. You can also create one in raw Python via `unreal.AssetToolsHelpers` +
+`unreal.DataTableFactory` if you prefer `execute_python_code`.
 
 ---
 

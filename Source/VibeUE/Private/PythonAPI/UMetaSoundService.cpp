@@ -489,8 +489,13 @@ TArray<FMetaSoundNodeClassInfo> UMetaSoundService::ListAvailableNodes(const FStr
 	TArray<FMetaSoundNodeClassInfo> Result;
 
 #if WITH_EDITORONLY_DATA
+	// TODO(UE5.8): FindAllClasses(bool) is deprecated in favor of the FMetaSoundClassInfo overload,
+	// but that lighter struct doesn't expose the default-interface inputs/outputs we report below.
+	// Keep the full-class overload until an equivalent pin-info path is available.
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	TArray<FMetasoundFrontendClass> AllClasses =
 		Metasound::Frontend::ISearchEngine::Get().FindAllClasses(false);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	AllClasses.Sort([](const FMetasoundFrontendClass& A, const FMetasoundFrontendClass& B)
 	{

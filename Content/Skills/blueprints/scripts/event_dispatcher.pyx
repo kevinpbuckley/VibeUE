@@ -2,6 +2,13 @@
 #
 # Sample script for the blueprints skill. Run via execute_python_code.
 # Use the dedicated dispatcher API — NOT add_variable(..., "EventDispatcher") (not a real type).
+#
+# add_event_dispatcher / add_event_dispatcher_parameter / add_call_delegate_node are surviving
+# VibeUE delta methods (kept as-is). CANONICAL compile path is the engine BlueprintTools toolset:
+#   call_tool(tool_name="compile_blueprint",
+#             toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
+#             arguments={"blueprint": BP_PATH})
+# This .pyx stays pure-Python, so it compiles via the native BlueprintEditorLibrary equivalent.
 import unreal
 bs = unreal.BlueprintService
 
@@ -17,7 +24,7 @@ print("param:", bs.add_event_dispatcher_parameter(BP_PATH, "OnDied", "Killer", "
 call_id = bs.add_call_delegate_node(BP_PATH, "EventGraph", "OnDied", 1400, -700)
 print("call node id:", call_id)
 
-# 4. Compile + save
-c = bs.compile_blueprint(BP_PATH)
-print("compile:", c.success, "errors:", c.num_errors)
+# 4. Compile (pure-Python equivalent of BlueprintTools.compile_blueprint) + save
+unreal.BlueprintEditorLibrary.compile_blueprint(unreal.load_asset(BP_PATH))
+print("compiled:", BP_PATH)
 unreal.EditorAssetLibrary.save_asset(BP_PATH)

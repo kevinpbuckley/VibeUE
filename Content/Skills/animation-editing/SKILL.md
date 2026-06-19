@@ -43,9 +43,10 @@ related_skills:
 Covers the **profile → preview → validate → bake** workflow for safe bone edits with correct
 bone-space handling and constraint validation.
 
-> **Load companion skills:** `animsequence` (basic keyframe creation), `skeleton` (structure, sockets,
-> retargeting), `animation-blueprint` (state machines / AnimGraph). Common combo:
-> `vibeue-skills-manager(action="load", skill_names=["animation-editing", "animsequence"])`.
+> **Load companion skills:** `animsequence` (basic keyframe creation), `skeleton` (structure,
+> retargeting), `animation-blueprint` (state machines / AnimGraph). Skills load via the engine's
+> `AgentSkillToolset` (`ListSkills` / `GetSkills`) — there is no `vibeue-skills-manager` tool. Run the
+> VibeUE services below with `execute_python_code` (`unreal.<Service>.<method>()`).
 
 > **🛡️ Safe discovery — never `unreal.load_asset()` in loops (memory crash 0xC0000005).**
 > Use `SkeletonService.list_skeletons(path)`, `AnimSequenceService.find_animations_for_skeleton(skeleton)`,

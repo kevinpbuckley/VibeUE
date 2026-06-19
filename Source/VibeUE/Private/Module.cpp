@@ -4,14 +4,16 @@
 #include "Modules/ModuleManager.h"
 #include "EditorSubsystem.h"
 #include "Editor.h"
-#include "Chat/AIChatCommands.h"
 #include "Core/ToolRegistry.h"
-#include "MCP/MCPServer.h"
 #include "HAL/IConsoleManager.h"
 #include "HAL/PlatformFileManager.h"
 #include "Tools/PythonTools.h"
 #include "IPythonScriptPlugin.h"
-#include "UI/ChatRichTextStyles.h"
+#include "ToolsetRegistry/UToolsetRegistry.h"
+#include "ToolsetRegistry/ToolsetDefinition.h"
+#include "Core/VibeUEMCPToolBridge.h"
+#include "UObject/UObjectHash.h"
+#include "UObject/UObjectIterator.h"
 #include "Utils/VibeUEPaths.h"
 #include "Misc/Paths.h"
 #include "Misc/FileHelper.h"
@@ -128,20 +130,92 @@ void FModule::StartupModule()
 	// Clear screenshots directory from previous sessions to save disk space
 	FVibeUEPaths::ClearScreenshotsDir();
 
-	// Initialize Chat Rich Text Styles (for markdown rendering)
-	FChatRichTextStyles::Initialize();
-
 	// Initialize Tool Registry (reflection-based tools)
 	FToolRegistry::Get().Initialize();
 
-	// Initialize AI Chat commands
-	FAIChatCommands::Initialize();
-
-	// Initialize MCP Server (auto-starts if enabled in config)
-	FMCPServer::Get().Initialize();
-
 	// Register PreExit callback to cleanup Python references before Unreal GC
 	FCoreDelegates::OnPreExit.AddRaw(this, &FModule::OnPreExit);
+
+	// Expose VibeUE service toolsets on UE 5.8's native ToolsetRegistry / MCP endpoint.
+	// The registry needs GEditor; register now if it's already up (late/hot-reload load),
+	// otherwise defer to PostEngineInit. Branch on GEditor directly to avoid the registry's
+	// "Editor is not available" warning during normal startup.
+	if (GEditor)
+	{
+		RegisterToolsets();
+	}
+	else
+	{
+		FCoreDelegates::GetOnPostEngineInit().AddRaw(this, &FModule::RegisterToolsets);
+	}
+}
+
+// Collect every non-abstract UToolsetDefinition subclass defined in this module (/Script/VibeUE)
+// that exposes at least one AICallable tool. Reflection-based so new services are picked up
+// automatically without editing this file.
+static void GatherVibeUEToolsetClasses(TArray<UClass*>& OutClasses)
+{
+	TArray<UClass*> Derived;
+	GetDerivedClasses(UToolsetDefinition::StaticClass(), Derived, /*bRecursive*/ true);
+
+	const UPackage* VibeUEPackage = FindPackage(nullptr, TEXT("/Script/VibeUE"));
+	for (UClass* Class : Derived)
+	{
+		if (!Class || Class->HasAnyClassFlags(CLASS_Abstract) || Class->GetOutermost() != VibeUEPackage)
+		{
+			continue;
+		}
+
+		// Skip toolsets with no AICallable functions (e.g. instance-only services) — they'd
+		// register as an empty toolset.
+		bool bHasAICallable = false;
+		for (TFieldIterator<UFunction> It(Class); It && !bHasAICallable; ++It)
+		{
+			const TValueOrError<bool, FString> Result = UToolsetDefinition::IsFunctionAICallable(*It);
+			bHasAICallable = Result.HasValue() && Result.GetValue();
+		}
+		if (bHasAICallable)
+		{
+			OutClasses.Add(Class);
+		}
+	}
+}
+
+void FModule::RegisterToolsets()
+{
+	// Service layer -> Epic's ToolsetRegistry (AICallable tools).
+	if (UToolsetRegistry::IsAvailable())
+	{
+		TArray<UClass*> ToolsetClasses;
+		GatherVibeUEToolsetClasses(ToolsetClasses);
+		for (UClass* Class : ToolsetClasses)
+		{
+			UToolsetRegistry::RegisterToolsetClass(Class);
+		}
+		UE_LOG(LogTemp, Display, TEXT("VibeUE: registered %d service toolset(s) with ToolsetRegistry."), ToolsetClasses.Num());
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("VibeUE: ToolsetRegistry not available; service toolsets not registered."));
+	}
+
+	// Dynamic FToolRegistry tools -> Epic's MCP endpoint (independent of ToolsetRegistry).
+	VibeUEMCPToolBridge::RegisterAll();
+}
+
+void FModule::UnregisterToolsets()
+{
+	VibeUEMCPToolBridge::UnregisterAll();
+
+	if (UToolsetRegistry::IsAvailable())
+	{
+		TArray<UClass*> ToolsetClasses;
+		GatherVibeUEToolsetClasses(ToolsetClasses);
+		for (UClass* Class : ToolsetClasses)
+		{
+			UToolsetRegistry::UnregisterToolsetClass(Class);
+		}
+	}
 }
 
 void FModule::ShutdownModule()
@@ -152,20 +226,15 @@ void FModule::ShutdownModule()
 		return;
 	}
 
-	// Unregister PreExit callback
+	// Unregister PreExit / PostEngineInit callbacks
 	FCoreDelegates::OnPreExit.RemoveAll(this);
+	FCoreDelegates::GetOnPostEngineInit().RemoveAll(this);
 
-	// Shutdown MCP Server
-	FMCPServer::Get().Shutdown();
-
-	// Shutdown AI Chat commands
-	FAIChatCommands::Shutdown();
+	// Unregister service toolsets + MCP tools
+	UnregisterToolsets();
 
 	// Shutdown Tool Registry
 	FToolRegistry::Get().Shutdown();
-
-	// Shutdown Chat Rich Text Styles
-	FChatRichTextStyles::Shutdown();
 
 	UE_LOG(LogTemp, Display, TEXT("VibeUE Module has shut down"));
 }

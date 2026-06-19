@@ -63,15 +63,13 @@ import unreal
 
 unreal.NiagaraEmitterService.shift_color_hue(system_path, emitter_name, 120.0)
 
-# Apply to multiple emitters
-emitters = unreal.NiagaraService.list_emitters(system_path)
-for e in emitters:
-    keys = unreal.NiagaraEmitterService.get_color_curve_keys(system_path, e.emitter_name)
+# Apply to multiple emitters (list emitters via the engine NiagaraToolsets — see niagara-systems):
+for name in emitter_names:   # names gathered from the engine toolset's list-emitters tool
+    keys = unreal.NiagaraEmitterService.get_color_curve_keys(system_path, name)
     if len(keys) > 0:
-        unreal.NiagaraEmitterService.shift_color_hue(system_path, e.emitter_name, 120.0)
+        unreal.NiagaraEmitterService.shift_color_hue(system_path, name, 120.0)
 
-# Always compile and save after changes
-unreal.NiagaraService.compile_with_results(system_path)
+# Compile via the engine NiagaraToolsets tool, then save:
 unreal.EditorAssetLibrary.save_asset(system_path)
 ```
 
@@ -110,8 +108,7 @@ for key in keys:
 # Write modified keys back
 unreal.NiagaraEmitterService.set_color_curve_keys(system_path, emitter_name, keys)
 
-# Compile after changes
-unreal.NiagaraService.compile_with_results(system_path)
+# Compile after changes via the engine NiagaraToolsets tool, then save the asset.
 ```
 
 ---
@@ -196,13 +193,16 @@ unreal.NiagaraService.set_rapid_iteration_param_by_stage(
 
 ## Managing ColorFromCurve Modules
 
+> **Module CRUD (remove / add / enable a module) is an engine `NiagaraToolsets` operation** — discover
+> the exact tools with `describe_toolset("NiagaraToolsets.NiagaraToolset_System")` and call them via
+> `call_tool`. The rapid-iteration-param writes below stay on VibeUE `NiagaraService`. Prefer
+> `shift_color_hue` / `set_color_curve_keys` above when you can — they don't require touching modules.
+
 ### Strategy 1: Remove ColorFromCurve (For Simple Solid Colors)
 
 ```python
-# Remove curve to allow Scale Color to work
-unreal.NiagaraEmitterService.remove_module(system_path, emitter_name, "ColorFromCurve")
-
-# Now set Scale Color directly
+# Remove the ColorFromCurve module via the engine NiagaraToolsets remove-module tool, then
+# set Scale Color directly (rapid-iteration write stays on VibeUE NiagaraService):
 unreal.NiagaraService.set_rapid_iteration_param(
     system_path, emitter_name,
     f"Constants.{emitter_name}.Color.Scale Color",
@@ -214,32 +214,31 @@ unreal.NiagaraService.set_rapid_iteration_param(
 
 ### Strategy 2: Add ScaleColor Module After ColorFromCurve
 
-To **keep the curve animation but tint it**:
+To **keep the curve animation but tint it** — note `set_color_tint` (VibeUE) already does exactly
+this (it ensures a ScaleColor module exists and sets its tint), so prefer it:
 
 ```python
-# Add ScaleColor module to ParticleUpdate (after ColorFromCurve)
-unreal.NiagaraEmitterService.add_module(
-    system_path, emitter_name,
-    "/Niagara/Modules/Update/Color/ScaleColor.ScaleColor",
-    "Update"
-)
+unreal.NiagaraEmitterService.set_color_tint(system_path, emitter_name, "(0.0, 3.0, 0.0)")
+```
 
-# Set the scale RGB via rapid iteration params
+If you instead add the ScaleColor module yourself (engine `NiagaraToolsets` add-module tool into the
+`ParticleUpdate` stage, after ColorFromCurve), set its scale via the rapid-iteration write:
+
+```python
 unreal.NiagaraService.set_rapid_iteration_param(
-    path, emitter,
-    f"Constants.{emitter}.ScaleColor.Scale RGB",
+    system_path, emitter_name,
+    f"Constants.{emitter_name}.ScaleColor.Scale RGB",
     "(0.0, 3.0, 0.0)"  # Green tint
 )
-
-# Compile
-unreal.NiagaraService.compile_with_results(path)
+# Then compile via the engine NiagaraToolsets tool.
 ```
 
 **✅ BENEFIT:** Preserves the color animation while applying a color tint/shift.
 
 ##### Strategy 3: Disable ColorFromCurve (Reversible)
 
-If you want to temporarily disable the curve without removing it:
+Disable (rather than remove) the ColorFromCurve module with the engine `NiagaraToolsets`
+enable-module tool (set enabled=False), then Scale Color works:
 
 ```python
 import unreal
@@ -247,10 +246,7 @@ import unreal
 system_path = "/Game/Path/To/NS_YourSystem"  # Your Niagara system
 emitter_name = "YourEmitter"                  # Target emitter
 
-# Disable instead of remove (can re-enable later)
-unreal.NiagaraEmitterService.enable_module(system_path, emitter_name, "ColorFromCurve", False)
-
-# Now Scale Color will work
+# After disabling ColorFromCurve via the engine toolset:
 unreal.NiagaraService.set_rapid_iteration_param(
     system_path, emitter_name, f"Constants.{emitter_name}.Color.Scale Color", "(0.0, 3.0, 0.0)"
 )

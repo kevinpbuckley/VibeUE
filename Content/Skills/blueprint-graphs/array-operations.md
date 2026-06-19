@@ -16,12 +16,16 @@ a random item. Do **NOT** manually build `Array_Length` → `RandomIntegerInRang
 That pattern has 3 nodes, is harder to wire, and `Array_Get` is deprecated in UE5.
 
 ```python
-# CORRECT — single node, editor shows it as "Random Array Item"
-arr_rand_id = unreal.BlueprintService.add_function_call_node(
-    bp_path, "EventGraph", "KismetArrayLibrary", "Array_Random", 600, 200)
+# CORRECT — single node, editor shows it as "Random Array Item".
+# Create it as a build_graph function_call (or spawner_key) node:
+r = unreal.BlueprintService.build_graph(bp_path, "EventGraph",
+    [{"ref": "rand", "type": "function_call",
+      "params": {"class": "KismetArrayLibrary", "function": "Array_Random"}}],
+    [], [], False, False)
+arr_rand_id = r.ref_to_node_id["rand"]
 # Pins: TargetArray (in, wildcard), OutItem (out, wildcard), OutIndex (out, int)
 
-# Or via build_graph:
+# Equivalent spawner_key descriptor:
 {"ref": "rand", "type": "spawner_key", "params": {"key": "FUNC KismetArrayLibrary::Array_Random"}}
 ```
 

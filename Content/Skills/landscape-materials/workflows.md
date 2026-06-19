@@ -25,8 +25,16 @@ unreal.LandscapeMaterialService.add_layer_to_blend_node(mat_path, blend.node_id,
 unreal.LandscapeMaterialService.add_layer_to_blend_node(mat_path, blend.node_id, "Rock", "LB_WeightBlend")
 unreal.LandscapeMaterialService.add_layer_to_blend_node(mat_path, blend.node_id, "Sand", "LB_WeightBlend")
 
-# 4. Connect blend to BaseColor output
-unreal.MaterialNodeService.connect_to_output(mat_path, blend.node_id, "", "BaseColor")
+# 4. Connect blend to BaseColor output (engine MaterialTools)
+call_tool(
+    tool_name="connect_to_output",
+    toolset_name="editor_toolset.toolsets.material.MaterialTools",
+    arguments={
+        "expression": blend.node_id,      # LandscapeLayerBlend node id
+        "output_name": "",
+        "material_property": "MP_BaseColor",
+    },
+)
 
 # 5. Save (but do NOT compile here — compile is slow!)
 unreal.EditorAssetLibrary.save_asset(mat_path)
@@ -133,18 +141,31 @@ import unreal
 
 mat_path = "/Game/Materials/M_Terrain"
 
-# Create UV coords node
+# Create UV coords node (LandscapeMaterialService — survives)
 coords_id = unreal.LandscapeMaterialService.create_layer_coords_node(mat_path, 0.01, -800, 0)
 
-# Create texture sample manually
-tex_id = unreal.MaterialNodeService.create_expression(mat_path, "TextureSample", -600, 0)
-unreal.MaterialNodeService.set_expression_property(mat_path, tex_id.id, "Texture", "/Game/Textures/T_Grass_D")
+# Create texture sample via engine MaterialTools (returns the engine expression object)
+tex = call_tool(
+    tool_name="add_expression",
+    toolset_name="editor_toolset.toolsets.material.MaterialTools",
+    arguments={"material_or_function": mat_path, "expression_class": "TextureSample", "x": -600, "y": 0},
+)
 
-# Connect UV to texture
-unreal.MaterialNodeService.connect_expressions(mat_path, coords_id, "", tex_id.id, "UVs")
+# Set the texture (set_expression_property survives on MaterialNodeService).
+# Resolve the MaterialNodeService expression id for this node — list_expressions
+# enumerates current expressions so you can grab the TextureSample's id.
+tex_id = unreal.MaterialNodeService.list_expressions(mat_path)[-1].id
+unreal.MaterialNodeService.set_expression_property(mat_path, tex_id, "Texture", "/Game/Textures/T_Grass_D")
 
-# Connect texture to blend node layer input
-unreal.LandscapeMaterialService.connect_to_layer_input(mat_path, tex_id.id, "", blend_node_id, "Grass", "Layer")
+# Connect UV coords to the texture's UVs input (engine MaterialTools)
+call_tool(
+    tool_name="connect_expressions",
+    toolset_name="editor_toolset.toolsets.material.MaterialTools",
+    arguments={"from_expression": coords_id, "from_output_name": "", "to_expression": tex_id, "to_input_name": "UVs"},
+)
+
+# Connect texture to blend node layer input (LandscapeMaterialService — survives, takes the node id)
+unreal.LandscapeMaterialService.connect_to_layer_input(mat_path, tex_id, "", blend_node_id, "Grass", "Layer")
 ```
 
 ### Using Layer Weight Nodes (Alternative)
@@ -190,9 +211,20 @@ grass_sample = unreal.LandscapeMaterialService.create_layer_sample_node(
     mat_path, "Grass", -600, 0
 )
 
-# Use the sample weight to drive blending or masking
-mult_id = unreal.MaterialNodeService.create_expression(mat_path, "Multiply", -400, 0)
-unreal.MaterialNodeService.connect_expressions(mat_path, grass_sample, "", mult_id, "A")
+# Use the sample weight to drive blending or masking.
+# Add the Multiply node via engine MaterialTools, then resolve its MaterialNodeService id.
+call_tool(
+    tool_name="add_expression",
+    toolset_name="editor_toolset.toolsets.material.MaterialTools",
+    arguments={"material_or_function": mat_path, "expression_class": "Multiply", "x": -400, "y": 0},
+)
+mult_id = unreal.MaterialNodeService.list_expressions(mat_path)[-1].id
+
+call_tool(
+    tool_name="connect_expressions",
+    toolset_name="editor_toolset.toolsets.material.MaterialTools",
+    arguments={"from_expression": grass_sample, "from_output_name": "", "to_expression": mult_id, "to_input_name": "A"},
+)
 ```
 
 ### Create Grass Output Node
@@ -215,10 +247,18 @@ grass_id = unreal.LandscapeMaterialService.create_grass_output(
     -200, 400
 )
 
-# Connect layer weights to the grass output inputs
-# Each grass type gets an input pin matching its name
-unreal.MaterialNodeService.connect_expressions(mat_path, grass_weight_id, "", grass_id, "Grass")
-unreal.MaterialNodeService.connect_expressions(mat_path, flower_weight_id, "", grass_id, "Flowers")
+# Connect layer weights to the grass output inputs (engine MaterialTools).
+# Each grass type gets an input pin matching its name.
+call_tool(
+    tool_name="connect_expressions",
+    toolset_name="editor_toolset.toolsets.material.MaterialTools",
+    arguments={"from_expression": grass_weight_id, "from_output_name": "", "to_expression": grass_id, "to_input_name": "Grass"},
+)
+call_tool(
+    tool_name="connect_expressions",
+    toolset_name="editor_toolset.toolsets.material.MaterialTools",
+    arguments={"from_expression": flower_weight_id, "from_output_name": "", "to_expression": grass_id, "to_input_name": "Flowers"},
+)
 
 unreal.MaterialService.compile_material(mat_path)
 ```
@@ -243,8 +283,12 @@ unreal.LandscapeMaterialService.setup_layer_textures(
 unreal.LandscapeMaterialService.setup_layer_textures(
     mat_path, blend.node_id, "Rock", "/Game/Textures/T_Rock_D", "/Game/Textures/T_Rock_N")
 
-# 4. Connect blend to material output
-unreal.MaterialNodeService.connect_to_output(mat_path, blend.node_id, "", "BaseColor")
+# 4. Connect blend to material output (engine MaterialTools)
+call_tool(
+    tool_name="connect_to_output",
+    toolset_name="editor_toolset.toolsets.material.MaterialTools",
+    arguments={"expression": blend.node_id, "output_name": "", "material_property": "MP_BaseColor"},
+)
 
 # 5. Compile and save
 unreal.MaterialService.compile_material(mat_path)

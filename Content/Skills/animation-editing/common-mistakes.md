@@ -52,11 +52,12 @@ e = ass.quat_to_euler(t.rotation)     # NOT t.location / NOT t.rotation.euler()
 print(e.roll, e.pitch, e.yaw, t.translation)
 ```
 
-## Duplicating an animation — use manage_asset, not a service method
+## Duplicating an animation — use native asset Python, not a service method
 There is no `duplicate_anim_sequence` on AnimSequenceService. To make a working copy before
-editing, use the asset tool: `manage_asset(action="duplicate", source_path=..., destination_path=...)`.
+editing, use `unreal.EditorAssetLibrary.duplicate_asset(source_path, destination_path)` (or Epic's
+`AssetTools` toolset).
 
 ## `create_from_pose` / new-asset paths may lack the object suffix
 Some creation calls return a package path like `/Game/Anims/AS_Foo` without the `.AS_Foo` object
 suffix. If a follow-up call returns NOT FOUND, append the asset name:
-`f"{path}.{path.rsplit('/',1)[-1]}"` (or just re-resolve with `manage_asset(action="find")`).
+`f"{path}.{path.rsplit('/',1)[-1]}"` (or check with `unreal.EditorAssetLibrary.does_asset_exist(path)`).

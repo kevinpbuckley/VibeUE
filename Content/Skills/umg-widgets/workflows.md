@@ -186,11 +186,18 @@ Runnable: `scripts/create_animation.pyx`.
 ## Bind Event
 
 `bind_event(widget_path, widget_name, event_name, function_name)`. Create the function first.
+The engine `BlueprintTools` toolset owns Blueprint function creation — call it via `call_tool`:
 
 ```python
-import unreal
+# Step 1: create the function graph (engine BlueprintTools, via call_tool)
+call_tool(
+    tool_name="add_function_graph",
+    toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
+    arguments={"blueprint": path, "graph_name": "OnPlayClicked"},
+)
 
-unreal.BlueprintService.create_function(path, "OnPlayClicked", is_pure=False)
+# Step 2: bind the event to that function (WidgetService keeps this)
+import unreal
 unreal.WidgetService.bind_event(path, "PlayButton", "OnClicked", "OnPlayClicked")
 unreal.EditorAssetLibrary.save_asset(path)
 ```

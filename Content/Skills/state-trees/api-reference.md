@@ -95,8 +95,8 @@ Use `select_state` to highlight a state in the StateTree editor panel (equivalen
 ```python
 import unreal
 
-# Open the asset first (if not already open)
-unreal.VibeUEService.manage_asset(action="open", asset_path="/Game/AI/ST_Cube")
+# Open the asset first (if not already open) via the engine AssetTools toolset:
+#   call_tool(toolset="AssetTools", tool="OpenAsset", args={"asset_path": "/Game/AI/ST_Cube"})
 
 # Expand parents so the state is visible
 unreal.StateTreeService.set_state_expanded("/Game/AI/ST_Cube", "Root", True)

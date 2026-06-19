@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/NoExportTypes.h"
+#include "ToolsetRegistry/ToolsetDefinition.h"
 #include "UInputService.generated.h"
 
 /**
@@ -262,7 +262,7 @@ struct FInputTypeDiscoveryResult
  * @note This replaces the JSON-based manage_enhanced_input MCP tool
  */
 UCLASS(BlueprintType)
-class VIBEUE_API UInputService : public UObject
+class VIBEUE_API UInputService : public UToolsetDefinition
 {
 	GENERATED_BODY()
 
@@ -277,7 +277,7 @@ public:
 	 *
 	 * @return Discovery result with action value types, modifiers, and triggers
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Input")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input")
 	static FInputTypeDiscoveryResult DiscoverTypes();
 
 	// =================================================================
@@ -293,7 +293,7 @@ public:
 	 * @param ValueType - Value type: "Boolean" (alias "Digital"), "Axis1D", "Axis2D", "Axis3D" — same names discover_types returns
 	 * @return Create result with asset path
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Input")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input")
 	static FInputCreateResult CreateAction(
 		const FString& ActionName,
 		const FString& AssetPath,
@@ -305,7 +305,7 @@ public:
 	 *
 	 * @return Array of Input Action paths
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Input")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input")
 	static TArray<FString> ListInputActions();
 
 	/**
@@ -316,7 +316,7 @@ public:
 	 * @param OutInfo - Structure containing action details
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Input")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input")
 	static bool GetInputActionInfo(const FString& ActionPath, FInputActionDetailedInfo& OutInfo);
 
 	/**
@@ -329,7 +329,7 @@ public:
 	 * @param Description - Description text for the action
 	 * @return True if configuration was successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Input")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input")
 	static bool ConfigureAction(
 		const FString& ActionPath,
 		bool bConsumeInput = true,
@@ -349,7 +349,7 @@ public:
 	 * @param Priority - Context priority (higher = processed first)
 	 * @return Create result with asset path
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Input")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input")
 	static FInputCreateResult CreateMappingContext(
 		const FString& ContextName,
 		const FString& AssetPath,
@@ -361,7 +361,7 @@ public:
 	 *
 	 * @return Array of Mapping Context paths
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Input")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input")
 	static TArray<FString> ListMappingContexts();
 
 	/**
@@ -371,7 +371,7 @@ public:
 	 * @param OutInfo - Structure containing context and mappings
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Input")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input")
 	static bool GetMappingContextInfo(const FString& ContextPath, FMappingContextDetailedInfo& OutInfo);
 
 	/**
@@ -381,7 +381,7 @@ public:
 	 * @param ContextPath - Full path to the Mapping Context
 	 * @return Array of key mapping information
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Input")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input")
 	static TArray<FKeyMappingInfo> GetMappings(const FString& ContextPath);
 
 	/**
@@ -393,7 +393,7 @@ public:
 	 * @param KeyName - Name of the key (e.g., "SpaceBar", "W", "Gamepad_LeftTrigger")
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Input")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input")
 	static bool AddKeyMapping(
 		const FString& ContextPath,
 		const FString& ActionPath,
@@ -407,7 +407,7 @@ public:
 	 * @param MappingIndex - Index of the mapping to remove
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Input")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input")
 	static bool RemoveMapping(
 		const FString& ContextPath,
 		int32 MappingIndex);
@@ -419,7 +419,7 @@ public:
 	 * @param Filter - Optional filter string to narrow results
 	 * @return Array of available key names
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Input")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input")
 	static TArray<FString> GetAvailableKeys(const FString& Filter = TEXT(""));
 
 	// =================================================================
@@ -435,7 +435,7 @@ public:
 	 * @param ModifierType - Type of modifier (e.g., "Negate", "Scalar", "DeadZone")
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Input")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input")
 	static bool AddModifier(
 		const FString& ContextPath,
 		int32 MappingIndex,
@@ -450,7 +450,7 @@ public:
 	 * @param ModifierIndex - Index of the modifier to remove
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Input")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input")
 	static bool RemoveModifier(
 		const FString& ContextPath,
 		int32 MappingIndex,
@@ -464,7 +464,7 @@ public:
 	 * @param MappingIndex - Index of the mapping
 	 * @return Array of modifier information
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Input")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input")
 	static TArray<FInputModifierInfo> GetModifiers(
 		const FString& ContextPath,
 		int32 MappingIndex);
@@ -475,7 +475,7 @@ public:
 	 *
 	 * @return Array of modifier type names
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Input")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input")
 	static TArray<FString> GetAvailableModifierTypes();
 
 	// =================================================================
@@ -491,7 +491,7 @@ public:
 	 * @param TriggerType - Type of trigger (e.g., "Pressed", "Released", "Down", "Hold")
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Input")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input")
 	static bool AddTrigger(
 		const FString& ContextPath,
 		int32 MappingIndex,
@@ -506,7 +506,7 @@ public:
 	 * @param TriggerIndex - Index of the trigger to remove
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Input")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input")
 	static bool RemoveTrigger(
 		const FString& ContextPath,
 		int32 MappingIndex,
@@ -520,7 +520,7 @@ public:
 	 * @param MappingIndex - Index of the mapping
 	 * @return Array of trigger information
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Input")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input")
 	static TArray<FInputTriggerInfo> GetTriggers(
 		const FString& ContextPath,
 		int32 MappingIndex);
@@ -531,7 +531,7 @@ public:
 	 *
 	 * @return Array of trigger type names
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Input")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input")
 	static TArray<FString> GetAvailableTriggerTypes();
 
 	// =================================================================
@@ -548,7 +548,7 @@ public:
 	 *   if not unreal.InputService.input_action_exists("/Game/Input/IA_Jump"):
 	 *       unreal.InputService.create_action("IA_Jump", "/Game/Input", "Axis1D")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Input|Exists")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input|Exists")
 	static bool InputActionExists(const FString& ActionPath);
 
 	/**
@@ -561,7 +561,7 @@ public:
 	 *   if not unreal.InputService.mapping_context_exists("/Game/Input/IMC_Default"):
 	 *       unreal.InputService.create_mapping_context("IMC_Default", "/Game/Input")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Input|Exists")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input|Exists")
 	static bool MappingContextExists(const FString& ContextPath);
 
 	/**
@@ -575,7 +575,7 @@ public:
 	 *   if not unreal.InputService.key_mapping_exists("/Game/Input/IMC_Default", "/Game/Input/IA_Jump"):
 	 *       unreal.InputService.add_key_mapping("/Game/Input/IMC_Default", "/Game/Input/IA_Jump", "SpaceBar")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Input|Exists")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input|Exists")
 	static bool KeyMappingExists(const FString& ContextPath, const FString& ActionPath);
 
 private:

@@ -36,44 +36,70 @@ related_skills:
 
 ## Critical Rules
 
-### ⚠️ `create_blueprint()` Signature
+### ⚠️ Creating a Blueprint — engine `BlueprintTools.create`
+
+Blueprint basics now live on the engine's `BlueprintTools` toolset (VibeUE extends the native MCP
+endpoint). Create a Blueprint with `call_tool`, not `unreal.BlueprintService.create_blueprint` (that
+method was cut):
 
 ```python
-# CORRECT - Three separate arguments: name, parent, folder
-unreal.BlueprintService.create_blueprint("BP_MyActor", "Actor", "/Game/Blueprints")
-
-# WRONG - Path as first argument
-unreal.BlueprintService.create_blueprint("/Game/Blueprints/BP_MyActor", "Actor")
+# CORRECT — engine BlueprintTools.create (args: folder_path, asset_name, asset_type)
+call_tool(
+    tool_name="create",
+    toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
+    arguments={"folder_path": "/Game/Blueprints", "asset_name": "BP_MyActor", "asset_type": "Actor"},
+)
 ```
 
-**Returns**: Full asset path like `/Game/Blueprints/BP_MyActor.BP_MyActor`
+The folder and asset name are passed separately (`folder_path` + `asset_name`) — do not jam a full
+asset path into one argument. `asset_type` is the parent class (e.g. `Actor`, `Pawn`, `Character`).
 
-### Blueprint Types in add_variable
+### Blueprint Types in add_variable — engine `BlueprintTools.add_variable`
 
-When adding a variable whose type is a Blueprint class, use the Blueprint asset name directly.
-Do **not** add `_C`, do **not** construct a generated class path — just use the name:
+Adding a variable is also an engine `BlueprintTools` call now (`unreal.BlueprintService.add_variable`
+was cut). Use `call_tool` with `blueprint`, `name`, `type_name` (and `add_object_variable` /
+`add_struct_variable` for object- and struct-typed variables):
 
 ```python
-# CORRECT — Blueprint asset name, short or full path
-unreal.BlueprintService.add_variable("/Game/BP_MyActor", "Target", "BP_Enemy")
-unreal.BlueprintService.add_variable("/Game/BP_MyActor", "Target", "/Game/Blueprints/BP_Enemy")
-
-# WRONG — do not guess generated class names or append _C
-unreal.BlueprintService.add_variable("/Game/BP_MyActor", "Target", "BP_Enemy_C")
-unreal.BlueprintService.add_variable("/Game/BP_MyActor", "Target", "/Game/Blueprints/BP_Enemy_C")
+# CORRECT — engine BlueprintTools.add_variable (args: blueprint, name, type_name)
+call_tool(
+    tool_name="add_variable",
+    toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
+    arguments={"blueprint": "/Game/BP_MyActor", "name": "Health", "type_name": "float"},
+)
 ```
 
-The type system resolves Blueprint names automatically via asset search.
+When the variable's type is a **Blueprint class**, use the Blueprint asset name directly in
+`type_name`. Do **not** add `_C`, and do **not** construct a generated class path — just use the name
+(`"BP_Enemy"`, or the full `"/Game/Blueprints/BP_Enemy"`). Appending `_C` (`"BP_Enemy_C"`) or guessing
+a generated class path is **wrong**; the type system resolves Blueprint names automatically via asset
+search.
 
 Engine structs need the `F` prefix: color variables are `"FLinearColor"` / `"FColor"` —
-plain `"LinearColor"` / `"Color"` returns `False`. Unsure of a type string? Use
-`search_variable_types("Linear")` to look it up.
+plain `"LinearColor"` / `"Color"` is not resolved. Unsure of a type string? Use the surviving
+`unreal.BlueprintService.search_variable_types("Linear")` to look it up.
+
+### ⚠️ Adding a function graph — engine `BlueprintTools.add_function_graph`
+
+Creating a function graph moved to the engine toolset (`create_function` / `add_function` on
+`BlueprintService` were cut). Use `call_tool` with `blueprint` + `graph_name`:
+
+```python
+call_tool(
+    tool_name="add_function_graph",
+    toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
+    arguments={"blueprint": "/Game/Blueprints/BP_MyActor", "graph_name": "DoThing"},
+)
+```
+
+Refining the graph afterward still uses the surviving VibeUE delta methods
+(`add_function_parameter`, `add_function_local_variable`, `get_function_parameters`,
+`get_function_info`, `override_function`, `open_function_graph`).
 
 ### ⚠️ Method Name Gotchas
 
 | WRONG | CORRECT |
 |-------|---------|
-| `add_function()` | `create_function()` |
 | `get_component_info(path, name)` | `get_component_info(type)` - takes ONLY type! |
 
 ### ⚠️ Property Name Gotchas
@@ -117,7 +143,11 @@ life  = unreal.BlueprintService.get_property(bp, "InitialLifeSpan")  # "5.000000
 
 # WRITE — values are strings; returns bool
 unreal.BlueprintService.set_property(bp, "bReplicates", "True")
-unreal.BlueprintService.compile_blueprint(bp)
+
+# Compile via the engine BlueprintTools toolset (compile_blueprint was cut from BlueprintService):
+# call_tool(tool_name="compile_blueprint",
+#           toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
+#           arguments={"blueprint": bp})
 unreal.EditorAssetLibrary.save_asset(bp)
 ```
 
@@ -197,8 +227,13 @@ Values are strings in UE export-text syntax. Check `property_type` via
 To add a StateTree delegate dispatcher variable to a Blueprint task (e.g. `STT_*`):
 
 ```python
-# Use type "FStateTreeDelegateDispatcher" — NOT "EventDispatcher"
-unreal.BlueprintService.add_variable(bp_path, "FinishRotatingDispatcher", "FStateTreeDelegateDispatcher")
+# Use type "FStateTreeDelegateDispatcher" — NOT "EventDispatcher".
+# add_variable is the engine BlueprintTools toolset call (BlueprintService.add_variable was cut):
+call_tool(
+    tool_name="add_variable",
+    toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
+    arguments={"blueprint": bp_path, "name": "FinishRotatingDispatcher", "type_name": "FStateTreeDelegateDispatcher"},
+)
 ```
 
 `"EventDispatcher"` is a Blueprint-only concept and is not a valid type string. The correct type
@@ -231,8 +266,10 @@ unreal.BlueprintService.add_event_dispatcher_parameter(bp, "FinishedLooking", "D
 call_id = unreal.BlueprintService.add_call_delegate_node(bp, "EventGraph", "FinishedLooking", 1400, -700)
 unreal.BlueprintService.connect_nodes(bp, "EventGraph", timeline_id, "Finished", call_id, "execute")
 
-# 4. Compile + save
-unreal.BlueprintService.compile_blueprint(bp)
+# 4. Compile (engine BlueprintTools toolset) + save
+# call_tool(tool_name="compile_blueprint",
+#           toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
+#           arguments={"blueprint": bp})
 unreal.EditorAssetLibrary.save_asset(bp)
 ```
 
@@ -246,7 +283,7 @@ unreal.EditorAssetLibrary.save_asset(bp)
 
 - ❌ `add_variable(bp, "FinishedLooking", "EventDispatcher")` — `"EventDispatcher"` is not a real type string; use `add_event_dispatcher` instead.
 - ❌ Treating the dispatcher like a regular variable (`add_get_variable_node` on it produces a delegate-getter, not a broadcast). The broadcast node is `UK2Node_CallDelegate` and is created only by `add_call_delegate_node`.
-- ❌ Skipping `compile_blueprint` before saving the asset. The skeleton compiles inline on dispatcher creation, but the final asset still needs `compile_blueprint` before `save_asset` to ensure the generated class is up-to-date.
+- ❌ Skipping the compile before saving the asset. The skeleton compiles inline on dispatcher creation, but the final asset still needs the engine `BlueprintTools.compile_blueprint` toolset call before `save_asset` to ensure the generated class is up-to-date.
 
 ### Blueprint Interfaces (implement / remove)
 
@@ -306,5 +343,7 @@ unreal.EditorAssetLibrary.save_asset(bp)
 
 ## Verification
 
-After any edit: `compile_blueprint(path)` and check `.success` / `.num_errors`, then
-`unreal.EditorAssetLibrary.save_asset(path)`. Don't claim success until compile reports zero errors.
+After any edit: compile via the engine `BlueprintTools.compile_blueprint` toolset call
+(`call_tool(tool_name="compile_blueprint", toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools", arguments={"blueprint": path})`)
+and check the result's `success` / `num_errors`, then `unreal.EditorAssetLibrary.save_asset(path)`.
+Don't claim success until compile reports zero errors.

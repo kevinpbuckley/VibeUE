@@ -52,13 +52,12 @@ keywords:
 
 This skill covers the **inspect → profile → preview → validate → bake** workflow for safe animation bone edits with correct bone-space handling and constraint validation.
 
-> **Required:**
-> ```python
-> vibeue-skills-manager(action="load", skill_name="animsequence")
-> ```
+> **Loading skills:** skills load via the engine's `AgentSkillToolset` (`ListSkills` / `GetSkills`) —
+> there is no `vibeue-skills-manager` tool. Run the VibeUE services below with `execute_python_code`
+> (`unreal.AnimSequenceService.<method>()` / `unreal.SkeletonService.<method>()`).
 >
 > **Related Skills:**
-> - **skeleton** - For modifying skeleton structure, sockets, and retargeting modes
+> - **skeleton** - For modifying skeleton bone transforms/hierarchy and retargeting modes
 > - **animation-blueprint** - For state machines and AnimGraph navigation
 >
 > **Workflow:** Create skeleton profile → Learn constraints → Preview bone rotations → Validate pose → Bake to keyframes

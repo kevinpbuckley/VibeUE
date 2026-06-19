@@ -218,8 +218,9 @@ Sample scripts under `scripts/` are **runnable examples** — edit the variables
 
 ## Sub-docs
 
-Load these only when the task needs them (read the file under
-`Plugins/VibeUE/Content/Skills/umg-widgets/`, or `vibeue-skills-manager(action='load', skill_name='umg-widgets/<name>')`):
+Load these only when the task needs them — read the sibling file directly under
+`Plugins/VibeUE/Content/Skills/umg-widgets/` (the engine `AgentSkillToolset` `GetSkills` is the
+loader that exposes this skill; there is no `vibeue-skills-manager` tool):
 
 - **`workflows.md`** — step-by-step task workflows with copy-paste Python for every task above.
 - **`reference.md`** — field-name tables for every return type (`FWidgetInfo`, `FWidgetComponentSnapshot`,

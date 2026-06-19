@@ -211,10 +211,16 @@ look_at_id = "<Look At node GUID>"
 bind_id = unreal.BlueprintService.add_delegate_bind_on_variable(
     bp, g, "Cube", "FinishedLooking", 960.0, 0.0)
 
-# Add the Custom Event + FinishTask call and wire the remaining pins.
+# Add the Custom Event (survives) + the FinishTask call. The FinishTask node is a
+# plain function call, so place it with the VibeUE delta build_graph (type
+# "function_call") — the standalone add_function_call_node creator was cut.
 custom_id = unreal.BlueprintService.add_custom_event_node(bp, g, "OnFinishedLooking", 960.0, 240.0)
-finish_id = unreal.BlueprintService.add_function_call_node(
-    bp, g, "StateTreeTaskBlueprintBase", "FinishTask", 1480.0, 240.0)
+bg = unreal.BlueprintService.build_graph(
+    bp, g,
+    [{"ref": "Finish", "type": "function_call",
+      "params": {"class": "StateTreeTaskBlueprintBase", "function": "FinishTask"}}],
+    [], [], False, False)
+finish_id = bg.ref_to_node_id["Finish"]
 
 # 1) upstream exec -> bind
 unreal.BlueprintService.connect_nodes(bp, g, look_at_id, "then",       bind_id,   "execute")
@@ -223,7 +229,10 @@ unreal.BlueprintService.connect_nodes(bp, g, custom_id,  "OutputDelegate", bind_
 # 3) custom event fires -> FinishTask
 unreal.BlueprintService.connect_nodes(bp, g, custom_id,  "then",       finish_id, "execute")
 
-unreal.BlueprintService.compile_blueprint(bp)
+# Compile via the engine BlueprintTools toolset (compile_blueprint moved to the engine):
+#   call_tool(tool_name="compile_blueprint",
+#             toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
+#             arguments={"blueprint": bp})
 unreal.EditorAssetLibrary.save_asset(bp)
 ```
 

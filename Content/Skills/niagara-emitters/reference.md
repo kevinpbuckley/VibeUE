@@ -1,61 +1,55 @@
 ---
 name: niagara-emitters/reference
-description: Niagara emitter quick reference — module/renderer/rapid-iteration-parameter/graph-positioning APIs and common property names.
+description: Niagara emitter quick reference — VibeUE rapid-iteration-parameter readers/writers, where module/renderer CRUD lives (engine NiagaraToolsets), and common property names.
 ---
 
-## Quick Reference
+## Where each operation lives
+
+| Operation | API |
+|-----------|-----|
+| Add / remove / enable / reorder **modules** | engine `NiagaraToolsets.*` via `call_tool` |
+| Set / get **module inputs** | engine `NiagaraToolsets.*` |
+| Add / remove / enable **renderers**, set renderer properties | engine `NiagaraToolsets.*` |
+| Search module scripts / list built-in modules | engine `NiagaraToolsets.*` |
+| **Read** rapid-iteration params | VibeUE `NiagaraService.list_rapid_iteration_params` / `NiagaraEmitterService.get_rapid_iteration_parameters` |
+| **Write** rapid-iteration params | VibeUE `NiagaraService.set_rapid_iteration_param[_by_stage]` |
+| Color / curve authoring | VibeUE `NiagaraEmitterService` (see `color.md`) |
+| Scratch-pad / Custom HLSL graphs | VibeUE `NiagaraScratchPadService` (see `scratch-pad.md`) |
+
+## Modules & renderers → engine NiagaraToolsets
+
+```python
+# Discover the exact tool names + input schemas, then call them:
+#   list_toolsets()
+#   describe_toolset("NiagaraToolsets.NiagaraToolset_System")
+#   call_tool(toolset_name="NiagaraToolsets.NiagaraToolset_System",
+#             tool_name="<add/remove/enable module or renderer tool>",
+#             arguments={ ... })
+#
+# Stage still matters when adding modules (ParticleSpawn / ParticleUpdate /
+# EmitterSpawn / EmitterUpdate) — see SKILL.md for which module goes in which stage.
+```
+
+## Rapid-iteration parameters (VibeUE)
 
 ```python
 import unreal
 
-# Generic variable pattern - replace with your actual paths
 system_path = "/Game/Path/To/NS_YourSystem"
 emitter_name = "YourEmitter"
 
-# === MODULES ===
-# Find module scripts by keyword (NOT "list_available_scripts" — that does not exist)
-scripts = unreal.NiagaraEmitterService.search_module_scripts("Color")
-# ...or list the common built-ins:
-builtins = unreal.NiagaraEmitterService.list_builtin_modules()
-
-# Add module to emitter — exactly 4 args; the 4th is the stage and must be one of
-# ParticleSpawn / ParticleUpdate / EmitterSpawn / EmitterUpdate (anything else returns False).
-# See SKILL.md "add_module stage string must be EXACT" for which module goes in which stage.
-ok = unreal.NiagaraEmitterService.add_module(
-    system_path, emitter_name,
-    "/Niagara/Modules/Solvers/SolveForcesAndVelocity.SolveForcesAndVelocity",
-    "ParticleUpdate"
-)
-assert ok, "add_module returned False — check the stage string and module path"
-
-# List modules in emitter. Struct fields: module_name, module_type (the stage),
-# module_index, is_enabled, script_asset_path.
-modules = unreal.NiagaraEmitterService.list_modules(system_path, emitter_name)
-for m in modules:
-    print(f"[{m.module_type}] {m.module_name}")
-
-# === RENDERERS ===
-# Add sprite renderer
-unreal.NiagaraEmitterService.add_renderer(
-    system_path, emitter_name,
-    "SpriteRenderer",
-    "MySprite",
-    {"Material": "/Game/Materials/M_Smoke"}
-)
-
-# Renderer types: SpriteRenderer, RibbonRenderer, MeshRenderer, LightRenderer
-
-# === RAPID ITERATION PARAMETERS ===
+# === READ ===
 # List all params (shows which stage they're in)
 params = unreal.NiagaraService.list_rapid_iteration_params(system_path, emitter_name)
 for p in params:
     print(f"[{p.script_type}] {p.parameter_name}: {p.value}")
 
-# OR use NiagaraEmitterService.get_rapid_iteration_parameters for more detail
+# OR NiagaraEmitterService.get_rapid_iteration_parameters for more detail
 params = unreal.NiagaraEmitterService.get_rapid_iteration_parameters(system_path, emitter_name)
 for p in params:
-    print(f"[{p.script_type}] {p.input_name}: {p.current_value}")
+    print(f"[{p.input_type}] {p.input_name}: {p.current_value}")
 
+# === WRITE ===
 # Set param in ALL matching stages (recommended for color)
 # Use full param name from list output (e.g., "Constants.YourEmitter.Color.Scale Color")
 unreal.NiagaraService.set_rapid_iteration_param(
@@ -71,12 +65,10 @@ unreal.NiagaraService.set_rapid_iteration_param_by_stage(
     f"Constants.{emitter_name}.Color.Scale Color",
     "(0.0, 3.0, 0.0)"
 )
-
-# === GRAPH POSITIONING ===
-# Move emitter in Niagara editor graph
-pos = unreal.NiagaraService.get_emitter_graph_position(system_path, emitter_name)
-unreal.NiagaraService.set_emitter_graph_position(system_path, emitter_name, pos.x + 250, pos.y)
 ```
+
+> Graph positioning (reordering emitters in the Niagara editor graph) is an engine
+> `NiagaraToolsets` operation — discover it with `describe_toolset`.
 
 ---
 

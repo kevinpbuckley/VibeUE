@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/NoExportTypes.h"
+#include "ToolsetRegistry/ToolsetDefinition.h"
 #include "USoundCueService.generated.h"
 
 // ============================================================================
@@ -185,7 +185,7 @@ struct FSoundWaveInfo
  * - **File**: USoundCueService.h
  */
 UCLASS(BlueprintType)
-class VIBEUE_API USoundCueService : public UObject
+class VIBEUE_API USoundCueService : public UToolsetDefinition
 {
 	GENERATED_BODY()
 
@@ -208,7 +208,7 @@ public:
 	 *   if result.success:
 	 *       print(f"Created: {result.asset_path}")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Lifecycle")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Lifecycle")
 	static FSoundCueResult CreateSoundCue(
 		const FString& AssetPath,
 		const FString& SoundWavePath = TEXT(""));
@@ -223,7 +223,7 @@ public:
 	 *   info = unreal.SoundCueService.get_sound_cue_info("/Game/Audio/SC_Footstep")
 	 *   print(f"Nodes: {info.node_count}, Volume: {info.volume_multiplier}")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Lifecycle")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Lifecycle")
 	static FSoundCueInfo GetSoundCueInfo(const FString& AssetPath);
 
 	/**
@@ -236,7 +236,7 @@ public:
 	 * Example:
 	 *   unreal.SoundCueService.save_sound_cue("/Game/Audio/SC_Footstep")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Lifecycle")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Lifecycle")
 	static bool SaveSoundCue(const FString& AssetPath);
 
 	/**
@@ -250,7 +250,7 @@ public:
 	 *   r = unreal.SoundCueService.duplicate_sound_cue(
 	 *       "/Game/Audio/SC_Footstep", "/Game/Audio/SC_Footstep_Gravel")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Lifecycle")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Lifecycle")
 	static FSoundCueResult DuplicateSoundCue(
 		const FString& SourcePath,
 		const FString& DestPath);
@@ -264,7 +264,7 @@ public:
 	 * Example:
 	 *   unreal.SoundCueService.delete_sound_cue("/Game/Audio/SC_Temp")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Lifecycle")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Lifecycle")
 	static bool DeleteSoundCue(const FString& AssetPath);
 
 	// ============================================================================
@@ -289,7 +289,7 @@ public:
 	 *       root_flag = " [ROOT]" if n.is_root_node else ""
 	 *       print(f"[{n.node_index}] {n.node_class}{root_flag} children={n.child_indices}")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Inspection")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Inspection")
 	static TArray<FSoundCueNodeInfo> ListNodes(const FString& AssetPath);
 
 	// ============================================================================
@@ -309,7 +309,7 @@ public:
 	 *   result = unreal.SoundCueService.add_wave_player_node(
 	 *       "/Game/Audio/SC_Footstep", "/Game/Audio/SW_Step_Stone", -400, 0)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Nodes")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Nodes")
 	static FSoundCueResult AddWavePlayerNode(
 		const FString& AssetPath,
 		const FString& SoundWavePath = TEXT(""),
@@ -327,7 +327,7 @@ public:
 	 * Example:
 	 *   result = unreal.SoundCueService.add_random_node("/Game/Audio/SC_Footstep", -200, 0)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Nodes")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Nodes")
 	static FSoundCueResult AddRandomNode(
 		const FString& AssetPath,
 		float PosX = 0.0f,
@@ -345,7 +345,7 @@ public:
 	 * Example:
 	 *   result = unreal.SoundCueService.add_mixer_node("/Game/Audio/SC_Ambience", 3, -200, 0)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Nodes")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Nodes")
 	static FSoundCueResult AddMixerNode(
 		const FString& AssetPath,
 		int32 NumInputs = 2,
@@ -363,7 +363,7 @@ public:
 	 * Example:
 	 *   result = unreal.SoundCueService.add_modulator_node("/Game/Audio/SC_Footstep", -100, 0)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Nodes")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Nodes")
 	static FSoundCueResult AddModulatorNode(
 		const FString& AssetPath,
 		float PosX = 0.0f,
@@ -380,7 +380,7 @@ public:
 	 * Example:
 	 *   result = unreal.SoundCueService.add_attenuation_node("/Game/Audio/SC_Footstep", -50, 0)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Nodes")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Nodes")
 	static FSoundCueResult AddAttenuationNode(
 		const FString& AssetPath,
 		float PosX = 0.0f,
@@ -394,7 +394,7 @@ public:
 	 * @param PosY      - Y position in the graph editor
 	 * @return FSoundCueResult; Message contains the new node index on success
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Nodes")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Nodes")
 	static FSoundCueResult AddLoopingNode(
 		const FString& AssetPath,
 		float PosX = 0.0f,
@@ -409,7 +409,7 @@ public:
 	 * @param PosY       - Y position in the graph editor
 	 * @return FSoundCueResult; Message contains the new node index on success
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Nodes")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Nodes")
 	static FSoundCueResult AddConcatenatorNode(
 		const FString& AssetPath,
 		int32 NumInputs = 2,
@@ -424,7 +424,7 @@ public:
 	 * @param PosY      - Y position in the graph editor
 	 * @return FSoundCueResult; Message contains the new node index on success
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Nodes")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Nodes")
 	static FSoundCueResult AddDelayNode(
 		const FString& AssetPath,
 		float PosX = 0.0f,
@@ -432,7 +432,7 @@ public:
 
 	/** Add a Switch node that selects one input based on an integer parameter.
 	 *  Slot 0 = default when param is out of range. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Nodes")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Nodes")
 	static FSoundCueResult AddSwitchNode(
 		const FString& AssetPath,
 		int32 NumInputs = 2,
@@ -440,7 +440,7 @@ public:
 		float PosY = 0.0f);
 
 	/** Add an Enveloper node — applies a volume/pitch envelope curve to its input. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Nodes")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Nodes")
 	static FSoundCueResult AddEnveloperNode(
 		const FString& AssetPath,
 		float PosX = 0.0f,
@@ -448,7 +448,7 @@ public:
 
 	/** Add a Distance CrossFade node — blends N inputs by listener distance.
 	 *  Use set_node_property to configure each input's FadeInDistanceStart/End etc. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Nodes")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Nodes")
 	static FSoundCueResult AddDistanceCrossFadeNode(
 		const FString& AssetPath,
 		int32 NumInputs = 2,
@@ -457,7 +457,7 @@ public:
 
 	/** Add a Branch node — routes to True (slot 0), False (slot 1), or Unset (slot 2)
 	 *  based on a named bool parameter. Always has exactly 3 input slots. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Nodes")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Nodes")
 	static FSoundCueResult AddBranchNode(
 		const FString& AssetPath,
 		float PosX = 0.0f,
@@ -465,7 +465,7 @@ public:
 		const FString& BoolParameterName = TEXT(""));
 
 	/** Add a Param CrossFade node — blends N inputs by a named float parameter. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Nodes")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Nodes")
 	static FSoundCueResult AddParamCrossFadeNode(
 		const FString& AssetPath,
 		int32 NumInputs = 2,
@@ -474,7 +474,7 @@ public:
 
 	/** Add a Quality Level node — selects one input per platform quality level.
 	 *  Number of inputs equals the number of quality levels in Project Settings → Audio. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Nodes")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Nodes")
 	static FSoundCueResult AddQualityLevelNode(
 		const FString& AssetPath,
 		float PosX = 0.0f,
@@ -482,7 +482,7 @@ public:
 
 	/** Reposition a node in the graph editor (purely visual).
 	 *  Call list_nodes() first to get the correct index. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Nodes")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Nodes")
 	static bool MoveNode(
 		const FString& AssetPath,
 		int32 NodeIndex,
@@ -522,7 +522,7 @@ public:
 	 * Example:
 	 *   unreal.SoundCueService.remove_node("/Game/Audio/SC_Footstep", 2)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Connections")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Connections")
 	static bool RemoveNode(const FString& AssetPath, int32 NodeIndex);
 
 	/**
@@ -537,10 +537,10 @@ public:
 	 *   # Clear slot 1 on node 2 (Mixer), leaving that input empty
 	 *   unreal.SoundCueService.disconnect_node("/Game/Audio/SC_Footstep", 2, 1)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Connections")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Connections")
 	static bool DisconnectNode(const FString& AssetPath, int32 NodeIndex, int32 InputSlot);
 
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Connections")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Connections")
 	static bool ConnectNodes(
 		const FString& AssetPath,
 		int32 ParentIndex,
@@ -562,7 +562,7 @@ public:
 	 *   # Set node 0 (a Random node) as the cue output
 	 *   unreal.SoundCueService.set_root_node("/Game/Audio/SC_Footstep", 0)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Connections")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Connections")
 	static bool SetRootNode(
 		const FString& AssetPath,
 		int32 NodeIndex);
@@ -588,7 +588,7 @@ public:
 	 *   val = unreal.SoundCueService.get_node_property("/Game/Audio/SC_Footstep", 0, "PitchMin")
 	 *   print(val)  # "0.95"
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|NodeProperties")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|NodeProperties")
 	static FString GetNodeProperty(
 		const FString& AssetPath,
 		int32 NodeIndex,
@@ -612,7 +612,7 @@ public:
 	 *   unreal.SoundCueService.set_node_property("/Game/Audio/SC_Footstep", 0, "PitchMin", "0.85")
 	 *   unreal.SoundCueService.set_node_property("/Game/Audio/SC_Footstep", 0, "bLooping", "true")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|NodeProperties")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|NodeProperties")
 	static bool SetNodeProperty(
 		const FString& AssetPath,
 		int32 NodeIndex,
@@ -631,7 +631,7 @@ public:
 	 *   unreal.SoundCueService.set_wave_player_asset(
 	 *       "/Game/Audio/SC_Footstep", 1, "/Game/Audio/SW_Step_Gravel")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|NodeProperties")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|NodeProperties")
 	static bool SetWavePlayerAsset(
 		const FString& AssetPath,
 		int32 NodeIndex,
@@ -648,7 +648,7 @@ public:
 	 * @param Value     - Volume multiplier (default 1.0)
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Settings")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Settings")
 	static bool SetVolumeMultiplier(const FString& AssetPath, float Value);
 
 	/**
@@ -658,7 +658,7 @@ public:
 	 * @param Value     - Pitch multiplier (default 1.0)
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Settings")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Settings")
 	static bool SetPitchMultiplier(const FString& AssetPath, float Value);
 
 	/**
@@ -673,28 +673,28 @@ public:
 	 *   unreal.SoundCueService.set_sound_class(
 	 *       "/Game/Audio/SC_Footstep", "/Game/Audio/Classes/SFX")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Settings")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Settings")
 	static bool SetSoundClass(const FString& AssetPath, const FString& SoundClassPath);
 
 	/** Assign an attenuation settings asset to a SoundCue.
 	 *  Pass empty string to clear the current attenuation asset. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Settings")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Settings")
 	static bool SetAttenuation(const FString& AssetPath, const FString& AttenuationAssetPath);
 
 	/** Return the asset path of the attenuation settings assigned to a SoundCue, or empty if none. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Settings")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Settings")
 	static FString GetAttenuation(const FString& AssetPath);
 
 	/** Assign a SoundConcurrency asset to a SoundCue (adds to the concurrency set).
 	 *  Pass bClearExisting=true to replace any previously assigned concurrency assets. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Settings")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Settings")
 	static bool SetConcurrency(
 		const FString& AssetPath,
 		const FString& ConcurrencyAssetPath,
 		bool bClearExisting = false);
 
 	/** Return all concurrency asset paths assigned to a SoundCue. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Settings")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Settings")
 	static TArray<FString> GetConcurrency(const FString& AssetPath);
 
 	// ============================================================================
@@ -711,7 +711,7 @@ public:
 	 *   info = unreal.SoundCueService.get_sound_wave_info("/Game/Audio/SW_Step_Stone")
 	 *   print(f"Duration: {info.duration}s, Channels: {info.num_channels}")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|SoundWave")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|SoundWave")
 	static FSoundWaveInfo GetSoundWaveInfo(const FString& SoundWavePath);
 
 	/**
@@ -725,7 +725,7 @@ public:
 	 *   r = unreal.SoundCueService.import_sound_wave(
 	 *       r"C:/Sounds/gunshot.wav", "/Game/Audio/SW_Gunshot")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|SoundWave")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|SoundWave")
 	static FSoundCueResult ImportSoundWave(
 		const FString& FilePath,
 		const FString& AssetPath);
@@ -748,7 +748,7 @@ public:
 	 * Example:
 	 *   unreal.SoundCueService.set_sound_wave_property("/Game/Audio/SW_Wind", "bLooping", "true")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|SoundWave")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|SoundWave")
 	static bool SetSoundWaveProperty(
 		const FString& SoundWavePath,
 		const FString& PropertyName,

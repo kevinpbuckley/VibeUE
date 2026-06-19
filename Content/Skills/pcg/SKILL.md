@@ -93,9 +93,10 @@ graph = unreal.EditorAssetLibrary.load_asset('/Game/PCG/MyPCGGraph')
 # graph is a PCGGraph — access nodes, input_node, output_node directly
 ```
 
-Or use `manage_asset` to search first (use `action="search"`, not `action="find"`):
-```
-manage_asset(action="search", search_query="MyPCGGraph")
+Or search first with the Asset Registry (or Epic's `AssetTools` toolset):
+```python
+ar = unreal.AssetRegistryHelpers.get_asset_registry()
+hits = ar.get_assets_by_class(unreal.TopLevelAssetPath("/Script/PCG", "PCGGraph"))
 ```
 
 ## Adding Nodes

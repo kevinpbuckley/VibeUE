@@ -1,23 +1,38 @@
-# create_system.pyx — Create a Niagara system, add a user parameter, compile.
+# niagara_diagnostics.pyx — VibeUE NiagaraService rapid-iteration tuning + diagnostics.
 #
 # Sample script for the niagara-systems skill. Run via execute_python_code.
-# For emitter internals (modules/renderers/color), load the niagara-emitters skill.
+#
+# ARCHITECTURE: creating a system, adding emitters, adding user parameters, and compiling are owned
+# by the ENGINE toolset NiagaraToolsets.* — call them with call_tool (discover via list_toolsets /
+# describe_toolset("NiagaraToolsets.NiagaraToolset_System")). VibeUE's NiagaraService keeps only the
+# rapid-iteration-parameter tuning + diagnostics demonstrated here.
 import unreal
 ns = unreal.NiagaraService
 
-FOLDER = "/Game/VFX"
-NAME = "NS_SkillTest"
-asset_path = f"{FOLDER}/{NAME}"
-if unreal.EditorAssetLibrary.does_asset_exist(asset_path):
-    unreal.EditorAssetLibrary.delete_asset(asset_path)
+SYSTEM = "/Game/VFX/NS_SkillTest"   # an existing system (create one via NiagaraToolsets first)
+EMITTER = "MyEmitter"
 
-r = ns.create_system(NAME, FOLDER)   # NiagaraCreateResult
-print("create:", r.success, r.asset_path)
-system = r.asset_path
+# --- Rapid-iteration parameter tuning (emitter script settings) ---
+print("rapid-iteration params:")
+for p in ns.list_rapid_iteration_params(SYSTEM, EMITTER):
+    print(f"  [{p.script_type}] {p.parameter_name}: {p.value}")
 
-# Expose a user parameter (settable per-instance at runtime)
-print("add_user_parameter:", ns.add_user_parameter(system, "SpawnRate", "float", "50.0"))
-print("params:", [str(p) for p in ns.list_parameters(system)][:10])
+# Set across all stages where the param exists (recommended for color):
+ns.set_rapid_iteration_param(SYSTEM, EMITTER, f"Constants.{EMITTER}.Color.Scale Color", "(0.0, 3.0, 0.0)")
+# Or target one stage explicitly:
+ns.set_rapid_iteration_param_by_stage(SYSTEM, EMITTER, "ParticleUpdate",
+                                      f"Constants.{EMITTER}.Color.Scale Color", "(0.0, 3.0, 0.0)")
 
-ns.compile_system(system, True)
-unreal.EditorAssetLibrary.save_asset(system)
+# --- Diagnostics ---
+info = ns.get_emitter_lifecycle(SYSTEM, EMITTER)   # struct or None
+if info:
+    print("lifecycle:", info.loop_behavior, info.life_cycle_mode)
+
+print(ns.debug_activation(SYSTEM))   # explains why a system might not be playing
+
+# Compare two systems (e.g. a template vs a copy):
+# cmp = ns.compare_systems("/Game/VFX/NS_Source", SYSTEM)
+# print("differences:", cmp.difference_count)
+
+# Compile via the engine NiagaraToolsets tool, then save:
+unreal.EditorAssetLibrary.save_asset(SYSTEM)

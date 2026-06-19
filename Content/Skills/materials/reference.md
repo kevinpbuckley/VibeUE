@@ -33,8 +33,10 @@ description: Material reference — parameter types, material output names, enum
 `OpacityMask`, `WorldPositionOffset`, `AmbientOcclusion`.
 
 ## Enum value format
-`set_blend_mode` / `set_shading_model` / etc. accept full prefixed (`BLEND_Masked`, `MSM_DefaultLit`,
-`MD_Surface`) or short (`Masked`, `DefaultLit`, `Surface`) — fuzzy matched.
+`MaterialService.set_property(path, name, value)` enum values are the full prefixed identifiers
+(`BLEND_Masked`, `MSM_DefaultLit`, `MD_Surface`). `set_property` matching is case-insensitive and
+ignores spaces on the property *name* (display or internal); read legal values from
+`list_properties(...).allowed_values` rather than guessing.
 
 ## Export JSON schema
 
@@ -56,14 +58,17 @@ Property gotchas: `MaterialExpressionTypeInfo` uses `display_name` (not `name`);
 ## Recreate a material from export
 
 1. `export_material_graph(src)` → parse JSON.
-2. `create_material(name, dir)` → read `.asset_path`.
-3. `set_blend_mode` / `set_shading_model` from `graph['material']`.
+2. Engine `MaterialTools.create_material` (`call_tool`, args `folder_path`, `asset_name`) →
+   reference the new asset by `folder_path + asset_name` (returns the Material object, no `.asset_path`).
+3. `MaterialService.set_property(path, "BlendMode", ...)` / `set_property(path, "ShadingModel", ...)`
+   from `graph['material']`.
 4. `batch_create_expressions` (generic) / `batch_create_specialized` (function calls, custom) — keep an
    old-id → new-id map.
 5. Set `ParameterName`/`Group` FIRST via `set_expression_property` (they're excluded from batch props).
 6. `batch_set_properties` for the rest.
 7. `batch_connect_expressions` using the `connections` array (mapped ids).
-8. `connect_to_output` for each `output_connections` entry.
+8. Engine `MaterialTools.connect_to_output` (`call_tool`, args `expression`, `output_name`,
+   `material_property` e.g. `"MP_BaseColor"`) for each `output_connections` entry.
 9. `compile_material`.
 
 Runnable: `scripts/export_graph.pyx` (export side).

@@ -42,13 +42,18 @@ keywords:
 | `set_game_view(enable)` | Toggle Game View (hides editor icons) |
 | `set_allow_cinematic_control(allow)` | Allow Sequencer to control viewport camera |
 | `set_realtime(enable)` | Toggle realtime rendering |
-| `set_camera_location(vector)` | Set camera world position |
-| `set_camera_rotation(rotator)` | Set camera world rotation |
 | `set_camera_speed(speed)` | Set camera movement speed (1-8) |
 | `set_viewport_layout(name)` | Switch viewport layout (single, quad, etc.) |
 | `get_viewport_layout()` | Get current layout name |
 
 ---
+
+> 🔀 **Camera get/set moved to the engine.** `ViewportService` no longer has
+> `set_camera_location` / `set_camera_rotation`. Reading and positioning the viewport camera is
+> now Unreal 5.8's native **`EditorAppToolset`** (`GetCameraTransform` / `SetCameraTransform`, plus
+> `FocusOnActors` to frame actors) — reach it with `call_tool` (run `describe_toolset` on
+> `EditorAppToolset` for exact action names/params). `ViewportService` still owns view type, view
+> mode, FOV, clip planes, exposure, game view, layout, realtime, and camera speed.
 
 ## Critical Rules
 
@@ -191,12 +196,20 @@ unreal.ViewportService.set_view_mode("lit")
 
 ### Position Camera at Specific Location
 
+Camera placement now lives in the engine **`EditorAppToolset`** (`SetCameraTransform`), called via
+`call_tool`. From Python you can still drive it through the editor subsystem:
+
 ```python
 import unreal
-# Move camera to a bird's-eye view
-unreal.ViewportService.set_camera_location(unreal.Vector(0, 0, 5000))
-unreal.ViewportService.set_camera_rotation(unreal.Rotator(pitch=-90))  # ⚠️ Rotator positional order is (Roll, Pitch, Yaw) — always use kwargs
+# Move camera to a bird's-eye view (location, rotation)
+# ⚠️ Rotator positional order is (Roll, Pitch, Yaw) — always use kwargs
+unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).set_level_viewport_camera_info(
+    unreal.Vector(0, 0, 5000), unreal.Rotator(pitch=-90))
 ```
+
+To frame specific actors instead of guessing coordinates, prefer the engine
+`EditorAppToolset.FocusOnActors` action (or load the `level-actors` skill for
+`ActorService.get_actor_view_camera`, which auto-computes a framing position from bounds).
 
 ### Configure Clipping Planes
 

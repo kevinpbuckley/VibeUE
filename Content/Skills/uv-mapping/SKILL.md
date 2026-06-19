@@ -30,7 +30,7 @@ keywords:
 
 # UV Mapping Skill
 
-`UVMappingService` provides automation-grade UV channel manipulation for StaticMesh assets in UE 5.7+. The service is built around mesh-description editing and post-build commits — every mutation marks the package dirty and rebuilds render data, but **does not save**. Follow with `manage_asset(action="save", ...)` once you finish a batch.
+`UVMappingService` provides automation-grade UV channel manipulation for StaticMesh assets in UE 5.7+. The service is built around mesh-description editing and post-build commits — every mutation marks the package dirty and rebuilds render data, but **does not save**. Follow with `unreal.EditorAssetLibrary.save_asset(mesh_path)` once you finish a batch.
 
 ## When NOT to Use This Service
 
@@ -70,7 +70,7 @@ Detailed inspection and all mutating operations target `UStaticMesh`. SkeletalMe
 unreal.UVMappingService.set_lightmap_settings("/Game/Meshes/SM_Wall", 1, 0, 128, True)
 unreal.UVMappingService.generate_lightmap_uvs("/Game/Meshes/SM_Wall", 0, 1, 1.0)
 # Save once at the end:
-manage_asset(action="save", asset_path="/Game/Meshes/SM_Wall")
+unreal.EditorAssetLibrary.save_asset("/Game/Meshes/SM_Wall")
 ```
 
 ### Health Check Before Editing
@@ -144,7 +144,7 @@ unreal.UVMappingService.transform_u_vs_by_normal(
     -0.5, 0.5,    # side selector
     scale_u=20.0, scale_v=1.0,  # only U
 )
-manage_asset(action="save", asset_path="/Game/Meshes/SM_Disc")
+unreal.EditorAssetLibrary.save_asset("/Game/Meshes/SM_Disc")
 ```
 
 > 💡 **Which axis to scale**: figure out the world-space aspect of the misbehaving region, then scale UVs to compensate. If a region is 20× wider than tall in world, scale U by 20× to make the brick texture tile 20× more in U than V — bricks now appear correctly proportioned.
@@ -204,7 +204,7 @@ unreal.UVMappingService.transform_u_vs_by_polygon_group(
 | `result.success` returning False but no error string | Check `result.message` — every failure includes a reason |
 | Generating lightmap UVs without setting `MinChartSpacingPercent` | Pass at least `1.0` for typical meshes; smaller values pack tighter but risk bleeding |
 | Calling `transform_uvs` on the lightmap channel | Avoid — transforms break the channel's `[0,1]` packing. Use it on material UV channels only |
-| Forgetting to save after edits | Add `manage_asset(action="save", asset_path=...)` after the batch |
+| Forgetting to save after edits | Add `unreal.EditorAssetLibrary.save_asset(...)` after the batch |
 | Editing UVs on a skeletal mesh | Not supported — only StaticMesh works |
 | Setting `LightMapCoordinateIndex` past the channel count | Use `set_uv_channel_count` first, or `add_uv_channel` |
 
@@ -281,7 +281,7 @@ print(f"GENERATED: {result.message}")
 unreal.UVMappingService.set_lightmap_settings(mesh, 1, 0, 128, True)
 
 # 4. Save
-manage_asset(action="save", asset_path=mesh)
+unreal.EditorAssetLibrary.save_asset(mesh)
 
 # 5. Verify
 ok, health = unreal.UVMappingService.get_uv_health(mesh)
@@ -308,7 +308,7 @@ print(f"COPIED: {r.message}")
 r = unreal.UVMappingService.transform_uvs(mesh, 0, 2, scale_u=4.0, scale_v=4.0)
 print(f"TILED: {r.message}")
 
-manage_asset(action="save", asset_path=mesh)
+unreal.EditorAssetLibrary.save_asset(mesh)
 ```
 
 ### Workflow: Auto-Unwrap a Mesh That Imported with Bad UVs
@@ -333,7 +333,7 @@ print(f"PACKED: {r.message}")
 # Regenerate the lightmap channel from the new charts
 unreal.UVMappingService.generate_lightmap_uvs(mesh, 0, 1, 1.0)
 
-manage_asset(action="save", asset_path=mesh)
+unreal.EditorAssetLibrary.save_asset(mesh)
 ```
 
 ### Workflow: Visual UV Inspection (AI-Friendly)
@@ -347,7 +347,8 @@ out = os.path.join(os.environ["TEMP"], "uv_layout.png")
 r = unreal.UVMappingService.export_uv_layout_image(
     mesh, lod_index=0, channel_index=1, output_path=out, image_size=1024)
 print(f"EXPORTED: {r.message}")
-# Then attach the PNG with the screenshots skill / attach_image
+# Then read the PNG back to inspect it visually (Read the file path directly,
+# or surface it through the engine's screenshot/image toolset).
 ```
 
 ### Workflow: Batch Lightmap Pass on All Meshes in a Folder
@@ -355,7 +356,7 @@ print(f"EXPORTED: {r.message}")
 ```python
 import unreal
 
-results = manage_asset(action="list", path="/Game/Meshes/Architecture")
+results = unreal.EditorAssetLibrary.list_assets("/Game/Meshes/Architecture")
 for asset in results["assets"]:
     if asset["asset_class"] != "StaticMesh":
         continue
@@ -365,7 +366,7 @@ for asset in results["assets"]:
     if health.b_lightmap_has_overlaps or not health.b_generate_lightmap_uvs:
         unreal.UVMappingService.generate_lightmap_uvs(path, 0, 1, 1.0)
         unreal.UVMappingService.set_lightmap_settings(path, 1, 0, 128, True)
-        manage_asset(action="save", asset_path=path)
+        unreal.EditorAssetLibrary.save_asset(path)
         print(f"FIXED: {path}")
     else:
         print(f"OK:    {path}")
@@ -406,7 +407,7 @@ assert not health.b_lightmap_has_overlaps
 assert health.lightmap_coordinate_index == 1
 ```
 
-For unwrap operations, export the layout PNG and visually inspect it via `attach_image` — the cheapest way to confirm the unwrap looks reasonable.
+For unwrap operations, export the layout PNG and visually inspect it (read the PNG back, or surface it through the engine's screenshot/image toolset) — the cheapest way to confirm the unwrap looks reasonable.
 
 ## Sample scripts (run via `execute_python_code`)
 

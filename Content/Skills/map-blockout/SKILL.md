@@ -6,7 +6,6 @@ vibeue_classes:
   - MapBlockoutService
   - LandscapeService
   - FoliageService
-  - ActorService
 unreal_classes:
   - Landscape
   - LandscapeProxy
@@ -59,7 +58,9 @@ and re-run the stage.
 
 ## Sub-docs available
 
-Load with `vibeue-skills-manager(action="load", skill_name="map-blockout/<section>")`:
+Skills load via the engine's `AgentSkillToolset` (`ListSkills` / `GetSkills`). To pull a
+sub-doc, request `map-blockout/<section>` through `GetSkills`. The sibling `*.md` files also
+sit next to this `SKILL.md` on disk and can be read directly.
 
 | Sub-doc | When to load |
 |---------|--------------|

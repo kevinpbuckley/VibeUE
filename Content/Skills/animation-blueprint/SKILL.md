@@ -26,10 +26,18 @@ keywords:
 
 # Animation Blueprint Skill
 
-> An AnimBP **is a Blueprint**. For its variables, functions, components, and overridable functions,
-> use `BlueprintService` and load the **`blueprints`** skill. Bool fields on info structs drop the C++
-> `b` prefix in Python — use `is_pure`, `is_output`, `already_overridden` (NOT `b_is_pure`, etc.); call
-> `discover_python_class` to confirm field names rather than guessing.
+> **Loading skills:** skills load through the engine's `AgentSkillToolset` (`ListSkills`/`GetSkills`) —
+> there is no `vibeue-skills-manager` tool. Run VibeUE services with `execute_python_code`
+> (`unreal.AnimGraphService.<method>()`); reach engine toolsets with `call_tool`.
+
+> An AnimBP **is a Blueprint**. The state-machine/AnimGraph authoring here is VibeUE
+> `AnimGraphService` (intact). For its **variables and compile**, note VibeUE's `BlueprintService`
+> was trimmed: **variable creation and blueprint compile moved to the engine** toolset
+> `editor_toolset.toolsets.blueprint.BlueprintTools` (`add_variable`, `compile_blueprint`), called via
+> `call_tool`. `BlueprintService` still has `list_variables`, `get_variable_info`,
+> `set_variable_default_value`, `variable_exists`, components, and overridable functions. Bool fields
+> on info structs drop the C++ `b` prefix in Python — use `is_pure`, `is_output`, `already_overridden`
+> (NOT `b_is_pure`); call `discover_python_class` to confirm field names rather than guessing.
 
 ## ⚠️ #1 GOTCHA — Transitions need a RULE or they NEVER fire
 
@@ -40,12 +48,15 @@ machine will never move. You MUST set a rule on every transition:
 ```python
 import unreal
 abp = "/Game/ABP_Character"
+BT  = "editor_toolset.toolsets.blueprint.BlueprintTools"
 
-# 1) Add the bool/float variable the rule reads (on the AnimBP), then COMPILE so it resolves
-unreal.BlueprintService.add_variable(abp, "bIsDead", "bool")
-unreal.BlueprintService.compile_blueprint(abp)
+# 1) Add the bool/float variable the rule reads, then COMPILE so it resolves.
+#    Variable creation + compile are ENGINE BlueprintTools (call_tool), not VibeUE:
+call_tool(BT, "add_variable", {"blueprint": {"refPath": abp}, "variable_name": "bIsDead", "variable_type": "bool"})
+call_tool(BT, "compile_blueprint", {"blueprint": {"refPath": abp}})
+# (Run describe_toolset(BT) for exact arg names.)
 
-# 2) Draw the transition
+# 2) Draw the transition (VibeUE AnimGraphService)
 unreal.AnimGraphService.add_transition(abp, "Locomotion", "Idle", "Dead", 0.2)
 
 # 3) Give it a rule — THIS is what makes it fire
@@ -239,11 +250,13 @@ the entry state, then compiles — and returns a JSON report.
 import unreal, json
 
 abp = "/Game/ABP_Character"
+BT  = "editor_toolset.toolsets.blueprint.BlueprintTools"
 
-# Add the variables the rules read FIRST, then compile so the rules can resolve them
-unreal.BlueprintService.add_variable(abp, "Speed", "float")
-unreal.BlueprintService.add_variable(abp, "bAttack", "bool")
-unreal.BlueprintService.compile_blueprint(abp)
+# Add the variables the rules read FIRST, then compile so the rules can resolve them.
+# Variable creation + compile are ENGINE BlueprintTools (call_tool), not VibeUE:
+call_tool(BT, "add_variable", {"blueprint": {"refPath": abp}, "variable_name": "Speed",   "variable_type": "float"})
+call_tool(BT, "add_variable", {"blueprint": {"refPath": abp}, "variable_name": "bAttack", "variable_type": "bool"})
+call_tool(BT, "compile_blueprint", {"blueprint": {"refPath": abp}})
 
 spec = {
     "states": [
@@ -290,7 +303,8 @@ unreal.AnimGraphService.add_transition(abp, "Locomotion", "Idle", "Walk", 0.15)
 unreal.AnimGraphService.set_transition_rule_comparison(abp, "Locomotion", "Idle", "Walk", "Speed", "greater", 10.0)
 unreal.AnimGraphService.set_transition_priority(abp, "Locomotion", "Idle", "Walk", 1)
 
-unreal.BlueprintService.compile_blueprint(abp)
+# Compile via engine BlueprintTools:
+call_tool("editor_toolset.toolsets.blueprint.BlueprintTools", "compile_blueprint", {"blueprint": {"refPath": abp}})
 ```
 
 ### Verify before claiming success — `validate_state_machine`

@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/NoExportTypes.h"
+#include "ToolsetRegistry/ToolsetDefinition.h"
 #include "USkeletonService.generated.h"
 
 /**
@@ -94,39 +94,6 @@ struct FBoneNodeInfo
 	/** Names of direct child bones */
 	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
 	TArray<FString> Children;
-};
-
-/**
- * Information about a socket attached to a skeletal mesh
- */
-USTRUCT(BlueprintType)
-struct FMeshSocketInfo
-{
-	GENERATED_BODY()
-
-	/** Name of the socket */
-	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
-	FString SocketName;
-
-	/** Bone this socket is attached to */
-	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
-	FString BoneName;
-
-	/** Relative location in bone space */
-	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
-	FVector RelativeLocation = FVector::ZeroVector;
-
-	/** Relative rotation in bone space */
-	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
-	FRotator RelativeRotation = FRotator::ZeroRotator;
-
-	/** Relative scale */
-	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
-	FVector RelativeScale = FVector::OneVector;
-
-	/** Whether socket forces bone to always animate */
-	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
-	bool bForceAlwaysAnimated = false;
 };
 
 /**
@@ -419,39 +386,6 @@ struct FAddBoneParams
 };
 
 /**
- * Parameters for adding a socket
- */
-USTRUCT(BlueprintType)
-struct FAddSocketParams
-{
-	GENERATED_BODY()
-
-	/** Name for the new socket */
-	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
-	FString SocketName;
-
-	/** Bone to attach socket to */
-	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
-	FString BoneName;
-
-	/** Relative location in bone space */
-	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
-	FVector RelativeLocation = FVector::ZeroVector;
-
-	/** Relative rotation in bone space */
-	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
-	FRotator RelativeRotation = FRotator::ZeroRotator;
-
-	/** Relative scale */
-	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
-	FVector RelativeScale = FVector::OneVector;
-
-	/** Whether to add socket to skeleton (shared) vs mesh-specific */
-	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
-	bool bAddToSkeleton = false;
-};
-
-/**
  * Skeleton and Skeletal Mesh service exposed directly to Python.
  *
  * This service provides comprehensive CRUD operations for Skeleton and SkeletalMesh assets
@@ -489,7 +423,7 @@ struct FAddSocketParams
  * - **File**: USkeletonService.h
  */
 UCLASS(BlueprintType)
-class VIBEUE_API USkeletonService : public UObject
+class VIBEUE_API USkeletonService : public UToolsetDefinition
 {
 	GENERATED_BODY()
 
@@ -510,7 +444,7 @@ public:
 	 *   for path in skeletons:
 	 *       print(path)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Discovery")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Discovery")
 	static TArray<FString> ListSkeletons(
 		const FString& SearchPath = TEXT("/Game"),
 		bool bRecursive = true);
@@ -525,7 +459,7 @@ public:
 	 * Example:
 	 *   meshes = unreal.SkeletonService.list_skeletal_meshes("/Game/Characters")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Discovery")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Discovery")
 	static TArray<FString> ListSkeletalMeshes(
 		const FString& SearchPath = TEXT("/Game"),
 		bool bRecursive = true);
@@ -541,7 +475,7 @@ public:
 	 *   info = unreal.SkeletonService.get_skeleton_info("/Game/SK_Mannequin")
 	 *   print(f"Bones: {info.bone_count}")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Discovery")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Discovery")
 	static bool GetSkeletonInfo(
 		const FString& SkeletonPath,
 		FSkeletonAssetInfo& OutInfo);
@@ -557,7 +491,7 @@ public:
 	 *   info = unreal.SkeletonService.get_skeletal_mesh_info("/Game/SKM_Character")
 	 *   print(f"LODs: {info.lod_count}, Sockets: {info.socket_count}")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Discovery")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Discovery")
 	static bool GetSkeletalMeshInfo(
 		const FString& SkeletalMeshPath,
 		FSkeletalMeshData& OutInfo);
@@ -571,77 +505,12 @@ public:
 	 * Example:
 	 *   skeleton = unreal.SkeletonService.get_skeleton_for_mesh("/Game/SKM_Character")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Discovery")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Discovery")
 	static FString GetSkeletonForMesh(const FString& SkeletalMeshPath);
 
 	// ============================================================================
 	// BONE HIERARCHY
 	// ============================================================================
-
-	/**
-	 * List all bones in a Skeleton or Skeletal Mesh.
-	 *
-	 * @param AssetPath - Path to Skeleton or Skeletal Mesh
-	 * @return Array of bone information
-	 *
-	 * Example:
-	 *   bones = unreal.SkeletonService.list_bones("/Game/SKM_Mannequin")
-	 *   for bone in bones:
-	 *       indent = "  " * bone.depth
-	 *       print(f"{indent}{bone.bone_name}")
-	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Bones")
-	static TArray<FBoneNodeInfo> ListBones(const FString& AssetPath);
-
-	/**
-	 * Get detailed information about a specific bone.
-	 *
-	 * @param AssetPath - Path to Skeleton or Skeletal Mesh
-	 * @param BoneName - Name of the bone
-	 * @param OutInfo - Output bone info
-	 * @return True if bone was found
-	 *
-	 * Example:
-	 *   info = unreal.SkeletonService.get_bone_info("/Game/SKM_Mannequin", "hand_r")
-	 *   print(f"Parent: {info.parent_bone_name}, Children: {len(info.children)}")
-	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Bones")
-	static bool GetBoneInfo(
-		const FString& AssetPath,
-		const FString& BoneName,
-		FBoneNodeInfo& OutInfo);
-
-	/**
-	 * Get the parent bone name for a given bone.
-	 *
-	 * @param AssetPath - Path to Skeleton or Skeletal Mesh
-	 * @param BoneName - Name of the bone
-	 * @return Parent bone name, or empty string if root bone
-	 *
-	 * Example:
-	 *   parent = unreal.SkeletonService.get_bone_parent("/Game/SKM_Mannequin", "hand_r")
-	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Bones")
-	static FString GetBoneParent(
-		const FString& AssetPath,
-		const FString& BoneName);
-
-	/**
-	 * Get child bone names for a given bone.
-	 *
-	 * @param AssetPath - Path to Skeleton or Skeletal Mesh
-	 * @param BoneName - Name of the bone
-	 * @param bRecursive - Whether to include all descendants
-	 * @return Array of child bone names
-	 *
-	 * Example:
-	 *   children = unreal.SkeletonService.get_bone_children("/Game/SKM_Mannequin", "spine_01", True)
-	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Bones")
-	static TArray<FString> GetBoneChildren(
-		const FString& AssetPath,
-		const FString& BoneName,
-		bool bRecursive = false);
 
 	/**
 	 * Get the transform of a bone in local or component space.
@@ -654,39 +523,11 @@ public:
 	 * Example:
 	 *   transform = unreal.SkeletonService.get_bone_transform("/Game/SKM_Mannequin", "hand_r", True)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Bones")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Bones")
 	static FTransform GetBoneTransform(
 		const FString& AssetPath,
 		const FString& BoneName,
 		bool bComponentSpace = false);
-
-	/**
-	 * Find the root bone of a skeleton.
-	 *
-	 * @param AssetPath - Path to Skeleton or Skeletal Mesh
-	 * @return Root bone name
-	 *
-	 * Example:
-	 *   root = unreal.SkeletonService.get_root_bone("/Game/SKM_Mannequin")
-	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Bones")
-	static FString GetRootBone(const FString& AssetPath);
-
-	/**
-	 * Find a bone by partial name match.
-	 *
-	 * @param AssetPath - Path to Skeleton or Skeletal Mesh
-	 * @param SearchPattern - Partial bone name to search for
-	 * @return Array of matching bone names
-	 *
-	 * Example:
-	 *   hands = unreal.SkeletonService.find_bones("/Game/SKM_Mannequin", "hand")
-	 *   # Returns: ["hand_l", "hand_r"]
-	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Bones")
-	static TArray<FString> FindBones(
-		const FString& AssetPath,
-		const FString& SearchPattern);
 
 	// ============================================================================
 	// BONE MODIFICATION (via SkeletonModifier)
@@ -711,7 +552,7 @@ public:
 	 *   )
 	 *   unreal.SkeletonService.commit_bone_changes("/Game/SKM_Mannequin")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Modification")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Modification")
 	static bool AddBone(
 		const FString& SkeletalMeshPath,
 		const FString& BoneName,
@@ -731,7 +572,7 @@ public:
 	 *   unreal.SkeletonService.remove_bone("/Game/SKM_Mannequin", "extra_bone", True)
 	 *   unreal.SkeletonService.commit_bone_changes("/Game/SKM_Mannequin")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Modification")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Modification")
 	static bool RemoveBone(
 		const FString& SkeletalMeshPath,
 		const FString& BoneName,
@@ -750,7 +591,7 @@ public:
 	 *   unreal.SkeletonService.rename_bone("/Game/SKM_Mannequin", "old_name", "new_name")
 	 *   unreal.SkeletonService.commit_bone_changes("/Game/SKM_Mannequin")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Modification")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Modification")
 	static bool RenameBone(
 		const FString& SkeletalMeshPath,
 		const FString& OldBoneName,
@@ -778,7 +619,7 @@ public:
 	 *   unreal.SkeletonService.reparent_bone("/Game/SKM_Mannequin", "weapon_bone", "hand_r")
 	 *   unreal.SkeletonService.commit_bone_changes("/Game/SKM_Mannequin")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Modification")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Modification")
 	static bool ReparentBone(
 		const FString& SkeletalMeshPath,
 		const FString& BoneName,
@@ -801,7 +642,7 @@ public:
 	 *   unreal.SkeletonService.duplicate_skeleton("/Game/SKM_Mannequin", "/Game/SK_MyMannequin")
 	 *   # Then manually assign the new skeleton to your mesh in the editor
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Modification")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Modification")
 	static bool DuplicateSkeleton(
 		const FString& SkeletalMeshPath,
 		const FString& NewSkeletonPath);
@@ -825,7 +666,7 @@ public:
 	 *   )
 	 *   unreal.SkeletonService.commit_bone_changes("/Game/SKM_Mannequin")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Modification")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Modification")
 	static bool SetBoneTransform(
 		const FString& SkeletalMeshPath,
 		const FString& BoneName,
@@ -848,7 +689,7 @@ public:
 	 *   # For automated/silent operations:
 	 *   unreal.SkeletonService.commit_bone_changes("/Game/SKM_Mannequin", True)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Modification")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Modification")
 	static bool CommitBoneChanges(const FString& SkeletalMeshPath, bool bForce = false);
 
 	/**
@@ -867,153 +708,8 @@ public:
 	 *   if is_shared:
 	 *       print("Warning: Reparent operations will require user confirmation")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Modification")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Modification")
 	static bool IsSkeletonShared(const FString& SkeletalMeshPath);
-
-	// ============================================================================
-	// SOCKET MANAGEMENT
-	// ============================================================================
-
-	/**
-	 * List all sockets on a Skeletal Mesh.
-	 *
-	 * @param SkeletalMeshPath - Path to the Skeletal Mesh
-	 * @return Array of socket information
-	 *
-	 * Example:
-	 *   sockets = unreal.SkeletonService.list_sockets("/Game/SKM_Mannequin")
-	 *   for s in sockets:
-	 *       print(f"{s.socket_name} -> {s.bone_name}")
-	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Sockets")
-	static TArray<FMeshSocketInfo> ListSockets(const FString& SkeletalMeshPath);
-
-	/**
-	 * Get detailed information about a specific socket.
-	 *
-	 * @param SkeletalMeshPath - Path to the Skeletal Mesh
-	 * @param SocketName - Name of the socket
-	 * @param OutInfo - Output socket info
-	 * @return True if socket was found
-	 *
-	 * Example:
-	 *   info = unreal.SkeletonService.get_socket_info("/Game/SKM_Mannequin", "Weapon_R")
-	 *   print(f"Bone: {info.bone_name}, Location: {info.relative_location}")
-	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Sockets")
-	static bool GetSocketInfo(
-		const FString& SkeletalMeshPath,
-		const FString& SocketName,
-		FMeshSocketInfo& OutInfo);
-
-	/**
-	 * Add a new socket to a Skeletal Mesh.
-	 *
-	 * @param SkeletalMeshPath - Path to the Skeletal Mesh
-	 * @param SocketName - Name for the new socket
-	 * @param BoneName - Bone to attach socket to
-	 * @param RelativeLocation - Position relative to bone
-	 * @param RelativeRotation - Rotation relative to bone
-	 * @param RelativeScale - Scale of socket
-	 * @param bAddToSkeleton - If true, socket is shared across meshes using this skeleton
-	 * @return True if socket was added successfully
-	 *
-	 * Example:
-	 *   unreal.SkeletonService.add_socket(
-	 *       "/Game/SKM_Mannequin",
-	 *       "Weapon_R",
-	 *       "hand_r",
-	 *       unreal.Vector(10, 0, 0),
-	 *       unreal.Rotator(0, 0, 90),
-	 *       unreal.Vector(1, 1, 1),
-	 *       True  # Add to skeleton for sharing
-	 *   )
-	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Sockets")
-	static bool AddSocket(
-		const FString& SkeletalMeshPath,
-		const FString& SocketName,
-		const FString& BoneName,
-		FVector RelativeLocation,
-		FRotator RelativeRotation,
-		FVector RelativeScale,
-		bool bAddToSkeleton = false);
-
-	/**
-	 * Remove a socket from a Skeletal Mesh.
-	 *
-	 * @param SkeletalMeshPath - Path to the Skeletal Mesh
-	 * @param SocketName - Name of the socket to remove
-	 * @return True if socket was removed successfully
-	 *
-	 * Example:
-	 *   unreal.SkeletonService.remove_socket("/Game/SKM_Mannequin", "OldSocket")
-	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Sockets")
-	static bool RemoveSocket(
-		const FString& SkeletalMeshPath,
-		const FString& SocketName);
-
-	/**
-	 * Rename a socket.
-	 *
-	 * @param SkeletalMeshPath - Path to the Skeletal Mesh
-	 * @param OldName - Current socket name
-	 * @param NewName - New socket name
-	 * @return True if socket was renamed successfully
-	 *
-	 * Example:
-	 *   unreal.SkeletonService.rename_socket("/Game/SKM_Mannequin", "Socket1", "Weapon_R")
-	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Sockets")
-	static bool RenameSocket(
-		const FString& SkeletalMeshPath,
-		const FString& OldName,
-		const FString& NewName);
-
-	/**
-	 * Update socket transform.
-	 *
-	 * @param SkeletalMeshPath - Path to the Skeletal Mesh
-	 * @param SocketName - Name of the socket
-	 * @param RelativeLocation - New position relative to bone
-	 * @param RelativeRotation - New rotation relative to bone
-	 * @param RelativeScale - New scale
-	 * @return True if socket was updated successfully
-	 *
-	 * Example:
-	 *   unreal.SkeletonService.set_socket_transform(
-	 *       "/Game/SKM_Mannequin",
-	 *       "Weapon_R",
-	 *       unreal.Vector(12, 0, 0),
-	 *       unreal.Rotator(0, 0, 90),
-	 *       unreal.Vector(1, 1, 1)
-	 *   )
-	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Sockets")
-	static bool SetSocketTransform(
-		const FString& SkeletalMeshPath,
-		const FString& SocketName,
-		const FVector& RelativeLocation,
-		const FRotator& RelativeRotation,
-		const FVector& RelativeScale);
-
-	/**
-	 * Change which bone a socket is attached to.
-	 *
-	 * @param SkeletalMeshPath - Path to the Skeletal Mesh
-	 * @param SocketName - Name of the socket
-	 * @param NewBoneName - New parent bone
-	 * @return True if socket was reparented successfully
-	 *
-	 * Example:
-	 *   unreal.SkeletonService.set_socket_bone("/Game/SKM_Mannequin", "Weapon_R", "lowerarm_r")
-	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Sockets")
-	static bool SetSocketBone(
-		const FString& SkeletalMeshPath,
-		const FString& SocketName,
-		const FString& NewBoneName);
 
 	// ============================================================================
 	// RETARGETING
@@ -1028,7 +724,7 @@ public:
 	 * Example:
 	 *   compatible = unreal.SkeletonService.get_compatible_skeletons("/Game/SK_Mannequin")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Retargeting")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Retargeting")
 	static TArray<FString> GetCompatibleSkeletons(const FString& SkeletonPath);
 
 	/**
@@ -1044,7 +740,7 @@ public:
 	 *       "/Game/MetaHumans/SK_MetaHuman"
 	 *   )
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Retargeting")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Retargeting")
 	static bool AddCompatibleSkeleton(
 		const FString& SkeletonPath,
 		const FString& CompatibleSkeletonPath);
@@ -1059,7 +755,7 @@ public:
 	 * Example:
 	 *   mode = unreal.SkeletonService.get_bone_retargeting_mode("/Game/SK_Mannequin", "pelvis")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Retargeting")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Retargeting")
 	static FString GetBoneRetargetingMode(
 		const FString& SkeletonPath,
 		const FString& BoneName);
@@ -1075,7 +771,7 @@ public:
 	 * Example:
 	 *   unreal.SkeletonService.set_bone_retargeting_mode("/Game/SK_Mannequin", "pelvis", "Skeleton")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Retargeting")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Retargeting")
 	static bool SetBoneRetargetingMode(
 		const FString& SkeletonPath,
 		const FString& BoneName,
@@ -1096,7 +792,7 @@ public:
 	 *   for c in curves:
 	 *       print(f"{c.curve_name} - Morph: {c.is_morph_target}, Material: {c.is_material}")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Curves")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Curves")
 	static TArray<FCurveMetaInfo> ListCurveMetaData(const FString& SkeletonPath);
 
 	/**
@@ -1109,7 +805,7 @@ public:
 	 * Example:
 	 *   unreal.SkeletonService.add_curve_metadata("/Game/SK_Mannequin", "BrowsUp")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Curves")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Curves")
 	static bool AddCurveMetaData(
 		const FString& SkeletonPath,
 		const FString& CurveName);
@@ -1124,7 +820,7 @@ public:
 	 * Example:
 	 *   unreal.SkeletonService.remove_curve_metadata("/Game/SK_Mannequin", "OldCurve")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Curves")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Curves")
 	static bool RemoveCurveMetaData(
 		const FString& SkeletonPath,
 		const FString& CurveName);
@@ -1140,7 +836,7 @@ public:
 	 * Example:
 	 *   unreal.SkeletonService.rename_curve_metadata("/Game/SK_Mannequin", "Old", "New")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Curves")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Curves")
 	static bool RenameCurveMetaData(
 		const FString& SkeletonPath,
 		const FString& OldName,
@@ -1157,7 +853,7 @@ public:
 	 * Example:
 	 *   unreal.SkeletonService.set_curve_morph_target("/Game/SK_Mannequin", "BrowsUp", True)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Curves")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Curves")
 	static bool SetCurveMorphTarget(
 		const FString& SkeletonPath,
 		const FString& CurveName,
@@ -1174,7 +870,7 @@ public:
 	 * Example:
 	 *   unreal.SkeletonService.set_curve_material("/Game/SK_Mannequin", "EyeGlow", True)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Curves")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Curves")
 	static bool SetCurveMaterial(
 		const FString& SkeletonPath,
 		const FString& CurveName,
@@ -1193,7 +889,7 @@ public:
 	 * Example:
 	 *   profiles = unreal.SkeletonService.list_blend_profiles("/Game/SK_Mannequin")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|BlendProfiles")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|BlendProfiles")
 	static TArray<FString> ListBlendProfiles(const FString& SkeletonPath);
 
 	/**
@@ -1207,7 +903,7 @@ public:
 	 * Example:
 	 *   profile = unreal.SkeletonService.get_blend_profile("/Game/SK_Mannequin", "UpperBody")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|BlendProfiles")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|BlendProfiles")
 	static bool GetBlendProfile(
 		const FString& SkeletonPath,
 		const FString& ProfileName,
@@ -1223,7 +919,7 @@ public:
 	 * Example:
 	 *   unreal.SkeletonService.create_blend_profile("/Game/SK_Mannequin", "UpperBody")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|BlendProfiles")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|BlendProfiles")
 	static bool CreateBlendProfile(
 		const FString& SkeletonPath,
 		const FString& ProfileName);
@@ -1241,7 +937,7 @@ public:
 	 *   unreal.SkeletonService.set_blend_profile_bone("/Game/SK_Mannequin", "UpperBody", "spine_01", 1.0)
 	 *   unreal.SkeletonService.set_blend_profile_bone("/Game/SK_Mannequin", "UpperBody", "pelvis", 0.0)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|BlendProfiles")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|BlendProfiles")
 	static bool SetBlendProfileBone(
 		const FString& SkeletonPath,
 		const FString& ProfileName,
@@ -1251,24 +947,6 @@ public:
 	// ============================================================================
 	// SKELETAL MESH PROPERTIES
 	// ============================================================================
-
-	/**
-	 * Set the Physics Asset for a Skeletal Mesh.
-	 *
-	 * @param SkeletalMeshPath - Path to the Skeletal Mesh
-	 * @param PhysicsAssetPath - Path to the Physics Asset (empty to clear)
-	 * @return True if physics asset was set successfully
-	 *
-	 * Example:
-	 *   unreal.SkeletonService.set_physics_asset(
-	 *       "/Game/SKM_Character",
-	 *       "/Game/Physics/PA_Character"
-	 *   )
-	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Properties")
-	static bool SetPhysicsAsset(
-		const FString& SkeletalMeshPath,
-		const FString& PhysicsAssetPath);
 
 	/**
 	 * Set the Post Process Animation Blueprint for a Skeletal Mesh.
@@ -1283,22 +961,10 @@ public:
 	 *       "/Game/ABP_PostProcess"
 	 *   )
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Properties")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Properties")
 	static bool SetPostProcessAnimBlueprint(
 		const FString& SkeletalMeshPath,
 		const FString& AnimBlueprintPath);
-
-	/**
-	 * List morph targets on a Skeletal Mesh.
-	 *
-	 * @param SkeletalMeshPath - Path to the Skeletal Mesh
-	 * @return Array of morph target names
-	 *
-	 * Example:
-	 *   morphs = unreal.SkeletonService.list_morph_targets("/Game/SKM_Character")
-	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Properties")
-	static TArray<FString> ListMorphTargets(const FString& SkeletalMeshPath);
 
 	// ============================================================================
 	// EDITOR NAVIGATION
@@ -1313,7 +979,7 @@ public:
 	 * Example:
 	 *   unreal.SkeletonService.open_skeleton_editor("/Game/SK_Mannequin")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Editor")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Editor")
 	static bool OpenSkeletonEditor(const FString& SkeletonPath);
 
 	/**
@@ -1325,7 +991,7 @@ public:
 	 * Example:
 	 *   unreal.SkeletonService.open_skeletal_mesh_editor("/Game/SKM_Mannequin")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Editor")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Editor")
 	static bool OpenSkeletalMeshEditor(const FString& SkeletalMeshPath);
 
 	/**
@@ -1337,7 +1003,7 @@ public:
 	 * Example:
 	 *   unreal.SkeletonService.save_asset("/Game/SK_Mannequin")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Editor")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Editor")
 	static bool SaveAsset(const FString& AssetPath);
 
 	// ============================================================================
@@ -1356,7 +1022,7 @@ public:
 	 *   profile = unreal.SkeletonService.create_skeleton_profile("/Game/SK_Mannequin")
 	 *   print(f"Bones: {profile.bone_count}, Constraints: {len(profile.constraints)}")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Profiles")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Profiles")
 	static bool CreateSkeletonProfile(
 		const FString& SkeletonPath,
 		FSkeletonProfile& OutProfile);
@@ -1374,7 +1040,7 @@ public:
 	 *   if not profile.is_valid:
 	 *       profile = unreal.SkeletonService.create_skeleton_profile("/Game/SK_Mannequin")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Profiles")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Profiles")
 	static bool GetSkeletonProfile(
 		const FString& SkeletonPath,
 		FSkeletonProfile& OutProfile);
@@ -1395,7 +1061,7 @@ public:
 	 *   for bone_range in constraints.bone_ranges:
 	 *       print(f"{bone_range.bone_name}: {bone_range.min_rotation} to {bone_range.max_rotation}")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Profiles")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Profiles")
 	static bool LearnFromAnimations(
 		const FString& SkeletonPath,
 		int32 MaxAnimations,
@@ -1415,7 +1081,7 @@ public:
 	 *       for br in constraints.bone_ranges:
 	 *           print(f"{br.bone_name}: samples={br.sample_count}")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Profiles")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Profiles")
 	static bool GetLearnedConstraints(
 		const FString& SkeletonPath,
 		FLearnedConstraintsInfo& OutConstraints);
@@ -1442,7 +1108,7 @@ public:
 	 *       1                              # Y axis (pitch)
 	 *   )
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Profiles")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Profiles")
 	static bool SetBoneConstraints(
 		const FString& SkeletonPath,
 		const FString& BoneName,
@@ -1472,7 +1138,7 @@ public:
 	 *       print(f"Violation: {result.violation_type} - {result.message}")
 	 *       print(f"Use clamped value: {result.clamped_rotation}")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Profiles")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Profiles")
 	static bool ValidateBoneRotation(
 		const FString& SkeletonPath,
 		const FString& BoneName,

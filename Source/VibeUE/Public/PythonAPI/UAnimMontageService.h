@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/NoExportTypes.h"
+#include "ToolsetRegistry/ToolsetDefinition.h"
 #include "UAnimMontageService.generated.h"
 
 // ============================================================================
@@ -369,7 +369,7 @@ struct FMontageNotifyInfo
  * - **File**: UAnimMontageService.h
  */
 UCLASS(BlueprintType)
-class VIBEUE_API UAnimMontageService : public UObject
+class VIBEUE_API UAnimMontageService : public UToolsetDefinition
 {
 	GENERATED_BODY()
 
@@ -385,7 +385,7 @@ public:
 	 * @param SkeletonFilter - Optional skeleton path to filter by
 	 * @return Array of montage info structs
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage")
 	static TArray<FMontageInfo> ListMontages(
 		const FString& SearchPath = TEXT("/Game"),
 		const FString& SkeletonFilter = TEXT(""));
@@ -397,7 +397,7 @@ public:
 	 * @param OutInfo - Output montage info
 	 * @return True if montage was found
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage")
 	static bool GetMontageInfo(
 		const FString& MontagePath,
 		FMontageInfo& OutInfo);
@@ -408,7 +408,7 @@ public:
 	 * @param SkeletonPath - Path to the skeleton asset
 	 * @return Array of montage info structs
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage")
 	static TArray<FMontageInfo> FindMontagesForSkeleton(const FString& SkeletonPath);
 
 	/**
@@ -417,7 +417,7 @@ public:
 	 * @param AnimSequencePath - Path to the animation sequence
 	 * @return Array of montage info structs containing that animation
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage")
 	static TArray<FMontageInfo> FindMontagesUsingAnimation(const FString& AnimSequencePath);
 
 	// ============================================================================
@@ -430,7 +430,7 @@ public:
 	 * @param MontagePath - Path to the montage asset
 	 * @return Duration in seconds, or -1 if not found
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage")
 	static float GetMontageLength(const FString& MontagePath);
 
 	/**
@@ -439,7 +439,7 @@ public:
 	 * @param MontagePath - Path to the montage asset
 	 * @return Skeleton asset path, or empty if not found
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage")
 	static FString GetMontageSkeleton(const FString& MontagePath);
 
 	/**
@@ -450,7 +450,7 @@ public:
 	 * @param BlendOption - Blend curve type as string ("Linear", "Cubic", "HermiteCubic", "Sinusoidal", "QuadraticInOut", "CubicInOut", "QuarticInOut", "QuinticInOut", "CircularIn", "CircularOut", "CircularInOut", "ExpIn", "ExpOut", "ExpInOut", "Custom")
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage")
 	static bool SetBlendIn(
 		const FString& MontagePath,
 		float BlendTime,
@@ -464,7 +464,7 @@ public:
 	 * @param BlendOption - Blend curve type as string
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage")
 	static bool SetBlendOut(
 		const FString& MontagePath,
 		float BlendTime,
@@ -477,7 +477,7 @@ public:
 	 * @param OutSettings - Output blend settings
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage")
 	static bool GetBlendSettings(
 		const FString& MontagePath,
 		FVibeMontageBlendSettings& OutSettings);
@@ -489,7 +489,7 @@ public:
 	 * @param TriggerTime - Time before end to trigger blend out (-1 for auto)
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage")
 	static bool SetBlendOutTriggerTime(const FString& MontagePath, float TriggerTime);
 
 	// ============================================================================
@@ -502,7 +502,7 @@ public:
 	 * @param MontagePath - Path to montage
 	 * @return Array of section info structs, ordered by start time
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Sections")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Sections")
 	static TArray<FMontageSectionInfo> ListSections(const FString& MontagePath);
 
 	/**
@@ -513,7 +513,7 @@ public:
 	 * @param OutInfo - Output section info
 	 * @return True if section was found
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Sections")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Sections")
 	static bool GetSectionInfo(
 		const FString& MontagePath,
 		const FString& SectionName,
@@ -526,7 +526,7 @@ public:
 	 * @param Time - Time in seconds
 	 * @return Section index, or -1 if time is out of range
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Sections")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Sections")
 	static int32 GetSectionIndexAtTime(const FString& MontagePath, float Time);
 
 	/**
@@ -536,7 +536,7 @@ public:
 	 * @param Time - Time in seconds
 	 * @return Section name, or empty string if time is out of range
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Sections")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Sections")
 	static FString GetSectionNameAtTime(const FString& MontagePath, float Time);
 
 	/**
@@ -547,7 +547,7 @@ public:
 	 * @param StartTime - Start time in seconds (must be within montage duration)
 	 * @return True if section was added successfully
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Sections")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Sections")
 	static bool AddSection(
 		const FString& MontagePath,
 		const FString& SectionName,
@@ -561,7 +561,7 @@ public:
 	 * @return True if successful
 	 * @note Cannot remove the "Default" section if it's the only one
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Sections")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Sections")
 	static bool RemoveSection(const FString& MontagePath, const FString& SectionName);
 
 	/**
@@ -572,7 +572,7 @@ public:
 	 * @param NewName - New section name (must be unique)
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Sections")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Sections")
 	static bool RenameSection(
 		const FString& MontagePath,
 		const FString& OldName,
@@ -586,7 +586,7 @@ public:
 	 * @param NewStartTime - New start time in seconds
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Sections")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Sections")
 	static bool SetSectionStartTime(
 		const FString& MontagePath,
 		const FString& SectionName,
@@ -599,7 +599,7 @@ public:
 	 * @param SectionName - Name of the section
 	 * @return Section duration, or -1 if not found
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Sections")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Sections")
 	static float GetSectionLength(const FString& MontagePath, const FString& SectionName);
 
 	// ============================================================================
@@ -613,7 +613,7 @@ public:
 	 * @param SectionName - Name of the section
 	 * @return Next section name, or empty string if section ends montage
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Sections")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Sections")
 	static FString GetNextSection(const FString& MontagePath, const FString& SectionName);
 
 	/**
@@ -624,7 +624,7 @@ public:
 	 * @param NextSectionName - Section to play next (empty string = end montage)
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Sections")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Sections")
 	static bool SetNextSection(
 		const FString& MontagePath,
 		const FString& SectionName,
@@ -638,7 +638,7 @@ public:
 	 * @param bLoop - True to loop, false to clear loop (section ends montage)
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Sections")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Sections")
 	static bool SetSectionLoop(
 		const FString& MontagePath,
 		const FString& SectionName,
@@ -650,7 +650,7 @@ public:
 	 * @param MontagePath - Path to montage
 	 * @return Array of section link info structs
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Sections")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Sections")
 	static TArray<FSectionLink> GetAllSectionLinks(const FString& MontagePath);
 
 	/**
@@ -660,7 +660,7 @@ public:
 	 * @param SectionName - Name of the section
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Sections")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Sections")
 	static bool ClearSectionLink(const FString& MontagePath, const FString& SectionName);
 
 	// ============================================================================
@@ -673,7 +673,7 @@ public:
 	 * @param MontagePath - Path to montage
 	 * @return Array of slot track info structs
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Slots")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Slots")
 	static TArray<FSlotTrackInfo> ListSlotTracks(const FString& MontagePath);
 
 	/**
@@ -684,7 +684,7 @@ public:
 	 * @param OutInfo - Output track info
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Slots")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Slots")
 	static bool GetSlotTrackInfo(
 		const FString& MontagePath,
 		int32 TrackIndex,
@@ -697,7 +697,7 @@ public:
 	 * @param SlotName - Name of the animation slot (must exist in skeleton)
 	 * @return Index of the new track, or -1 on failure
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Slots")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Slots")
 	static int32 AddSlotTrack(const FString& MontagePath, const FString& SlotName);
 
 	/**
@@ -708,7 +708,7 @@ public:
 	 * @return True if successful
 	 * @note Cannot remove the last slot track
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Slots")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Slots")
 	static bool RemoveSlotTrack(const FString& MontagePath, int32 TrackIndex);
 
 	/**
@@ -719,7 +719,7 @@ public:
 	 * @param NewSlotName - New slot name
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Slots")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Slots")
 	static bool SetSlotName(
 		const FString& MontagePath,
 		int32 TrackIndex,
@@ -731,7 +731,7 @@ public:
 	 * @param MontagePath - Path to montage
 	 * @return Array of slot names
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Slots")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Slots")
 	static TArray<FString> GetAllUsedSlotNames(const FString& MontagePath);
 
 	// ============================================================================
@@ -745,7 +745,7 @@ public:
 	 * @param TrackIndex - Index of the slot track
 	 * @return Array of segment info structs
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Segments")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Segments")
 	static TArray<FAnimSegmentInfo> ListAnimSegments(const FString& MontagePath, int32 TrackIndex);
 
 	/**
@@ -757,7 +757,7 @@ public:
 	 * @param OutInfo - Output segment info
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Segments")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Segments")
 	static bool GetAnimSegmentInfo(
 		const FString& MontagePath,
 		int32 TrackIndex,
@@ -774,7 +774,7 @@ public:
 	 * @param PlayRate - Playback rate multiplier (1.0 = normal)
 	 * @return Index of the new segment, or -1 on failure
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Segments")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Segments")
 	static int32 AddAnimSegment(
 		const FString& MontagePath,
 		int32 TrackIndex,
@@ -790,7 +790,7 @@ public:
 	 * @param SegmentIndex - Index of the segment to remove
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Segments")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Segments")
 	static bool RemoveAnimSegment(
 		const FString& MontagePath,
 		int32 TrackIndex,
@@ -805,7 +805,7 @@ public:
 	 * @param NewStartTime - New start time in seconds
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Segments")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Segments")
 	static bool SetSegmentStartTime(
 		const FString& MontagePath,
 		int32 TrackIndex,
@@ -821,7 +821,7 @@ public:
 	 * @param PlayRate - New playback rate
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Segments")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Segments")
 	static bool SetSegmentPlayRate(
 		const FString& MontagePath,
 		int32 TrackIndex,
@@ -837,7 +837,7 @@ public:
 	 * @param AnimStartPos - Time in source animation to start playing from
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Segments")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Segments")
 	static bool SetSegmentStartPosition(
 		const FString& MontagePath,
 		int32 TrackIndex,
@@ -853,7 +853,7 @@ public:
 	 * @param AnimEndPos - Time in source animation to stop playing
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Segments")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Segments")
 	static bool SetSegmentEndPosition(
 		const FString& MontagePath,
 		int32 TrackIndex,
@@ -869,7 +869,7 @@ public:
 	 * @param LoopCount - Number of loops (0 = play once, no loop)
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Segments")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Segments")
 	static bool SetSegmentLoopCount(
 		const FString& MontagePath,
 		int32 TrackIndex,
@@ -886,7 +886,7 @@ public:
 	 * @param MontagePath - Path to montage
 	 * @return Array of notify info structs
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Notifies")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Notifies")
 	static TArray<FMontageNotifyInfo> ListNotifies(const FString& MontagePath);
 
 	/**
@@ -898,7 +898,7 @@ public:
 	 * @param NotifyName - Optional name for the notify
 	 * @return Index of the new notify, or -1 on failure
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Notifies")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Notifies")
 	static int32 AddNotify(
 		const FString& MontagePath,
 		const FString& NotifyClass,
@@ -915,7 +915,7 @@ public:
 	 * @param NotifyName - Optional name for the notify
 	 * @return Index of the new notify, or -1 on failure
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Notifies")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Notifies")
 	static int32 AddNotifyState(
 		const FString& MontagePath,
 		const FString& NotifyStateClass,
@@ -930,7 +930,7 @@ public:
 	 * @param NotifyIndex - Index of the notify to remove
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Notifies")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Notifies")
 	static bool RemoveNotify(const FString& MontagePath, int32 NotifyIndex);
 
 	/**
@@ -941,7 +941,7 @@ public:
 	 * @param NewTime - New trigger time in seconds
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Notifies")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Notifies")
 	static bool SetNotifyTriggerTime(
 		const FString& MontagePath,
 		int32 NotifyIndex,
@@ -955,7 +955,7 @@ public:
 	 * @param SectionName - Name of the section to link to
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Notifies")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Notifies")
 	static bool SetNotifyLinkToSection(
 		const FString& MontagePath,
 		int32 NotifyIndex,
@@ -971,7 +971,7 @@ public:
 	 * @param MontagePath - Path to montage
 	 * @return Array of branching point info structs
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|BranchingPoints")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|BranchingPoints")
 	static TArray<FBranchingPointInfo> ListBranchingPoints(const FString& MontagePath);
 
 	/**
@@ -983,7 +983,7 @@ public:
 	 * @param TriggerTime - Time in seconds when the event fires
 	 * @return Index of the new branching point, or -1 on failure
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|BranchingPoints")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|BranchingPoints")
 	static int32 AddBranchingPoint(
 		const FString& MontagePath,
 		const FString& NotifyName,
@@ -996,7 +996,7 @@ public:
 	 * @param Index - Index of the branching point to remove
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|BranchingPoints")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|BranchingPoints")
 	static bool RemoveBranchingPoint(const FString& MontagePath, int32 Index);
 
 	/**
@@ -1006,7 +1006,7 @@ public:
 	 * @param Time - Time to check
 	 * @return True if a branching point fires at this time
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|BranchingPoints")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|BranchingPoints")
 	static bool IsBranchingPointAtTime(const FString& MontagePath, float Time);
 
 	// ============================================================================
@@ -1019,7 +1019,7 @@ public:
 	 * @param MontagePath - Path to montage
 	 * @return True if root motion translation is enabled
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|RootMotion")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|RootMotion")
 	static bool GetEnableRootMotionTranslation(const FString& MontagePath);
 
 	/**
@@ -1029,7 +1029,7 @@ public:
 	 * @param bEnable - Whether to enable root motion translation
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|RootMotion")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|RootMotion")
 	static bool SetEnableRootMotionTranslation(const FString& MontagePath, bool bEnable);
 
 	/**
@@ -1038,7 +1038,7 @@ public:
 	 * @param MontagePath - Path to montage
 	 * @return True if root motion rotation is enabled
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|RootMotion")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|RootMotion")
 	static bool GetEnableRootMotionRotation(const FString& MontagePath);
 
 	/**
@@ -1048,7 +1048,7 @@ public:
 	 * @param bEnable - Whether to enable root motion rotation
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|RootMotion")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|RootMotion")
 	static bool SetEnableRootMotionRotation(const FString& MontagePath, bool bEnable);
 
 	/**
@@ -1059,7 +1059,7 @@ public:
 	 * @param OutTransform - Output root motion transform
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|RootMotion")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|RootMotion")
 	static bool GetRootMotionAtTime(
 		const FString& MontagePath,
 		float Time,
@@ -1077,7 +1077,7 @@ public:
 	 * @param MontageName - Name for the new montage asset
 	 * @return Path to created montage, or empty string on failure
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Creation")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Creation")
 	static FString CreateMontageFromAnimation(
 		const FString& AnimSequencePath,
 		const FString& DestPath,
@@ -1091,7 +1091,7 @@ public:
 	 * @param MontageName - Name for the new montage asset
 	 * @return Path to created montage, or empty string on failure
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Creation")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Creation")
 	static FString CreateEmptyMontage(
 		const FString& SkeletonPath,
 		const FString& DestPath,
@@ -1105,7 +1105,7 @@ public:
 	 * @param NewName - Name for the duplicate
 	 * @return Path to duplicated montage, or empty string on failure
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Creation")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Creation")
 	static FString DuplicateMontage(
 		const FString& SourcePath,
 		const FString& DestPath,
@@ -1121,7 +1121,7 @@ public:
 	 * @param MontagePath - Path to montage
 	 * @return True if editor opened successfully
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Editor")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Editor")
 	static bool OpenMontageEditor(const FString& MontagePath);
 
 	/**
@@ -1131,7 +1131,7 @@ public:
 	 * @param MontagePath - Path to montage
 	 * @return True if editor refreshed successfully
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Editor")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Editor")
 	static bool RefreshMontageEditor(const FString& MontagePath);
 
 	/**
@@ -1141,7 +1141,7 @@ public:
 	 * @param SectionName - Name of the section to jump to
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Editor")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Editor")
 	static bool JumpToSection(const FString& MontagePath, const FString& SectionName);
 
 	/**
@@ -1151,7 +1151,7 @@ public:
 	 * @param Time - Time in seconds
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Editor")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Editor")
 	static bool SetPreviewTime(const FString& MontagePath, float Time);
 
 	/**
@@ -1161,7 +1161,7 @@ public:
 	 * @param StartSection - Optional section to start from (empty = beginning)
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Montage|Editor")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Editor")
 	static bool PlayPreview(const FString& MontagePath, const FString& StartSection = TEXT(""));
 
 private:

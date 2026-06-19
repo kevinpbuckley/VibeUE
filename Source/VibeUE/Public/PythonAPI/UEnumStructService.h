@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/NoExportTypes.h"
+#include "ToolsetRegistry/ToolsetDefinition.h"
 #include "UEnumStructService.generated.h"
 
 // ============================================================================
@@ -253,7 +253,7 @@ struct FStructSearchResult
  *   unreal.EnumStructService.add_struct_property(path, "Damage", "float")
  */
 UCLASS(BlueprintType)
-class VIBEUE_API UEnumStructService : public UObject
+class VIBEUE_API UEnumStructService : public UToolsetDefinition
 {
 	GENERATED_BODY()
 
@@ -271,7 +271,7 @@ public:
 	 * @param MaxResults - Maximum results to return (0 = unlimited)
 	 * @return Array of enum search results
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|EnumStruct")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EnumStruct")
 	static TArray<FEnumSearchResult> SearchEnums(
 		const FString& SearchFilter = TEXT(""),
 		bool bUserDefinedOnly = false,
@@ -284,7 +284,7 @@ public:
 	 * @param OutInfo - Populated enum information
 	 * @return True if enum was found
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|EnumStruct")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EnumStruct")
 	static bool GetEnumInfo(const FString& EnumPathOrName, FEnumInfo& OutInfo);
 
 	/**
@@ -296,7 +296,7 @@ public:
 	 * @param EnumPathOrName - Full path or enum name
 	 * @return Array of enum value names (empty if enum not found)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|EnumStruct")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EnumStruct")
 	static TArray<FString> GetEnumValues(const FString& EnumPathOrName);
 
 	// ========================================================================
@@ -310,7 +310,7 @@ public:
 	 * @param EnumName - Name for the enum (will add E prefix if not present)
 	 * @return Full path to created asset (empty on failure)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|EnumStruct")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EnumStruct")
 	static FString CreateEnum(const FString& AssetPath, const FString& EnumName);
 
 	/**
@@ -319,7 +319,7 @@ public:
 	 * @param EnumPath - Full path to the enum asset
 	 * @return True if deleted successfully
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|EnumStruct")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EnumStruct")
 	static bool DeleteEnum(const FString& EnumPath);
 
 	// ========================================================================
@@ -334,7 +334,7 @@ public:
 	 * @param DisplayName - Display name (optional, defaults to ValueName)
 	 * @return True if value was added
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|EnumStruct")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EnumStruct")
 	static bool AddEnumValue(
 		const FString& EnumPath,
 		const FString& ValueName,
@@ -347,7 +347,7 @@ public:
 	 * @param ValueName - Name of the value to remove
 	 * @return True if value was removed
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|EnumStruct")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EnumStruct")
 	static bool RemoveEnumValue(const FString& EnumPath, const FString& ValueName);
 
 	/**
@@ -358,7 +358,7 @@ public:
 	 * @param NewValueName - New value name
 	 * @return True if renamed successfully
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|EnumStruct")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EnumStruct")
 	static bool RenameEnumValue(
 		const FString& EnumPath,
 		const FString& OldValueName,
@@ -372,7 +372,7 @@ public:
 	 * @param DisplayName - New display name
 	 * @return True if set successfully
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|EnumStruct")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EnumStruct")
 	static bool SetEnumValueDisplayName(
 		const FString& EnumPath,
 		const FString& ValueName,
@@ -391,7 +391,7 @@ public:
 	 * @param MaxResults - Maximum results to return (0 = unlimited)
 	 * @return Array of struct search results
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|EnumStruct")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EnumStruct")
 	static TArray<FStructSearchResult> SearchStructs(
 		const FString& SearchFilter = TEXT(""),
 		bool bUserDefinedOnly = false,
@@ -404,7 +404,7 @@ public:
 	 * @param OutInfo - Populated struct information
 	 * @return True if struct was found
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|EnumStruct")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EnumStruct")
 	static bool GetStructInfo(const FString& StructPathOrName, FStructInfo& OutInfo);
 
 	// ========================================================================
@@ -418,7 +418,7 @@ public:
 	 * @param StructName - Name for the struct (will add F prefix if not present)
 	 * @return Full path to created asset (empty on failure)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|EnumStruct")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EnumStruct")
 	static FString CreateStruct(const FString& AssetPath, const FString& StructName);
 
 	/**
@@ -427,7 +427,7 @@ public:
 	 * @param StructPath - Full path to the struct asset
 	 * @return True if deleted successfully
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|EnumStruct")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EnumStruct")
 	static bool DeleteStruct(const FString& StructPath);
 
 	// ========================================================================
@@ -444,7 +444,7 @@ public:
 	 * @param ContainerType - "Array", "Set", or "Map" (empty for single value)
 	 * @return True if property was added
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|EnumStruct")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EnumStruct")
 	static bool AddStructProperty(
 		const FString& StructPath,
 		const FString& PropertyName,
@@ -459,7 +459,7 @@ public:
 	 * @param PropertyName - Name of the property to remove
 	 * @return True if property was removed
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|EnumStruct")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EnumStruct")
 	static bool RemoveStructProperty(const FString& StructPath, const FString& PropertyName);
 
 	/**
@@ -470,7 +470,7 @@ public:
 	 * @param NewPropertyName - New property name
 	 * @return True if renamed successfully
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|EnumStruct")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EnumStruct")
 	static bool RenameStructProperty(
 		const FString& StructPath,
 		const FString& OldPropertyName,
@@ -485,7 +485,7 @@ public:
 	 * @param NewPropertyType - New type string
 	 * @return True if type was changed
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|EnumStruct")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EnumStruct")
 	static bool ChangeStructPropertyType(
 		const FString& StructPath,
 		const FString& PropertyName,
@@ -499,7 +499,7 @@ public:
 	 * @param DefaultValue - New default value as string
 	 * @return True if default was set
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|EnumStruct")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EnumStruct")
 	static bool SetStructPropertyDefault(
 		const FString& StructPath,
 		const FString& PropertyName,
@@ -515,7 +515,7 @@ public:
 	 * @param EnumPathOrName - Full path or enum name
 	 * @return True if enum exists
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|EnumStruct")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EnumStruct")
 	static bool EnumExists(const FString& EnumPathOrName);
 
 	/**
@@ -524,7 +524,7 @@ public:
 	 * @param StructPathOrName - Full path or struct name
 	 * @return True if struct exists
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|EnumStruct")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EnumStruct")
 	static bool StructExists(const FString& StructPathOrName);
 
 private:

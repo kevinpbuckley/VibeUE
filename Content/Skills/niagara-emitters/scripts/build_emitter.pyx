@@ -1,32 +1,37 @@
-# build_emitter.pyx — Create a Niagara system, add an emitter, add a renderer + module, compile.
+# build_emitter.pyx — Where emitter/module/renderer CRUD lives now, + the VibeUE follow-up.
 #
 # Sample script for the niagara-emitters skill. Run via execute_python_code.
-# add_emitter needs an emitter template asset path — discover with list_emitter_templates().
+#
+# ARCHITECTURE: creating a system, adding an emitter, adding modules/renderers, and compiling are
+# owned by the ENGINE toolset NiagaraToolsets.* — call them with call_tool. VibeUE keeps color/curve
+# authoring and rapid-iteration reads/writes, shown at the bottom.
 import unreal
-ns = unreal.NiagaraService
+
+SYSTEM = "/Game/VFX/NS_SkillTest"
+EMITTER = "MyEmitter"
+
+# 1) Discover the engine Niagara toolsets + exact tool names/schemas:
+#       list_toolsets()
+#       describe_toolset("NiagaraToolsets.NiagaraToolset_System")
+#
+# 2) Create system / add emitter / add module / add renderer / compile via call_tool, e.g.:
+#       call_tool(toolset_name="NiagaraToolsets.NiagaraToolset_System",
+#                 tool_name="<create-system tool>", arguments={ ... })
+#       call_tool(toolset_name="NiagaraToolsets.NiagaraToolset_System",
+#                 tool_name="<add-emitter tool>", arguments={ ... })
+#       call_tool(toolset_name="NiagaraToolsets.NiagaraToolset_System",
+#                 tool_name="<add-renderer tool>", arguments={ ... })  # SpriteRenderer/Ribbon/Mesh/Light
+#    Stage matters when adding modules: ParticleSpawn / ParticleUpdate / EmitterSpawn / EmitterUpdate.
+
+# 3) VibeUE follow-up — read the emitter's rapid-iteration params, then set spawn rate:
 nes = unreal.NiagaraEmitterService
+ns = unreal.NiagaraService
 
-NAME = "NS_SkillTest"
-FOLDER = "/Game/VFX"
+for p in ns.list_rapid_iteration_params(SYSTEM, EMITTER):
+    print(f"[{p.script_type}] {p.parameter_name}: {p.value}")
 
-asset_path = f"{FOLDER}/{NAME}"
-if unreal.EditorAssetLibrary.does_asset_exist(asset_path):
-    unreal.EditorAssetLibrary.delete_asset(asset_path)
+ns.set_rapid_iteration_param(SYSTEM, EMITTER, f"Constants.{EMITTER}.SpawnRate.SpawnRate", "25")
 
-r = ns.create_system(NAME, FOLDER)          # NiagaraCreateResult
-print("create_system:", r.success, r.asset_path)
-system = r.asset_path
-
-# Discover a template emitter to add (e.g. a Fountain/Sprite template)
-templates = ns.list_emitter_templates()
-print("templates:", [str(t) for t in templates][:5])
-if templates:
-    tmpl = str(templates[0]).split(" ")[0]
-    emitter = ns.add_emitter(system, tmpl, "MyEmitter")
-    print("add_emitter:", emitter)
-
-    nes.add_renderer(system, "MyEmitter", "SpriteRenderer")   # or Ribbon/Mesh/Light
-    print("renderers:", [str(x) for x in nes.list_renderers(system, "MyEmitter")])
-
-ns.compile_system(system, True)
-unreal.EditorAssetLibrary.save_asset(system)
+# 4) Recolor (VibeUE), then compile via the engine toolset and save:
+nes.set_color_tint(SYSTEM, EMITTER, "(0.0, 3.0, 0.0)")
+unreal.EditorAssetLibrary.save_asset(SYSTEM)

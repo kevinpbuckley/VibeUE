@@ -3,7 +3,7 @@
 #include "PythonAPI/UEnumStructService.h"
 #include "PythonAPI/BlueprintTypeParser.h"
 #include "Engine/UserDefinedEnum.h"
-#include "Engine/UserDefinedStruct.h"
+#include "StructUtils/UserDefinedStruct.h"
 #include "EditorAssetLibrary.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetToolsModule.h"

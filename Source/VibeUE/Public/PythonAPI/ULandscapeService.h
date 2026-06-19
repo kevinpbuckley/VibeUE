@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/NoExportTypes.h"
+#include "ToolsetRegistry/ToolsetDefinition.h"
 #include "ULandscapeService.generated.h"
 
 /**
@@ -680,7 +680,7 @@ struct FLineTraceHit
  *   unreal.LandscapeService.apply_noise("Landscape", 0.0, 0.0, 10000.0, 500.0, 0.005, 42)
  */
 UCLASS(BlueprintType)
-class VIBEUE_API ULandscapeService : public UObject
+class VIBEUE_API ULandscapeService : public UToolsetDefinition
 {
 	GENERATED_BODY()
 
@@ -695,7 +695,7 @@ public:
 	 *
 	 * @return Array of landscape information
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static TArray<FLandscapeInfo_Custom> ListLandscapes();
 
 	/**
@@ -706,7 +706,7 @@ public:
 	 * @param OutInfo - Structure containing landscape details
 	 * @return True if landscape found
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static bool GetLandscapeInfo(const FString& LandscapeNameOrLabel, FLandscapeInfo_Custom& OutInfo);
 
 	// =================================================================
@@ -727,7 +727,7 @@ public:
 	 * @param LandscapeLabel - Optional display label
 	 * @return Create result with actor label
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static FLandscapeCreateResult CreateLandscape(
 		FVector Location,
 		FRotator Rotation,
@@ -745,7 +745,7 @@ public:
 	 * @param LandscapeNameOrLabel - Name or label of the landscape to delete
 	 * @return True if deleted successfully
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static bool DeleteLandscape(const FString& LandscapeNameOrLabel);
 
 	// =================================================================
@@ -767,7 +767,7 @@ public:
 	 * @param FilePath - Absolute path to the heightmap file
 	 * @return Result with success status, resolution, and error message if failed
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static FHeightmapImportResult ImportHeightmap(
 		const FString& LandscapeNameOrLabel,
 		const FString& FilePath);
@@ -780,7 +780,7 @@ public:
 	 * @param OutputFilePath - Absolute path for the output file
 	 * @return True if export succeeded
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static bool ExportHeightmap(
 		const FString& LandscapeNameOrLabel,
 		const FString& OutputFilePath);
@@ -794,7 +794,7 @@ public:
 	 * @param FilePath - Absolute path to the heightmap file (PNG or RAW)
 	 * @return Dimensions with width, height, bit depth
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static FHeightmapDimensions GetHeightmapDimensions(const FString& FilePath);
 
 	/**
@@ -811,7 +811,7 @@ public:
 	 * @param OutputPath - Absolute path for the resized output file. If empty, appends "_resized" to source filename
 	 * @return Result with success status, dimensions, output file path
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static FHeightmapResizeResult ResizeHeightmap(
 		const FString& SourcePath,
 		int32 TargetWidth,
@@ -832,7 +832,7 @@ public:
 	 * @param SectionsPerComponent - Sections per component: 1 or 2 (default: 1)
 	 * @return Resolution info with X, Y dimensions and total vertex count
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static FLandscapeResolutionInfo CalculateLandscapeResolution(
 		int32 ComponentCountX,
 		int32 ComponentCountY,
@@ -850,7 +850,7 @@ public:
 	 * @param TargetHeight - Target resolution height (e.g. 1081)
 	 * @return Resolution info with recommended landscape parameters, or empty if no valid config exists
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static FLandscapeResolutionInfo FindLandscapeConfigForResolution(
 		int32 TargetWidth,
 		int32 TargetHeight);
@@ -864,7 +864,7 @@ public:
 	 * @param WorldY - World Y coordinate
 	 * @return Height sample with value and validity
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static FLandscapeHeightSample GetHeightAtLocation(
 		const FString& LandscapeNameOrLabel,
 		float WorldX, float WorldY);
@@ -883,7 +883,7 @@ public:
 	 * @param SizeY - Height in vertices
 	 * @return Row-major array of world-space Z heights (size = SizeX * SizeY), empty on failure
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static TArray<float> GetHeightInRegion(
 		const FString& LandscapeNameOrLabel,
 		int32 StartX, int32 StartY,
@@ -901,7 +901,7 @@ public:
 	 * @param Heights - Row-major array of height values (size must equal SizeX * SizeY)
 	 * @return True if heights were set successfully
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static bool SetHeightInRegion(
 		const FString& LandscapeNameOrLabel,
 		int32 StartX, int32 StartY,
@@ -924,7 +924,7 @@ public:
 	 * @param BrushFalloffType - Falloff type: "Linear", "Smooth", "Spherical", "Tip"
 	 * @return True if sculpting succeeded
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static bool SculptAtLocation(
 		const FString& LandscapeNameOrLabel,
 		float WorldX, float WorldY,
@@ -945,7 +945,7 @@ public:
 	 * @param BrushFalloffType - Falloff type: "Linear", "Smooth", "Spherical", "Tip"
 	 * @return True if flatten succeeded
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static bool FlattenAtLocation(
 		const FString& LandscapeNameOrLabel,
 		float WorldX, float WorldY,
@@ -970,7 +970,7 @@ public:
 	 * @param BrushFalloffType - Falloff type: "Linear", "Smooth", "Spherical", "Tip"
 	 * @return True if smoothing succeeded
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static bool SmoothAtLocation(
 		const FString& LandscapeNameOrLabel,
 		float WorldX, float WorldY,
@@ -994,7 +994,7 @@ public:
 	 * @param FalloffWidth - Width of the smooth falloff band at edges in world units (default 0 = hard edges)
 	 * @return True if operation succeeded
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static bool RaiseLowerRegion(
 		const FString& LandscapeNameOrLabel,
 		float WorldCenterX, float WorldCenterY,
@@ -1025,7 +1025,7 @@ public:
 	 *   print(f"Delta range: [{result.min_delta_applied}, {result.max_delta_applied}]")
 	 *   print(f"Vertices: {result.vertices_modified}, Saturated: {result.saturated_vertices}")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static FLandscapeNoiseResult ApplyNoise(
 		const FString& LandscapeNameOrLabel,
 		float WorldCenterX, float WorldCenterY,
@@ -1046,7 +1046,7 @@ public:
 	 * @param LandscapeNameOrLabel - Name or label of the landscape
 	 * @return Array of layer information
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static TArray<FLandscapeLayerInfo_Custom> ListLayers(
 		const FString& LandscapeNameOrLabel);
 
@@ -1058,7 +1058,7 @@ public:
 	 * @param LayerInfoAssetPath - Path to the ULandscapeLayerInfoObject asset
 	 * @return True if layer was added
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static bool AddLayer(
 		const FString& LandscapeNameOrLabel,
 		const FString& LayerInfoAssetPath);
@@ -1071,7 +1071,7 @@ public:
 	 * @param LayerName - Name of the layer to remove
 	 * @return True if layer was removed
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static bool RemoveLayer(
 		const FString& LandscapeNameOrLabel,
 		const FString& LayerName);
@@ -1085,7 +1085,7 @@ public:
 	 * @param WorldY - World Y coordinate
 	 * @return Array of layer weight samples
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static TArray<FLandscapeLayerWeightSample> GetLayerWeightsAtLocation(
 		const FString& LandscapeNameOrLabel,
 		float WorldX, float WorldY);
@@ -1102,7 +1102,7 @@ public:
 	 * @param Strength - Paint strength (0.0-1.0)
 	 * @return True if painting succeeded
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static bool PaintLayerAtLocation(
 		const FString& LandscapeNameOrLabel,
 		const FString& LayerName,
@@ -1122,7 +1122,7 @@ public:
 	 * @param MaterialPath - Full path to the material asset
 	 * @return True if material was assigned
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static bool SetLandscapeMaterial(
 		const FString& LandscapeNameOrLabel,
 		const FString& MaterialPath);
@@ -1135,7 +1135,7 @@ public:
 	 * @param PropertyName - Property name
 	 * @return Property value as string
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static FString GetLandscapeProperty(
 		const FString& LandscapeNameOrLabel,
 		const FString& PropertyName);
@@ -1149,7 +1149,7 @@ public:
 	 * @param Value - Value as string
 	 * @return True if property was set
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static bool SetLandscapeProperty(
 		const FString& LandscapeNameOrLabel,
 		const FString& PropertyName,
@@ -1167,7 +1167,7 @@ public:
 	 * @param bVisible - Whether the landscape should be visible
 	 * @return True if visibility was set
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static bool SetLandscapeVisibility(
 		const FString& LandscapeNameOrLabel,
 		bool bVisible);
@@ -1180,7 +1180,7 @@ public:
 	 * @param bEnableCollision - Whether collision should be enabled
 	 * @return True if collision setting was changed
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static bool SetLandscapeCollision(
 		const FString& LandscapeNameOrLabel,
 		bool bEnableCollision);
@@ -1195,7 +1195,7 @@ public:
 	 * @param LandscapeNameOrLabel - Name or label to search for
 	 * @return True if landscape exists
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Exists")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape|Exists")
 	static bool LandscapeExists(const FString& LandscapeNameOrLabel);
 
 	/**
@@ -1205,7 +1205,7 @@ public:
 	 * @param LayerName - Layer name to check
 	 * @return True if layer exists
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Exists")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape|Exists")
 	static bool LayerExists(
 		const FString& LandscapeNameOrLabel,
 		const FString& LayerName);
@@ -1230,7 +1230,7 @@ public:
 	 * @param Strength - Target weight (0.0–1.0). Each vertex is set to this value.
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Painting")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape|Painting")
 	static bool PaintLayerInRegion(
 		const FString& LandscapeNameOrLabel,
 		const FString& LayerName,
@@ -1253,7 +1253,7 @@ public:
 	 * @param Strength - Target weight (0.0–1.0)
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Painting")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape|Painting")
 	static bool PaintLayerInWorldRect(
 		const FString& LandscapeNameOrLabel,
 		const FString& LayerName,
@@ -1274,7 +1274,7 @@ public:
 	 * @param OutputFilePath - Absolute path for the output .png file
 	 * @return Export result with dimensions and error info
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Painting")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape|Painting")
 	static FWeightMapExportResult ExportWeightMap(
 		const FString& LandscapeNameOrLabel,
 		const FString& LayerName,
@@ -1291,7 +1291,7 @@ public:
 	 * @param FilePath - Absolute path to source PNG file
 	 * @return Import result with vertex count and error info
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Painting")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape|Painting")
 	static FWeightMapImportResult ImportWeightMap(
 		const FString& LandscapeNameOrLabel,
 		const FString& LayerName,
@@ -1309,7 +1309,7 @@ public:
 	 * @param SizeY - Height in vertices
 	 * @return Row-major float array (size = SizeX * SizeY), empty on failure
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Painting")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape|Painting")
 	static TArray<float> GetWeightsInRegion(
 		const FString& LandscapeNameOrLabel,
 		const FString& LayerName,
@@ -1329,7 +1329,7 @@ public:
 	 * @param Weights - Values 0.0–1.0, size must equal SizeX * SizeY
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Painting")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape|Painting")
 	static bool SetWeightsInRegion(
 		const FString& LandscapeNameOrLabel,
 		const FString& LayerName,
@@ -1354,7 +1354,7 @@ public:
 	 * @param bCreateHole - True to punch a hole, False to fill
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Holes")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape|Holes")
 	static bool SetHoleAtLocation(
 		const FString& LandscapeNameOrLabel,
 		float WorldX, float WorldY,
@@ -1373,7 +1373,7 @@ public:
 	 * @param bCreateHole - True to punch a hole, False to fill
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Holes")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape|Holes")
 	static bool SetHoleInRegion(
 		const FString& LandscapeNameOrLabel,
 		int32 StartX, int32 StartY,
@@ -1389,7 +1389,7 @@ public:
 	 * @param WorldY - World Y coordinate
 	 * @return True if the vertex at that location is a hole
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Holes")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape|Holes")
 	static bool GetHoleAtLocation(
 		const FString& LandscapeNameOrLabel,
 		float WorldX, float WorldY);
@@ -1412,7 +1412,7 @@ public:
 	 * @param bLowerTerrain - Whether to lower terrain to spline level
 	 * @return Create result with index of the new point
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Splines")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape|Splines")
 	static FSplineCreateResult CreateSplinePoint(
 		const FString& LandscapeNameOrLabel,
 		FVector WorldLocation,
@@ -1441,7 +1441,7 @@ public:
 	 * @param bLowerTerrain - Whether to lower terrain under segment
 	 * @return True if segment was created
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Splines")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape|Splines")
 	static bool ConnectSplinePoints(
 		const FString& LandscapeNameOrLabel,
 		int32 StartPointIndex,
@@ -1470,7 +1470,7 @@ public:
 	 * @param bClosedLoop - Whether to connect last point back to first
 	 * @return Spline info describing all created points and segments
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Splines")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape|Splines")
 	static FLandscapeSplineInfo CreateSplineFromPoints(
 		const FString& LandscapeNameOrLabel,
 		const TArray<FVector>& WorldLocations,
@@ -1489,7 +1489,7 @@ public:
 	 * @param LandscapeNameOrLabel - Name or label of the landscape
 	 * @return Spline info with all control points and segments
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Splines")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape|Splines")
 	static FLandscapeSplineInfo GetSplineInfo(
 		const FString& LandscapeNameOrLabel);
 
@@ -1514,7 +1514,7 @@ public:
 	 *        if false, apply the supplied Rotation directly
 	 * @return True if modified successfully
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Splines")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape|Splines")
 	static bool ModifySplinePoint(
 		const FString& LandscapeNameOrLabel,
 		int32 PointIndex,
@@ -1534,7 +1534,7 @@ public:
 	 * @param PointIndex - Index of the control point to remove
 	 * @return True if deleted successfully
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Splines")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape|Splines")
 	static bool DeleteSplinePoint(
 		const FString& LandscapeNameOrLabel,
 		int32 PointIndex);
@@ -1546,7 +1546,7 @@ public:
 	 * @param LandscapeNameOrLabel - Name or label of the landscape
 	 * @return True if cleared successfully
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Splines")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape|Splines")
 	static bool DeleteAllSplines(
 		const FString& LandscapeNameOrLabel);
 
@@ -1560,7 +1560,7 @@ public:
 	 * @param LandscapeNameOrLabel - Name or label of the landscape
 	 * @return True if applied successfully
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Splines")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape|Splines")
 	static bool ApplySplinesToLandscape(
 		const FString& LandscapeNameOrLabel);
 
@@ -1582,7 +1582,7 @@ public:
 	 * @param MeshEntries - Array of mesh entries to set on the segment
 	 * @return True if meshes were set successfully
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Splines")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape|Splines")
 	static bool SetSplineSegmentMeshes(
 		const FString& LandscapeNameOrLabel,
 		int32 SegmentIndex,
@@ -1604,7 +1604,7 @@ public:
 	 * @param SegmentMeshOffset - Vertical offset for connected segment meshes
 	 * @return True if set successfully
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Splines")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape|Splines")
 	static bool SetSplinePointMesh(
 		const FString& LandscapeNameOrLabel,
 		int32 PointIndex,
@@ -1633,7 +1633,7 @@ public:
 	 * @param NewSectionsPerComponent - Sections per component (-1 = keep current)
 	 * @return Create result describing the new landscape
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static FLandscapeCreateResult ResizeLandscape(
 		const FString& LandscapeNameOrLabel,
 		int32 NewComponentCountX,
@@ -1657,7 +1657,7 @@ public:
 	 * @param bAdditive            - If true, displace existing height rather than replace
 	 * @return Result with vertex count and bounds info
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static FMeshProjectionResult ProjectMeshToLandscape(
 		const FString& LandscapeNameOrLabel,
 		const FString& MeshActorLabel,
@@ -1674,7 +1674,7 @@ public:
 	 * @param bAdditive            - If true, add displacements
 	 * @return Array of per-mesh projection results
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static TArray<FMeshProjectionResult> ProjectMultipleMeshesToLandscape(
 		const FString& LandscapeNameOrLabel,
 		const TArray<FString>& MeshActorLabels,
@@ -1693,7 +1693,7 @@ public:
 	 * @param SampleCount    - Grid dimension (SampleCount x SampleCount traces)
 	 * @return Array of world-space hit locations (only hits included)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static TArray<FVector> SampleMeshHeights(
 		const FString& MeshActorLabel,
 		float CenterX,
@@ -1715,7 +1715,7 @@ public:
 	 * @param Radius               - Analysis radius in world units (0 = whole landscape)
 	 * @return Terrain statistics including height range, average slope, roughness
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static FTerrainAnalysis AnalyzeTerrain(
 		const FString& LandscapeNameOrLabel,
 		float CenterX = 0.0f,
@@ -1731,7 +1731,7 @@ public:
 	 * @param WorldY               - World Y coordinate
 	 * @return Slope in degrees (0=flat, 90=vertical). Returns -1.0 on failure.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static float GetSlopeAtLocation(
 		const FString& LandscapeNameOrLabel,
 		float WorldX,
@@ -1746,7 +1746,7 @@ public:
 	 * @param WorldY               - World Y coordinate
 	 * @return Unit normal vector (ZeroVector on failure)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static FVector GetNormalAtLocation(
 		const FString& LandscapeNameOrLabel,
 		float WorldX,
@@ -1765,7 +1765,7 @@ public:
 	 * @param MaxWorldY            - Region max world Y
 	 * @return Row-major slope array in degrees (same layout as GetHeightInRegion)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static TArray<float> GetSlopeMap(
 		const FString& LandscapeNameOrLabel,
 		float MinWorldX = 0.0f,
@@ -1783,7 +1783,7 @@ public:
 	 * @param MaxResults           - Maximum number of results
 	 * @return World-space centers of flat areas (sorted by cluster size)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static TArray<FVector> FindFlatAreas(
 		const FString& LandscapeNameOrLabel,
 		float MaxSlopeDegrees = 5.0f,
@@ -1802,7 +1802,7 @@ public:
 	 * @param EndLocations   - Array of trace end points (must match length)
 	 * @return Array of hit results, same length as input arrays
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static TArray<FLineTraceHit> BatchLineTrace(
 		const TArray<FVector>& StartLocations,
 		const TArray<FVector>& EndLocations);
@@ -1820,7 +1820,7 @@ public:
 	 * @param EndZ           - Trace end Z (below terrain)
 	 * @return Row-major array of hit results (GridResolution x GridResolution)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static TArray<FLineTraceHit> BatchLineTraceGrid(
 		float OriginX,
 		float OriginY,
@@ -1848,7 +1848,7 @@ public:
 	 * @param Seed                 - Random seed for noise
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static bool CreateMountain(
 		const FString& LandscapeNameOrLabel,
 		float CenterX,
@@ -1873,7 +1873,7 @@ public:
 	 * @param Seed                 - Random seed for noise
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static bool CreateValley(
 		const FString& LandscapeNameOrLabel,
 		float CenterX,
@@ -1900,7 +1900,7 @@ public:
 	 * @param Seed                 - Random seed for noise
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static bool CreateRidge(
 		const FString& LandscapeNameOrLabel,
 		float StartX, float StartY,
@@ -1923,7 +1923,7 @@ public:
 	 * @param EdgeBlend            - Edge blend distance in world units
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static bool CreatePlateau(
 		const FString& LandscapeNameOrLabel,
 		float CenterX,
@@ -1945,7 +1945,7 @@ public:
 	 * @param Seed                 - Random seed
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static bool ApplyErosion(
 		const FString& LandscapeNameOrLabel,
 		float CenterX,
@@ -1967,7 +1967,7 @@ public:
 	 * @param RimHeight            - Rim raise height in world units (0 = no rim)
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static bool CreateCrater(
 		const FString& LandscapeNameOrLabel,
 		float CenterX,
@@ -1988,7 +1988,7 @@ public:
 	 * @param Smoothness           - Edge blend factor (0=sharp, 1=fully smoothed)
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static bool CreateTerraces(
 		const FString& LandscapeNameOrLabel,
 		float CenterX,
@@ -2008,7 +2008,7 @@ public:
 	 * @param BlendWeight          - Blend strength (0=no change, 1=fully smoothed)
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static bool BlendTerrainFeatures(
 		const FString& LandscapeNameOrLabel,
 		float CenterX,

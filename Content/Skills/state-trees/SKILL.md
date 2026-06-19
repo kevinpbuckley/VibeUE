@@ -58,14 +58,14 @@ StateTreeService  → edits the StateTree ASSET (states, tasks list, transitions
 BlueprintService  → edits the STT Blueprint CONTENT (variables, function graphs, node wiring)
 ```
 
-Use `vibeue-skills-manager(action='load', skill_name='blueprints')` before writing any code that
-touches an `STT_*` Blueprint's internals.
+Load the `blueprints` skill (via the engine `AgentSkillToolset` — `GetSkills`, see the `vibeue`
+skill) before writing any code that touches an `STT_*` Blueprint's internals.
 
 If the request mentions timers, delayed completion, event callbacks, or screenshots of Blueprint graphs,
-also load:
+also load the `blueprint-graphs` skill:
 
-```python
-vibeue-skills-manager(action='load', skill_name='blueprint-graphs')
+```
+call_tool(toolset="ToolsetRegistry.AgentSkillToolset", tool="GetSkills", args={"skills": ["blueprint-graphs"]})
 ```
 
 ## ⚠️ STT Graph Editing Rules
@@ -183,15 +183,16 @@ if not result.success:
 unreal.StateTreeService.save_state_tree("/Game/AI/MyBehavior")
 
 # 7. Select the last state you modified so the user can see it
-unreal.VibeUEService.manage_asset(action="open", asset_path="/Game/AI/MyBehavior")
+#    (open the asset first via the engine AssetTools toolset:
+#     call_tool(toolset="AssetTools", tool="OpenAsset", args={"asset_path": "/Game/AI/MyBehavior"}))
 unreal.StateTreeService.set_state_expanded("/Game/AI/MyBehavior", "Root", True)
 unreal.StateTreeService.select_state("/Game/AI/MyBehavior", "Root/Walking")  # select whichever state you just edited
 ```
 
 ## Sub-docs available
 
-This skill's larger reference material has been split into sibling files. Load them with
-`vibeue-skills-manager(action='load', skill_name='<name>')` when you need the detail:
+This skill's larger reference material has been split into sibling files. Load them via the engine
+`AgentSkillToolset` (`GetSkills` with `["state-trees/<name>"]`, see the `vibeue` skill) when you need the detail:
 
 - **`api-reference`** — `StateTreeService` API for asset/state discovery, asset creation, state management (add, type, move, remove, enable, select), and per-state tasks (add, inspect, set property — including the deterministic property pattern and `FStateTreeDebugTextTask` notes).
 - **`api-bindings`** — Evaluators & global tasks (add, inspect, bind), transitions (all triggers/types/priorities plus the full `OnDelegate` workflow), compile & save, setting the context actor class, property bindings (task → context / root parameter / global task / evaluator), assigning a StateTree to a `StateTreeComponent` (use `StateTreeRef` not `StateTree`), theme colors, expand/collapse, and the "service first vs `execute_python_code`" guidance.

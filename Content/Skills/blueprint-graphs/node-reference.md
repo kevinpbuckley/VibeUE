@@ -1,15 +1,19 @@
 ---
 name: node-reference
-description: Reference for specific Blueprint node APIs - add_member_get_node, add_validated_get_node, Custom Event Input Pin CRUD, and Timeline CRUD
+description: Reference for specific Blueprint node APIs - member_get and validated_get build_graph node types, Custom Event Input Pin CRUD, and Timeline CRUD
 ---
 
 This sub-doc continues from skill.md → reference subsections of "Critical Rules" (member getter, validated get, custom event inputs, timelines).
 
 ## Node Reference
 
-### Accessing Members of Another Blueprint (`add_member_get_node`)
+### Accessing Members of Another Blueprint (`member_get` node)
 
-Use `add_member_get_node` to read a property or component that belongs to another class
+> The standalone `add_member_get_node` method is **gone**. Create this node as the `build_graph`
+> node type **`member_get`** (`params`: `member`, `class`). The resulting node and its pin names
+> are unchanged.
+
+Use `member_get` to read a property or component that belongs to another class
 (not the current Blueprint). This creates a getter node with a **Target** input pin.
 
 ```
@@ -18,9 +22,13 @@ MemberName (output) — the property value (e.g. the CubeMesh component)
 ```
 
 ```python
-# Get the CubeMesh component from a "Cube" variable of type BP_Cube
-mesh_id = unreal.BlueprintService.add_member_get_node(
-    bp_path, graph, "BP_Cube_C", "CubeMesh", 400, 0)
+# Get the CubeMesh component from a "Cube" variable of type BP_Cube.
+# build_graph member_get descriptor; ref_to_node_id maps the ref back to the GUID.
+r = unreal.BlueprintService.build_graph(bp_path, graph,
+    [{"ref": "Mesh", "type": "member_get",
+      "params": {"member": "CubeMesh", "class": "BP_Cube_C"}}],
+    [], [], False, False)
+mesh_id = r.ref_to_node_id["Mesh"]
 
 # Connect: Cube (from validated get) -> Target of the member getter
 unreal.BlueprintService.connect_nodes(bp_path, graph, val_get_id, "Cube", mesh_id, "self")
@@ -28,12 +36,16 @@ unreal.BlueprintService.connect_nodes(bp_path, graph, val_get_id, "Cube", mesh_i
 unreal.BlueprintService.connect_nodes(bp_path, graph, mesh_id, "CubeMesh", next_id, "Target")
 ```
 
-The `TargetClass` must be the generated class name (`BP_Cube_C`, not `BP_Cube`). The function
-resolves it via the same 3-step fallback as `create_blueprint`.
+The `class` param must be the generated class name (`BP_Cube_C`, not `BP_Cube`). It
+resolves via the same 3-step class fallback as the engine `BlueprintTools.create`.
 
-### Validated Get Nodes (`add_validated_get_node`)
+### Validated Get Nodes (`validated_get` node)
 
-Use `add_validated_get_node` to create a **Validated Get** — a variable getter with execution
+> The standalone `add_validated_get_node` method is **gone**. Create this node as the
+> `build_graph` node type **`validated_get`** (`params`: `variable`). The resulting node and its
+> pin names are unchanged.
+
+Use `validated_get` to create a **Validated Get** — a variable getter with execution
 pins that only continues on the valid path if the object reference is non-null.
 
 Pin names produced:
@@ -45,28 +57,37 @@ Pin names produced:
 | Is Not Valid (object null) | `"else"` | output exec |
 | Variable data | variable name e.g. `"MyObject"` | output data |
 
+The whole BeginPlay → ValidatedGet → SomeFunction graph is a clean single `build_graph` call
+(`event`, `validated_get`, and `function_call` are all build_graph node types; compile runs as
+the final positional flag):
+
 ```python
 import unreal
 
 bp_path = "/Game/BP_MyActor"
 graph = "EventGraph"
 
-# Compile first so the variable type is resolved
-unreal.BlueprintService.compile_blueprint(bp_path)
+# Compile first so the variable type is resolved (engine BlueprintTools toolset)
+call_tool(tool_name="compile_blueprint",
+          toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
+          arguments={"blueprint": bp_path})
 
-# Add BeginPlay + validated get + some function call
-begin_id = unreal.BlueprintService.add_event_node(bp_path, graph, "ReceiveBeginPlay", 0, 0)
-val_get_id = unreal.BlueprintService.add_validated_get_node(bp_path, graph, "MyObject", 300, 0)
-call_id = unreal.BlueprintService.add_function_call_node(bp_path, graph, "MyObject", "SomeFunction", 700, 0)
+unreal.BlueprintService.build_graph(bp_path, graph,
+    [
+        {"ref": "Begin", "type": "event", "params": {"event": "ReceiveBeginPlay"}},
+        {"ref": "ValGet", "type": "validated_get", "params": {"variable": "MyObject"}},
+        {"ref": "Call", "type": "function_call",
+         "params": {"class": "MyObject", "function": "SomeFunction"}},
+    ],
+    [
+        # Execution flow: BeginPlay -> ValidatedGet (Is Valid path) -> SomeFunction
+        {"from_": "Begin.then", "to": "ValGet.execute"},
+        {"from_": "ValGet.then", "to": "Call.execute"},
+        # Data flow: MyObject output -> function Target
+        {"from_": "ValGet.MyObject", "to": "Call.self"},
+    ],
+    [], True, True)  # auto_layout, compile
 
-# Execution flow: BeginPlay -> ValidatedGet (Is Valid path) -> SomeFunction
-unreal.BlueprintService.connect_nodes(bp_path, graph, begin_id, "then", val_get_id, "execute")
-unreal.BlueprintService.connect_nodes(bp_path, graph, val_get_id, "then", call_id, "execute")
-
-# Data flow: MyObject output -> function Target
-unreal.BlueprintService.connect_nodes(bp_path, graph, val_get_id, "MyObject", call_id, "self")
-
-unreal.BlueprintService.compile_blueprint(bp_path)
 unreal.EditorAssetLibrary.save_asset(bp_path)
 ```
 
@@ -77,7 +98,7 @@ unreal.EditorAssetLibrary.save_asset(bp_path)
 
 ### Custom Event Input Pins — Full CRUD (`*_custom_event_input`)
 
-`add_function_parameter` / `add_function_input` **only work on real function graphs** (`UK2Node_FunctionEntry`).
+`add_function_parameter` **only works on real function graphs** (`UK2Node_FunctionEntry`).
 They return `False` on a Custom Event node. To manage the input pins (parameters) of a Custom Event node,
 use these (identify the node by GUID, as returned by `add_custom_event_node` / `get_nodes_in_graph`):
 
@@ -100,13 +121,13 @@ for p in unreal.BlueprintService.get_custom_event_inputs(bp, "EventGraph", node_
 - Type strings are the same format as `add_variable` (`"float"`, `"int"`, `"FRotator"`, `"FVector"`, `"AActor"`, `"BP_Foo"`, …).
 - Custom Event input pins appear as **output** pins on the node (they flow out of the event). `get_node_pins` will show e.g. `Rotation | struct | input=False`.
 - Empty `new_name` / `new_type` in `modify_custom_event_input` means "leave that part unchanged".
-- Always `compile_blueprint(bp)` afterwards and verify with `get_custom_event_inputs` / `get_node_pins`.
+- Always compile afterwards (engine `BlueprintTools.compile_blueprint` via `call_tool`) and verify with `get_custom_event_inputs` / `get_node_pins`.
 
 ---
 
 ### Timelines — Full CRUD (`*_timeline*`)
 
-There is no Timeline node in `discover_nodes` / `add_function_call_node`; use the dedicated API. A Timeline is a
+There is no Timeline node in `discover_nodes` / `build_graph` / engine `create_node`; use the dedicated API. A Timeline is a
 `UK2Node_Timeline` node **plus** a `UTimelineTemplate` on the blueprint — `add_timeline` creates both.
 
 **Create the node + tracks + keys, then wire it:**
@@ -134,7 +155,10 @@ unreal.BlueprintService.add_timeline_event_key(bp, "LookAtTimeline", "Halfway", 
 # 4) Wire it: e.g. a Custom Event's exec out -> the timeline's "Play" input
 unreal.BlueprintService.connect_nodes(bp, g, custom_event_id, "then", tnode, "Play")
 
-unreal.BlueprintService.compile_blueprint(bp)
+# compile via the engine BlueprintTools toolset
+call_tool(tool_name="compile_blueprint",
+          toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
+          arguments={"blueprint": bp})
 unreal.EditorAssetLibrary.save_asset(bp)
 ```
 
@@ -163,6 +187,6 @@ for t in unreal.BlueprintService.get_timelines(bp):
 ```
 
 - Track names must be unique within a timeline (across all track types). Adding/removing/renaming a track or changing settings reconstructs the node, so re-read pins afterwards.
-- Always `compile_blueprint(bp)` then verify with `get_timelines` and `get_node_pins(bp, "EventGraph", tnode)`.
+- Always compile (engine `BlueprintTools.compile_blueprint` via `call_tool`) then verify with `get_timelines` and `get_node_pins(bp, "EventGraph", tnode)`.
 
 ---

@@ -1,444 +1,196 @@
-# VibeUE AI Assistant
+# VibeUE — AI agent guide (Unreal Engine 5.8)
 
-This is an Unreal Engine 5.7+ project with the **VibeUE** plugin for AI-powered development via MCP.
+VibeUE is a plugin that **extends Unreal 5.8's native AI toolset system**. Its services, tools, and
+skills register into the engine's own `ToolsetRegistry` + `ModelContextProtocol` and are served from
+Unreal's MCP endpoint (default `http://localhost:8000/mcp`). There is **no separate VibeUE server,
+no API key, and no in-editor chat** — you talk to the engine's endpoint.
 
-**ALWAYS use MCP tools for Unreal Engine operations - NEVER try to read .uasset files from disk.**
-
-## MCP Tools
-
-### Discovery Tools (use before executing)
-- `discover_python_module` - Inspect module contents (use `unreal` lowercase)
-- `discover_python_class` - Get class methods and properties
-- `discover_python_function` - Get function signatures
-- `list_python_subsystems` - List available editor subsystems
-- `execute_python_code` - Run Python in Unreal context
-
-### Other Tools
-- `vibeue-skills-manager` - Load domain-specific skill documentation
-- `manage_asset` - Search, open, save, duplicate, move, delete assets
-- `editor_control` - Play-In-Editor (`start_pie`/`stop_pie`/`pie_status`), launch standalone, profile (`frame_timing`/`profiler_*`/`analyse`), **and `screenshot`** — a synchronous PNG of the editor/active window so you can SEE what you built and review it (no skill load, no Python). See Screenshots & Vision below.
-- `read_logs` - Read Unreal log files for errors and warnings
-- `terrain_data` - Generate heightmaps and water splines from real-world data
-- `deep_research` - Research Unreal Engine topics via web search
-
-> VibeUE already covers the **whole loop** — it is not just "Blueprints and Python." Editing/spawning/moving actors (`level-actors` skill), level-viewport camera control (`viewport` skill), running the game (`editor_control` PIE), and seeing the result (`editor_control` `screenshot`) are all here. You do not need a second plugin for "eyes and hands in the viewport."
-
-## � Build and Launch Workflow
-
-When the user asks to rebuild, relaunch, test, or recover from a compile/live-coding issue, use the project build script instead of manual build commands:
-
-- Run `./Plugins/VibeUE/BuildAndLaunchGame.ps1` from the project root (the Slash project) to stop any running Unreal editor, build the project, and launch it again.
-- Use `-Clean` when stale build artifacts may be causing failures.
-- Use `-StrictRebuild` when you need a full plugin recompile under the plugin's strict warnings-as-errors rules.
-- Use `-SkipBuild` only when the user explicitly wants to relaunch without rebuilding.
-- Do not ask the user to manually run `Build.bat`, `UnrealEditor.exe`, or similar commands when this script is available.
-
-This script is the correct path for normal rebuild-and-test cycles in this repo because it handles the editor shutdown, build, and relaunch workflow automatically.
-
-## 📸 Screenshots & Vision — Build → Screenshot → Review Yourself → Fix
-
-**Capturing what you built and actually looking at it is the single highest-value habit in this setup.** After any *visible* change (spawned/moved actors, a blocked-out level, a UI, a material), don't just claim success — see it:
-
-1. *(Testing gameplay?)* `editor_control(action="start_pie")`.
-2. `editor_control(action="screenshot")` → returns a `file_path` to a synchronous PNG of the editor window. Use `mode="active_window"` if PIE opened a separate game window.
-3. **Open / read the `file_path`** and judge the image against what the user asked for.
-4. Wrong? Fix it and screenshot again. Loop until it looks right, then report with the evidence.
-
-This needs no skill load and no Python. For framing a specific actor, moving the editor camera, or capturing a specific asset editor, load the `screenshots` and `viewport` skills.
-
-## 🎯 Skills System (Index + On-Demand Sub-Docs)
-
-VibeUE uses a **two-tier lazy-loading skills system** to keep responses small while still surfacing deep reference material when needed:
-
-- **Index (`SKILL.md`)** — concise workflows + critical gotchas + property formats. Loaded with `skill_name="<skill>"`. Always lean enough to fit in a single tool response.
-- **Sub-docs (sibling `.md` files)** — deeper reference material (full API tables, edge-case catalogues, long recipes). Loaded on demand with `skill_name="<skill>/<section>"`. Listed in the index's `available_sections` field so you know what exists.
-
-**⚠️ Skills do NOT replace discovery.** Skills tell you WHAT to do and WHY. To get exact method signatures, call `discover_python_class('unreal.ClassName', method_filter='keyword')` on the classes named in the skill's `vibeue_classes` field.
-
-### ⚠️ VibeUE skills vs. UnrealEngineSkills.com skills (don't confuse them)
-
-Two distinct skill libraries may be available in a session — they serve different purposes and **pair together**:
-
-| | **VibeUE skills** (`vibeue-skills-manager`) | **UnrealEngineSkills.com skills** (`unreal-engine-skills-manager`) |
-|---|---|---|
-| What it is | Usage guides for VibeUE's own MCP tools | Read-only Unreal Engine domain knowledge |
-| Acts on | The **live editor** (creates/edits assets, runs PIE/profiling) | **Nothing** — pure documentation, never touches the editor |
-| Contains | Tool workflows, property/value formats, VibeUE gotchas, `vibeue_classes` to discover | Correct UE **C++ APIs & signatures**, engine architecture/concepts, patterns, citations into the UE 5.7 engine source |
-| Load when | You are about to **DO** something in the running editor | You need to **understand or write engine/C++ code**, or want the authoritative "how does UE do X / what's the correct API/class" answer |
-| Availability | Always (this plugin) | Only if the external `unreal-engine-skills` MCP server is connected this session |
-
-**Use them together, in order:** look up the engine knowledge first (UnrealEngineSkills.com — "what's the right API / how does UE do this"), then act on the editor with VibeUE (live tool workflows). Example: adding a C++ ability component → `unreal-engine-skills-manager(action="search"/"load")` for the correct `UActorComponent`/GAS API, then VibeUE tools to wire it into a Blueprint. If the external server is **not** connected, fall back to VibeUE skills + `discover_python_class` for signatures. Never guess C++ signatures from memory when the UnrealEngineSkills.com library is available — load it.
-
-### When to Load Skills
-
-**Automatically load when:**
-- User mentions a domain ("create a blueprint", "add material parameter")
-- User asks to "see", "look at", or take a "screenshot"
-- You need service-specific workflows or gotchas
-- **You discover an actor has a `StateTreeComponent`** → load `state-trees` immediately
-
-**How to load:**
-```python
-# List every skill with descriptions, classes, and the sections each one offers
-vibeue-skills-manager(action="list")
-
-# Load a skill's INDEX (workflows + gotchas only)
-vibeue-skills-manager(action="load", skill_name="blueprints")
-
-# Load a specific SUB-DOC for deeper reference material
-vibeue-skills-manager(action="load", skill_name="state-trees/api-reference")
-
-# Batch-load multiple in one call (each entry can be a bare name or a sub-doc path)
-vibeue-skills-manager(action="load", skill_names=["blueprints", "blueprint-graphs/workflows"])
-```
-
-**Pattern:**
-1. Call `list` once per session if you don't already know what skills exist.
-2. Load the index for your domain.
-3. Read `available_sections` in the response — if there's a sub-doc that matches what you're about to do, load it now. Otherwise the index plus runtime discovery is usually enough.
-4. Call `discover_python_class` on classes from `vibeue_classes` to get exact method signatures before writing code.
-
-**Example:**
-```
-User: "Create BP_Enemy with a Health variable"
-→ vibeue-skills-manager(action="load", skill_name="blueprints")
-→ discover_python_class("unreal.BlueprintService", method_filter="variable")
-→ execute_python_code(...)
-
-User: "Add a transition to the Idle state in ST_Enemy"
-→ vibeue-skills-manager(action="load", skill_name="state-trees")
-→ Index response shows `available_sections` includes `api-reference`
-→ The transition flow is non-obvious → vibeue-skills-manager(action="load", skill_name="state-trees/api-reference")
-→ discover_python_class("unreal.StateTreeService", method_filter="transition")
-→ execute_python_code(...)
-```
+**ALWAYS use the MCP tools / Python API for Unreal operations — NEVER read `.uasset` files from disk.**
 
 ---
 
-## ⚠️ How to Read the Load Response
+## 1. The efficient interaction model (read this first)
 
-When `vibeue-skills-manager(action="load", ...)` returns, the response includes:
+There are two ways to act on the editor. Pick the cheap one:
 
-| Field | What it is | How to use it |
-|---|---|---|
-| `content` | Workflows, gotchas, property formats from the loaded file | Read this for the conceptual scaffold and critical rules |
-| `vibeue_classes` | List of VibeUE service class names this skill works with | Pass these to `discover_python_class` to get real method signatures |
-| `unreal_classes` | List of native Unreal classes the skill touches | Same — discover before calling |
-| `COMMON_MISTAKES` | Extracted "common mistakes" section (when present) | Read FIRST — these are the failure modes the skill author already saw |
-| `available_sections` | Sub-docs you can load next via `skill_name="<skill>/<section>"` | Decide whether you need deeper material before doing the work |
-| `loaded_section` | Present only when a sub-doc was loaded — the section name | Confirms which file you got |
+- **`execute_python_code` — your workhorse.** Runs an arbitrary Python script in the editor in **one
+  round-trip**. Every VibeUE service is exposed to Python (`unreal.BlueprintService.add_variable(...)`)
+  and sits next to the whole native `unreal.*` API in the same script. **Batch aggressively** — do a
+  whole multi-step task (create + edit + compile + verify) in a single call, and `print()` only what
+  you need back.
+- **`call_tool` — one tool per round-trip.** Use it only for things that are **not** Python-callable:
+  loading **skills** (`AgentSkillToolset`), and the few Epic toolsets with no good Python path
+  (screenshots, etc.). Don't use it to do work `execute_python_code` can batch.
 
-**Rules:**
-1. NEVER guess a method name from skill content alone — confirm via `discover_python_class` first.
-2. If a sub-doc looks relevant, load it — it's cheaper than guessing and being wrong.
-3. Don't reload a skill you already loaded this conversation — the loader dedups, but a redundant call still wastes a turn.
-
-### When to Use Discovery Tools Directly
-
-Beyond skills, the discovery tools are useful for:
-- **Return types**: inspect a return type the skill mentions but doesn't fully document (e.g., `discover_python_class("unreal.FBlueprintInfo")`)
-- **Native UE classes** not listed in any skill (e.g., `unreal.Actor`, `unreal.StaticMeshComponent`)
-- **Troubleshooting `AttributeError`** — verify correct method/property names
-- **Module exploration**: `discover_python_module("unreal", name_filter="Niagara")`
+**Rules of thumb (speed + tokens):**
+1. Default to `execute_python_code`; one call should accomplish a logical step, not one operation.
+2. `call_tool` only for skills and Epic-only toolsets (below).
+3. **Avoid `describe_toolset` as a habit** — it dumps the full JSON schema of every tool in a toolset
+   (the most token-heavy thing here). Reach for a **skill** + `discover_python_class` instead.
+4. Discover signatures narrowly: `discover_python_class('unreal.BlueprintService', method_filter='variable')`.
 
 ---
 
-## ⚠️ Python Basics
+## 2. Tool roster — what's where
+
+**VibeUE MCP tools (call directly):**
+- `execute_python_code` — run Python (must start with `import unreal`). The workhorse.
+- `discover_python_module` / `discover_python_class` / `discover_python_function` — inspect the API
+  (use `unreal` lowercase; narrow with `name_filter` / `method_filter`).
+- `list_python_subsystems` — list editor subsystems.
+- `deep_research` — web search / page fetch / geocode (see §5).
+- `terrain_data` — real-world heightmaps + water splines (see §5).
+- `memory` — persistent cross-session notes (only write when the user asks).
+
+**VibeUE services (call from Python inside `execute_python_code`):** `unreal.<Name>Service.<method>()`
+— Blueprint, BlueprintGraph (via BlueprintService), Material(+Node), Widget, Skeleton, AnimSequence,
+AnimMontage, AnimGraph, Landscape(+Material), Foliage, MetaSound, SoundCue, Niagara(+Emitter,
++ScratchPad), StateTree, Input, EnumStruct, UVMapping, RuntimeVirtualTexture, MapBlockout,
+GameplayTag, Viewport, Actor, Engine/ProjectSettings, **Performance** (`unreal.PerformanceService.frame_timing()`).
+These overlap-trimmed services keep only what the engine lacks — for plain asset/actor/blueprint
+basics the engine's own tools may be simpler (below).
+
+**Use the engine's native tools for these (VibeUE intentionally doesn't duplicate them):**
+- **Assets** (find / save / move / delete / duplicate / metadata): native Python
+  `unreal.EditorAssetLibrary` / `EditorAssetSubsystem` inside `execute_python_code` (batchable), or
+  Epic's `AssetTools` toolset via `call_tool`.
+- **Screenshots / vision**: Epic's `EditorAppToolset` via `call_tool` — `CaptureViewport` (returns a
+  PNG, and can overlay a world grid + actor labels), `CaptureEditorImage`, `CaptureAssetImage`.
+- **PIE**: Epic's `EditorAppToolset.StartPIE` / `StopPIE` / `IsPIERunning` via `call_tool`.
+- **Logs**: Epic's `LogsToolset.GetLogEntries` via `call_tool` (or read the `.log` file).
+- **DataTables / DataAssets / enum-struct basics**: Epic's `DataTableTools` / `DataAssetTools` /
+  `ObjectTools`. (VibeUE keeps only `EnumStructService` for create/edit of user enums & structs.)
+
+---
+
+## 3. Skills — native `AgentSkill` (lazy domain knowledge)
+
+VibeUE's ~88 skill packs are registered as Unreal **AgentSkills** and served by the engine's
+`AgentSkillToolset`. Skills tell you **what to do and why**; they do **not** replace discovery of exact
+signatures.
+
+**Discover + load (both are `call_tool` on `ToolsetRegistry.AgentSkillToolset`):**
+```
+call_tool(tool_name="ListSkills", toolset_name="ToolsetRegistry.AgentSkillToolset")
+  → { "/VibeUE/Python/init_unreal_PY.VibeUE_blueprints": "Create and modify Blueprint assets…", … }
+
+call_tool(tool_name="GetSkills", toolset_name="ToolsetRegistry.AgentSkillToolset",
+          arguments={"skillPaths": ["/VibeUE/Python/init_unreal_PY.VibeUE_blueprints"]})
+  → full markdown for that pack
+```
+- `ListSkills` returns **summaries only** (cheap) — call it once per session to see what exists. VibeUE
+  packs are `/VibeUE/Python/init_unreal_PY.VibeUE_<name>`; the engine's own skills appear alongside.
+- `GetSkills` returns full instructions **lazily** — request only the packs you need.
+- **Sub-docs are their own skill entries** (e.g. `…VibeUE_blueprint_graphs__build_graph`,
+  `…VibeUE_state_trees__api_reference`) — load them by path the same way; no `skill/section` argument.
+
+**When to load a skill:** the user names a domain ("create a blueprint", "build a state tree"), or you
+hit a non-obvious workflow. Then: read the pack → `discover_python_class` the classes it names → write
+the Python. Don't reload a pack you already loaded this session.
+
+---
+
+## 4. Python basics
 
 ```python
-# Module name is lowercase 'unreal' (NOT 'Unreal')
-import unreal
+import unreal  # lowercase
 
-# Access editor subsystems via get_editor_subsystem()
-subsys = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
-subsys.editor_invalidate_viewports()  # Refresh viewports
+# Editor subsystems:
+sub = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
 
-# VibeUE services are accessed directly as classes
+# VibeUE services are static classes, called directly:
 info = unreal.BlueprintService.get_blueprint_info("/Game/MyBP")
 
-# Use json module for data formatting (DataTables, etc.)
-import json
-data = {"Health": 100, "Name": "Player"}
-json_str = json.dumps(data)
+# Batch a whole task in ONE execute_python_code call, printing evidence as you go:
+bp = unreal.BlueprintService.create_blueprint("BP_Enemy", "Actor", "/Game/Blueprints"); print("CREATED:", bp)
+unreal.BlueprintService.add_variable(bp, "Health", "float"); print("ADDED: Health")
+unreal.BlueprintService.compile_blueprint(bp); print("COMPILED:", bp)
 ```
 
 ---
 
-## 📚 Available Skills
+## 5. When to use `deep_research` and `terrain_data`
 
-*ALWAYS* Load the appropriate skill for detailed documentation using `vibeue-skills-manager(action="load", skill_name="<name>")`:
+**`deep_research`** — when you need information that isn't in the editor:
+- `action="search"` / `action="fetch_page"` — research a UE topic, API, or technique before writing code.
+- `action="geocode"` / `action="reverse_geocode"` — turn a place name into lat/lng (feeds `terrain_data`).
 
-| Skill Name | Display Name | Description |
-|------------|-------------|-------------|
-| `animation-blueprint` | Animation Blueprints | Navigate, inspect, and author Animation Blueprints — state machines, states, transitions, and transition rules (AnimGraphService). Use when the user asks to create or edit an Animation Blueprint/AnimBP, add a state machine or states, wire transitions between states, set a state's animation, or inspect AnimGraph structure. |
-| `animation-editing` | Animation Editing & Bone Space Correctness | Preview, validate, and bake bone-rotation edits on AnimSequences with constraint awareness and retarget safety. Use when the user asks to edit/pose/adjust an animation's bones, raise an arm, create a swing/wave/dance/pose, mirror or copy a pose, set joint limits, or learn bone constraints. Load together with animsequence (keyframes) and skeleton (structure). |
-| `animation-montage` | Animation Montages | Create and manipulate Animation Montages — sections, slots, segments, branching points, notifies, and blend settings (AnimMontageService). Use when the user asks to create a montage (from an animation or empty), add or link montage sections, set up slots/segments, add branching points, or adjust montage blend timing. |
-| `animsequence` | Animation Sequences & Editing | Create and edit AnimSequence keyframes and tracks — add/remove keyframes, set bone tracks, query sequence info, and bake edits (AnimSequenceService). Use when the user asks to create a new animation sequence, add keyframes/tracks, or edit raw animation data. For constraint-aware bone posing, also load animation-editing. |
-| `asset-management` | Asset Discovery & Management | Search, find, open, move, duplicate, save, delete, import, and export assets (the manage_asset tool / AssetDiscoveryService). Use when the user asks to find/locate an asset, list a folder, open/save/duplicate/move/rename/delete an asset, or import an image from disk. Prefer the manage_asset MCP tool over raw Python for asset ops. |
-| `blueprint-graphs` | Blueprint Graph Editing | Add, connect, and configure nodes in Blueprint event graphs and function graphs — function-call/event/branch/timer/custom-event/delegate nodes, pin wiring, node layout, arrays, comment boxes, and the batch build_graph API. Use when the user asks to wire up Blueprint logic, add or connect nodes, build an event graph, set up a timer/delay, broadcast a delegate, or lay out an existing graph. |
-| `blueprints` | Blueprint System | Create and modify Blueprint assets, variables, functions, components, event dispatchers, and interfaces. Use when the user asks to create a Blueprint/BP, add a variable or component to a Blueprint, make an event dispatcher/delegate, implement a Blueprint interface, or inspect a Blueprint's class/components. For node-level graph wiring, also load blueprint-graphs. |
-| `data-assets` | Data Assets | Create and modify Primary Data Assets and set their properties (DataAssetService). Use when the user asks to create a Data Asset / PrimaryDataAsset (DA_), populate its fields, or read/write Data Asset properties. |
-| `data-tables` | Data Tables | Create and modify Data Tables and manage their rows (DataTableService). Use when the user asks to create a Data Table (DT_) from a row struct, add/edit/remove rows, or read row data. Pair with enum-struct to define the row struct first. |
-| `engine-settings` | Engine Settings System | Configure Unreal Engine core settings — rendering, physics, audio, garbage collection, console variables (cvars), and scalability levels (EngineSettingsService). Use when the user asks to change engine/rendering settings, set a console variable (r.*, etc.), adjust scalability/quality levels, or read engine config categories. |
-| `enhanced-input` | Enhanced Input System | Create and configure Enhanced Input — Input Actions, Mapping Contexts, key mappings, triggers, and modifiers (InputService). Use when the user asks to set up player input, create an Input Action (IA_) or Input Mapping Context (IMC_), bind keys to actions, or configure input triggers/modifiers. |
-| `enum-struct` | Enums and Structs | Create, modify, and introspect UserDefinedEnums and UserDefinedStructs (EnumStructService). Use when the user asks to create a Blueprint enum or struct, add enum values or struct members, or inspect an enum/struct's fields. Pair with data-tables when defining a row struct. |
-| `foliage` | Foliage & Vegetation | Create foliage types and place/scatter foliage instances on landscapes and meshes (FoliageService). Use when the user asks to add trees/grass/bushes/rocks as foliage, create a foliage type from a mesh, scatter or paint foliage instances, or query/remove foliage on a surface. |
-| `gameplay-tags` | Gameplay Tags | Create, list, remove, and rename Gameplay Tags with runtime registration (GameplayTagService). Use when the user asks to add or register gameplay tags, list/query existing tags, or rename/remove tags (e.g. Ability.Attack.Melee, State.Stunned). |
-| `landscape-auto-material` | Landscape Auto-Material System | Create production-quality landscape materials with the master-material + material-function + material-instance paradigm, RVT, and auto-layering. Use when the user asks for an auto/procedural landscape material, slope/altitude/distance-based layer blending, Runtime Virtual Textures, biome configuration via instances, or layer material functions. For basic layer-blend materials load landscape-materials. |
-| `landscape-materials` | Landscape Material System | Create landscape materials with layer blending, texture setup, and layer info objects (LandscapeMaterialService). Use when the user asks to build a landscape/terrain material, set up paint layers (grass/rock/dirt), create layer info objects, add a grass output, or assign a material to a landscape. For production master-material+RVT systems, load landscape-auto-material. |
-| `landscape` | Landscape Terrain | Create and edit landscape terrain — heightmaps, sculpting, paint layers, terrain analysis, mesh projection, and procedural features like mountains/valleys/craters (LandscapeService). Use when the user asks to create a landscape, sculpt/raise/lower terrain, import or export a heightmap, paint terrain layers, or add procedural terrain features. For terrain materials load landscape-materials; for real-world heightmaps load terrain-data. |
-| `level-actors` | Level Actors & Editor Subsystems | List, find, place, move, rotate, and modify actors in the current level (ActorService + editor subsystems). Use when the user asks to find/list actors in the level, move or rotate an actor, set an actor's properties/folder/transform, or spawn/delete level actors. |
-| `log-reading` | Log Reading & Diagnostics | Read, tail, filter, and watch Unreal Engine log files with the read_logs tool — find errors/warnings, debug Blueprint or Niagara compiles, inspect VibeUE chat and raw LLM API logs, and monitor for new output. Use when the user asks to check the logs, find errors or warnings, see what happened during startup, investigate a crash, review recent AI chat activity, or watch for new log output. |
-| `map-blockout` | Procedural FPS Map Blockout | Procedurally design an AAA-style open-world FPS map blockout (roads, POIs, fields, forests/treelines, railway/bridges) from a landscape, validate it through gated checks, and materialize it into engine geometry. Use when the user asks to block out or lay out an open-world/FPS map, place roads/POIs/forests/railways procedurally, or turn a blockout plan into splines, paint layers, foliage, and actors. |
-| `materials` | Material System | Create and edit materials and material instances — graph nodes, parameters, functions, custom HLSL, and instance overrides (MaterialService + MaterialNodeService). Use when the user asks to create or edit a material/material instance, wire material nodes, add material parameters, set blend/shading modes, or recreate a material graph. For landscape materials load landscape-materials. |
-| `metasounds` | MetaSound Editor | Create and modify MetaSound Source assets — add/connect nodes, wire pins, set input defaults, and play procedurally (MetaSoundService). Use when the user asks to create a MetaSound, build or edit a MetaSound graph, add operator/input/output nodes, or generate procedural audio. |
-| `niagara-emitters` | Niagara Emitters | Configure Niagara emitter internals — modules, renderers, rapid-iteration parameters, color/curve editing, graph positioning, and Custom-HLSL scratch-pad authoring. Use when the user asks to add modules/renderers to a Niagara emitter, recolor or hue-shift particles, set emitter parameters, build an emitter from scratch, or author a scratch-pad/Custom HLSL module. For system-level lifecycle, load niagara-systems. |
-| `niagara-systems` | Niagara Systems | Create and manage Niagara particle systems — system lifecycle, add/copy emitters, user parameters, and system script settings (NiagaraService). Use when the user asks to create a Niagara system, add or copy emitters into a system, add user/exposed parameters, or compile a system. For emitter internals, load niagara-emitters. |
-| `pcg` | Procedural Content Generation (PCG) | Create, inspect, and edit PCG Graph assets — add nodes, configure settings, connect pins, and wire procedural generation graphs (native PCG Python API). Use when the user asks to build a PCG graph, add PCG nodes (Surface Sampler, Static Mesh Spawner, filters), wire PCG pins, place a PCGVolume and generate, or set up procedural scattering. |
-| `pie-testing` | Play-In-Editor Testing | Start, stop, and query Play-In-Editor (PIE) sessions for runtime testing of Blueprints, gameplay logic, widgets, AI, and any in-game behavior. Use when the user asks you to "play", "test", "run", "PIE", "start/stop the game", or otherwise needs a live game world to validate changes. |
-| `profiling` | Profiling & Performance | Diagnose frame-rate bottlenecks and control Unreal Insights traces. Use when FPS is low/bad, the game is slow/stutters, or you need to find what limits the frame rate. **STEP 0 is always determining CPU-bound vs GPU-bound first** via `editor_control(action="frame_timing")` (or `stat dumpframe` / the `r.ScreenPercentage 50` test) — optimizing GPU passes does nothing on a CPU-bound frame. Then drill in: GameThread→tick/BP/AI/anim, RenderThread→draw calls/lights, GPU→ProfileGPU/shadows/Lumen. |
-| `project-settings` | Project & Editor Settings | Configure Unreal Engine project settings and editor preferences — UI appearance, toolbar icons, scale, colors, and any UDeveloperSettings subclass (ProjectSettingsService). Use when the user asks to change a project setting or editor preference, configure a UDeveloperSettings category, or read/write project config values. |
-| `screenshots` | Screenshot & Vision | Capture screenshots of the editor window, viewports, and asset editors for AI vision analysis (ScreenshotService). Use when the user asks you to look at / see / show the editor, verify something visually, capture a material or blueprint editor, or when you need vision to confirm a change. Pair captures with attach_image. |
-| `skeleton` | Skeleton & Skeletal Mesh Management | Manipulate skeletons, bones, sockets, retargeting, curve metadata, blend profiles, and bone constraints. Use when the user asks to add/inspect a socket, add or query bones, set retargeting modes, manage blend profiles or curves, or work with skeleton/skeletal-mesh structure (SkeletonService). For animation bone edits, also load animation-editing. |
-| `sound-cues` | Sound Cue Editor | Create and modify SoundCue assets — add/connect nodes (mixer, random, delay, attenuation, modulator, etc.) and set audio properties (SoundCueService). Use when the user asks to create a Sound Cue, build a SoundCue node graph, or wire audio playback logic. |
-| `state-trees` | StateTree Behavior | Create, inspect, and edit StateTree assets — states, tasks, transitions, conditions, considerations, and property bindings for AI behavior and game logic (StateTreeService). Use when the user asks to build a StateTree, add states/tasks/transitions, bind task properties, set up Utility AI considerations, or wire StateTree delegate transitions. |
-| `terrain-data` | Real-World Terrain | Generate heightmaps, map reference images, and water feature splines (rivers, lakes, oceans) from real-world geographic data (terrain_data tool). Use when the user asks to build terrain from a real location/coordinates, download a real-world heightmap, or add rivers/lakes/oceans from map data. Downloads Mapbox tiles server-side and produces UE5-compatible heightmaps + landscape splines. |
-| `umg-widgets` | UMG Widget Blueprints | Create and modify UMG Widget Blueprints (UI) — build the widget hierarchy, set properties, style fonts/brushes, author widget animations, bind events, capture previews, run PIE checks, and wire MVVM ViewModels. Use when the user asks to create a UI/HUD/menu, add or arrange widgets (Button, TextBlock, Image, panels), style or animate a widget, or set up data bindings in a Widget Blueprint (WBP). |
-| `uv-mapping` | UV Mapping | Inspect, generate, transform, and visualize UV channels on StaticMesh assets (UVMappingService). Use when the user asks to check/add/remove UV channels, auto-unwrap UVs, transform (tile/offset/rotate) UVs, check UV health/islands, or export a UV layout image. |
-| `vibeue` | VibeUE (entry point) | Bootstrap skill for external/non-VibeUE skill systems — points agents at `vibeue-skills-manager(action="list"/"load")` for the live, always-current skill set. Requires the VibeUE MCP server to be connected. |
-| `viewport` | Viewport Control | Control the Unreal Editor level viewport — camera type/position, view mode, FOV, exposure, layout, and rendering settings (ViewportService). Use when the user asks to move the editor camera, change the view mode (Lit/Unlit/Wireframe), set FOV/exposure, switch viewport layout, or frame the level for a screenshot. |
+**`terrain_data`** — when the user wants terrain from a **real-world location**:
+- `preview_elevation` → use the suggested `base_level`/`height_scale` → `generate_heightmap`
+  (`resolution` MUST match the landscape) → import via `unreal.LandscapeService` → `get_water_features`
+  for rivers/lakes.
 
-> ⚠️ This table is a static snapshot for quick reference. The **always-current** list (auto-generated from each `SKILL.md`) is returned by `vibeue-skills-manager(action="list")` — call it once per session if unsure what exists.
+**The real-world-terrain chain:** `deep_research(geocode "Mount Fuji")` → `terrain_data(generate_heightmap, lng/lat)`
+→ `LandscapeService` import → `terrain_data(get_water_features)` → landscape splines. Load the
+`terrain-data` and `landscape` skills for the resolution formulas and water workflow.
 
 ---
 
-## ⚠️ Critical Rules
+## 6. See what you built (screenshots)
 
-### Logging for Rollback on Failure
-
-**CRITICAL:** Python execution has NO automatic rollback. If your script fails midway, assets created before the failure remain. **ALWAYS print what you create/modify** so the AI can help undo changes if needed.
-
-**Pattern - Log all changes:**
-```python
-import unreal
-
-# Step 1: Create blueprint
-bp_path = unreal.BlueprintService.create_blueprint("BP_Enemy", "Actor", "/Game/Blueprints")
-print(f"CREATED: {bp_path}")
-
-# Step 2: Add variable
-unreal.BlueprintService.add_variable(bp_path, "Health", "float")
-print(f"ADDED: Variable 'Health' to {bp_path}")
-
-# Step 3: Compile
-unreal.BlueprintService.compile_blueprint(bp_path)
-print(f"COMPILED: {bp_path}")
+After any **visible** change, capture and actually look before claiming success:
 ```
-
-If the script fails at step 3, output shows what was done:
+call_tool(tool_name="CaptureViewport", toolset_name="EditorToolset.EditorAppToolset")
 ```
-CREATED: /Game/Blueprints/BP_Enemy
-ADDED: Variable 'Health' to /Game/Blueprints/BP_Enemy
-Error: Blueprint compilation failed...
-```
-
-The AI can then offer to undo: delete BP_Enemy or remove the variable.
-
-**Rules:**
-1. Print immediately after each create/modify operation
-2. Use clear prefixes: `CREATED:`, `ADDED:`, `MODIFIED:`, `DELETED:`
-3. Include the full asset path in the message
-4. On failure, AI reads output and offers rollback options
-
-### Always Search Before Accessing
-
-**Use `manage_asset` (MCP tool) — NOT Python code — to find, open, save, duplicate, and move assets.**
-
-`manage_asset` is a first-class MCP tool that wraps `AssetDiscoveryService` directly. No Python needed.
-
-```
-User says "BP_Player_Test" → manage_asset(action="search", search_term="BP_Player_Test", asset_type="Blueprint")
-Never guess paths. Confirm the exact path from results before editing.
-```
-
-**Common patterns:**
-
-| Goal | Tool call |
-|------|-----------|
-| Find an asset by partial name | `manage_asset(action="search", search_term="BP_Enemy", asset_type="Blueprint")` |
-| Confirm an exact path exists | `manage_asset(action="find", asset_path="/Game/AI/ST_Cube")` |
-| List all assets in a folder | `manage_asset(action="list", path="/Game/AI")` |
-| Open an asset in its editor | `manage_asset(action="open", asset_path="/Game/AI/ST_Cube")` |
-| Save after edits | `manage_asset(action="save", asset_path="/Game/AI/ST_Cube")` |
-| Save all dirty assets | `manage_asset(action="save_all")` |
-| Duplicate to a new path | `manage_asset(action="duplicate", source_path="...", destination_path="...")` |
-| Move or rename an asset | `manage_asset(action="move", source_path="...", destination_path="...")` |
-| Delete (with reference guard) | `manage_asset(action="delete", asset_path="...")` |
-
-Never emulate a move by duplicating an asset and deleting the original. That creates a different asset and can break references. Use `manage_asset(action="move", source_path="...", destination_path="...")` instead.
-
-### Non-Destructive Editing
-
-Preserve existing data by default. If an operation cannot be completed with a direct supported setter or workflow, do not "fake" it by deleting, recreating, clearing, or replacing existing assets, states, nodes, bindings, properties, or arrays.
-
-Before changing any dropdown, enum-like field, type field, or other constrained value:
-
-1. Discover the valid options first via `discover_python_class('unreal.ClassName')` on the class named in the skill's `vibeue_classes`, or a targeted discovery tool.
-2. Use a first-class setter or supported editor workflow that updates the value in place.
-3. If the exact option or setter cannot be verified, stop and report the gap instead of guessing.
-
-Never use destructive fallback patterns such as:
-
-- remove-and-recreate to change a type or dropdown value
-- clearing existing data just to make a write succeed
-- replacing a whole object when only one field should change
-- deleting children, tasks, transitions, bindings, or parameters as part of an unverified workaround
-
-If a requested edit is not directly supported, prefer one of these outcomes:
-
-1. Discover a supported non-destructive API.
-2. Leave the existing data unchanged and explain what capability is missing.
-3. Ask the user before any operation that would intentionally discard or rebuild existing data.
-
-Never emulate a StateTree hierarchy move by calling `remove_state` and then `add_state`. That destroys the original `UStateTreeState` object and can lose tasks, transitions, bindings, child states, or other editor data. Use `unreal.StateTreeService.move_state(asset_path, state_path, new_parent_path, new_index)` for StateTree reparenting.
-
-For detailed per-action docs: `manage_asset(action="help", help_action="search")`
-
-### Idempotent Operations (Check Before Create)
-Always use `*_exists()` methods before creating to avoid duplicates:
-```python
-# Blueprints
-if not unreal.BlueprintService.blueprint_exists("/Game/Blueprints/BP_Enemy"):
-    unreal.BlueprintService.create_blueprint("BP_Enemy", "Actor", "/Game/Blueprints")
-# Other Services - same pattern
-```
-
-### Compile After Structure Changes
-```python
-# After adding variables, functions, components, or changing structure:
-unreal.BlueprintService.compile_blueprint(path)  # REQUIRED!
-```
-
-### Success Claims Require Verification Evidence
-
-For Blueprint, Widget, Material, AnimGraph, and StateTree graph edits, a successful tool call is **not** enough. Before claiming a graph edit is complete, re-read the asset and verify from its state: `get_nodes_in_graph()`, `get_connections()`, `get_node_pins()`, and `compile_blueprint(...).success`. Include brief evidence (verified node titles, connections, compile result) when reporting success.
-
-Load the `blueprint-graphs` skill for detailed verification workflows, timer callback patterns, and recovery steps. Load the `state-trees` skill for STT-specific build/verify mode.
-
-### Error Recovery
-- Max 3 attempts at same operation
-- Max 2 discovery calls for same function
-- Stop after 2 failed searches, ask user
-- If success but no change after 2 tries, report limitation
-
-### ⚠️ Loop Prevention (CRITICAL)
-**You MUST self-monitor for loops. Track the OUTCOMES of your tool calls, not just the arguments.**
-
-- Never repeat the same tool call with the same arguments more than 2 times when output is unchanged
-- **Outcome-pattern loops**: If the same error/result keeps appearing across multiple calls — even with different code — you are stuck. STOP and report the issue to the user.
-  - Example: calling `bind_task_property` 3 different ways but always getting "FAILED to bind" → STOP
-  - Example: alternating between "COMPILE FAILED" and "FAILED to bind" repeatedly → STOP
-- **After 2 failed attempts at the same goal**, do NOT try a 3rd variation. Instead: explain what you tried, what failed, and ask the user for guidance.
-- If a tool result contains a hard failure (e.g. "FAILED", "COMPILE FAILED", "not found"), do not retry blindly; try ONE alternative approach, and if that also fails, STOP and report.
-- **Self-check**: Before each tool call, ask yourself: "Have I seen this same result/error before in this conversation?" If yes, STOP.
-
-### Safety - Never Use
-- Modal dialogs (freezes editor)
-- `input()` or blocking operations
-- Long `time.sleep()` calls
-- Infinite loops
-
-### Asset Paths
-Always use full paths: `/Game/Blueprints/BP_Name` (not `BP_Name`)
-
-### Colors (0.0-1.0, not 0-255)
-`{"R": 1.0, "G": 0.5, "B": 0.0, "A": 1.0}`
-
-### Terrain Heightmap ↔ Landscape Resolution
-
-Load the `landscape` skill for resolution formulas, safe configs, z_scale calculation, blur_passes guidance, and sizing utilities. **⚠️ 1081 is NOT a valid performant resolution** — use 1009 instead.
+It returns a PNG (base64) and can overlay a world-space grid + actor labels for spatial awareness. For
+a running game, `StartPIE` first. **Open/read the image, judge it against the request, fix, re-capture.**
 
 ---
 
-## 💬 Communication Style
+## 7. Diagnose performance
 
-**BE CONCISE** - This is an IDE tool, not a chatbot.
-
-**⚠️ CRITICAL - ALWAYS EXPLAIN BEFORE TOOL CALLS:**
-
-You MUST follow this pattern for EVERY tool call:
-
-1. **First**: Write 1 sentence explaining what you're about to do
-2. **Then**: Make the tool call
-3. **Finally**: Write 1-2 sentences summarizing the result
-
-**Example - CORRECT:**
-```
-User: "Create BP_Enemy"
-AI: "I'll load the blueprints skill to get the API reference."
-[vibeue-skills-manager tool call]
-AI: "Skill loaded. Now creating the blueprint."
-[execute_python_code tool call]
-AI: "Created BP_Enemy at /Game/Blueprints/BP_Enemy."
-```
-
-**Example - WRONG (what you're currently doing):**
-```
-User: "Create BP_Enemy"
-[vibeue-skills-manager tool call immediately - NO EXPLANATION BEFORE]
-[execute_python_code tool call immediately - NO EXPLANATION BEFORE]
-AI: "Created BP_Enemy."
-```
-
-**Multi-Step Tasks:**
-- Execute all steps without stopping — NEVER pause and wait for the user to say "continue"
-- After a tool call returns, IMMEDIATELY make the next tool call if more steps remain
-- Don't ask for confirmation between steps
-- Don't narrate what you plan to do without also making the tool call in the same response
-- Brief status before EACH AND EVERY tool call
-- If you loaded a skill and need to call discover or execute next, do it in the SAME response — do NOT stop after loading a skill
-
-**Skill Loading:**
-- Mention when loading a new skill: "Loading blueprints skill for API reference..."
-
-## 🧭 Working Effectively on This Project
-
-- **Screenshot self-review (see above):** after any visible change, capture and look before you say "done."
-- **Git milestones:** ensure the project is a git repo before large changes, and commit at every working milestone (`git add -A && git commit -m "..."`) so a bad experiment reverts cleanly. Prefer many small commits over one big one.
-- **Manage context:** long Unreal sessions fill the context window fast. As you approach the limit, summarize what's done and what's left so work can continue cleanly; prefer a fresh, tightly-scoped task over dragging stale context forward.
-- **Division of labor:** you handle logic, node wiring, Python, and asset organization; the human prepares 3D meshes/audio and the high-level architecture. If a needed asset doesn't exist, say so — don't fake it with a placeholder unless asked.
-- **Detailed prompts win:** the more precise the requested logic/architecture, the better the result. If a request is vague, ask one clarifying question or state the assumption you're making, then build.
-- **Supervise the graph:** auto-generated Blueprint graphs are functional, not tidy — verify behavior (see "Success Claims Require Verification Evidence") rather than over-investing in auto-cleaning node layout.
-- **Living gotchas:** when you hit a real problem, work out a fix, and confirm it works, append a one-line gotcha + fix to this file (or the project's `CLAUDE.md`) so the next session doesn't relearn it.
-
-## 🚀 Getting Started Workflow
-
-1. **User asks to do something** (e.g., "Create BP_Enemy")
-2. **Identify domain** → Blueprints
-3. **Load skill INDEX:** `vibeue-skills-manager(action="load", skill_name="blueprints")`
-   - Read `COMMON_MISTAKES` first
-   - Check `available_sections` — load a sub-doc with `skill_name="blueprints/<section>"` if your task needs deeper reference material
-4. **Get method signatures:** call `discover_python_class('unreal.<ClassName>', method_filter='<keyword>')` for each class in `vibeue_classes` you need. Never write code against a method name you haven't confirmed exists.
-5. **Check before creating:** use the relevant `*_exists()` method (or `manage_asset(action="find", ...)`) to avoid duplicates
-6. **Execute:** `execute_python_code` with the discovered signatures
-7. **Report result:** concise status message with evidence (paths created, compile success, etc.)
-
-**CRITICAL:** Method signatures come from `discover_python_class`, NOT from skill content or memory. Skill content tells you *which* class and *why*; discovery tells you the exact call shape.
-
-Break up functionality into tasks and execute sequentially with status updates.
-
-## Common Mistakes
-
-When skills reference complex return types or specific patterns, follow them exactly. The skill documentation contains battle-tested solutions.
-
-### 🚫 DEPRECATED: `unreal.EditorLevelLibrary`
-
-**`unreal.EditorLevelLibrary` is DEPRECATED in UE 5.7+.** Load the `level-actors` skill for the full migration guide and replacement patterns using `EditorActorSubsystem`.
-
-**⚠️ `get_all_level_actors_of_class` DOES NOT EXIST** on `EditorActorSubsystem`. Use `get_all_level_actors()` + `isinstance()` filtering.
-
-### Log Reading
+`PerformanceService` is VibeUE's net-new capability (the engine has no perf tooling). **STEP 0 is
+always CPU-bound vs GPU-bound** — optimising the GPU does nothing on a CPU-bound frame:
 ```python
-read_logs(action="help")  # See all log reading options
-read_logs(action="errors", file="main")  # Find errors in project log
+import unreal, json
+print(unreal.PerformanceService.frame_timing())            # game/render/gpu ms + bound verdict — RUN FIRST
+unreal.PerformanceService.start_trace("cap", "")           # Unreal Insights trace
+# … reproduce the workload (ideally under PIE / standalone) …
+unreal.PerformanceService.stop_trace()
+print(unreal.PerformanceService.analyse("both", ""))       # frame stats + worst frames + log hitches
 ```
+Load the `profiling` and `frame-rate` skills for the full drill-down.
+
+---
+
+## 8. Build & launch
+
+When asked to rebuild / relaunch / test, use the project script — not manual `Build.bat`/editor commands:
+- `./Plugins/VibeUE/BuildAndLaunchGame.ps1` (stops the editor, builds, relaunches).
+- `-StrictRebuild` for a full plugin recompile under warnings-as-errors; `-Clean` to wipe artifacts;
+  `-SkipBuild` to relaunch only.
+
+---
+
+## 9. Critical rules (evergreen)
+
+- **Log every change for rollback.** Python has no auto-rollback — `print("CREATED:/ADDED:/MODIFIED:/DELETED:", path)`
+  after each op so a mid-script failure can be undone.
+- **Idempotent: check before create.** Use the service `*_exists()` (or `unreal.EditorAssetLibrary.does_asset_exist`)
+  before creating, to avoid duplicates.
+- **Compile after structure changes.** `unreal.BlueprintService.compile_blueprint(path)` after adding
+  variables/functions/components.
+- **Verify success with evidence.** For Blueprint/Widget/Material/AnimGraph/StateTree edits, a successful
+  tool call isn't proof — re-read the asset (`get_nodes_in_graph`, `get_connections`, compile result)
+  and report brief evidence.
+- **Non-destructive.** Never remove-and-recreate to change a value, clear data to make a write succeed,
+  or replace a whole object to change one field. Discover the supported setter; if none exists, report
+  the gap. (StateTree reparenting: `move_state`, never remove+add.)
+- **Loop prevention.** Track *outcomes*. Never repeat the same call with the same args >2× when output
+  is unchanged; after 2 failed attempts at a goal, stop and report — don't try a 3rd variation.
+- **Never** use modal dialogs, `input()`, blocking ops, long `time.sleep()`, or infinite loops.
+- **Full asset paths** (`/Game/Blueprints/BP_Name`). **Colors are 0.0–1.0** (`{"R":1.0,"G":0.5,"B":0.0,"A":1.0}`).
+- **`unreal.EditorLevelLibrary` is deprecated** — use `EditorActorSubsystem` (`get_all_level_actors()`
+  + `isinstance` filtering; `get_all_level_actors_of_class` does not exist).
+
+---
+
+## 10. Communication & working style
+
+- **Be concise** — this is an IDE tool. Before each tool call, one sentence on what/why; after, 1–2 on
+  the result. Execute multi-step tasks straight through — don't pause for "continue".
+- **Discover before you call.** Method signatures come from `discover_python_class`, not memory or skill
+  prose. Skills say *which* class and *why*; discovery gives the exact call shape.
+- **Commit at milestones** if the project is a git repo, so a bad experiment reverts cleanly.
+- **Living gotchas:** when you solve a real problem, append a one-line gotcha+fix to this file so the
+  next session doesn't relearn it.
