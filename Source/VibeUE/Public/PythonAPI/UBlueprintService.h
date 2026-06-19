@@ -569,6 +569,54 @@ struct FBlueprintNodeInfo
 };
 
 /**
+ * Snapshot of the graph the user is currently looking at — VibeUE's equivalent of
+ * Epic's FAIAssistantDockContext, expressed in the string-path conventions the rest
+ * of this service uses so the result feeds straight into get_nodes_in_graph /
+ * build_graph (for Blueprints) without translation. Covers the Blueprint family
+ * (Blueprint / Widget / AnimBlueprint editors) and the Material editor.
+ *
+ * Returned by GetFocusedGraphContext(). bFound is false when no supported graph
+ * editor is open and focused.
+ */
+USTRUCT(BlueprintType)
+struct FBlueprintFocusContext
+{
+	GENERATED_BODY()
+
+	/** True if an open Blueprint editor with a focused graph was found. */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	bool bFound = false;
+
+	/** Full object path of the focused Blueprint (feed directly to BlueprintPath params). */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	FString AssetPath;
+
+	/** Short asset name (e.g. "BP_Player"). */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	FString AssetName;
+
+	/** Editor flavour: "BlueprintEditor" | "WidgetBlueprintEditor" | "AnimationBlueprintEditor". */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	FString EditorType;
+
+	/** Name of the focused graph tab (feed directly to GraphName params, e.g. "EventGraph"). */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	FString GraphName;
+
+	/** "Ubergraph" | "Function" | "Macro" | "DelegateSignature" | "Material" | "Other". */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	FString GraphKind;
+
+	/** Node count of the focused graph (cheap sanity signal). */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	int32 GraphNodeCount = 0;
+
+	/** The nodes currently selected in that graph (same shape as get_selected_nodes). */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	TArray<FBlueprintNodeInfo> SelectedNodes;
+};
+
+/**
  * Detailed pin information including connections
  */
 USTRUCT(BlueprintType)
@@ -1823,6 +1871,31 @@ public:
 	static TArray<FBlueprintNodeInfo> GetSelectedNodes(
 		const FString& BlueprintPath = TEXT("")
 	);
+
+	/**
+	 * Report the graph the user is currently focused on — which asset, which graph,
+	 * its kind/size, and what's selected — in a single call. Covers Blueprint-family
+	 * editors (graph_kind Ubergraph/Function/Macro/DelegateSignature) and the
+	 * Material editor (graph_kind "Material").
+	 *
+	 * VibeUE's analogue of Epic's UAIAssistantToolset::GetDockedContext(). Epic
+	 * anchors on the AI assistant's own docked widget; VibeUE has no in-editor
+	 * widget, so it anchors on the globally-active dock tab and falls back to the
+	 * first open supported editor. Use it to answer "what is the user looking at
+	 * right now?" without making them restate the asset / graph — for Blueprints the
+	 * returned asset_path and graph_name feed straight into the other tools.
+	 *
+	 * Note: UE Python strips the leading `b` from bool properties — read `ctx.found`.
+	 *
+	 * @return FBlueprintFocusContext; found is False when no supported editor is open.
+	 *
+	 * Example:
+	 *   ctx = unreal.BlueprintService.get_focused_graph_context()
+	 *   if ctx.found and ctx.graph_kind != "Material":
+	 *       nodes = unreal.BlueprintService.get_nodes_in_graph(ctx.asset_path, ctx.graph_name)
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints")
+	static FBlueprintFocusContext GetFocusedGraphContext();
 
 	/**
 	 * Add a Custom Event node to a graph.
