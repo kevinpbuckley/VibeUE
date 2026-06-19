@@ -1205,6 +1205,49 @@ public:
 		const FString& PropertyName,
 		const FString& PropertyValue);
 
+	/**
+	 * Delete an expression from inside a Material Function's graph.
+	 * Maps to action="delete_function_expression"
+	 *
+	 * The function-graph counterpart to DeleteExpression (which only handles UMaterial and
+	 * therefore returns false for function nodes). Any inputs on other expressions that still
+	 * reference the target are cleared first so no dangling pointers remain, then the node is
+	 * removed from the function's expression collection and the function is recompiled/saved.
+	 *
+	 * @param FunctionPath Full asset path to the UMaterialFunction
+	 * @param ExpressionId ID of the expression to delete
+	 * @return True if the expression was found and removed
+	 *
+	 * Example:
+	 *   unreal.MaterialNodeService.delete_function_expression("/Game/MF_MyLayer", node_id)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MaterialNode")
+	static bool DeleteFunctionExpression(
+		const FString& FunctionPath,
+		const FString& ExpressionId);
+
+	/**
+	 * Remove every expression not reachable from the asset's outputs — the scriptable
+	 * equivalent of the Material Editor's "Clean Graph -> Clean Up".
+	 * Maps to action="cleanup_unused_expressions"
+	 *
+	 * Works on both UMaterial and UMaterialFunction assets. Roots match the engine's own
+	 * UMaterialGraph::GetUnusedExpressions: for a function, every FunctionOutput; for a
+	 * material, every expression wired to a material property input plus all CustomOutput
+	 * nodes. A depth-first walk back through every connected input marks the reachable set
+	 * (following NamedRerouteUsage declarations, which have no input pins), and everything
+	 * else is removed. Unreachable nodes only reference each other, so no reachable node is
+	 * ever orphaned.
+	 *
+	 * @param AssetPath Full asset path to a UMaterial or UMaterialFunction
+	 * @return Number of expressions removed
+	 *
+	 * Example:
+	 *   removed = unreal.MaterialNodeService.cleanup_unused_expressions("/Game/MF_MyLayer")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MaterialNode")
+	static int32 CleanupUnusedExpressions(const FString& AssetPath);
+
 private:
 	// Helper methods
 	static UMaterial* LoadMaterialAsset(const FString& MaterialPath);
