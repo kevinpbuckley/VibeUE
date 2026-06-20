@@ -51,7 +51,7 @@ Where something is broken or inefficient, we file a GitHub issue and move on.
 | umg/widget_hierarchy.md | 4 | ⬜ | – | – | – | |
 | niagara/niagara_test.md | 15 | ⬜ | – | – | – | |
 | niagara/scratchpad_trackpainter.md | 9 | ⬜ | – | – | – | |
-| metasounds/metasounds_tests.md | 39 | ⬜ | – | – | – | |
+| metasounds/metasounds_tests.md | ~38 | ✅ | 36/2/0 | #460 | sonnet | MetaSoundService solid (graph/node CRUD, IO, scenarios all work). API gaps only: no read-back of node input defaults / connections; AudioMixer name convention undocumented; batch-delete 30s timeout. |
 | sound-cues/sound_cues_tests.md | 45 | ⬜ | – | – | – | |
 | foliage/foliage_tests.md | 31 | ✅ | 26/2/0 +2B | #454 | sonnet | FoliageService clean/complete. Issues are mostly test-file expectation bugs (GroundSlopeAngle vs AlignMaxAngle, origin-centered rect, missing paint layers). 1 behavior note: add_foliage_instances places off-landscape points at z=0 (doc says reject). |
 | landscape/landscape_tests.md | ~77 | 🟡 | 63/4/5 +8B | #456 | sonnet | No disconnect. 8 BLOCKED = missing content packs (Stylized_Spruce_Forest, Landscape1–4, Real_Landscape). Bugs: get_hole_at_location always False; layer cache needs 2nd assign_material; weightmap round-trip 1.0→0.557; RVT params remapped; material_exists needs full path. |
