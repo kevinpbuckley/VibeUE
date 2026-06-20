@@ -60,7 +60,7 @@ Where something is broken or inefficient, we file a GitHub issue and move on.
 | uv-mapping/uv_mapping_tests.md | ? | ⬜ | – | – | – | header format differs (0 `##`) |
 | terrain-data/terrain_data_tests.md | 27 | ⬜ | – | – | – | uses terrain_data tool |
 | terrain-data/issues.md | 10 | ⬜ | – | – | – | known-issues list, not a test suite? |
-| deep-research/deep_research_tests.md | 14 | ⬜ | – | – | – | uses deep_research tool |
+| deep-research/deep_research_tests.md | ~50 | ✅ | core green | – | opus | Tested core directly: search/fetch_page/geocode/reverse_geocode all work; error handling clean (MISSING_PARAMS, UNKNOWN_ACTION) — no hangs. Note: fetch_page can return very large output (e.g. Wikipedia 154k chars). Integration/landscape-build section deferred to landscape+terrain-data domains. |
 | markdown_rendering_test.md | 3 | ⬜ | – | – | – | chat rendering check |
 | demo_prompts.md | ? | ⬜ | – | – | – | header format differs (0 `##`) |
 
