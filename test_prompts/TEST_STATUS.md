@@ -56,7 +56,7 @@ Where something is broken or inefficient, we file a GitHub issue and move on.
 | foliage/foliage_tests.md | 31 | ✅ | 26/2/0 +2B | #454 | sonnet | FoliageService clean/complete. Issues are mostly test-file expectation bugs (GroundSlopeAngle vs AlignMaxAngle, origin-centered rect, missing paint layers). 1 behavior note: add_foliage_instances places off-landscape points at z=0 (doc says reject). |
 | landscape/landscape_tests.md | ~77 | 🟡 | 63/4/5 +8B | #456 | sonnet | No disconnect. 8 BLOCKED = missing content packs (Stylized_Spruce_Forest, Landscape1–4, Real_Landscape). Bugs: get_hole_at_location always False; layer cache needs 2nd assign_material; weightmap round-trip 1.0→0.557; RVT params remapped; material_exists needs full path. |
 | map-blockout/map_blockout_tests.md | ~39 | ✅ | 28/0/0 +11B | #458 | sonnet | Core pipeline solid (all stages + PNGs). 11 BLOCKED = no Landscape1 in skeleton map. Real items: Forest-Surrounded-POI accepts treelines; target_count floor clamp. Doc gaps: rel-path, river return type. (foliage-partition crash noted on #454.) |
-| pcg/pcg_tests.md | 22 | ⬜ | – | – | – | |
+| pcg/pcg_tests.md | 44 | ✅ | 43/1/0 | #465 | sonnet | PCG skills comprehensive & accurate; native PCG Python covers all. Only minor: is_standalone_graph deprecated→GraphUsageContext; test node-count wording. 1 PARTIAL = documented Windows file-handle delete limit (PCG_TestGraph leftover, clears on restart). |
 | uv-mapping/uv_mapping_tests.md | ? | ⬜ | – | – | – | header format differs (0 `##`) |
 | terrain-data/terrain_data_tests.md | 27 | ⬜ | – | – | – | uses terrain_data tool |
 | terrain-data/issues.md | 10 | ⬜ | – | – | – | known-issues list, not a test suite? |
