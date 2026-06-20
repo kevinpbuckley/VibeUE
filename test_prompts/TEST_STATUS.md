@@ -35,7 +35,7 @@ Where something is broken or inefficient, we file a GitHub issue and move on.
 | data_table/data_table_test.md | 17 | 🟡 | 12/2/1 +2B | #452 | sonnet | Run cut short at Part 10 by an MCP **client** disconnect (NOT a crash — verified: editor alive, no dump, invalid path handled gracefully). Findings: get_schema exposes row-key as column; set_rows silent wrong-type coercion; no clear_rows; empty GameplayTag→"None". Re-run Parts 11–17 after reconnect. |
 | gameplay-tags/gameplay_tags_tests.md | 10 | ✅ | 10/0/0 | #455 | sonnet+opus | All green; skill verified accurate (single-tag CRUD→engine GameplayTagsToolset, bulk add_tags on VibeUE). Minor: C++ docstring lists removed methods; RemoveTag error should name blocking assets. |
 | color/color_testing.md | 12 | 🟡 | 0/7/5 | #450 | sonnet+opus | Core asset/node creation works + UE tuple `(R=,G=,B=,A=)` works everywhere, but friendly formats (hex/named/temp/arrays) NOT wired into setters despite FJsonValueHelper existing. **Verified in source:** MaterialNodeService.set_expression_property returns `true` on failure (false-positive, line 1004). |
-| level_actors/level_actor_tests.md | 11 | ⬜ | – | – | – | |
+| level_actors/level_actor_tests.md | 11 | ✅ | 11/0/0 | – | sonnet+opus | All 11 sections (36 steps) green; level restored. Fixed deprecated `TraceTypeQuery.TRACE_TYPE_QUERY1`→`ECC_VISIBILITY` in skill. |
 | viewport/viewport_tests.md | 20 | ⬜ | – | – | – | |
 | transactions/transactions.md | 11 | ⬜ | – | – | – | |
 | logs/log_reader_tests.md | 28 | ⬜ | – | – | – | |
