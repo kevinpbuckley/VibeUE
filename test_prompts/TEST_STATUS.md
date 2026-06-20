@@ -44,7 +44,7 @@ Where something is broken or inefficient, we file a GitHub issue and move on.
 | animation-editing.md | 25 | 🟡 | 21/2/2 | #447 | sonnet | No crash (safe domain). Fixed: percentile5/95 doc naming. Filed: learn_from_animations sampling, preview_pose_delta None-on-fail, manual-constraint non-enforcement. Refuted Sonnet claim that BoneDelta(kwargs) fails — it works. |
 | animsequence/animsequence_tests.md | 57 | 🟡 | 43/11/3 | #448 | sonnet | No crash. Verified: search_animations is exact-match-only (core bug). + notify_class empty, track-name not persisted, morph flag, sync-marker float match. 2 confirmed-known (frame_rate=60→30, list duration=0). |
 | montage/montage_tests.md | 30 | ✅ | 30/0/0 | #461 | sonnet+opus | All 30 green. Fixed skill b_loops/b_is_loop→loops/is_loop. Minor: list_montages rejects None filter (use ""); no set_playback_rate_scale method. |
-| skeleton/skeleton_tests.md | 44 | ⬜ | – | – | – | |
+| skeleton/skeleton_tests.md | 43 | 🟡 | 38/3/2 | #466 | sonnet | Socket/retarget/curve-meta work. ⚠️ **DAMAGED SK_Mannequin** (4 stuck bones + orphan blend profiles — reparent_bone corrupts SkeletonModifier, silent false-positive commits). rename_bone duplicates; add_bone hits SHARED skeleton; no delete_blend_profile. **SK_Mannequin may need revert/re-import (restart if unsaved).** |
 | state-trees/state_trees_tests.md | ? | ⬜ | – | – | – | header format differs (0 `##`) |
 | umg/manage_umg_widget.md | 29 | ⬜ | – | – | – | |
 | umg/viewmodel_binding.md | 5 | ⬜ | – | – | – | |
