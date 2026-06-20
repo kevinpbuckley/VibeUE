@@ -45,7 +45,7 @@ Where something is broken or inefficient, we file a GitHub issue and move on.
 | animsequence/animsequence_tests.md | 57 | 🟡 | 43/11/3 | #448 | sonnet | No crash. Verified: search_animations is exact-match-only (core bug). + notify_class empty, track-name not persisted, morph flag, sync-marker float match. 2 confirmed-known (frame_rate=60→30, list duration=0). |
 | montage/montage_tests.md | 30 | ✅ | 30/0/0 | #461 | sonnet+opus | All 30 green. Fixed skill b_loops/b_is_loop→loops/is_loop. Minor: list_montages rejects None filter (use ""); no set_playback_rate_scale method. |
 | skeleton/skeleton_tests.md | 43 | 🟡 | 38/3/2 | #466 | sonnet | Socket/retarget/curve-meta work. ⚠️ **DAMAGED SK_Mannequin** (4 stuck bones + orphan blend profiles — reparent_bone corrupts SkeletonModifier, silent false-positive commits). rename_bone duplicates; add_bone hits SHARED skeleton; no delete_blend_profile. **SK_Mannequin may need revert/re-import (restart if unsaved).** |
-| state-trees/state_trees_tests.md | ? | ⬜ | – | – | – | header format differs (0 `##`) |
+| state-trees/state_trees_tests.md | 83 | 🟡 | 58/13/2 +10B | #468 | sonnet+opus | Large domain, no crash. Most of StateTreeService works (states/params/transitions/tasks/conditions/evaluators/considerations/linked/bindings). 10 BLOCKED = missing fixtures (ST_Cube asset, BP_Cube_1/2 actors w/ StateTreeComponent). **Verified bug:** `move_task` returns True but never reorders (#468). **Refuted 2 Sonnet "FAIL"s:** transition enabled/delay DO persist with documented gate flags `set_enabled`/`set_delay` — Sonnet omitted gates AND skill docs (changelog.md/blueprint-tasks.md) showed wrong `b_`-prefixed names → **fixed**. Other PARTIALs were natural-language prompt wording (int→Int32, "Value"→Constant, "LinkedSubtree"→set_linked_subtree) — skill is correct. |
 | umg/manage_umg_widget.md | 29 | ⬜ | – | – | – | |
 | umg/viewmodel_binding.md | 5 | ⬜ | – | – | – | |
 | umg/widget_hierarchy.md | 4 | ⬜ | – | – | – | |
@@ -72,6 +72,7 @@ Where something is broken or inefficient, we file a GitHub issue and move on.
 - [#445](https://github.com/kevinpbuckley/VibeUE/issues/445) — `add_function_parameter` skill example passes default value into the `is_output` positional slot.
 - [#446](https://github.com/kevinpbuckley/VibeUE/issues/446) — 🔴 **CRASH**: compiling an Anim Blueprint with a state machine via `BlueprintTools.compile_blueprint` → fatal `AnimationStateMachineSchema → EdGraphSchema_K2` cast. Blocks all anim domains until a crash-safe compile exists.
 - [#467](https://github.com/kevinpbuckley/VibeUE/issues/467) — `SoundCueService.add_quality_level_node` creates a fixed single-slot node (project `AudioQualitySettings`-driven); no `num_inputs`, so multi-quality cues can't be wired. Low severity.
+- [#468](https://github.com/kevinpbuckley/VibeUE/issues/468) — `StateTreeService.move_task` returns True but never reorders the Tasks array (silent no-op). + secondary: `set_selection_behavior` accepts unknown enum strings silently. Skill docs `b_`-prefixed kwarg/field names for `update_transition` fixed inline.
 
 ## Process notes (learned from pilot)
 

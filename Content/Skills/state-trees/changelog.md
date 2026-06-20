@@ -133,9 +133,12 @@ unreal.StateTreeService.update_transition(
     priority="Normal",
     event_tag="",                     # gameplay tag for OnEvent trigger
     event_payload_struct="",          # e.g. "FStartChasingPayload", "None" to clear
-    b_set_enabled=True, b_enabled=True,
-    b_set_delay=True, b_delay_transition=True, delay_duration=1.5, delay_random_variance=0.5
+    # Gate flags: the change is ONLY applied when its set_* flag is True.
+    set_enabled=True, enabled=True,
+    set_delay=True, delay_transition=True, delay_duration=1.5, delay_random_variance=0.5
 )
+# NOTE: kwargs are set_enabled / enabled / set_delay / delay_transition (NO "b_" prefix).
+# Passing enabled=/delay_transition= WITHOUT the matching set_* gate is a deliberate no-op.
 
 # Remove a transition by index
 unreal.StateTreeService.remove_transition(path, "Root/Idle", 0)
