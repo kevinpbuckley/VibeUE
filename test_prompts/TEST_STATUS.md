@@ -53,7 +53,7 @@ Where something is broken or inefficient, we file a GitHub issue and move on.
 | niagara/scratchpad_trackpainter.md | 9 | ⬜ | – | – | – | |
 | metasounds/metasounds_tests.md | 39 | ⬜ | – | – | – | |
 | sound-cues/sound_cues_tests.md | 45 | ⬜ | – | – | – | |
-| foliage/foliage_tests.md | 14 | ⬜ | – | – | – | |
+| foliage/foliage_tests.md | 31 | ✅ | 26/2/0 +2B | #454 | sonnet | FoliageService clean/complete. Issues are mostly test-file expectation bugs (GroundSlopeAngle vs AlignMaxAngle, origin-centered rect, missing paint layers). 1 behavior note: add_foliage_instances places off-landscape points at z=0 (doc says reject). |
 | landscape/landscape_tests.md | 77 | ⬜ | – | – | – | |
 | map-blockout/map_blockout_tests.md | 28 | ⬜ | – | – | – | |
 | pcg/pcg_tests.md | 22 | ⬜ | – | – | – | |
