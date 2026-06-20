@@ -57,6 +57,18 @@ reached with `call_tool` (discover them with `list_toolsets` / `describe_toolset
 
 ## ⚠️ System / emitter / parameter CRUD → engine NiagaraToolsets
 
+> 🛑 **CRASH RISK — Niagara user-parameter ops (issue #464).** The engine
+> `NiagaraToolset_System.AddUserVariables` tool (the "add user parameter" path) can trigger a
+> **fatal engine assertion** (`NiagaraVariant.cpp:108 InCount > 0`) that hard-crashes the editor —
+> it builds an `FNiagaraVariant` with a zero-byte payload when the variable's type/default yields no
+> value bytes. **Do NOT add Niagara user parameters via this tool until #464 is fixed.** Worse: a
+> system left half-modified by a failed `AddUserVariables` is corrupted, and subsequent **read** ops
+> on it (`GetUserVariables`, `GetSystemCompileState`, `GetEmitterTopology`, `GetEmitterSummary`, …)
+> then crash with an array-index-out-of-bounds. If a user parameter is truly required, supply a
+> concrete **non-empty** default for the exact type and verify the system still reads back before
+> doing anything else. For scratch-module work, prefer the crash-safe `NiagaraScratchPadService`
+> (validated solid in the sweep).
+
 Creating a system, adding/copying/removing emitters, adding user parameters, listing emitters,
 compiling — these moved to the engine. Discover and call them like this:
 

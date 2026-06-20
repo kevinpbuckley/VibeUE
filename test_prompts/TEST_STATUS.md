@@ -50,7 +50,7 @@ Where something is broken or inefficient, we file a GitHub issue and move on.
 | umg/viewmodel_binding.md | 5 | ⬜ | – | – | – | |
 | umg/widget_hierarchy.md | 4 | ⬜ | – | – | – | |
 | niagara/niagara_test.md | ~62 | 🟡 | 42/8/4 | #462 #463 | sonnet+opus | ScratchPadService solid; engine NiagaraToolsets CRUD works. **Verified:** NiagaraService/EmitterService docstrings advertise unbound methods (move/duplicate/copy_emitter, get_module_info...); no emitter dup/copy; Niagara delete_asset fails. Agent's "AssetEditorSubsystem broken" = interpreter namespace pollution (#463), restored. |
-| niagara/scratchpad_trackpainter.md | 9 | ⬜ | – | – | – | |
+| niagara/scratchpad_trackpainter.md | 9 | ❌ | deferred | #464 | – | NOT run — niagara user-param/read ops **crash the editor** (#464: AddUserVariables→NiagaraVariant assert; reads on the corrupted system→array-OOB). Scratchpad core already validated solid in #462. Added 🛑 crash guard to niagara-systems skill steering away from AddUserVariables. |
 | metasounds/metasounds_tests.md | ~38 | ✅ | 36/2/0 | #460 | sonnet | MetaSoundService solid (graph/node CRUD, IO, scenarios all work). API gaps only: no read-back of node input defaults / connections; AudioMixer name convention undocumented; batch-delete 30s timeout. |
 | sound-cues/sound_cues_tests.md | 45 | ⬜ | – | – | – | |
 | foliage/foliage_tests.md | 31 | ✅ | 26/2/0 +2B | #454 | sonnet | FoliageService clean/complete. Issues are mostly test-file expectation bugs (GroundSlopeAngle vs AlignMaxAngle, origin-centered rect, missing paint layers). 1 behavior note: add_foliage_instances places off-landscape points at z=0 (doc says reject). |
