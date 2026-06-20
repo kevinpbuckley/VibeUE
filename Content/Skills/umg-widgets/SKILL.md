@@ -62,6 +62,11 @@ unreal.WidgetService.add_component(path, "CanvasPanel", "RootCanvas", "", True) 
 unreal.WidgetService.add_component(path, "Button", "PlayButton", "RootCanvas", False)
 ```
 
+> ⚠️ **Widget names are unique per-blueprint, NOT per-parent.** UMG enforces one name across the
+> whole Widget Blueprint, so you can't add an `ItemLabel`/`ItemButton` under each of `Item1`,
+> `Item2`, `Item3`. Suffix per-parent (`Item1Label`, `Item2Label`, …) — reusing a name silently
+> lands the component on the wrong parent or no-ops.
+
 ### 🚨 Property values are ALWAYS strings
 
 ```python
@@ -95,6 +100,13 @@ examples in `scripts/apply_font.pyx` and `scripts/apply_brush.pyx`.
 > but typeface/family do not go through the struct sub-property path). Always change typeface/family
 > via `set_font` with a `WidgetFontInfo`. Don't trust the `True/False` return of `set_property` on
 > nested struct sub-fields — read it back to confirm.
+
+> ⚠️ **`get_font` readback quirk (issue #470):** the struct-typed string fields `color`,
+> `shadow_color`, and `shadow_offset` come back as **two concatenated representations** glued
+> together, e.g. `shadow_offset == "(X=0.0,Y=0.0)(X=1.000000,Y=1.000000)"`. The *trailing*
+> parenthesized group is the real value. Scalar fields (`size`, `typeface`, `font_family`,
+> `letter_spacing`, `outline_size`) are clean. When verifying a font round-trip, parse the last
+> `(...)` group of these three fields (or compare scalars only) until #470 is fixed.
 
 ### 🚨 Animations require real property paths
 
