@@ -211,17 +211,17 @@ Each struct field is read-only data already populated; just read it.
 
 **`MontageSectionInfo`** (from `list_sections`):
 `section_name`, `section_index`, `start_time`, `end_time`, `duration`, `next_section_name`,
-`b_loops`, `segment_count`.
+`loops`, `segment_count`.
 
 **`AnimSegmentInfo`** (from `list_anim_segments` / `get_anim_segment_info`):
 `segment_index`, `anim_sequence_path`, `anim_name`, `start_time`, `duration`, `play_rate`,
-`anim_start_pos`, `anim_end_pos`, `loop_count`, `b_loops`.
+`anim_start_pos`, `anim_end_pos`, `loop_count`, `loops`.
 *(Segments have NO `end_time` — that field exists only on sections. Compute segment end as
 `start_time + duration`. Source-clip range is `anim_start_pos` → `anim_end_pos`.)*
 
 **`SlotTrackInfo`** (from `list_slot_tracks`): `track_index`, `slot_name`, `segment_count`, `total_duration`.
 
-**`SectionLink`** (from `get_all_section_links`): `from_section`, `to_section`, `b_is_loop`.
+**`SectionLink`** (from `get_all_section_links`): `from_section`, `to_section`, `is_loop`.
 
 **`BranchingPointInfo`** (from `list_branching_points`): `index`, `notify_name`, `trigger_time`, `section_name`.
 
