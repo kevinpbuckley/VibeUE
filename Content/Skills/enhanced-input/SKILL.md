@@ -65,7 +65,7 @@ Verify any other name with `get_available_keys("thumb")` (substring filter) inst
 ### ⚠️ Triggers and Modifiers
 
 **Triggers:** `Pressed`, `Released`, `Down`, `Hold`, `Tap`, `Pulse`  
-**Modifiers:** `Negate`, `DeadZone`, `Scalar`, `SwizzleInputAxisValues`
+**Modifiers:** `Negate`, `DeadZone`, `Scalar`, `SwizzleAxis` (also: `Smooth`, `SmoothDelta`, `ScaleByDeltaTime` — use `get_available_modifier_types()` for the full set)
 
 ---
 
