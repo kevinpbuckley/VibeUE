@@ -31,7 +31,7 @@ Where something is broken or inefficient, we file a GitHub issue and move on.
 | blueprint/blueprint_tests.md | 67 | 🟡 | 5/1/0 suites | #449 | sonnet+opus | Suites 1–5 PASS — **validates #444 refPath fix end-to-end**. Verified+fixed in skill: `int` not `int32` (authoritative type set documented), `add_object_variable` uses `object_class` {refPath}. #449 tracks remaining doc gaps (IA/self-call discovery, root-component order, macro-library creation). Suite 6 macro-creation deferred (agent's "crash" was a false MCP-disconnect, no dump). |
 | enhanced_input/enhanced_input_test.md | 7 | ⬜ | – | – | – | |
 | enum_struct/enum_struct_tests.md | 18 | ⬜ | – | – | – | |
-| data_asset/data_asset_test.md | 20 | ⬜ | – | – | – | |
+| data_asset/data_asset_test.md | 20 | 🟡 | 17/2/6B | #451 | sonnet+opus | Works via native get/set_editor_property. **Verified:** no VibeUE DataAssetService + no data-asset skill exist (only engine DataAssetTools.create). 6 BLOCKED = test references non-DataAsset classes (PhysicalMaterial/SoundAttenuation/MPC). |
 | data_table/data_table_test.md | 17 | ⬜ | – | – | – | |
 | gameplay-tags/gameplay_tags_tests.md | ? | ⬜ | – | – | – | header format differs (0 `##`) |
 | color/color_testing.md | 12 | 🟡 | 0/7/5 | #450 | sonnet+opus | Core asset/node creation works + UE tuple `(R=,G=,B=,A=)` works everywhere, but friendly formats (hex/named/temp/arrays) NOT wired into setters despite FJsonValueHelper existing. **Verified in source:** MaterialNodeService.set_expression_property returns `true` on failure (false-positive, line 1004). |
