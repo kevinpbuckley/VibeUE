@@ -113,6 +113,20 @@ Engine structs need the `F` prefix: color variables are `"FLinearColor"` / `"FCo
 plain `"LinearColor"` / `"Color"` is not resolved. Unsure of a type string? Use the surviving
 `unreal.BlueprintService.search_variable_types("Linear")` to look it up.
 
+**Supported primitive `type_name` values (exact):** `bool`, `int`, `float`, `byte`, `name`, `string`,
+`text`, `Vector`, `Rotator`, `Transform`, `Vector2D`, `LinearColor`. Use `int` (**not** `int32`) and
+`float` (**not** `double`) — `add_variable` rejects `int32`/`double` with
+*"Unknown type 'int32'. Supported: …"*. For other engine structs (e.g. `FColor`, `FGameplayTag`) use
+`add_struct_variable` with `struct_type`; for object/class refs use `add_object_variable` with
+`object_class` as a `{refPath}`:
+
+```python
+# Object-reference variable — object_class is a {refPath} to the class
+call_tool("add_object_variable", "editor_toolset.toolsets.blueprint.BlueprintTools",
+    {"blueprint": {"refPath": "/Game/BP_MyActor.BP_MyActor"}, "name": "DeathFX",
+     "object_class": {"refPath": "/Script/Niagara.NiagaraSystem"}})
+```
+
 ### ⚠️ Adding a function graph — engine `BlueprintTools.add_function_graph`
 
 Creating a function graph moved to the engine toolset (`create_function` / `add_function` on
