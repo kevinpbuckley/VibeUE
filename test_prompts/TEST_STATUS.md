@@ -4,6 +4,19 @@ Tracking sweep of every file under `test_prompts/`. Goal: confirm an agent can c
 each prompt **efficiently** using a mix of Epic's native toolsets and VibeUE's tools/skills.
 Where something is broken or inefficient, we file a GitHub issue and move on.
 
+> ✅ **SWEEP COMPLETE — all 39 files triaged.** Issues #444–#471 filed (label `test-sweep`).
+> Roughly two-thirds of domains are green; most ❌/⏭️ are missing content fixtures, an absent
+> service (transactions #469), an unconfigured terrain API key, or human-only/UI tests — not code
+> defects. Two editor-crashers found are **engine bugs** (binary engine, unpatchable here):
+> anim-BP compile #446 and Niagara `AddUserVariables` #464 (skill crash-guard added). Cheap
+> skill-doc fixes were applied inline across ~12 skills as the sweep ran.
+>
+> **Follow-ups needing the user:** (1) `SK_Mannequin` was damaged by the skeleton run (#466) —
+> revert/re-import; an editor restart reverts it if unsaved. (2) terrain-data needs a `VibeUEApiKey`
+> in `EditorPerProjectUserSettings.ini` before that domain (and the water-features `issues.md`
+> findings) can be re-tested. (3) uv-mapping + several umg/state-tree BLOCKED steps need content
+> fixtures (`/Game/Meshes/SM_*`, a `UMVVMViewModelBase` subclass, `ST_Cube`, `BP_Cube_1/2` actors).
+
 ## Process
 
 - **Test with Sonnet, fix with Opus.** A Sonnet subagent drives the live editor through the
@@ -36,7 +49,7 @@ Where something is broken or inefficient, we file a GitHub issue and move on.
 | gameplay-tags/gameplay_tags_tests.md | 10 | ✅ | 10/0/0 | #455 | sonnet+opus | All green; skill verified accurate (single-tag CRUD→engine GameplayTagsToolset, bulk add_tags on VibeUE). Minor: C++ docstring lists removed methods; RemoveTag error should name blocking assets. |
 | color/color_testing.md | 12 | 🟡 | 0/7/5 | #450 | sonnet+opus | Core asset/node creation works + UE tuple `(R=,G=,B=,A=)` works everywhere, but friendly formats (hex/named/temp/arrays) NOT wired into setters despite FJsonValueHelper existing. **Verified in source:** MaterialNodeService.set_expression_property returns `true` on failure (false-positive, line 1004). |
 | level_actors/level_actor_tests.md | 11 | ✅ | 11/0/0 | – | sonnet+opus | All 11 sections (36 steps) green; level restored. Fixed deprecated `TraceTypeQuery.TRACE_TYPE_QUERY1`→`ECC_VISIBILITY` in skill. |
-| viewport/viewport_tests.md | 20 | ⬜ | – | – | – | |
+| viewport/viewport_tests.md | 45 | 🟡 | 38/3/4 | #471 | sonnet+opus | ViewportService solid for what it exposes: view types (persp + 6 ortho), FOV, clip planes, exposure (fixed/auto), game view, cinematic, realtime, camera speed, all 5 layouts. 4 FAIL = `set_camera_location`/`set_camera_rotation` **don't exist** but the C++ class docstring advertises them (#471) — camera pose is set via engine (`EditorAppToolset.SetCameraTransform` / `UnrealEditorSubsystem.set_level_viewport_camera_info`, verified). **Skill already correct** (points to engine path, multi-pane realtime caveat, near-clip -1) — no skill edit. Secondary: set_realtime/get target different panes when viewport_index≠0 (skill-documented). |
 | transactions/transactions.md | 11 | ❌ | obsolete | #469 | opus | **No `TransactionService`** exists (not in Python services, not in source, no engine toolset). Raw Python only exposes grouping primitives (`SystemLibrary.begin/end/cancel_transaction`, `transact_object`) — **no undo/redo/history/count/description/can_undo/can_redo/reset**. ~9 of 11 sections impossible. Opus-verified directly (no Sonnet). Like logs #457: test file built around an absent service. Needs a TransactionService wrapping `GEditor->Trans` or a test rewrite. |
 | logs/log_reader_tests.md | 28 | 🟡 | obsolete | #457 | sonnet+opus | **Test file obsolete** — built around the cut `read_logs` tool. Capability works via Epic `LogsToolset.GetLogEntries` (must pass `category=""` + `pattern=""` — bad default `"LogsToolset"` verified) + Python file I/O. Needs test rewrite. |
 | materials/materials_tests.md | ~34 | 🟡 | 28/3/3 | #459 (+#450) | sonnet | F1 re-confirms #450. NEW: set_instance_parameters_bulk mis-parses hex (#FF00FF→white) & array (drops R); batch_create_expressions silent-fails on bad class ("Lerp"→use LinearInterpolate); list_expressions missing param_name for TextureObject; NodeTest stuck-delete after MEL (leftover in /Game/Tests/Materials/). |
@@ -75,6 +88,7 @@ Where something is broken or inefficient, we file a GitHub issue and move on.
 - [#468](https://github.com/kevinpbuckley/VibeUE/issues/468) — `StateTreeService.move_task` returns True but never reorders the Tasks array (silent no-op). + secondary: `set_selection_behavior` accepts unknown enum strings silently. Skill docs `b_`-prefixed kwarg/field names for `update_transition` fixed inline.
 - [#469](https://github.com/kevinpbuckley/VibeUE/issues/469) — `transactions.md` targets a non-existent `TransactionService`; raw Python only has transaction grouping (begin/end/cancel), no undo/redo/history/reset. Like #457 (logs): obsolete/aspirational test file. Needs a service wrapping `GEditor->Trans`, or a rewrite.
 - [#470](https://github.com/kevinpbuckley/VibeUE/issues/470) — `WidgetService.get_font` returns `color`/`shadow_color`/`shadow_offset` as two concatenated (unparseable) string representations; trailing `(...)` group is the real value. Scalars clean. Skill note added.
+- [#471](https://github.com/kevinpbuckley/VibeUE/issues/471) — `UViewportService` C++ class docstring advertises removed `set_camera_location`/`set_camera_rotation` (+ "19 operations"); camera pose is now engine-side (`EditorAppToolset`/`set_level_viewport_camera_info`). Plus doc nits: `exposure_settings_fixed`→`exposure_fixed`, near-clip `-1` reads back as resolved `10.0`. Skill already correct; docstring-only fix.
 
 ## Process notes (learned from pilot)
 
