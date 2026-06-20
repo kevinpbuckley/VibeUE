@@ -82,6 +82,19 @@ UE strips the `b` prefix from bool UPROPERTY names in Python:
 `list_nodes()` returns nodes in graph order — indices can change if new nodes are added.
 Always call `list_nodes()` to get current indices before connecting or modifying nodes.
 
+### ⚠️ Quality Level node has a fixed slot count
+
+`add_quality_level_node` creates a node whose input-slot count is governed by the project's
+**audio quality levels** (`AudioQualitySettings`), not by an argument — there is no `num_inputs`
+param. In a default/skeleton project this is often a **single slot**, so `connect_nodes(..., slot=1)`
+returns `False`. If a cue must select between sounds per scalability bucket, confirm the project
+defines multiple quality levels first; otherwise only slot 0 is wireable.
+
+### ⚠️ New-cue defaults: `volume_multiplier` is `0.75`, not `1.0`
+
+A freshly created empty cue reports `volume_multiplier = 0.75` (the engine `USoundCue` default),
+`pitch_multiplier = 1.0`. Do **not** assert `1.0` for volume on a new cue — read it back instead.
+
 ### ⚠️ `connect_nodes` parameter order
 
 ```python
@@ -208,7 +221,7 @@ svc.set_sound_class('/Game/Audio/SC_Explosion', '/Game/Audio/SC_SFX')
 | `add_distance_cross_fade_node(path, num_inputs, x, y)` | Crossfades by distance | `num_inputs` 2–32 |
 | `add_branch_node(path, x, y, bool_param='')` | Routes by bool parameter; True(0) False(1) Unset(2) | optional param name last |
 | `add_param_cross_fade_node(path, num_inputs, x, y)` | Crossfades by named float param | `num_inputs` 2–32 |
-| `add_quality_level_node(path, x, y)` | One input per quality level | — |
+| `add_quality_level_node(path, x, y)` | One input per quality level | slot count = project quality levels (see note) |
 
 ### Node Management
 
