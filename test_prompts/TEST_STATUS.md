@@ -38,7 +38,7 @@ Where something is broken or inefficient, we file a GitHub issue and move on.
 | level_actors/level_actor_tests.md | 11 | ✅ | 11/0/0 | – | sonnet+opus | All 11 sections (36 steps) green; level restored. Fixed deprecated `TraceTypeQuery.TRACE_TYPE_QUERY1`→`ECC_VISIBILITY` in skill. |
 | viewport/viewport_tests.md | 20 | ⬜ | – | – | – | |
 | transactions/transactions.md | 11 | ⬜ | – | – | – | |
-| logs/log_reader_tests.md | 28 | ⬜ | – | – | – | |
+| logs/log_reader_tests.md | 28 | 🟡 | obsolete | #457 | sonnet+opus | **Test file obsolete** — built around the cut `read_logs` tool. Capability works via Epic `LogsToolset.GetLogEntries` (must pass `category=""` + `pattern=""` — bad default `"LogsToolset"` verified) + Python file I/O. Needs test rewrite. |
 | materials/materials_tests.md | 31 | ⬜ | – | – | – | |
 | animation-blueprint/animation_blueprint.md | 74 | ❌ | – | #446 | – | **BLOCKS editor**: compile→fatal cast at KismetCompiler.cpp:5903 (`ReplaceConvertibleDelegates`, Epic CastChecked). The produced ABP is a *poison asset* (crashes on **load** too) — quarantined to `_crash_artifacts/`. Engine bug; binary-engine build means a source patch won't apply. Fix approach TBD (VibeUE pre-compile guard vs source-engine patch). |
 | animation-editing.md | 25 | 🟡 | 21/2/2 | #447 | sonnet | No crash (safe domain). Fixed: percentile5/95 doc naming. Filed: learn_from_animations sampling, preview_pose_delta None-on-fail, manual-constraint non-enforcement. Refuted Sonnet claim that BoneDelta(kwargs) fails — it works. |
