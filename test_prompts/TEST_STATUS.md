@@ -34,7 +34,7 @@ Where something is broken or inefficient, we file a GitHub issue and move on.
 | data_asset/data_asset_test.md | 20 | ⬜ | – | – | – | |
 | data_table/data_table_test.md | 17 | ⬜ | – | – | – | |
 | gameplay-tags/gameplay_tags_tests.md | ? | ⬜ | – | – | – | header format differs (0 `##`) |
-| color/color_testing.md | 31 | ⬜ | – | – | – | |
+| color/color_testing.md | 12 | 🟡 | 0/7/5 | #450 | sonnet+opus | Core asset/node creation works + UE tuple `(R=,G=,B=,A=)` works everywhere, but friendly formats (hex/named/temp/arrays) NOT wired into setters despite FJsonValueHelper existing. **Verified in source:** MaterialNodeService.set_expression_property returns `true` on failure (false-positive, line 1004). |
 | level_actors/level_actor_tests.md | 11 | ⬜ | – | – | – | |
 | viewport/viewport_tests.md | 20 | ⬜ | – | – | – | |
 | transactions/transactions.md | 11 | ⬜ | – | – | – | |
