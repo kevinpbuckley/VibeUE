@@ -54,7 +54,7 @@ AnimSequenceService.find_animations_for_skeleton(skeleton_path) -> Array[AnimSeq
 AnimSequenceService.list_anim_sequences(search_path, skeleton_filter) -> Array[AnimSequenceInfo]
 AnimSequenceService.get_anim_sequence_info(anim_path) -> AnimSequenceInfo
 AnimSequenceService.search_animations(name_pattern, search_path) -> Array[AnimSequenceInfo]
-SkeletonService.list_skeletons(search_path) -> Array
+SkeletonService.list_skeletons(search_path) -> Array[str]   # raw skeleton object paths, e.g. "/Game/.../SK_X.SK_X"
 ```
 `AnimSequenceInfo`: `anim_name`, `anim_path`, `duration`, `frame_count`.
 
@@ -67,7 +67,7 @@ SkeletonService.list_skeletons(search_path) -> Array
 **BoneConstraint**: `bone_name`, `min_rotation`, `max_rotation`, `is_hinge`, `hinge_axis` (0=X,1=Y,2=Z),
 `rotation_order` (default "YXZ").
 
-**LearnedBoneRange**: `bone_name`, `min_rotation`, `max_rotation`, `percentile_5`, `percentile_95`,
+**LearnedBoneRange**: `bone_name`, `min_rotation`, `max_rotation`, `percentile5`, `percentile95`,
 `sample_count`.
 
 **AnimationEditResult**: `success`, `modified_bones`, `start_frame`, `end_frame`, `was_clamped`,

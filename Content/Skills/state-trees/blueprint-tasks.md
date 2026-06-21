@@ -125,12 +125,12 @@ for t in types:
 - `considerations` (list of `FStateTreeNodeInfo`) — utility AI considerations; each node's `struct_type` is the full struct name (e.g. `"StateTreeConstantConsideration"`)
 
 `FStateTreeNodeInfo` now includes:
-- `b_considered_for_completion` (bool) — whether task contributes to state completion (tasks only)
+- `considered_for_completion` (bool) — whether task contributes to state completion (tasks only)
 - `operand` (str) — "Copy", "And", or "Or" (conditions only)
 
 `FStateTreeTransitionInfo` now includes:
 - `index` (int) — zero-based index within the state's transitions array
-- `b_delay_transition` (bool)
+- `delay_transition` (bool); read-back also exposes `enabled` (bool)
 - `delay_duration` (float)
 - `delay_random_variance` (float)
 - `required_event_tag` (str)

@@ -260,6 +260,16 @@ TArray<FEnumSearchResult> UEnumStructService::SearchEnums(
 
 		FString EnumName = Enum->GetName();
 
+		// Skip transient reinstancing/trash ghosts left by Blueprint/asset recompiles —
+		// these are duplicate UUserDefinedEnum copies in /Engine/Transient that otherwise
+		// leak through the bUserDefinedOnly filter (issue #453).
+		if (!IsValid(Enum) || Enum->GetOutermost() == GetTransientPackage()
+			|| EnumName.StartsWith(TEXT("REINST_")) || EnumName.StartsWith(TEXT("TRASHCLASS_"))
+			|| EnumName.StartsWith(TEXT("HOTRELOADED_")) || EnumName.StartsWith(TEXT("SKEL_")))
+		{
+			continue;
+		}
+
 		// Skip MAX entries and internal enums
 		if (EnumName.Contains(TEXT("_MAX")) || EnumName.StartsWith(TEXT("E_")))
 		{
@@ -716,6 +726,16 @@ TArray<FStructSearchResult> UEnumStructService::SearchStructs(
 		}
 
 		FString StructName = Struct->GetName();
+
+		// Skip transient reinstancing/trash ghosts left by Blueprint/asset recompiles —
+		// duplicate UUserDefinedStruct copies in /Engine/Transient that otherwise leak
+		// through the bUserDefinedOnly filter (issue #453).
+		if (!IsValid(Struct) || Struct->GetOutermost() == GetTransientPackage()
+			|| StructName.StartsWith(TEXT("REINST_")) || StructName.StartsWith(TEXT("TRASHCLASS_"))
+			|| StructName.StartsWith(TEXT("HOTRELOADED_")) || StructName.StartsWith(TEXT("SKEL_")))
+		{
+			continue;
+		}
 
 		bool bIsUserDefined = Struct->IsA<UUserDefinedStruct>();
 

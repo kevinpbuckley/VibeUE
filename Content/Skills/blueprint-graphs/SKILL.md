@@ -48,6 +48,12 @@ related_skills:
 | `get_connected_nodes()` | `get_node_details()` (pins include connections) or `get_node_pins()` + `pin.is_connected` |
 | `unreal.find_class()` | `unreal.load_class(None, "/Script/Module.ClassName")` |
 
+> ⚠️ **Engine `BlueprintTools` `call_tool` args are `{refPath}` objects, not strings.** Every
+> `arguments={"blueprint": path, ...}` / `{"blueprint": bp_path}` below is shorthand — the engine
+> toolset needs `{"refPath": "/Game/Dir/BP.BP"}` (full object path, `.AssetName` suffix required) and
+> returns `{"returnValue": null}` on success. See the **blueprints** skill for the `bp_ref_of()` helper.
+> VibeUE's own `unreal.BlueprintService.*` methods are unaffected — they take plain string paths.
+
 > **Node creation moved to the engine toolset.** The old per-node convenience creators
 > (`add_function_call_node`, `add_event_node`, `add_get_variable_node`, `add_set_variable_node`,
 > `add_member_get_node`, `add_validated_get_node`) and the basics (`create_blueprint`,
@@ -144,6 +150,35 @@ for n in selected:
 ```
 
 Use this when the user says "this node", "the selected node(s)", "what I have highlighted", or "the one I'm looking at". An empty result means *nothing is selected in any open Blueprint editor* — ask the user to click a node in the graph rather than guessing.
+
+### 🧭 "What am I looking at?" — `get_focused_graph_context()`
+
+When the user says "this Blueprint", "the graph I have open", "the current material", or "what I'm looking at" **without naming the asset**, call `get_focused_graph_context()` first instead of guessing a path or chaining `list_graphs` → `get_selected_nodes`. It returns the asset **and** the focused graph in one shot — VibeUE's analogue of Epic's `GetDockedContext()`. It anchors on the globally-active editor tab (falling back to the first open supported editor).
+
+It covers both **Blueprint-family editors** and the **Material editor**. Fields:
+
+| Field | Notes |
+|---|---|
+| `found` | bool — `False` if no supported editor is open. **Note the stripped `b`** (UE Python: `bFound` → `found`). |
+| `asset_path` | full object path — feed straight into `BlueprintPath` params |
+| `asset_name` | short name, e.g. `"BP_Player"` |
+| `editor_type` | `"BlueprintEditor"` / `"WidgetBlueprintEditor"` / `"AnimationBlueprintEditor"` / `"MaterialEditor"` |
+| `graph_name` | focused graph tab, e.g. `"EventGraph"` — feed into `GraphName` params (Blueprints) |
+| `graph_kind` | `"Ubergraph"` / `"Function"` / `"Macro"` / `"DelegateSignature"` / `"Material"` / `"Other"` |
+| `graph_node_count` | node count of the focused graph |
+| `selected_nodes` | same `FBlueprintNodeInfo` shape as `get_selected_nodes()` |
+
+```python
+ctx = unreal.BlueprintService.get_focused_graph_context()
+if ctx.found and ctx.graph_kind != "Material":
+    # asset_path + graph_name drop straight into the other Blueprint tools
+    nodes = unreal.BlueprintService.get_nodes_in_graph(ctx.asset_path, ctx.graph_name)
+    sel = [n.node_id for n in ctx.selected_nodes]
+```
+
+> **Materials:** when `graph_kind == "Material"`, the Blueprint graph tools (`get_nodes_in_graph`, `build_graph`) do **not** apply — use `MaterialNodeService` keyed by `ctx.asset_path`. `selected_nodes` is still populated (material expression nodes), but `graph_name` is the internal material-graph name, not a Blueprint graph tab.
+
+`found == False` means no Blueprint/Material editor is open — ask the user to open the asset rather than guessing a path.
 
 ### 💬 Comment Boxes — `add_comment_node()` / `add_comment_around_nodes()`
 
@@ -401,7 +436,31 @@ A full `AssetPath:GraphName` string is also accepted for user-defined macro libr
 Notes:
 - `IsValid` places **one** node exposing both `Is Valid` and `Is Not Valid` exec outputs — there is no separate `IsNotValid` macro.
 - `MultiGate` is `K2Node_MultiGate` (a distinct node type), not a StandardMacro — it is not in this list.
-- To create a macro graph on a `MacroLibrary` Blueprint, use `create_macro_graph(lib_path, "MacroName")` (the engine `BlueprintTools.add_function_graph` path asserts on MacroLibrary BPs).
+- To create a macro graph on a `MacroLibrary` Blueprint, use `create_macro_graph(lib_path, "MacroName")` (the engine `BlueprintTools.add_function_graph` path asserts on MacroLibrary BPs). To create the **library asset** itself from Python (issue #449):
+  ```python
+  f = unreal.BlueprintMacroFactory()   # NOT BlueprintFactory
+  unreal.AssetToolsHelpers.get_asset_tools().create_asset("ML_X", "/Game/Macros", unreal.Blueprint, f)
+  unreal.BlueprintService.create_macro_graph("/Game/Macros/ML_X", "MyMacro")
+  # reference it from a graph: add_macro_instance_node(bp, graph, "/Game/Macros/ML_X.ML_X:MyMacro", x, y)
+  ```
+
+### 🔎 Calling a function (self / parent / library) — discover the spawner key (#449)
+
+`build_graph`'s `function_call` works for library statics, but the **most reliable** way to add a
+call to a **self** function, a **parent-class** function (Character/Pawn/Actor…), or any discoverable
+function is `discover_nodes` → `create_node_by_key`:
+
+```python
+# Find the function — self functions show category "Self Functions"; parents show "FUNC Parent::Func"
+hits = unreal.BlueprintService.discover_nodes(bp, "Jump")        # search_term (NOT a graph name)
+key  = hits[0].spawner_key                                       # e.g. "FUNC Character::Jump"
+node = unreal.BlueprintService.create_node_by_key(bp, "EventGraph", key, 400, 200)
+```
+
+`discover_nodes(blueprint_path, search_term, category="", max_results=20)` surfaces the blueprint's
+OWN functions (your custom functions, callable on self) plus the full parent hierarchy and library
+functions. The returned `spawner_key` (`"FUNC <Class>::<Func>"`) feeds straight into
+`create_node_by_key` — this is how you add a **self-call** node deterministically.
 
 ### ⚠️ Complex Graphs: Create and Verify One Node at a Time
 

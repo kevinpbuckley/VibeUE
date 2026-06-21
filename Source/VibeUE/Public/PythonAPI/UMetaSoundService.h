@@ -148,6 +148,56 @@ struct FMetaSoundNodeInfo
 	float PosY = 0.0f;
 };
 
+/** A single node input pin's current value: its literal default + whether it's wired. */
+USTRUCT(BlueprintType)
+struct FMetaSoundInputValue
+{
+	GENERATED_BODY()
+
+	/** Input pin name. */
+	UPROPERTY(BlueprintReadOnly, Category = "VibeUE|Audio|MetaSound")
+	FString Name;
+
+	/** Data type, e.g. "Float", "Audio", "Trigger". */
+	UPROPERTY(BlueprintReadOnly, Category = "VibeUE|Audio|MetaSound")
+	FString DataType;
+
+	/** Current literal default value as a string. Ignored at runtime when bIsConnected is true. */
+	UPROPERTY(BlueprintReadOnly, Category = "VibeUE|Audio|MetaSound")
+	FString DefaultValue;
+
+	/** True if a connection feeds this input (the literal default is then overridden). */
+	UPROPERTY(BlueprintReadOnly, Category = "VibeUE|Audio|MetaSound")
+	bool bIsConnected = false;
+};
+
+/** A single edge (wire) in the graph: FromNode.Output -> ToNode.Input. */
+USTRUCT(BlueprintType)
+struct FMetaSoundConnection
+{
+	GENERATED_BODY()
+
+	/** GUID string of the source node. */
+	UPROPERTY(BlueprintReadOnly, Category = "VibeUE|Audio|MetaSound")
+	FString FromNodeId;
+
+	/** Output pin name on the source node. */
+	UPROPERTY(BlueprintReadOnly, Category = "VibeUE|Audio|MetaSound")
+	FString FromOutput;
+
+	/** GUID string of the destination node. */
+	UPROPERTY(BlueprintReadOnly, Category = "VibeUE|Audio|MetaSound")
+	FString ToNodeId;
+
+	/** Input pin name on the destination node. */
+	UPROPERTY(BlueprintReadOnly, Category = "VibeUE|Audio|MetaSound")
+	FString ToInput;
+
+	/** Data type carried by the connection. */
+	UPROPERTY(BlueprintReadOnly, Category = "VibeUE|Audio|MetaSound")
+	FString DataType;
+};
+
 // ============================================================================
 // SERVICE
 // ============================================================================
@@ -253,6 +303,32 @@ public:
 	/** Return pin information for a single node. */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|MetaSound")
 	FMetaSoundNodeInfo GetNodePins(const FString& AssetPath, const FString& NodeId);
+
+	/**
+	 * Read back the CURRENT literal default value of a single node input pin
+	 * (the counterpart to set_node_input_default). Returns "" if the node/pin
+	 * isn't found. If the input is connected, the value is the underlying default,
+	 * not the connected signal — use get_node_input_values to see is_connected. (#460)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|MetaSound")
+	FString GetNodeInputDefault(const FString& AssetPath,
+	                            const FString& NodeId,
+	                            const FString& InputName);
+
+	/**
+	 * Read back every input pin on a node: name, data type, current literal default,
+	 * and whether it is connected. (#460)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|MetaSound")
+	TArray<FMetaSoundInputValue> GetNodeInputValues(const FString& AssetPath, const FString& NodeId);
+
+	/**
+	 * Read back every connection (edge) touching a node — both incoming (into its
+	 * inputs) and outgoing (from its outputs) — with the resolved node ids and pin
+	 * names on both ends. (#460)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|MetaSound")
+	TArray<FMetaSoundConnection> GetNodeConnections(const FString& AssetPath, const FString& NodeId);
 
 	// =========================================================================
 	// Connections

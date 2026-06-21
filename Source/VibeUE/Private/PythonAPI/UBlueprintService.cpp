@@ -67,6 +67,12 @@
 // For OpenFunctionGraph - Blueprint Editor navigation
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "BlueprintEditor.h"
+#include "Framework/Docking/TabManager.h"   // For FGlobalTabmanager (active-tab anchoring)
+#include "Widgets/Docking/SDockTab.h"        // For SDockTab::GetTabManagerPtr
+#include "Materials/Material.h"              // For UMaterial::MaterialGraph (focused-graph context)
+#include "MaterialGraph/MaterialGraph.h"     // For UMaterialGraph
+#include "IMaterialEditor.h"                 // For IMaterialEditor::GetSelectedNodes
+#include "AssetRegistry/ARFilter.h"          // For FARFilter (resolve original material asset path)
 // For FScopedTransaction (undo support)
 #include "ScopedTransaction.h"
 
@@ -4664,6 +4670,219 @@ TArray<FBlueprintNodeInfo> UBlueprintService::GetSelectedNodes(const FString& Bl
 	}
 
 	return NodeInfos;
+}
+
+
+FBlueprintFocusContext UBlueprintService::GetFocusedGraphContext()
+{
+	FBlueprintFocusContext Context;
+
+	UAssetEditorSubsystem* AssetEditorSubsystem = GEditor ? GEditor->GetEditorSubsystem<UAssetEditorSubsystem>() : nullptr;
+	if (!AssetEditorSubsystem)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GetFocusedGraphContext: AssetEditorSubsystem not available"));
+		return Context;
+	}
+
+	// Anchor on the globally-active dock tab so we report the editor the user is
+	// actually looking at. Epic's FAIAssistantDockContext walks up from the AI
+	// assistant's own docked widget; VibeUE is an external MCP agent with no
+	// widget of its own, so the active tab is our closest equivalent signal.
+	TSharedPtr<FTabManager> ActiveTabManager;
+	if (TSharedPtr<SDockTab> ActiveTab = FGlobalTabmanager::Get()->GetActiveTab())
+	{
+		ActiveTabManager = ActiveTab->GetTabManagerPtr();
+	}
+
+	// Resolve and fill the context from one open asset editor. Handles both the
+	// Blueprint family (FBlueprintEditor::GetFocusedGraph) and the Material editor
+	// (IMaterialEditor + UMaterial::MaterialGraph), mirroring the two branches of
+	// Epic's UAIAssistantToolset::GetDockedContext(). The editor-name guards avoid
+	// an unsafe static_cast onto unrelated editor types. Returns false if the asset
+	// isn't a supported graph editor or has no focused/built graph.
+	auto TryFill = [&Context](UObject* Asset, IAssetEditorInstance* EditorInstance) -> bool
+	{
+		if (!Asset || !EditorInstance)
+		{
+			return false;
+		}
+
+		const FName EditorName = EditorInstance->GetEditorName();
+
+		// --- Blueprint family (Blueprint / Widget / AnimBlueprint editors) ---
+		if (UBlueprint* Blueprint = Cast<UBlueprint>(Asset))
+		{
+			if (EditorName != FName(TEXT("BlueprintEditor"))
+				&& EditorName != FName(TEXT("WidgetBlueprintEditor"))
+				&& EditorName != FName(TEXT("AnimationBlueprintEditor")))
+			{
+				return false;
+			}
+
+			FBlueprintEditor* BlueprintEditor = static_cast<FBlueprintEditor*>(EditorInstance);
+			UEdGraph* FocusedGraph = BlueprintEditor->GetFocusedGraph();
+			if (!FocusedGraph)
+			{
+				return false;
+			}
+
+			Context.bFound = true;
+			Context.AssetPath = Blueprint->GetPathName();
+			Context.AssetName = Blueprint->GetName();
+			Context.EditorType = EditorName.ToString();
+			Context.GraphName = FocusedGraph->GetName();
+			Context.GraphNodeCount = FocusedGraph->Nodes.Num();
+
+			if (Blueprint->UbergraphPages.Contains(FocusedGraph))
+			{
+				Context.GraphKind = TEXT("Ubergraph");
+			}
+			else if (Blueprint->FunctionGraphs.Contains(FocusedGraph))
+			{
+				Context.GraphKind = TEXT("Function");
+			}
+			else if (Blueprint->MacroGraphs.Contains(FocusedGraph))
+			{
+				Context.GraphKind = TEXT("Macro");
+			}
+			else if (Blueprint->DelegateSignatureGraphs.Contains(FocusedGraph))
+			{
+				Context.GraphKind = TEXT("DelegateSignature");
+			}
+			else
+			{
+				// Collapsed/composite sub-graphs aren't in the top-level arrays.
+				Context.GraphKind = TEXT("Other");
+			}
+
+			for (UObject* SelectedObject : BlueprintEditor->GetSelectedNodes())
+			{
+				if (UEdGraphNode* GraphNode = Cast<UEdGraphNode>(SelectedObject))
+				{
+					Context.SelectedNodes.Add(MakeBlueprintNodeInfoFromNode(GraphNode));
+				}
+			}
+			return true;
+		}
+
+		// --- Material editor (mirrors Epic's GetDockedContext UMaterial branch) ---
+		if (UMaterial* Material = Cast<UMaterial>(Asset))
+		{
+			if (EditorName != FName(TEXT("MaterialEditor")))
+			{
+				return false;
+			}
+
+			// MaterialGraph is built by the editor and stays null until it exists.
+			UMaterialGraph* MaterialGraph = Material->MaterialGraph;
+			if (!MaterialGraph)
+			{
+				return false;
+			}
+
+			IMaterialEditor* MaterialEditor = static_cast<IMaterialEditor*>(EditorInstance);
+
+			// The material editor edits a transient preview duplicate, so the live
+			// UMaterial's path is "/Engine/Transient.<Name>" — useless for round-trips.
+			// Recover the original /Game asset by name from the AssetRegistry so the
+			// path feeds MaterialNodeService. Ambiguous (duplicate-named) or unfound
+			// cases fall back to the working-copy path; AssetName is always correct.
+			FString ResolvedPath = Material->GetPathName();
+			if (Material->GetPackage() == GetTransientPackage())
+			{
+				const FAssetRegistryModule& ARModule =
+					FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+				FARFilter Filter;
+				Filter.ClassPaths.Add(UMaterial::StaticClass()->GetClassPathName());
+				Filter.bRecursiveClasses = false;
+				TArray<FAssetData> Candidates;
+				ARModule.Get().GetAssets(Filter, Candidates);
+
+				const FName MaterialName = Material->GetFName();
+				int32 MatchCount = 0;
+				FString FirstMatch;
+				for (const FAssetData& Candidate : Candidates)
+				{
+					if (Candidate.AssetName == MaterialName)
+					{
+						if (MatchCount == 0)
+						{
+							FirstMatch = Candidate.GetObjectPathString();
+						}
+						++MatchCount;
+					}
+				}
+				if (MatchCount == 1)
+				{
+					ResolvedPath = FirstMatch;  // unambiguous original asset
+				}
+			}
+
+			Context.bFound = true;
+			Context.AssetPath = ResolvedPath;
+			Context.AssetName = Material->GetName();
+			Context.EditorType = EditorName.ToString();
+			Context.GraphName = MaterialGraph->GetName();
+			Context.GraphKind = TEXT("Material");
+			Context.GraphNodeCount = MaterialGraph->Nodes.Num();
+
+			// Material expression nodes are UEdGraphNode subclasses, so the same
+			// FBlueprintNodeInfo projection used for K2 nodes applies cleanly.
+			for (UObject* SelectedObject : MaterialEditor->GetSelectedNodes())
+			{
+				if (UEdGraphNode* GraphNode = Cast<UEdGraphNode>(SelectedObject))
+				{
+					Context.SelectedNodes.Add(MakeBlueprintNodeInfoFromNode(GraphNode));
+				}
+			}
+			return true;
+		}
+
+		return false;
+	};
+
+	// Single pass over open assets: prefer the editor whose tab manager owns the
+	// active tab; otherwise remember the first supported editor as a fallback.
+	UObject* FallbackAsset = nullptr;
+	IAssetEditorInstance* FallbackEditor = nullptr;
+
+	for (UObject* Asset : AssetEditorSubsystem->GetAllEditedAssets())
+	{
+		if (!Asset || !(Asset->IsA<UBlueprint>() || Asset->IsA<UMaterial>()))
+		{
+			continue;
+		}
+
+		IAssetEditorInstance* EditorInstance = AssetEditorSubsystem->FindEditorForAsset(Asset, /*bFocusIfOpen=*/false);
+		if (!EditorInstance)
+		{
+			continue;
+		}
+
+		if (ActiveTabManager.IsValid() && EditorInstance->GetAssociatedTabManager() == ActiveTabManager)
+		{
+			// The editor the user is actively focused on — use it directly.
+			if (TryFill(Asset, EditorInstance))
+			{
+				return Context;
+			}
+		}
+
+		if (!FallbackEditor)
+		{
+			FallbackAsset = Asset;
+			FallbackEditor = EditorInstance;
+		}
+	}
+
+	// No active-tab match (e.g. focus is on the Content Browser); fall back to the
+	// first open supported editor so the agent still gets useful context.
+	if (FallbackEditor)
+	{
+		TryFill(FallbackAsset, FallbackEditor);
+	}
+
+	return Context;
 }
 
 

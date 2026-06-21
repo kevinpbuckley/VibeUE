@@ -36,6 +36,35 @@ related_skills:
 
 ## Critical Rules
 
+### ⚠️ Engine `BlueprintTools` args are `{refPath}` objects, NOT strings
+
+Every UObject/UClass argument to the engine `BlueprintTools` toolset (`blueprint`, `asset_type`,
+`graph`, `parent_class`, …) is a **reference object** `{"refPath": "<object path>"}`, and these tools
+**return** the same shape. Passing a plain string fails with
+`"<x> is not a valid object path for property '<arg>'"`. This rule is **only** for the engine
+`BlueprintTools` `call_tool` path — VibeUE's own `unreal.BlueprintService.*` Python methods still take
+plain string paths.
+
+The `refPath` must be the **full object path** — `/Game/Dir/Asset.Asset` (the asset name repeated
+after the dot). A bare **package** path (`/Game/Dir/Asset`, no `.Asset`) is rejected. Two safe ways
+to get one:
+
+```python
+# (a) Reuse what create/load returns — it is already a {refPath} object:
+bp_ref = call_tool("create", "editor_toolset.toolsets.blueprint.BlueprintTools",
+                   {"folder_path": "/Game/BP", "asset_name": "BP_X",
+                    "asset_type": {"refPath": "/Script/Engine.Actor"}})["returnValue"]
+
+# (b) Build one from a package path you already have:
+def bp_ref_of(p):  # "/Game/Dir/BP_X" -> {"refPath": "/Game/Dir/BP_X.BP_X"}
+    name = p.rsplit("/", 1)[-1].split(".")[0]
+    return {"refPath": p if "." in p.rsplit("/", 1)[-1] else f"{p}.{name}"}
+```
+
+All the `arguments={"blueprint": path, ...}` / `{"blueprint": bp, ...}` examples in the sub-docs are
+shorthand — wrap the path with `bp_ref_of(...)` (or reuse the returned ref) when you actually call.
+On success these tools return `{"returnValue": null}`; an error comes back as a `Parameter error`.
+
 ### ⚠️ Creating a Blueprint — engine `BlueprintTools.create`
 
 Blueprint basics now live on the engine's `BlueprintTools` toolset (VibeUE extends the native MCP
@@ -43,16 +72,21 @@ endpoint). Create a Blueprint with `call_tool`, not `unreal.BlueprintService.cre
 method was cut):
 
 ```python
-# CORRECT — engine BlueprintTools.create (args: folder_path, asset_name, asset_type)
-call_tool(
+# CORRECT — folder_path + asset_name are strings; asset_type is a {refPath} class reference.
+result = call_tool(
     tool_name="create",
     toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
-    arguments={"folder_path": "/Game/Blueprints", "asset_name": "BP_MyActor", "asset_type": "Actor"},
+    arguments={"folder_path": "/Game/Blueprints", "asset_name": "BP_MyActor",
+               "asset_type": {"refPath": "/Script/Engine.Actor"}},
 )
+# -> {"returnValue": {"refPath": "/Game/Blueprints/BP_MyActor.BP_MyActor"}}
+bp_ref = result["returnValue"]   # reuse this {refPath} object for later BlueprintTools calls
 ```
 
 The folder and asset name are passed separately (`folder_path` + `asset_name`) — do not jam a full
-asset path into one argument. `asset_type` is the parent class (e.g. `Actor`, `Pawn`, `Character`).
+asset path into one argument. `asset_type` is the parent **class** as a `{refPath}`:
+`/Script/Engine.Actor`, `/Script/Engine.Pawn`, `/Script/Engine.Character`, or a Blueprint's generated
+class `"/Game/.../BP_Base.BP_Base_C"`.
 
 ### Blueprint Types in add_variable — engine `BlueprintTools.add_variable`
 
@@ -61,11 +95,11 @@ was cut). Use `call_tool` with `blueprint`, `name`, `type_name` (and `add_object
 `add_struct_variable` for object- and struct-typed variables):
 
 ```python
-# CORRECT — engine BlueprintTools.add_variable (args: blueprint, name, type_name)
+# CORRECT — blueprint is a {refPath} object; name/type_name are strings
 call_tool(
     tool_name="add_variable",
     toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
-    arguments={"blueprint": "/Game/BP_MyActor", "name": "Health", "type_name": "float"},
+    arguments={"blueprint": {"refPath": "/Game/BP_MyActor.BP_MyActor"}, "name": "Health", "type_name": "float"},
 )
 ```
 
@@ -79,6 +113,20 @@ Engine structs need the `F` prefix: color variables are `"FLinearColor"` / `"FCo
 plain `"LinearColor"` / `"Color"` is not resolved. Unsure of a type string? Use the surviving
 `unreal.BlueprintService.search_variable_types("Linear")` to look it up.
 
+**Supported primitive `type_name` values (exact):** `bool`, `int`, `float`, `byte`, `name`, `string`,
+`text`, `Vector`, `Rotator`, `Transform`, `Vector2D`, `LinearColor`. Use `int` (**not** `int32`) and
+`float` (**not** `double`) — `add_variable` rejects `int32`/`double` with
+*"Unknown type 'int32'. Supported: …"*. For other engine structs (e.g. `FColor`, `FGameplayTag`) use
+`add_struct_variable` with `struct_type`; for object/class refs use `add_object_variable` with
+`object_class` as a `{refPath}`:
+
+```python
+# Object-reference variable — object_class is a {refPath} to the class
+call_tool("add_object_variable", "editor_toolset.toolsets.blueprint.BlueprintTools",
+    {"blueprint": {"refPath": "/Game/BP_MyActor.BP_MyActor"}, "name": "DeathFX",
+     "object_class": {"refPath": "/Script/Niagara.NiagaraSystem"}})
+```
+
 ### ⚠️ Adding a function graph — engine `BlueprintTools.add_function_graph`
 
 Creating a function graph moved to the engine toolset (`create_function` / `add_function` on
@@ -88,7 +136,7 @@ Creating a function graph moved to the engine toolset (`create_function` / `add_
 call_tool(
     tool_name="add_function_graph",
     toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
-    arguments={"blueprint": "/Game/Blueprints/BP_MyActor", "graph_name": "DoThing"},
+    arguments={"blueprint": {"refPath": "/Game/Blueprints/BP_MyActor.BP_MyActor"}, "graph_name": "DoThing"},
 )
 ```
 
@@ -147,7 +195,7 @@ unreal.BlueprintService.set_property(bp, "bReplicates", "True")
 # Compile via the engine BlueprintTools toolset (compile_blueprint was cut from BlueprintService):
 # call_tool(tool_name="compile_blueprint",
 #           toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
-#           arguments={"blueprint": bp})
+#           arguments={"blueprint": {"refPath": "/Game/Blueprints/TestActor.TestActor"}})
 unreal.EditorAssetLibrary.save_asset(bp)
 ```
 

@@ -82,7 +82,8 @@ bp_path = "/Game/BP_Player"
 call_tool(tool_name="add_function_graph",
           toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
           arguments={"blueprint": bp_path, "name": "TakeDamage", "is_pure": False})
-unreal.BlueprintService.add_function_parameter(bp_path, "TakeDamage", "Amount", "float", "0.0")  # input
+unreal.BlueprintService.add_function_parameter(bp_path, "TakeDamage", "Amount", "float", default_value="0.0")  # input
+# NOTE: the 5th positional arg is is_output (bool) — pass the default by keyword, or "0.0" makes it an OUTPUT.
 # (use add_function_parameter / the engine toolset for the NewHealth output too)
 call_tool(tool_name="compile_blueprint",
           toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",

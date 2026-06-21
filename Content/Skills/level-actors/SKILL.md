@@ -362,7 +362,7 @@ arrived = unreal.Vector.distance(actor.get_actor_location(), target) < 1.0
 world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()
 hit = unreal.SystemLibrary.line_trace_single(
     world, start_loc, target,
-    unreal.TraceTypeQuery.TRACE_TYPE_QUERY1,   # Visibility channel
+    unreal.TraceTypeQuery.ECC_VISIBILITY,      # Visibility channel (TRACE_TYPE_QUERY1 is the deprecated alias)
     False, [actor],                            # ignore the moving actor itself
     unreal.DrawDebugTrace.NONE, True)
 if hit and hit.to_tuple()[0]:                  # [0] = blocking hit bool

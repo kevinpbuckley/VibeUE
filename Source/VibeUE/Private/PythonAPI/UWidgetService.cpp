@@ -669,6 +669,10 @@ namespace
 			return false;
 		}
 
+		// ExportTextItem_Direct APPENDS to OutText; reset first so callers passing a
+		// struct field that has a default-value initializer (e.g. FWidgetFontInfo.ShadowOffset)
+		// get the value alone, not "<default><exported>" concatenated. (issue #470)
+		OutText.Reset();
 		Property->ExportTextItem_Direct(OutText, ValuePtr, nullptr, Object, PPF_None);
 		return true;
 	}

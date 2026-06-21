@@ -12,4 +12,4 @@ c = sks.learn_from_animations(SKELETON, MAX_ANIMS, SAMPLES_PER)
 print("analyzed", c.animation_count, "animations,", c.total_samples, "samples")
 for r in c.bone_ranges:
     if "arm" in r.bone_name.lower():
-        print(f"{r.bone_name}: safe {r.percentile_5} -> {r.percentile_95} ({r.sample_count} samples)")
+        print(f"{r.bone_name}: safe {r.percentile5} -> {r.percentile95} ({r.sample_count} samples)")

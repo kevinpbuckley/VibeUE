@@ -4292,10 +4292,12 @@ bool UStateTreeService::MoveTransition(const FString& AssetPath, const FString& 
 
 	if (FromIndex == ToIndex) { return true; }
 
+	// ToIndex is the desired FINAL position; insert there directly so a forward move
+	// (ToIndex > FromIndex) is not silently a no-op (same root cause as MoveTask, issue #468).
 	FStateTreeTransition Moved = State->Transitions[FromIndex];
 	State->Transitions.RemoveAt(FromIndex);
-	const int32 AdjustedToIndex = (ToIndex > FromIndex) ? ToIndex - 1 : ToIndex;
-	State->Transitions.Insert(MoveTemp(Moved), AdjustedToIndex);
+	const int32 InsertIndex = FMath::Clamp(ToIndex, 0, State->Transitions.Num());
+	State->Transitions.Insert(MoveTemp(Moved), InsertIndex);
 
 	MarkStateTreeDirty(StateTree);
 	return true;
@@ -4465,10 +4467,14 @@ bool UStateTreeService::MoveTask(const FString& AssetPath, const FString& StateP
 
 	if (CurrentIndex == NewIndex) { return true; }
 
+	// NewIndex is the desired FINAL position. After removing the element, inserting at
+	// NewIndex places it there for both forward and backward moves (issue #468 — the old
+	// `NewIndex - 1` adjustment made a forward move-by-one a silent no-op). Clamp to the
+	// post-removal length so a move-to-end is valid.
 	FStateTreeEditorNode Moved = State->Tasks[CurrentIndex];
 	State->Tasks.RemoveAt(CurrentIndex);
-	const int32 AdjustedIndex = (NewIndex > CurrentIndex) ? NewIndex - 1 : NewIndex;
-	State->Tasks.Insert(MoveTemp(Moved), AdjustedIndex);
+	const int32 InsertIndex = FMath::Clamp(NewIndex, 0, State->Tasks.Num());
+	State->Tasks.Insert(MoveTemp(Moved), InsertIndex);
 
 	MarkStateTreeDirty(StateTree);
 	return true;

@@ -93,32 +93,25 @@ struct FNiagaraModuleInfo_Custom
 };
 
 /**
- * Niagara Emitter Service - Python API for module-level emitter manipulation
+ * Niagara Emitter Service - Python API for emitter color + module authoring.
  *
- * Provides 17 module and renderer management actions:
+ * Methods this service actually exposes (issue #462 — the docstring previously listed
+ * renderer/module-input/script-discovery actions that are not bound):
  *
- * Module Management:
- * - list_modules: List all modules in an emitter
- * - get_module_info: Get detailed module information
- * - add_module: Add a module to an emitter
- * - remove_module: Remove a module from an emitter
- * - enable_module: Enable/disable a module
- * - set_module_input: Set a module input value
- * - get_module_input: Get a module input value
- * - reorder_module: Reorder a module within its stack
- * - set_color_tint: Set color tint (handles ColorFromCurve automatically)
+ * Color authoring:
+ * - set_color_tint(system_path, emitter_name, color[, hue_shift]) — handles ColorFromCurve
+ * - get_color_curve_keys(system_path, emitter_name)
+ * - set_color_curve_keys(system_path, emitter_name, keys)
+ * - shift_color_hue(system_path, emitter_name, degrees)
  *
- * Renderer Management:
- * - list_renderers: List all renderers in an emitter
- * - add_renderer: Add a renderer to an emitter
- * - remove_renderer: Remove a renderer from an emitter
- * - enable_renderer: Enable/disable a renderer
- * - set_renderer_property: Set a renderer property
+ * Modules / parameters:
+ * - list_modules(system_path, emitter_name, stage)
+ * - add_module(system_path, emitter_name, module_script_path, stage)
+ * - get_rapid_iteration_parameters(system_path, emitter_name, stage)
  *
- * Script Discovery:
- * - search_module_scripts: Search for module scripts
- * - get_script_info: Get script asset information
- * - list_builtin_modules: List built-in module scripts
+ * For emitter add/copy/duplicate/remove/move and renderer CRUD, use the engine
+ * NiagaraToolsets via call_tool (see UNiagaraService notes). Scratch-pad / Custom-HLSL
+ * graph authoring is on NiagaraScratchPadService.
  *
  * Python Usage:
  *   import unreal

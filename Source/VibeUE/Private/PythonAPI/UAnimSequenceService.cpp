@@ -475,9 +475,24 @@ TArray<FAnimSequenceInfo> UAnimSequenceService::SearchAnimations(
 
 	for (const FAssetData& Asset : AssetList)
 	{
-		// Match name pattern
+		// Match name pattern. Empty = match all; a pattern with wildcard chars uses
+		// wildcard matching; otherwise a case-insensitive SUBSTRING match (issue #448 —
+		// MatchesWildcard alone required the whole name to match, i.e. exact-match-only).
 		FString AssetName = Asset.AssetName.ToString();
-		if (AssetName.MatchesWildcard(NamePattern))
+		bool bNameMatches;
+		if (NamePattern.IsEmpty())
+		{
+			bNameMatches = true;
+		}
+		else if (NamePattern.Contains(TEXT("*")) || NamePattern.Contains(TEXT("?")))
+		{
+			bNameMatches = AssetName.MatchesWildcard(NamePattern, ESearchCase::IgnoreCase);
+		}
+		else
+		{
+			bNameMatches = AssetName.Contains(NamePattern, ESearchCase::IgnoreCase);
+		}
+		if (bNameMatches)
 		{
 			// Use GetAsset first (if already loaded), then TryLoad as fallback
 			UE_LOG(LogTemp, Log, TEXT("SearchAnimations: Loading asset for name match: %s"), *Asset.GetObjectPathString());
@@ -2784,18 +2799,20 @@ bool UAnimSequenceService::PreviewBoneRotation(
 	OutResult.bSuccess = false;
 	OutResult.bWasClamped = false;
 
+	// Note: failure paths return true (with bSuccess=false + ErrorMessage) so the Python
+	// binding always yields an AnimationEditResult struct, never None. (issue #447)
 	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
 	if (!AnimSeq)
 	{
 		OutResult.ErrorMessage = TEXT("Failed to load animation");
-		return false;
+		return true;
 	}
 
 	USkeleton* Skeleton = AnimSeq->GetSkeleton();
 	if (!Skeleton)
 	{
 		OutResult.ErrorMessage = TEXT("Animation has no skeleton");
-		return false;
+		return true;
 	}
 
 	// Verify bone exists
@@ -2804,13 +2821,18 @@ bool UAnimSequenceService::PreviewBoneRotation(
 	if (BoneIndex == INDEX_NONE)
 	{
 		OutResult.ErrorMessage = FString::Printf(TEXT("Bone not found: %s"), *BoneName);
-		return false;
+		return true;
 	}
 
-	// Validate rotation against constraints
+	// Validate rotation against constraints — enforce MANUAL constraints first (set via
+	// set_bone_constraints), falling back to learned constraints when manual didn't clamp. (#447)
 	FBoneValidationResult ValidationResult;
 	FString SkeletonPath = Skeleton->GetPathName();
-	USkeletonService::ValidateBoneRotation(SkeletonPath, BoneName, RotationDelta, true, ValidationResult);
+	USkeletonService::ValidateBoneRotation(SkeletonPath, BoneName, RotationDelta, false, ValidationResult);
+	if (ValidationResult.bIsValid)
+	{
+		USkeletonService::ValidateBoneRotation(SkeletonPath, BoneName, RotationDelta, true, ValidationResult);
+	}
 
 	FRotator EffectiveRotation = RotationDelta;
 	if (!ValidationResult.bIsValid)
@@ -2864,18 +2886,20 @@ bool UAnimSequenceService::PreviewPoseDelta(
 	OutResult.bSuccess = false;
 	OutResult.bWasClamped = false;
 
+	// Note: failure paths return true (with bSuccess=false + ErrorMessage) so the Python
+	// binding always yields an AnimationEditResult struct, never None. (issue #447)
 	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
 	if (!AnimSeq)
 	{
 		OutResult.ErrorMessage = TEXT("Failed to load animation");
-		return false;
+		return true;
 	}
 
 	USkeleton* Skeleton = AnimSeq->GetSkeleton();
 	if (!Skeleton)
 	{
 		OutResult.ErrorMessage = TEXT("Animation has no skeleton");
-		return false;
+		return true;
 	}
 
 	const FReferenceSkeleton& RefSkeleton = Skeleton->GetReferenceSkeleton();
@@ -2888,7 +2912,7 @@ bool UAnimSequenceService::PreviewPoseDelta(
 		if (BoneIndex == INDEX_NONE)
 		{
 			OutResult.ErrorMessage = FString::Printf(TEXT("Bone not found: %s"), *Delta.BoneName);
-			return false;
+			return true;
 		}
 	}
 
@@ -2896,8 +2920,14 @@ bool UAnimSequenceService::PreviewPoseDelta(
 	TArray<FBoneDelta> EffectiveDeltas;
 	for (const FBoneDelta& Delta : BoneDeltas)
 	{
+		// Enforce MANUAL constraints first (set via set_bone_constraints); fall back to
+		// learned constraints when the manual profile didn't clamp. (issue #447)
 		FBoneValidationResult ValidationResult;
-		USkeletonService::ValidateBoneRotation(SkeletonPath, Delta.BoneName, Delta.RotationDelta, true, ValidationResult);
+		USkeletonService::ValidateBoneRotation(SkeletonPath, Delta.BoneName, Delta.RotationDelta, false, ValidationResult);
+		if (ValidationResult.bIsValid)
+		{
+			USkeletonService::ValidateBoneRotation(SkeletonPath, Delta.BoneName, Delta.RotationDelta, true, ValidationResult);
+		}
 
 		FBoneDelta EffectiveDelta = Delta;
 		if (!ValidationResult.bIsValid)

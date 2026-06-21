@@ -697,6 +697,164 @@ FMetaSoundNodeInfo UMetaSoundService::GetNodePins(const FString& AssetPath, cons
 	return Found;
 }
 
+FString UMetaSoundService::GetNodeInputDefault(const FString& AssetPath,
+                                               const FString& NodeId,
+                                               const FString& InputName)
+{
+	FString LoadError;
+	UMetaSoundSource* Source = nullptr;
+	UMetaSoundBuilderBase* Builder = BeginEditing(AssetPath, &Source, LoadError);
+	if (!Builder)
+	{
+		UE_LOG(LogMetaSoundService, Warning, TEXT("GetNodeInputDefault: %s"), *LoadError);
+		return FString();
+	}
+
+	FGuid NodeGuid;
+	FMetaSoundResult ErrResult;
+	if (!ParseNodeGuid(NodeId, NodeGuid, ErrResult)) return FString();
+
+	const FName Resolved = FuzzyFindVertexName(Builder, NodeGuid, InputName, false);
+	if (Resolved == NAME_None) return FString();
+
+	EMetaSoundBuilderResult R;
+	const FMetaSoundBuilderNodeInputHandle InHandle =
+		Builder->FindNodeInputByName(FMetaSoundNodeHandle(NodeGuid), Resolved, R);
+	if (R != EMetaSoundBuilderResult::Succeeded) return FString();
+
+	const FMetasoundFrontendLiteral Lit = Builder->GetNodeInputDefault(InHandle, R);
+	if (R != EMetaSoundBuilderResult::Succeeded) return FString();
+
+	return Lit.ToString();
+}
+
+TArray<FMetaSoundInputValue> UMetaSoundService::GetNodeInputValues(const FString& AssetPath, const FString& NodeId)
+{
+	TArray<FMetaSoundInputValue> Values;
+
+	FString LoadError;
+	UMetaSoundSource* Source = nullptr;
+	UMetaSoundBuilderBase* Builder = BeginEditing(AssetPath, &Source, LoadError);
+	if (!Builder)
+	{
+		UE_LOG(LogMetaSoundService, Warning, TEXT("GetNodeInputValues: %s"), *LoadError);
+		return Values;
+	}
+
+	FGuid NodeGuid;
+	FMetaSoundResult ErrResult;
+	if (!ParseNodeGuid(NodeId, NodeGuid, ErrResult)) return Values;
+
+	EMetaSoundBuilderResult R;
+	const TArray<FMetaSoundBuilderNodeInputHandle> InHandles =
+		Builder->FindNodeInputs(FMetaSoundNodeHandle(NodeGuid), R);
+	for (const FMetaSoundBuilderNodeInputHandle& H : InHandles)
+	{
+		FMetaSoundInputValue Val;
+
+		FName PinName, PinType;
+		EMetaSoundBuilderResult DataR;
+		Builder->GetNodeInputData(H, PinName, PinType, DataR);
+		Val.Name = PinName.ToString();
+		Val.DataType = PinType.ToString();
+
+		Val.bIsConnected = Builder->NodeInputIsConnected(H);
+
+		EMetaSoundBuilderResult DefR;
+		const FMetasoundFrontendLiteral Lit = Builder->GetNodeInputDefault(H, DefR);
+		if (DefR == EMetaSoundBuilderResult::Succeeded)
+		{
+			Val.DefaultValue = Lit.ToString();
+		}
+
+		Values.Add(Val);
+	}
+	return Values;
+}
+
+TArray<FMetaSoundConnection> UMetaSoundService::GetNodeConnections(const FString& AssetPath, const FString& NodeId)
+{
+	TArray<FMetaSoundConnection> Connections;
+
+	FString LoadError;
+	UMetaSoundSource* Source = nullptr;
+	UMetaSoundBuilderBase* Builder = BeginEditing(AssetPath, &Source, LoadError);
+	if (!Builder)
+	{
+		UE_LOG(LogMetaSoundService, Warning, TEXT("GetNodeConnections: %s"), *LoadError);
+		return Connections;
+	}
+
+	FGuid NodeGuid;
+	FMetaSoundResult ErrResult;
+	if (!ParseNodeGuid(NodeId, NodeGuid, ErrResult)) return Connections;
+
+	const FMetaSoundFrontendDocumentBuilder& DB = Builder->GetConstBuilder();
+
+	// Collect this node's input and output vertices (name + datatype + vertex id).
+	TArray<FMetasoundFrontendVertex> InputVerts;
+	TArray<FMetasoundFrontendVertex> OutputVerts;
+	bool bFound = false;
+	DB.IterateNodes(
+		[&](const FMetasoundFrontendClass& /*Class*/, const FMetasoundFrontendNode& Node)
+		{
+			if (bFound) return;
+			if (Node.GetID() == NodeGuid)
+			{
+				InputVerts = Node.Interface.Inputs;
+				OutputVerts = Node.Interface.Outputs;
+				bFound = true;
+			}
+		});
+	if (!bFound)
+	{
+		UE_LOG(LogMetaSoundService, Warning, TEXT("GetNodeConnections: node '%s' not found"), *NodeId);
+		return Connections;
+	}
+
+	const FString ThisNodeStr = NodeGuid.ToString(EGuidFormats::DigitsWithHyphens);
+
+	// Incoming edges (something -> this node's input).
+	for (const FMetasoundFrontendVertex& In : InputVerts)
+	{
+		for (const FMetasoundFrontendEdge* E : DB.FindEdges(NodeGuid, In.VertexID))
+		{
+			if (!E) continue;
+			FMetaSoundConnection C;
+			C.ToNodeId = ThisNodeStr;
+			C.ToInput = In.Name.ToString();
+			C.DataType = In.TypeName.ToString();
+			C.FromNodeId = E->FromNodeID.ToString(EGuidFormats::DigitsWithHyphens);
+			if (const FMetasoundFrontendVertex* FromV = DB.FindNodeOutput(E->FromNodeID, E->FromVertexID))
+			{
+				C.FromOutput = FromV->Name.ToString();
+			}
+			Connections.Add(C);
+		}
+	}
+
+	// Outgoing edges (this node's output -> something).
+	for (const FMetasoundFrontendVertex& Out : OutputVerts)
+	{
+		for (const FMetasoundFrontendEdge* E : DB.FindEdges(NodeGuid, Out.VertexID))
+		{
+			if (!E) continue;
+			FMetaSoundConnection C;
+			C.FromNodeId = ThisNodeStr;
+			C.FromOutput = Out.Name.ToString();
+			C.DataType = Out.TypeName.ToString();
+			C.ToNodeId = E->ToNodeID.ToString(EGuidFormats::DigitsWithHyphens);
+			if (const FMetasoundFrontendVertex* ToV = DB.FindNodeInput(E->ToNodeID, E->ToVertexID))
+			{
+				C.ToInput = ToV->Name.ToString();
+			}
+			Connections.Add(C);
+		}
+	}
+
+	return Connections;
+}
+
 // ============================================================================
 // CONNECTIONS
 // ============================================================================

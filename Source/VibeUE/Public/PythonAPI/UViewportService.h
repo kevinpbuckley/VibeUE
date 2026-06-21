@@ -17,12 +17,13 @@
  * - location (Vector): Camera world location
  * - rotation (Rotator): Camera world rotation
  * - fov (float): Horizontal field of view in degrees (perspective only)
- * - near_clip_plane (float): Near clipping plane distance (-1 = engine default)
+ * - near_clip_plane (float): Near clipping plane distance. Set -1 to restore the engine
+ *     default; note the read-back then reports the *resolved* engine value (e.g. 10.0), not -1.
  * - far_clip_plane (float): Far clipping plane distance (0 = infinity)
  * - is_realtime (bool): Whether the viewport renders in realtime
  * - is_game_view (bool): Whether Game View mode is active (hides editor icons)
  * - allow_cinematic_control (bool): Whether cinematic sequences can control this viewport
- * - exposure_settings_fixed (bool): Whether exposure is fixed (true) or auto (false)
+ * - exposure_fixed (bool): Whether exposure is fixed (true) or auto/game-settings (false)
  * - exposure_ev100 (float): Fixed EV100 exposure value (when fixed)
  * - camera_speed_setting (int): Camera movement speed index (1-8)
  * - layout (str): Viewport layout name ("OnePane", "FourPanes2x2", etc.)
@@ -116,11 +117,16 @@ struct FViewportInfo
  *   unreal.ViewportService.set_viewport_layout("FourPanes2x2")
  *   unreal.ViewportService.set_viewport_layout("OnePane")
  *
- *   # Camera position/rotation
- *   unreal.ViewportService.set_camera_location(unreal.Vector(0, 0, 500))
- *   unreal.ViewportService.set_camera_rotation(unreal.Rotator(-45, 0, 0))
+ *   # Camera position/rotation is engine-side (this service is read-only for pose):
+ *   #   read:  ViewportService.get_viewport_info().location / .rotation
+ *   #   write: EditorAppToolset.SetCameraTransform via call_tool, or
+ *   #          unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem)
+ *   #              .set_level_viewport_camera_info(location, rotation)
  *
- * @note All 19 viewport operations available via Python
+ * @note ViewportService owns view type, view mode, FOV, clip planes, exposure, game view,
+ *       cinematic control, realtime, camera speed, and layout. It does NOT set camera
+ *       position/rotation (no set_camera_location / set_camera_rotation) — use the engine
+ *       path above. (issue #471)
  */
 UCLASS(BlueprintType)
 class VIBEUE_API UViewportService : public UToolsetDefinition

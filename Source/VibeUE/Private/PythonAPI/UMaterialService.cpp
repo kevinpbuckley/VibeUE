@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UMaterialService.h"
+#include "Core/JsonValueHelper.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialInstance.h"
 #include "Materials/MaterialInstanceConstant.h"
@@ -794,26 +795,16 @@ int32 UMaterialService::SetInstanceParametersBulk(
 		}
 		else if (TypeUpper == TEXT("VECTOR") || TypeUpper == TEXT("COLOR"))
 		{
-			// Parse "(R=1.0,G=0.5,B=0.0,A=1.0)" or "1.0,0.5,0.0,1.0"
+			// Accept UE tuple "(R=..,G=..,B=..,A=..)", "R,G,B[,A]" arrays, #RRGGBB[AA]
+			// hex, and named colors via the shared parser (issue #459 — hex parsed to
+			// white and short arrays dropped channels).
 			FLinearColor Color = FLinearColor::White;
-			if (ParamValue.Contains(TEXT("R=")))
+			if (!FJsonValueHelper::TryParseLinearColor(ParamValue, Color))
 			{
-				Color.InitFromString(ParamValue);
-			}
-			else
-			{
-				TArray<FString> Parts;
-				ParamValue.ParseIntoArray(Parts, TEXT(","));
-				if (Parts.Num() >= 3)
-				{
-					Color.R = FCString::Atof(*Parts[0]);
-					Color.G = FCString::Atof(*Parts[1]);
-					Color.B = FCString::Atof(*Parts[2]);
-					if (Parts.Num() >= 4)
-					{
-						Color.A = FCString::Atof(*Parts[3]);
-					}
-				}
+				UE_LOG(LogTemp, Warning,
+					TEXT("UMaterialService::SetInstanceParametersBulk: could not parse color '%s' for param '%s'"),
+					*ParamValue, *ParamName);
+				continue;
 			}
 			Instance->SetVectorParameterValueEditorOnly(FName(*ParamName), Color);
 			SuccessCount++;

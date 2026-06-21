@@ -2,6 +2,7 @@
 
 #include "PythonAPI/UMaterialNodeService.h"
 #include "PythonAPI/UMaterialService.h"
+#include "Core/JsonValueHelper.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialExpression.h"
 #include "Materials/MaterialExpressionParameter.h"
@@ -24,6 +25,8 @@
 #include "Materials/MaterialExpressionLandscapeGrassOutput.h"
 #include "Materials/MaterialExpressionFunctionInput.h"
 #include "Materials/MaterialExpressionFunctionOutput.h"
+#include "Materials/MaterialExpressionCustomOutput.h"
+#include "Materials/MaterialExpressionNamedReroute.h"
 #include "Materials/MaterialFunction.h"
 #include "Materials/MaterialParameterCollection.h"
 #include "LandscapeGrassType.h"
@@ -978,27 +981,41 @@ bool UMaterialNodeService::SetExpressionProperty(
 	
 	void* PropertyPtr = Property->ContainerPtrToValuePtr<void>(Expression);
 	
-	// Handle FLinearColor
+	// Handle FLinearColor — accept the UE tuple form AND friendly formats
+	// (#RRGGBB / #RRGGBBAA hex, named colors, "R,G,B[,A]" arrays). (issue #450)
 	if (FStructProperty* StructProp = CastField<FStructProperty>(Property))
 	{
 		if (StructProp->Struct->GetName() == TEXT("LinearColor"))
 		{
 			FLinearColor Color;
-			if (Color.InitFromString(PropertyValue))
+			if (FJsonValueHelper::TryParseLinearColor(PropertyValue, Color))
 			{
 				FLinearColor* ColorPtr = static_cast<FLinearColor*>(PropertyPtr);
 				*ColorPtr = Color;
 				RefreshMaterialGraph(Material);
 				return true;
 			}
+			// A color property with an unparseable value is a real failure, not a no-op.
+			UE_LOG(LogTemp, Warning,
+				TEXT("UMaterialNodeService::SetExpressionProperty: could not parse color '%s' for '%s'"),
+				*PropertyValue, *PropertyName);
+			return false;
 		}
 	}
-	
-	// Standard import
-	Property->ImportText_Direct(*PropertyValue, PropertyPtr, Expression, PPF_None);
-	
+
+	// Standard import — ImportText_Direct returns nullptr when the value can't be parsed.
+	// Previously the result was ignored and the call always returned true (issue #450).
+	const TCHAR* ImportResult = Property->ImportText_Direct(*PropertyValue, PropertyPtr, Expression, PPF_None);
+	if (ImportResult == nullptr)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("UMaterialNodeService::SetExpressionProperty: failed to import '%s' into property '%s'"),
+			*PropertyValue, *PropertyName);
+		return false;
+	}
+
 	RefreshMaterialGraph(Material);
-	
+
 	return true;
 }
 
@@ -2713,11 +2730,17 @@ UMaterialExpression* UMaterialNodeService::FindExpressionInFunctionById(UMateria
 		}
 	}
 
-	// Try matching by index
-	int32 Index = FCString::Atoi(*ExpressionId);
-	if (Index >= 0 && Index < Expressions.Num())
+	// Try matching by index — but ONLY when the id is genuinely numeric. FCString::Atoi
+	// returns 0 for any non-numeric string, so without this guard a stale or unknown id
+	// (e.g. "MaterialExpressionConstant_0x...") silently resolved to expression index 0 and
+	// the caller mutated/deleted the wrong node. Require an all-digit id for the fallback.
+	if (ExpressionId.IsNumeric())
 	{
-		return Expressions[Index];
+		int32 Index = FCString::Atoi(*ExpressionId);
+		if (Index >= 0 && Index < Expressions.Num())
+		{
+			return Expressions[Index];
+		}
 	}
 
 	return nullptr;
@@ -3297,4 +3320,142 @@ bool UMaterialNodeService::SetFunctionExpressionProperty(
 		*ExpressionId, *PropertyName, *PropertyValue);
 
 	return true;
+}
+
+// =================================================================
+// Cleanup (graph reachability — "Clean Graph -> Clean Up")
+// =================================================================
+//
+// Note: single-node deletion (for both Material and MaterialFunction graphs) is provided by
+// Epic's native MaterialTools.delete_expression, so VibeUE does not duplicate it. This covers
+// only the gap Epic leaves: cleaning *unused* nodes out of a MaterialFunction (Epic's
+// delete_unused_expressions is material-only).
+
+int32 UMaterialNodeService::CleanupUnusedExpressions(const FString& AssetPath)
+{
+	// Resolve the asset as either a material or a material function.
+	UMaterial* Material = LoadMaterialAsset(AssetPath);
+	UMaterialFunction* Function = Material ? nullptr : LoadMaterialFunctionAsset(AssetPath);
+	if (!Material && !Function)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UMaterialNodeService::CleanupUnusedExpressions: Not a material or material function: %s"), *AssetPath);
+		return 0;
+	}
+
+	TConstArrayView<TObjectPtr<UMaterialExpression>> AllExpressions =
+		Material ? Material->GetExpressions() : Function->GetExpressions();
+
+	// --- Gather reachability roots (mirrors UMaterialGraph::GetUnusedExpressions) ---
+	TArray<UMaterialExpression*> Roots;
+	if (Function)
+	{
+		// Function roots = every FunctionOutput node.
+		for (UMaterialExpression* Expr : AllExpressions)
+		{
+			if (Cast<UMaterialExpressionFunctionOutput>(Expr))
+			{
+				Roots.Add(Expr);
+			}
+		}
+	}
+	else
+	{
+		// Material roots = whatever is wired to a material property input...
+		for (int32 PropIndex = 0; PropIndex < MP_MAX; ++PropIndex)
+		{
+			FExpressionInput* PropInput = Material->GetExpressionInputForProperty((EMaterialProperty)PropIndex);
+			if (PropInput && PropInput->Expression)
+			{
+				Roots.Add(PropInput->Expression);
+			}
+		}
+		// ...plus all CustomOutput nodes, which are used even without a property connection.
+		for (UMaterialExpression* Expr : AllExpressions)
+		{
+			if (Cast<UMaterialExpressionCustomOutput>(Expr))
+			{
+				Roots.Add(Expr);
+			}
+		}
+	}
+
+	// --- Depth-first walk back through every connected input ---
+	TSet<UMaterialExpression*> Reachable;
+	TArray<UMaterialExpression*> Stack = Roots;
+	while (Stack.Num() > 0)
+	{
+		UMaterialExpression* Expr = Stack.Pop();
+		if (!Expr || Reachable.Contains(Expr))
+		{
+			continue;
+		}
+		Reachable.Add(Expr);
+
+		for (int32 i = 0; ; ++i)
+		{
+			FExpressionInput* Input = Expr->GetInput(i);
+			if (!Input)
+			{
+				break;
+			}
+			if (Input->Expression)
+			{
+				Stack.Push(Input->Expression);
+			}
+		}
+
+		// Named reroute usage nodes have no input pins — follow their declaration manually.
+		if (UMaterialExpressionNamedRerouteUsage* RerouteUsage = Cast<UMaterialExpressionNamedRerouteUsage>(Expr))
+		{
+			if (RerouteUsage->Declaration)
+			{
+				Stack.Push(RerouteUsage->Declaration);
+			}
+		}
+	}
+
+	// --- Everything not reached is unused. Unreachable nodes only reference each other,
+	//     so deleting the whole set leaves no reachable node dangling. ---
+	TArray<UMaterialExpression*> Unused;
+	for (UMaterialExpression* Expr : AllExpressions)
+	{
+		if (Expr && !Reachable.Contains(Expr))
+		{
+			Unused.Add(Expr);
+		}
+	}
+
+	if (Unused.Num() == 0)
+	{
+		return 0;
+	}
+
+	FScopedTransaction Transaction(NSLOCTEXT("MaterialNodeService", "Cleanup Unused Expressions", "Cleanup Unused Expressions"));
+	if (Material)
+	{
+		Material->Modify();
+		for (UMaterialExpression* Expr : Unused)
+		{
+			Expr->Modify();
+			Material->GetExpressionCollection().RemoveExpression(Expr);
+			Material->RemoveExpressionParameter(Expr);
+		}
+		RefreshMaterialGraph(Material);
+	}
+	else
+	{
+		Function->Modify();
+		for (UMaterialExpression* Expr : Unused)
+		{
+			Expr->Modify();
+			Function->GetExpressionCollection().RemoveExpression(Expr);
+		}
+		Function->PostEditChange();
+		UEditorAssetLibrary::SaveAsset(AssetPath, false);
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("UMaterialNodeService::CleanupUnusedExpressions: Removed %d unused expression(s) from %s"),
+		Unused.Num(), *AssetPath);
+
+	return Unused.Num();
 }

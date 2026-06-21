@@ -3115,6 +3115,8 @@ bool ULandscapeService::SetHoleAtLocation(
 	FGuid LayerGuid = ResolveEditLayerGuid(Landscape);
 	FScopedSetLandscapeEditingLayer EditLayerScope(Landscape, LayerGuid);
 
+	bool bWritePersisted = false;
+
 	// Scope the TAlphamapAccessor so its destructor releases the texture write
 	// lock before ForceLayersFullUpdate() triggers texture compression.
 	{
@@ -3142,7 +3144,35 @@ bool ULandscapeService::SetHoleAtLocation(
 
 		AlphaAccessor.SetData(MinX, MinY, MaxX, MaxY, WeightData.GetData(), ELandscapeLayerPaintingRestriction::None);
 		AlphaAccessor.Flush();
+
+		// Verify the visibility paint actually persisted by reading the center vertex back
+		// in the same edit-layer scope. If a hole we just wrote (255) reads back as 0, the
+		// VisibilityLayer is not a paintable target on this landscape — i.e. its material has
+		// no Landscape Visibility Mask, so holes are unsupported. Report a clear failure
+		// instead of the old silent false-positive that made get_hole "always False". (#456)
+		if (bCreateHole)
+		{
+			const int32 CX = FMath::Clamp(FMath::RoundToInt(LocalX), MinX, MaxX);
+			const int32 CY = FMath::Clamp(FMath::RoundToInt(LocalY), MinY, MaxY);
+			uint8 BackVal = 0;
+			AlphaAccessor.GetDataFast(CX, CY, CX, CY, &BackVal);
+			bWritePersisted = (BackVal > 128);
+		}
+		else
+		{
+			bWritePersisted = true; // filling/clearing a hole is always valid
+		}
 	} // ~TAlphamapAccessor: releases texture write lock
+
+	if (!bWritePersisted)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("ULandscapeService::SetHoleAtLocation: '%s' — visibility paint did not persist. ")
+			TEXT("The landscape material has no Landscape Visibility Mask node, so holes are not ")
+			TEXT("supported on this landscape. Assign a hole-capable material first."),
+			*LandscapeNameOrLabel);
+		return false;
+	}
 
 	Info->ForceLayersFullUpdate();
 
@@ -3240,18 +3270,22 @@ bool ULandscapeService::GetHoleAtLocation(
 	int32 LocalX = FMath::RoundToInt((WorldX - LandscapeLocation.X) / LandscapeScale.X);
 	int32 LocalY = FMath::RoundToInt((WorldY - LandscapeLocation.Y) / LandscapeScale.Y);
 
-	TArray<uint8> WeightData;
-	WeightData.SetNumZeroed(1);
+	// Read the raw (NOT total-normalized, matching SetHoleAtLocation's write) visibility
+	// weight. Check both the active edit layer and the final merged data so a hole reads
+	// back regardless of whether it has been resolved into the base weightmap yet. (#456)
+	uint8 EditVal = 0;
+	uint8 FinalVal = 0;
+	{
+		FScopedSetLandscapeEditingLayer EditLayerScope(Landscape, ResolveEditLayerGuid(Landscape));
+		TAlphamapAccessor<false> Acc(Info, VisLayer);
+		Acc.GetDataFast(LocalX, LocalY, LocalX, LocalY, &EditVal);
+	}
+	{
+		TAlphamapAccessor<false> Acc(Info, VisLayer);
+		Acc.GetDataFast(LocalX, LocalY, LocalX, LocalY, &FinalVal);
+	}
 
-	// Read from the edit layer (matching SetHoleAtLocation's write path) so that
-	// holes are visible immediately without waiting for deferred layer resolution.
-	FGuid LayerGuid = ResolveEditLayerGuid(Landscape);
-	FScopedSetLandscapeEditingLayer EditLayerScope(Landscape, LayerGuid);
-
-	TAlphamapAccessor<true> AlphaAccessor(Info, VisLayer);
-	AlphaAccessor.GetData(LocalX, LocalY, LocalX, LocalY, WeightData.GetData());
-
-	return WeightData[0] > 128;
+	return FMath::Max(EditVal, FinalVal) > 128;
 }
 
 // =================================================================
