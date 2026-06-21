@@ -91,12 +91,14 @@ bool UTransactionService::CancelTransaction()
 	{
 		return false;
 	}
-	// Roll back the active transaction's records. Index 0 cancels from the start of the
-	// currently-open transaction (the common single-open case).
-	const int32 Index = GActiveTransactionIndex != INDEX_NONE ? GActiveTransactionIndex : 0;
-	GEditor->CancelTransaction(Index);
+	// NOTE: GEditor->CancelTransaction only DISCARDS the in-progress transaction record;
+	// it does not restore object state (interactive tools revert themselves on escape).
+	// To deliver the expected "roll back everything done since begin_transaction" behavior,
+	// finalize the open transaction and immediately undo it. The reverted transaction is
+	// left as a redo candidate.
+	GEditor->EndTransaction();
 	GActiveTransactionIndex = INDEX_NONE;
-	return true;
+	return GEditor->UndoTransaction();
 }
 
 FTransactionState UTransactionService::GetState()
