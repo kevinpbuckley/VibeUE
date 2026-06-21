@@ -436,7 +436,31 @@ A full `AssetPath:GraphName` string is also accepted for user-defined macro libr
 Notes:
 - `IsValid` places **one** node exposing both `Is Valid` and `Is Not Valid` exec outputs — there is no separate `IsNotValid` macro.
 - `MultiGate` is `K2Node_MultiGate` (a distinct node type), not a StandardMacro — it is not in this list.
-- To create a macro graph on a `MacroLibrary` Blueprint, use `create_macro_graph(lib_path, "MacroName")` (the engine `BlueprintTools.add_function_graph` path asserts on MacroLibrary BPs).
+- To create a macro graph on a `MacroLibrary` Blueprint, use `create_macro_graph(lib_path, "MacroName")` (the engine `BlueprintTools.add_function_graph` path asserts on MacroLibrary BPs). To create the **library asset** itself from Python (issue #449):
+  ```python
+  f = unreal.BlueprintMacroFactory()   # NOT BlueprintFactory
+  unreal.AssetToolsHelpers.get_asset_tools().create_asset("ML_X", "/Game/Macros", unreal.Blueprint, f)
+  unreal.BlueprintService.create_macro_graph("/Game/Macros/ML_X", "MyMacro")
+  # reference it from a graph: add_macro_instance_node(bp, graph, "/Game/Macros/ML_X.ML_X:MyMacro", x, y)
+  ```
+
+### 🔎 Calling a function (self / parent / library) — discover the spawner key (#449)
+
+`build_graph`'s `function_call` works for library statics, but the **most reliable** way to add a
+call to a **self** function, a **parent-class** function (Character/Pawn/Actor…), or any discoverable
+function is `discover_nodes` → `create_node_by_key`:
+
+```python
+# Find the function — self functions show category "Self Functions"; parents show "FUNC Parent::Func"
+hits = unreal.BlueprintService.discover_nodes(bp, "Jump")        # search_term (NOT a graph name)
+key  = hits[0].spawner_key                                       # e.g. "FUNC Character::Jump"
+node = unreal.BlueprintService.create_node_by_key(bp, "EventGraph", key, 400, 200)
+```
+
+`discover_nodes(blueprint_path, search_term, category="", max_results=20)` surfaces the blueprint's
+OWN functions (your custom functions, callable on self) plus the full parent hierarchy and library
+functions. The returned `spawner_key` (`"FUNC <Class>::<Func>"`) feeds straight into
+`create_node_by_key` — this is how you add a **self-call** node deterministically.
 
 ### ⚠️ Complex Graphs: Create and Verify One Node at a Time
 
