@@ -475,9 +475,24 @@ TArray<FAnimSequenceInfo> UAnimSequenceService::SearchAnimations(
 
 	for (const FAssetData& Asset : AssetList)
 	{
-		// Match name pattern
+		// Match name pattern. Empty = match all; a pattern with wildcard chars uses
+		// wildcard matching; otherwise a case-insensitive SUBSTRING match (issue #448 —
+		// MatchesWildcard alone required the whole name to match, i.e. exact-match-only).
 		FString AssetName = Asset.AssetName.ToString();
-		if (AssetName.MatchesWildcard(NamePattern))
+		bool bNameMatches;
+		if (NamePattern.IsEmpty())
+		{
+			bNameMatches = true;
+		}
+		else if (NamePattern.Contains(TEXT("*")) || NamePattern.Contains(TEXT("?")))
+		{
+			bNameMatches = AssetName.MatchesWildcard(NamePattern, ESearchCase::IgnoreCase);
+		}
+		else
+		{
+			bNameMatches = AssetName.Contains(NamePattern, ESearchCase::IgnoreCase);
+		}
+		if (bNameMatches)
 		{
 			// Use GetAsset first (if already loaded), then TryLoad as fallback
 			UE_LOG(LogTemp, Log, TEXT("SearchAnimations: Loading asset for name match: %s"), *Asset.GetObjectPathString());
