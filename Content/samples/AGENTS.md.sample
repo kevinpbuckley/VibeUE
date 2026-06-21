@@ -18,9 +18,12 @@ There are two ways to act on the editor. Pick the cheap one:
   and sits next to the whole native `unreal.*` API in the same script. **Batch aggressively** — do a
   whole multi-step task (create + edit + compile + verify) in a single call, and `print()` only what
   you need back.
-- **`call_tool` — one tool per round-trip.** Use it only for things that are **not** Python-callable:
-  loading **skills** (`AgentSkillToolset`), and the few Epic toolsets with no good Python path
-  (screenshots, etc.). Don't use it to do work `execute_python_code` can batch.
+- **`call_tool` — one tool per round-trip.** Genuinely needed only for **skills**
+  (`AgentSkillToolset`) and for the few Epic tools whose **result the MCP layer must surface for
+  you** (image returns like `CaptureViewport`). **Everything else from Epic's engine toolsets is
+  also reachable from inside `execute_python_code`** via `unreal.ToolsetRegistry.execute_tool(...)`
+  (see §2), so batch engine-toolset calls with your Python instead of spending a round-trip. Don't
+  use `call_tool` for work `execute_python_code` can batch.
 
 **Rules of thumb (speed + tokens):**
 1. Default to `execute_python_code`; one call should accomplish a logical step, not one operation.
@@ -50,16 +53,40 @@ GameplayTag, Viewport, Actor, Engine/ProjectSettings, **Performance** (`unreal.P
 These overlap-trimmed services keep only what the engine lacks — for plain asset/actor/blueprint
 basics the engine's own tools may be simpler (below).
 
+**Calling Epic's engine toolsets from Python (`execute_tool`).** Epic's engine toolset *classes*
+exist as `unreal.*` (e.g. `unreal.EditorAppToolset`) but their AICallable functions are **not**
+exposed as Python methods — `unreal.EditorAppToolset.get_selected_assets()` fails. Invoke them
+through the registry instead (same dispatch `call_tool` uses, but in-process and batchable):
+```python
+import unreal, json
+res = unreal.ToolsetRegistry.execute_tool(
+    "EditorToolset.EditorAppToolset",   # registered (namespaced) toolset name
+    "GetSelectedAssets",                # tool name
+    "{}")                               # args as a JSON string
+assert res.is_complete and not res.error, res.error
+out = json.loads(res.get_value_as_json_string())     # -> {"returnValue": ...}
+```
+Discover exact names/schemas from Python: `unreal.ToolsetRegistry.get_all_toolset_json_schemas()`
+(all of them) or `get_toolset_json_schema("EditorToolset.EditorAppToolset")` (one). Names are
+namespaced — `EditorToolset.EditorAppToolset`, `NiagaraToolsets.NiagaraToolset_System`, etc. (a bare
+`"EditorAppToolset"` returns "Toolset not found"). Note `execute_tool` returns an **async** result:
+the editor tools above complete synchronously (`is_complete=True`), but for a long-running tool check
+`is_complete` / bind `on_completed` rather than assuming `value` is ready.
+
 **Use the engine's native tools for these (VibeUE intentionally doesn't duplicate them):**
 - **Assets** (find / save / move / delete / duplicate / metadata): native Python
   `unreal.EditorAssetLibrary` / `EditorAssetSubsystem` inside `execute_python_code` (batchable), or
-  Epic's `AssetTools` toolset via `call_tool`.
-- **Screenshots / vision**: Epic's `EditorAppToolset` via `call_tool` — `CaptureViewport` (returns a
-  PNG, and can overlay a world grid + actor labels), `CaptureEditorImage`, `CaptureAssetImage`.
-- **PIE**: Epic's `EditorAppToolset.StartPIE` / `StopPIE` / `IsPIERunning` via `call_tool`.
-- **Logs**: Epic's `LogsToolset.GetLogEntries` via `call_tool` (or read the `.log` file).
+  Epic's `AssetTools` toolset (via `execute_tool` in-Python, or `call_tool`).
+- **Screenshots / vision**: Epic's `EditorAppToolset` — `CaptureViewport` (returns a PNG, and can
+  overlay a world grid + actor labels), `CaptureEditorImage`, `CaptureAssetImage`. **Use `call_tool`
+  for these** so the MCP layer surfaces the image for you to view (`execute_tool` would only hand
+  back a base64 string).
+- **PIE**: `EditorAppToolset.StartPIE` / `StopPIE` / `IsPIERunning` — batchable via `execute_tool`
+  (`"EditorToolset.EditorAppToolset"`), or `call_tool`.
+- **Logs**: `LogsToolset.GetLogEntries` — via `execute_tool` or `call_tool` (or read the `.log` file).
 - **DataTables / DataAssets / enum-struct basics**: Epic's `DataTableTools` / `DataAssetTools` /
-  `ObjectTools`. (VibeUE keeps only `EnumStructService` for create/edit of user enums & structs.)
+  `ObjectTools` (via `execute_tool` or `call_tool`). (VibeUE keeps only `EnumStructService` for
+  create/edit of user enums & structs.)
 
 ---
 
