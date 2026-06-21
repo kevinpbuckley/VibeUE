@@ -101,7 +101,6 @@ public class VibeUE : ModuleRules
 				"MetasoundEngine",        // For UMetaSoundSource, UMetaSoundBuilderSubsystem, UMetaSoundSourceBuilder
 				"MetasoundFrontend",      // For FMetaSoundFrontendDocumentBuilder, FMetasoundFrontendClassName, ISearchEngine
 				"MetasoundGraphCore",     // For core MetaSound graph types
-				"StructUtils",            // For FInstancedStruct / MakeInstancedStruct support
 				"MeshDescription",        // For FMeshDescription / TVertexInstanceAttributesRef (UV editing)
 				"StaticMeshDescription",  // For FStaticMeshAttributes / FStaticMeshOperations / FUVMapParameters
 				"ToolsetRegistry",        // UE 5.8 native AI toolset registry — exposes services as AICallable tools on Epic's MCP endpoint
