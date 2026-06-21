@@ -1,9 +1,7 @@
 # VibeUE — AI agent guide (Unreal Engine 5.8)
 
-VibeUE is a plugin that **extends Unreal 5.8's native AI toolset system**. Its services, tools, and
-skills register into the engine's own `ToolsetRegistry` + `ModelContextProtocol` and are served from
-Unreal's MCP endpoint (default `http://localhost:8000/mcp`). There is **no separate VibeUE server,
-no API key, and no in-editor chat** — you talk to the engine's endpoint.
+VibeUE **extends Unreal 5.8's native AI toolset system** — its services, tools, and skills register
+into the engine's `ToolsetRegistry` and are reachable through the MCP tools you already have.
 
 **ALWAYS use the MCP tools / Python API for Unreal operations — NEVER read `.uasset` files from disk.**
 
@@ -25,12 +23,9 @@ There are two ways to act on the editor. Pick the cheap one:
   (see §2), so batch engine-toolset calls with your Python instead of spending a round-trip. Don't
   use `call_tool` for work `execute_python_code` can batch.
 
-**Rules of thumb (speed + tokens):**
-1. Default to `execute_python_code`; one call should accomplish a logical step, not one operation.
-2. `call_tool` only for skills and Epic-only toolsets (below).
-3. **Avoid `describe_toolset` as a habit** — it dumps the full JSON schema of every tool in a toolset
-   (the most token-heavy thing here). Reach for a **skill** + `discover_python_class` instead.
-4. Discover signatures narrowly: `discover_python_class('unreal.BlueprintService', method_filter='variable')`.
+**Speed + tokens:** **avoid `describe_toolset` as a habit** — it dumps the full JSON schema of every
+tool in a toolset (the most token-heavy thing here); reach for a **skill** plus a narrow
+`discover_python_class('unreal.BlueprintService', method_filter='variable')` instead.
 
 ---
 
