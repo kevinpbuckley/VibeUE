@@ -3248,7 +3248,12 @@ bool ULandscapeService::GetHoleAtLocation(
 	FGuid LayerGuid = ResolveEditLayerGuid(Landscape);
 	FScopedSetLandscapeEditingLayer EditLayerScope(Landscape, LayerGuid);
 
-	TAlphamapAccessor<true> AlphaAccessor(Info, VisLayer);
+	// Use TAlphamapAccessor<false> (RAW, NOT total-normalized) to match how
+	// SetHoleAtLocation writes the visibility weight. Reading with <true> normalizes
+	// the visibility weight against the other paint layers, which scales a painted
+	// hole (255) below the threshold wherever other layers have weight — so the read
+	// previously returned False even on a real hole. (issue #456)
+	TAlphamapAccessor<false> AlphaAccessor(Info, VisLayer);
 	AlphaAccessor.GetData(LocalX, LocalY, LocalX, LocalY, WeightData.GetData());
 
 	return WeightData[0] > 128;
