@@ -105,6 +105,12 @@ sine_id = r2.node_id   # GUID string
 # Set the Sine frequency to 880 Hz
 # Use get_node_pins() to confirm exact input pin names before setting
 ms.set_node_input_default(asset_path, sine_id, "Frequency", "880.0", "Float")
+
+# Read it back (issue #460):
+ms.get_node_input_default(asset_path, sine_id, "Frequency")   # -> "880.000000"
+# All inputs at once: name / data_type / default_value / is_connected
+for v in ms.get_node_input_values(asset_path, sine_id):
+    print(v.name, v.data_type, v.default_value, v.is_connected)
 ```
 
 ### 6 — Connect nodes
@@ -113,6 +119,10 @@ ms.set_node_input_default(asset_path, sine_id, "Frequency", "880.0", "Float")
 # connect_nodes(asset_path, from_node_id, output_name, to_node_id, input_name)
 # Sine output pin is "Audio"; AudioOut input pin is "UE.OutputFormat.Mono.Audio:0"
 ms.connect_nodes(asset_path, sine_id, "Audio", audio_out_id, audio_in_pin)
+
+# Read the wiring back (issue #460) — every edge touching a node, both directions:
+for c in ms.get_node_connections(asset_path, sine_id):
+    print(f"{c.from_node_id}.{c.from_output} -> {c.to_node_id}.{c.to_input} [{c.data_type}]")
 ```
 
 ### 7 — Save
