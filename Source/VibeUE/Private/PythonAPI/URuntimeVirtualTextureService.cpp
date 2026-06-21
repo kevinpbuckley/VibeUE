@@ -133,22 +133,38 @@ FRVTCreateResult URuntimeVirtualTextureService::CreateRuntimeVirtualTexture(
 			ByteProp->SetPropertyValue_InContainer(NewRVT, (uint8)MatType);
 		}
 
-		// Set TileCount (int32)
+		// The TileCount / TileSize / TileBorderSize UPROPERTYs are stored as exponents/indices;
+		// the engine getters derive the ACTUAL values:
+		//   GetTileCount()      = 1 << TileCount            (TileCount     in [0,12])
+		//   GetTileSize()       = 1 << (TileSize + 6)       (TileSize      in [0,4] -> 64..1024 px)
+		//   GetTileBorderSize() = 2 * TileBorderSize        (TileBorderSize in [0,4] -> 0..8 px)
+		// Callers pass the actual values they expect to read back (e.g. 256 tiles, 256 px,
+		// 4 px border), so convert to the stored form so the round-trip is consistent
+		// (previously the literal int was written into the exponent, e.g. 256 -> 4096). (#472)
+		auto FloorLog2OrZero = [](int32 InValue) -> int32
+		{
+			return (InValue > 0) ? static_cast<int32>(FMath::FloorLog2(static_cast<uint32>(InValue))) : 0;
+		};
+		const int32 StoredTileCount  = FMath::Clamp(FloorLog2OrZero(TileCount), 0, 12);
+		const int32 StoredTileSize   = FMath::Clamp(FloorLog2OrZero(TileSize) - 6, 0, 4);
+		const int32 StoredTileBorder = FMath::Clamp(TileBorderSize / 2, 0, 4);
+
+		// Set TileCount (int32, stored as exponent)
 		if (FIntProperty* IntProp = CastField<FIntProperty>(RVTClass->FindPropertyByName(TEXT("TileCount"))))
 		{
-			IntProp->SetPropertyValue_InContainer(NewRVT, TileCount);
+			IntProp->SetPropertyValue_InContainer(NewRVT, StoredTileCount);
 		}
 
-		// Set TileSize (int32)
+		// Set TileSize (int32, stored as index)
 		if (FIntProperty* IntProp = CastField<FIntProperty>(RVTClass->FindPropertyByName(TEXT("TileSize"))))
 		{
-			IntProp->SetPropertyValue_InContainer(NewRVT, TileSize);
+			IntProp->SetPropertyValue_InContainer(NewRVT, StoredTileSize);
 		}
 
-		// Set TileBorderSize (int32)
+		// Set TileBorderSize (int32, stored as half the pixel border)
 		if (FIntProperty* IntProp = CastField<FIntProperty>(RVTClass->FindPropertyByName(TEXT("TileBorderSize"))))
 		{
-			IntProp->SetPropertyValue_InContainer(NewRVT, TileBorderSize);
+			IntProp->SetPropertyValue_InContainer(NewRVT, StoredTileBorder);
 		}
 
 		// Set bContinuousUpdate (bool)
