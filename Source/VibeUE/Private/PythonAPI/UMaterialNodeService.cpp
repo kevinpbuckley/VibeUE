@@ -2,6 +2,7 @@
 
 #include "PythonAPI/UMaterialNodeService.h"
 #include "PythonAPI/UMaterialService.h"
+#include "Core/JsonValueHelper.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialExpression.h"
 #include "Materials/MaterialExpressionParameter.h"
@@ -980,27 +981,41 @@ bool UMaterialNodeService::SetExpressionProperty(
 	
 	void* PropertyPtr = Property->ContainerPtrToValuePtr<void>(Expression);
 	
-	// Handle FLinearColor
+	// Handle FLinearColor — accept the UE tuple form AND friendly formats
+	// (#RRGGBB / #RRGGBBAA hex, named colors, "R,G,B[,A]" arrays). (issue #450)
 	if (FStructProperty* StructProp = CastField<FStructProperty>(Property))
 	{
 		if (StructProp->Struct->GetName() == TEXT("LinearColor"))
 		{
 			FLinearColor Color;
-			if (Color.InitFromString(PropertyValue))
+			if (FJsonValueHelper::TryParseLinearColor(PropertyValue, Color))
 			{
 				FLinearColor* ColorPtr = static_cast<FLinearColor*>(PropertyPtr);
 				*ColorPtr = Color;
 				RefreshMaterialGraph(Material);
 				return true;
 			}
+			// A color property with an unparseable value is a real failure, not a no-op.
+			UE_LOG(LogTemp, Warning,
+				TEXT("UMaterialNodeService::SetExpressionProperty: could not parse color '%s' for '%s'"),
+				*PropertyValue, *PropertyName);
+			return false;
 		}
 	}
-	
-	// Standard import
-	Property->ImportText_Direct(*PropertyValue, PropertyPtr, Expression, PPF_None);
-	
+
+	// Standard import — ImportText_Direct returns nullptr when the value can't be parsed.
+	// Previously the result was ignored and the call always returned true (issue #450).
+	const TCHAR* ImportResult = Property->ImportText_Direct(*PropertyValue, PropertyPtr, Expression, PPF_None);
+	if (ImportResult == nullptr)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("UMaterialNodeService::SetExpressionProperty: failed to import '%s' into property '%s'"),
+			*PropertyValue, *PropertyName);
+		return false;
+	}
+
 	RefreshMaterialGraph(Material);
-	
+
 	return true;
 }
 
