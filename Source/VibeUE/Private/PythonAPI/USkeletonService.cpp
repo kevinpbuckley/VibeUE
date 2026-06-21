@@ -1303,9 +1303,13 @@ bool USkeletonService::LearnFromAnimations(
 		}
 	}
 
-	// Apply limits
-	const int32 HardLimit = 10;  // Reduced for safety
+	// Apply limits. Honor the caller's MaxAnimations up to a generous safety ceiling
+	// (was hard-capped at 10, which silently ignored larger requests — issue #447).
+	const int32 HardLimit = 200;
 	int32 MaxToProcess = MaxAnimations > 0 ? FMath::Min(MaxAnimations, HardLimit) : HardLimit;
+
+	// Sample this many evenly-spaced frames per animation (was effectively 1: the ref pose).
+	const int32 SamplesToTake = FMath::Clamp(SamplesPerAnimation, 1, 1000);
 
 	// Use Asset Registry to process ONE animation at a time (no batch list)
 	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
@@ -1363,6 +1367,10 @@ bool USkeletonService::LearnFromAnimations(
 		}
 
 		// ========== SAMPLE PHASE ==========
+		// Sample the ACTUAL ANIMATED local-space bone rotations at evenly-spaced frames
+		// across the clip (previously this sampled the static ref/bind pose once per bone,
+		// so SamplesPerAnimation was ignored and every sample was identical → degenerate
+		// min==max==percentile constraints). (issue #447)
 		int32 SamplesFromThisAnim = 0;
 		const FReferenceSkeleton& AnimRefSkeleton = AnimSkeleton->GetReferenceSkeleton();
 		int32 AnimBoneCount = AnimRefSkeleton.GetNum();
@@ -1372,20 +1380,33 @@ bool USkeletonService::LearnFromAnimations(
 			continue;
 		}
 
-		for (int32 BoneIndex = 0; BoneIndex < AnimBoneCount; BoneIndex++)
+		const float PlayLength = AnimSeq->GetPlayLength();
+		for (int32 SampleIdx = 0; SampleIdx < SamplesToTake; SampleIdx++)
 		{
-			FName BoneFName = AnimRefSkeleton.GetBoneName(BoneIndex);
-			FString BoneName = BoneFName.ToString();
-			if (!BoneRotationSamples.Contains(BoneName))
-			{
-				continue;
-			}
+			// Evenly-spaced times across [0, PlayLength] (single sample → t=0).
+			const float Time = (SamplesToTake > 1)
+				? (PlayLength * static_cast<float>(SampleIdx) / static_cast<float>(SamplesToTake - 1))
+				: 0.0f;
 
-			const FTransform& RefPose = AnimRefSkeleton.GetRefBonePose()[BoneIndex];
-			FRotator RefRotation = RefPose.GetRotation().Rotator();
-			BoneRotationSamples[BoneName].Add(RefRotation);
-			OutConstraints.TotalSamples++;
-			SamplesFromThisAnim++;
+			for (int32 BoneIndex = 0; BoneIndex < AnimBoneCount; BoneIndex++)
+			{
+				FName BoneFName = AnimRefSkeleton.GetBoneName(BoneIndex);
+				FString BoneName = BoneFName.ToString();
+				if (!BoneRotationSamples.Contains(BoneName))
+				{
+					continue;
+				}
+
+				FTransform BoneTransform;
+				FSkeletonPoseBoneIndex SkeletonBoneIndex(BoneIndex);
+				FAnimExtractContext ExtractionContext(static_cast<double>(Time));
+				AnimSeq->GetBoneTransform(BoneTransform, SkeletonBoneIndex, ExtractionContext, /*bUseRawData=*/true);
+
+				FRotator SampledRotation = BoneTransform.GetRotation().Rotator();
+				BoneRotationSamples[BoneName].Add(SampledRotation);
+				OutConstraints.TotalSamples++;
+				SamplesFromThisAnim++;
+			}
 		}
 
 		UE_LOG(LogTemp, Log, TEXT("LearnFromAnimations: %s - %d samples"), *AnimName, SamplesFromThisAnim);
