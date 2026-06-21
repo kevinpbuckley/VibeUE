@@ -99,6 +99,10 @@ ar = unreal.AssetRegistryHelpers.get_asset_registry()
 hits = ar.get_assets_by_class(unreal.TopLevelAssetPath("/Script/PCG", "PCGGraph"))
 ```
 
+> ⚠️ **`PCGGraph.is_standalone_graph` is deprecated** (issue #465) — it logs a deprecation
+> warning in 5.8. Use the graph's `GraphUsageContext` / usage flags instead of `is_standalone_graph`
+> to tell a top-level graph from a subgraph.
+
 ## Adding Nodes
 
 Use `add_node_of_type(SettingsClass)` — returns a `(PCGNode, PCGSettings)` tuple.
