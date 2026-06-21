@@ -31,8 +31,14 @@ Use `AnimMontageService` for animation montage operations.
 ## Quick Reference - Python API
 
 ### Discovery Methods
+> ⚠️ **`list_montages` filters are strings, not `None`** (issue #461) — pass `""` for "no
+> filter", never `None` (an FString arg can't be null and raises a TypeError).
+> **Playback rate:** there is no `set_playback_rate_scale` method; set the montage's `RateScale`
+> directly — `unreal.load_asset(montage_path).set_editor_property("RateScale", 1.5)` then
+> `unreal.EditorAssetLibrary.save_asset(montage_path)`.
+
 ```python
-# List all montages in a path
+# List all montages in a path (use "" for no skeleton filter, NOT None)
 montages = AnimMontageService.list_montages(search_path, skeleton_filter) -> Array[MontageInfo]
 
 # Get detailed montage info
