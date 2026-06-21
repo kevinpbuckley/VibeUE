@@ -33,6 +33,34 @@ unreal_classes:
 > `asset_exists`, …) was **removed** from `AssetDiscoveryService` — use the engine `AssetTools`
 > toolset or `EditorAssetLibrary` / the Asset Registry.
 
+## Data Assets & Data Tables — no dedicated VibeUE service (issues #451, #452)
+
+There is **no `DataAssetService` / `DataTableService`**. Drive them natively:
+
+```python
+import unreal
+
+# --- Data Assets (UPrimaryDataAsset / UDataAsset subclasses) ---
+# Create: engine DataAssetTools toolset via call_tool (describe_toolset for the action), OR a factory.
+da = unreal.load_asset("/Game/Data/DA_Thing")
+val = da.get_editor_property("MyField")          # read
+da.set_editor_property("MyField", 42)            # write — works for any UPROPERTY
+unreal.EditorAssetLibrary.save_loaded_asset(da)
+
+# --- Data Tables ---
+dt = unreal.load_asset("/Game/Data/DT_Items")
+names = unreal.DataTableFunctionLibrary.get_data_table_row_names(dt)   # row keys
+# Read/write rows with the editor DataTable API:
+#   unreal.DataTableFunctionLibrary.evaluate_curve_table_row(...) / get_data_table_column_as_string(dt, "Col")
+# Engine DataTableTools (call_tool) covers add/remove/get rows + import/export CSV/JSON.
+```
+
+> ⚠️ **Data Table gotchas (verified, #452):** the row **key** ("Name") is reported as a column by
+> some schema readers — it is the row id, not a data field. Writing a row with the wrong value type
+> can be silently coerced — read the row back to confirm. There is no `clear_rows`; remove rows
+> individually (engine `DataTableTools`) or re-import an empty CSV. An empty `GameplayTag` field
+> serializes as `"None"`.
+
 ## Critical Rules
 
 ### ⚠️ Out-Params Become Return Values in Python — Never Pass an `AssetData` Argument
