@@ -134,63 +134,40 @@ struct FNiagaraSystemComparison
 };
 
 /**
- * Niagara Service - Python API for Niagara System manipulation
+ * Niagara Service - Python API for Niagara rapid-iteration tuning + diagnostics.
  *
- * Provides Niagara system management actions:
+ * This service was TRIMMED (issue #462): system / emitter / user-parameter
+ * create / add / copy / duplicate / remove / move / compile are now owned by the
+ * engine NiagaraToolsets (NiagaraToolset_System / _Assets / _Component / _Info) and
+ * are reached with call_tool — they are NOT methods on this service. Scratch-pad /
+ * Custom-HLSL graph authoring lives on NiagaraScratchPadService.
  *
- * Lifecycle:
- * - create_system: Create a new Niagara System asset
- * - save_system: Save system to disk
- * - compile_system: Compile/rebuild system
- * - compile_with_results: Compile and get detailed error/warning messages
- * - open_in_editor: Open system in Niagara Editor
+ * Methods this service actually exposes:
  *
- * Information:
- * - get_system_info: Get comprehensive system information
- * - summarize: Get AI-friendly system summary
- * - list_emitters: List all emitters in system
+ * Rapid-iteration parameters (per-emitter script settings):
+ * - list_rapid_iteration_params(system_path, emitter_name)
+ * - set_rapid_iteration_param(system_path, emitter_name, param_name, value)
+ * - set_rapid_iteration_param_by_stage(system_path, emitter_name, stage, param_name, value)
  *
- * Emitter Management:
- * - add_emitter: Add emitter to system (from template or minimal)
- * - list_emitter_templates: List available emitter templates
- * - copy_emitter: Copy emitter from one system to another
- * - remove_emitter: Remove emitter from system
- * - enable_emitter: Enable/disable emitter
- * - duplicate_emitter: Duplicate an emitter within system
- * - rename_emitter: Rename an emitter
- * - move_emitter: Reorder/reposition an emitter in the graph
+ * Diagnostics:
+ * - compare_systems(source_path, target_path)
+ * - get_emitter_lifecycle(system_path, emitter_name)  # info struct or None
+ * - debug_activation(system_path)
  *
- * Parameter Management:
- * - list_parameters: List all user-exposed parameters
- * - get_parameter: Get a parameter value
- * - set_parameter: Set a parameter value
- * - add_user_parameter: Add a new user-exposed parameter
- * - remove_user_parameter: Remove a user parameter
- *
- * Existence Checks:
- * - system_exists: Check if system exists
- * - emitter_exists: Check if emitter exists in system
- * - parameter_exists: Check if parameter exists
- *
- * Search:
- * - search_systems: Search for Niagara systems
- * - search_emitters: Search for standalone emitter assets
+ * For system/emitter/parameter CRUD + compile, discover the engine tools with
+ * list_toolsets() / describe_toolset("NiagaraToolsets.NiagaraToolset_System") and
+ * invoke via call_tool.
  *
  * Python Usage:
  *   import unreal
  *
- *   # Create a system
- *   result = unreal.NiagaraService.create_system("NS_Fire", "/Game/VFX")
+ *   # Discover and tune an emitter's rapid-iteration parameters:
+ *   params = unreal.NiagaraService.list_rapid_iteration_params("/Game/VFX/NS_Fire", "Flames")
+ *   unreal.NiagaraService.set_rapid_iteration_param(
+ *       "/Game/VFX/NS_Fire", "Flames", "Constants.flames.Color.Scale Color", "(0.0, 3.0, 0.0)")
  *
- *   # Add minimal emitter (like UI's "Add Minimal Emitter" button)
- *   unreal.NiagaraService.add_emitter(result.asset_path, "minimal", "Flames")
- *
- *   # Or add existing emitter template
- *   templates = unreal.NiagaraService.list_emitter_templates("", "Fountain")
- *   unreal.NiagaraService.add_emitter(result.asset_path, templates[0], "Fountain")
- *
- *   # Set user parameter
- *   unreal.NiagaraService.set_parameter(result.asset_path, "User.SpawnRate", "100.0")
+ *   # Diagnose:
+ *   print(unreal.NiagaraService.debug_activation("/Game/VFX/NS_Fire"))
  */
 UCLASS(BlueprintType)
 class VIBEUE_API UNiagaraService : public UToolsetDefinition

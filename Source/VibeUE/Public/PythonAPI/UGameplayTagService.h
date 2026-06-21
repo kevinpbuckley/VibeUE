@@ -106,12 +106,10 @@ struct FGameplayTagResult
  *   # Get direct children of a tag
  *   children = unreal.GameplayTagService.get_children("Cube")
  *
- *   # Rename a tag
- *   result = unreal.GameplayTagService.rename_tag("Cube.StartChasing", "Cube.BeginChase")
- *
- *   # Remove a tag
- *   result = unreal.GameplayTagService.remove_tag("Cube.StopChasing")
- *
+ * @note This service owns: has_tag, get_tag_info, get_children, add_tags (bulk).
+ *       Single-tag create / rename / remove are the engine's GameplayTagsToolset —
+ *       reach them with call_tool (run describe_toolset on the GameplayTags toolset for
+ *       the exact action names). There is no rename_tag / remove_tag on this service.
  * @note Tags are written to DefaultGameplayTags.ini by default and registered at runtime.
  */
 UCLASS(BlueprintType)
