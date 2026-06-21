@@ -19,6 +19,63 @@
 // Static map for skeleton modifiers - using TStrongObjectPtr for GC safety
 TMap<FString, TStrongObjectPtr<USkeletonModifier>> USkeletonService::ActiveModifiers;
 
+namespace
+{
+	// Guard against mutating bone STRUCTURE on engine or SHARED skeletons (issue #466).
+	// reparent/add/rename of bones edits the underlying USkeleton; doing that on a skeleton
+	// shared by several skeletal meshes (or an engine/template skeleton) corrupts every mesh
+	// that uses it. We refuse with an actionable error instead of silently committing.
+	bool IsProtectedSkeletonForStructureEdit(USkeletalMesh* Mesh, FString& OutReason)
+	{
+		if (!Mesh)
+		{
+			return false;
+		}
+		USkeleton* Skeleton = Mesh->GetSkeleton();
+		if (!Skeleton)
+		{
+			return false;
+		}
+
+		const FString SkeletonPath = Skeleton->GetPathName();
+		if (SkeletonPath.StartsWith(TEXT("/Engine/")))
+		{
+			OutReason = FString::Printf(TEXT("skeleton '%s' is engine content"), *SkeletonPath);
+			return true;
+		}
+
+		// Count how many SkeletalMesh assets reference this skeleton's package.
+		FAssetRegistryModule& ARM = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+		IAssetRegistry& AR = ARM.Get();
+		TArray<FName> Referencers;
+		AR.GetReferencers(Skeleton->GetOutermost()->GetFName(), Referencers);
+
+		int32 MeshCount = 0;
+		const FTopLevelAssetPath SkelMeshClass = USkeletalMesh::StaticClass()->GetClassPathName();
+		for (const FName& RefPkg : Referencers)
+		{
+			TArray<FAssetData> Assets;
+			AR.GetAssetsByPackageName(RefPkg, Assets);
+			for (const FAssetData& AD : Assets)
+			{
+				if (AD.AssetClassPath == SkelMeshClass)
+				{
+					++MeshCount;
+					break;
+				}
+			}
+		}
+		if (MeshCount > 1)
+		{
+			OutReason = FString::Printf(
+				TEXT("skeleton '%s' is shared by %d skeletal meshes — editing its bone structure would affect all of them"),
+				*SkeletonPath, MeshCount);
+			return true;
+		}
+		return false;
+	}
+}
+
 // ============================================================================
 // PRIVATE HELPERS
 // ============================================================================
@@ -386,6 +443,15 @@ FTransform USkeletonService::GetBoneTransform(const FString& AssetPath, const FS
 
 bool USkeletonService::AddBone(const FString& SkeletalMeshPath, const FString& BoneName, const FString& ParentBoneName, const FTransform& LocalTransform)
 {
+	{
+		FString ProtectReason;
+		if (IsProtectedSkeletonForStructureEdit(LoadSkeletalMesh(SkeletalMeshPath), ProtectReason))
+		{
+			UE_LOG(LogTemp, Error, TEXT("USkeletonService::AddBone: refused — %s. Duplicate the mesh/skeleton first and edit the copy."), *ProtectReason);
+			return false;
+		}
+	}
+
 	USkeletonModifier* Modifier = GetSkeletonModifier(SkeletalMeshPath);
 	if (!Modifier)
 	{
@@ -398,6 +464,15 @@ bool USkeletonService::AddBone(const FString& SkeletalMeshPath, const FString& B
 
 bool USkeletonService::RemoveBone(const FString& SkeletalMeshPath, const FString& BoneName, bool bRemoveChildren)
 {
+	{
+		FString ProtectReason;
+		if (IsProtectedSkeletonForStructureEdit(LoadSkeletalMesh(SkeletalMeshPath), ProtectReason))
+		{
+			UE_LOG(LogTemp, Error, TEXT("USkeletonService::RemoveBone: refused — %s. Duplicate the mesh/skeleton first and edit the copy."), *ProtectReason);
+			return false;
+		}
+	}
+
 	USkeletonModifier* Modifier = GetSkeletonModifier(SkeletalMeshPath);
 	if (!Modifier)
 	{
@@ -410,6 +485,15 @@ bool USkeletonService::RemoveBone(const FString& SkeletalMeshPath, const FString
 
 bool USkeletonService::RenameBone(const FString& SkeletalMeshPath, const FString& OldBoneName, const FString& NewBoneName)
 {
+	{
+		FString ProtectReason;
+		if (IsProtectedSkeletonForStructureEdit(LoadSkeletalMesh(SkeletalMeshPath), ProtectReason))
+		{
+			UE_LOG(LogTemp, Error, TEXT("USkeletonService::RenameBone: refused — %s. Duplicate the mesh/skeleton first and edit the copy."), *ProtectReason);
+			return false;
+		}
+	}
+
 	USkeletonModifier* Modifier = GetSkeletonModifier(SkeletalMeshPath);
 	if (!Modifier)
 	{
@@ -426,6 +510,15 @@ bool USkeletonService::ReparentBone(const FString& SkeletalMeshPath, const FStri
 	// during commit, which triggers a modal dialog that blocks the game thread.
 	// Instead, we implement reparenting as: remove bone+descendants, add bone with new parent, add descendants back.
 	
+	{
+		FString ProtectReason;
+		if (IsProtectedSkeletonForStructureEdit(LoadSkeletalMesh(SkeletalMeshPath), ProtectReason))
+		{
+			UE_LOG(LogTemp, Error, TEXT("USkeletonService::ReparentBone: refused — %s. Duplicate the mesh/skeleton first and edit the copy."), *ProtectReason);
+			return false;
+		}
+	}
+
 	USkeletonModifier* Modifier = GetSkeletonModifier(SkeletalMeshPath);
 	if (!Modifier)
 	{
