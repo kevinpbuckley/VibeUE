@@ -190,7 +190,7 @@ for exact signatures before writing code.
 
 **Enabled automatically by VibeUE:** `PythonScriptPlugin` (the `unreal.*` API),
 `EditorScriptingUtilities`, and the domain plugins its services need — `Niagara`, `MetaSound`,
-`EnhancedInput`, `ModelViewViewModel`, `StateTree`, `MeshModelingToolset`, `StructUtils`,
+`EnhancedInput`, `ModelViewViewModel`, `StateTree`, `MeshModelingToolset`,
 `GameplayTagsEditor`. (VibeUE also depends on
 `ToolsetRegistry` + `ModelContextProtocol`, so enabling VibeUE pulls them in — but you still enable
 **Editor Tools** and start the server per Step 1.)

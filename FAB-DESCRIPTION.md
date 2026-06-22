@@ -41,4 +41,4 @@ VibeUE works without a key. A free API key (grab one at vibeue.com/login, set it
 • Free API key: https://www.vibeue.com/login
 
 
-Requirements: Win64 / Mac / Linux · Unreal Engine 5.8+ · Unreal's native MCP stack enabled (Unreal MCP, Toolset Registry, Editor Tools). VibeUE auto-enables the engine plugins its services need: Python Script Plugin, EditorScriptingUtilities, Enhanced Input, Niagara, MetaSound, MeshModelingToolset, ModelViewViewModel, StateTree, StructUtils, GameplayTagsEditor, plus ToolsetRegistry and ModelContextProtocol.
+Requirements: Win64 / Mac / Linux · Unreal Engine 5.8+ · Unreal's native MCP stack enabled (Unreal MCP, Toolset Registry, Editor Tools). VibeUE auto-enables the engine plugins its services need: Python Script Plugin, EditorScriptingUtilities, Enhanced Input, Niagara, MetaSound, MeshModelingToolset, ModelViewViewModel, StateTree, GameplayTagsEditor, plus ToolsetRegistry and ModelContextProtocol.

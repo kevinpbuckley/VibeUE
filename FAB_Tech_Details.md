@@ -8,7 +8,7 @@ Skills — ~34 lazy-loaded domain skill packs served through Unreal's native Age
 
 Module: VibeUE (Editor), 105 C++ source files. Win64 / Mac / Linux. Unreal Engine 5.8+.
 
-Prerequisites — enable Unreal's native MCP stack first: Unreal MCP (ModelContextProtocol), Toolset Registry (ToolsetRegistry), and Editor Tools (EditorToolset), then start the MCP server (see Epic's docs). VibeUE auto-enables the engine plugins its services need: PythonScriptPlugin, EditorScriptingUtilities, EnhancedInput, Niagara, MetaSound, MeshModelingToolset, ModelViewViewModel, StateTree, StructUtils, GameplayTagsEditor.
+Prerequisites — enable Unreal's native MCP stack first: Unreal MCP (ModelContextProtocol), Toolset Registry (ToolsetRegistry), and Editor Tools (EditorToolset), then start the MCP server (see Epic's docs). VibeUE auto-enables the engine plugins its services need: PythonScriptPlugin, EditorScriptingUtilities, EnhancedInput, Niagara, MetaSound, MeshModelingToolset, ModelViewViewModel, StateTree, GameplayTagsEditor.
 
 API key — optional and free (vibeue.com/login), set in Editor Preferences → Plugins → VibeUE. It unlocks only the real-world terrain tools; everything else works without one.
 
