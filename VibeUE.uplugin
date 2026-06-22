@@ -4,7 +4,7 @@
 	"VersionName": "4.0",
 	"EngineVersion": "5.8.0",
 	"FriendlyName": "VibeUE",
-	"Description": "In Editor AI Chat and Model Context Protocol server for Unreal Engine",
+	"Description": "MCP Expansion and AI Editor Toolset for Unreal Engine 5.8 — extends Unreal's native MCP server, ToolsetRegistry, and AgentSkill systems with deep editor automation.",
 	"Category": "Editor",
 	"CreatedBy": "Kevin Buckley",
 	"CreatedByURL": "",

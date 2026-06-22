@@ -189,7 +189,7 @@ namespace
 // PRIVATE MEMBER HELPERS
 // ============================================================================
 
-bool UMetaSoundService::ParseNodeGuid(const FString& NodeIdStr, FGuid& OutGuid, FMetaSoundResult& OutResult) const
+bool UMetaSoundService::ParseNodeGuid(const FString& NodeIdStr, FGuid& OutGuid, FMetaSoundResult& OutResult)
 {
 	if (!FGuid::Parse(NodeIdStr, OutGuid))
 	{
@@ -201,7 +201,7 @@ bool UMetaSoundService::ParseNodeGuid(const FString& NodeIdStr, FGuid& OutGuid, 
 
 FMetaSoundNodeInfo UMetaSoundService::BuildNodeInfo(UMetaSoundBuilderBase* Builder,
                                                     const FMetasoundFrontendClass& Class,
-                                                    const FMetasoundFrontendNode& Node) const
+                                                    const FMetasoundFrontendNode& Node)
 {
 	FMetaSoundNodeInfo Info;
 	Info.NodeId    = Node.GetID().ToString(EGuidFormats::DigitsWithHyphens);

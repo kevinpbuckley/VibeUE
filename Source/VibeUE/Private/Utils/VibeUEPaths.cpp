@@ -124,21 +124,6 @@ FString FVibeUEPaths::GetConfigDir()
 	return PluginDir / TEXT("Config");
 }
 
-FString FVibeUEPaths::GetMemoryDir()
-{
-	// Use Project/Saved/VibeUE/Memory — per-project, persistent across sessions.
-	FString MemoryDir = FPaths::ProjectSavedDir() / TEXT("VibeUE") / TEXT("Memory");
-
-	// Ensure directory exists
-	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
-	if (!PlatformFile.DirectoryExists(*MemoryDir))
-	{
-		PlatformFile.CreateDirectoryTree(*MemoryDir);
-	}
-
-	return MemoryDir;
-}
-
 FString FVibeUEPaths::GetPluginVersionName()
 {
 	IPluginManager& PluginManager = IPluginManager::Get();

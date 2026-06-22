@@ -205,15 +205,14 @@ struct FMetaSoundConnection
 /**
  * Python-accessible MetaSound source authoring service.
  *
- * Quick reference:
- *   ms = unreal.MetaSoundService()
- *   r = ms.create_meta_sound("/Game/Audio", "MS_Sine", "Mono")
- *   nodes = ms.list_available_nodes("Sine")    # discover node class
- *   r2 = ms.add_node(r.asset_path, "Metasound.Standard", "Sine", "Audio")
+ * Quick reference (all methods are static — call on the class):
+ *   r = unreal.MetaSoundService.create_meta_sound("/Game/Audio", "MS_Sine", "Mono")
+ *   nodes = unreal.MetaSoundService.list_available_nodes("Sine")    # discover node class
+ *   r2 = unreal.MetaSoundService.add_node(r.asset_path, "Metasound.Standard", "Sine", "Audio")
  *   # r2.node_id = GUID of the Sine node
  *   # connect Sine output to the built-in graph output node
- *   ms.connect_nodes(r.asset_path, r2.node_id, "Out", graph_out_id, "Audio:0")
- *   ms.save_meta_sound(r.asset_path)
+ *   unreal.MetaSoundService.connect_nodes(r.asset_path, r2.node_id, "Out", graph_out_id, "Audio:0")
+ *   unreal.MetaSoundService.save_meta_sound(r.asset_path)
  *
  * Use list_nodes() to retrieve NodeIds of the built-in interface nodes
  * (OnPlay output, OnFinished input, AudioOut inputs) created at asset creation.
@@ -237,25 +236,25 @@ public:
 	 * @param OutputFormat "Mono" | "Stereo" | "Quad" (default "Mono")
 	 * @return result.AssetPath = full content path of the new asset.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|MetaSound")
-	FMetaSoundResult CreateMetaSound(const FString& PackagePath,
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|MetaSound")
+	static FMetaSoundResult CreateMetaSound(const FString& PackagePath,
 	                                 const FString& AssetName,
 	                                 const FString& OutputFormat = TEXT("Mono"));
 
 	/** Delete a MetaSound source asset. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|MetaSound")
-	FMetaSoundResult DeleteMetaSound(const FString& AssetPath);
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|MetaSound")
+	static FMetaSoundResult DeleteMetaSound(const FString& AssetPath);
 
 	/** Return summary info about a MetaSound source asset including node count and graph I/O names. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|MetaSound")
-	FMetaSoundInfo GetMetaSoundInfo(const FString& AssetPath);
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|MetaSound")
+	static FMetaSoundInfo GetMetaSoundInfo(const FString& AssetPath);
 
 	/**
 	 * Save a MetaSound source asset after completing graph edits.
 	 * Always call save after a series of add_node / connect_nodes operations.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|MetaSound")
-	FMetaSoundResult SaveMetaSound(const FString& AssetPath);
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|MetaSound")
+	static FMetaSoundResult SaveMetaSound(const FString& AssetPath);
 
 	// =========================================================================
 	// Node Discovery
@@ -267,8 +266,8 @@ public:
 	 * @param SearchFilter Optional substring filter applied to FullClassName and DisplayName.
 	 * @return Array of node class descriptors sorted alphabetically by FullClassName.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|MetaSound")
-	TArray<FMetaSoundNodeClassInfo> ListAvailableNodes(const FString& SearchFilter = TEXT(""));
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|MetaSound")
+	static TArray<FMetaSoundNodeClassInfo> ListAvailableNodes(const FString& SearchFilter = TEXT(""));
 
 	// =========================================================================
 	// Node Management
@@ -283,8 +282,8 @@ public:
 	 * @param PosX / PosY   Editor position
 	 * @return result.NodeId = GUID string of the new node.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|MetaSound")
-	FMetaSoundResult AddNode(const FString& AssetPath,
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|MetaSound")
+	static FMetaSoundResult AddNode(const FString& AssetPath,
 	                         const FString& NodeNamespace,
 	                         const FString& NodeName,
 	                         const FString& NodeVariant = TEXT(""),
@@ -293,16 +292,16 @@ public:
 	                         float PosY = 0.0f);
 
 	/** Remove a node (and all its connected edges) from the graph. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|MetaSound")
-	FMetaSoundResult RemoveNode(const FString& AssetPath, const FString& NodeId);
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|MetaSound")
+	static FMetaSoundResult RemoveNode(const FString& AssetPath, const FString& NodeId);
 
 	/** List all nodes currently in the default graph page. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|MetaSound")
-	TArray<FMetaSoundNodeInfo> ListNodes(const FString& AssetPath);
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|MetaSound")
+	static TArray<FMetaSoundNodeInfo> ListNodes(const FString& AssetPath);
 
 	/** Return pin information for a single node. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|MetaSound")
-	FMetaSoundNodeInfo GetNodePins(const FString& AssetPath, const FString& NodeId);
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|MetaSound")
+	static FMetaSoundNodeInfo GetNodePins(const FString& AssetPath, const FString& NodeId);
 
 	/**
 	 * Read back the CURRENT literal default value of a single node input pin
@@ -310,8 +309,8 @@ public:
 	 * isn't found. If the input is connected, the value is the underlying default,
 	 * not the connected signal — use get_node_input_values to see is_connected. (#460)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|MetaSound")
-	FString GetNodeInputDefault(const FString& AssetPath,
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|MetaSound")
+	static FString GetNodeInputDefault(const FString& AssetPath,
 	                            const FString& NodeId,
 	                            const FString& InputName);
 
@@ -319,16 +318,16 @@ public:
 	 * Read back every input pin on a node: name, data type, current literal default,
 	 * and whether it is connected. (#460)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|MetaSound")
-	TArray<FMetaSoundInputValue> GetNodeInputValues(const FString& AssetPath, const FString& NodeId);
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|MetaSound")
+	static TArray<FMetaSoundInputValue> GetNodeInputValues(const FString& AssetPath, const FString& NodeId);
 
 	/**
 	 * Read back every connection (edge) touching a node — both incoming (into its
 	 * inputs) and outgoing (from its outputs) — with the resolved node ids and pin
 	 * names on both ends. (#460)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|MetaSound")
-	TArray<FMetaSoundConnection> GetNodeConnections(const FString& AssetPath, const FString& NodeId);
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|MetaSound")
+	static TArray<FMetaSoundConnection> GetNodeConnections(const FString& AssetPath, const FString& NodeId);
 
 	// =========================================================================
 	// Connections
@@ -341,16 +340,16 @@ public:
 	 * @param ToNodeId   GUID string of the destination node.
 	 * @param InputName  Input pin name on the destination node.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|MetaSound")
-	FMetaSoundResult ConnectNodes(const FString& AssetPath,
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|MetaSound")
+	static FMetaSoundResult ConnectNodes(const FString& AssetPath,
 	                              const FString& FromNodeId,
 	                              const FString& OutputName,
 	                              const FString& ToNodeId,
 	                              const FString& InputName);
 
 	/** Disconnect the connection going INTO a specific node input pin. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|MetaSound")
-	FMetaSoundResult DisconnectPin(const FString& AssetPath,
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|MetaSound")
+	static FMetaSoundResult DisconnectPin(const FString& AssetPath,
 	                               const FString& NodeId,
 	                               const FString& InputName);
 
@@ -363,8 +362,8 @@ public:
 	 * @param DataType     e.g. "Float", "Int32", "Bool", "String", "Audio", "Trigger"
 	 * @param DefaultValue String representation of default (e.g. "440.0" for Float)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|MetaSound")
-	FMetaSoundResult AddGraphInput(const FString& AssetPath,
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|MetaSound")
+	static FMetaSoundResult AddGraphInput(const FString& AssetPath,
 	                               const FString& InputName,
 	                               const FString& DataType,
 	                               const FString& DefaultValue = TEXT(""));
@@ -373,18 +372,18 @@ public:
 	 * Add a named output to the graph.
 	 * @param DataType e.g. "Float", "Audio", "Trigger"
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|MetaSound")
-	FMetaSoundResult AddGraphOutput(const FString& AssetPath,
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|MetaSound")
+	static FMetaSoundResult AddGraphOutput(const FString& AssetPath,
 	                                const FString& OutputName,
 	                                const FString& DataType);
 
 	/** Remove a named graph-level input. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|MetaSound")
-	FMetaSoundResult RemoveGraphInput(const FString& AssetPath, const FString& InputName);
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|MetaSound")
+	static FMetaSoundResult RemoveGraphInput(const FString& AssetPath, const FString& InputName);
 
 	/** Remove a named graph-level output. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|MetaSound")
-	FMetaSoundResult RemoveGraphOutput(const FString& AssetPath, const FString& OutputName);
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|MetaSound")
+	static FMetaSoundResult RemoveGraphOutput(const FString& AssetPath, const FString& OutputName);
 
 	// =========================================================================
 	// Node Configuration
@@ -397,32 +396,32 @@ public:
 	 * @param Value     String value (e.g. "440.0", "true", "42", "Hello").
 	 * @param DataType  "Float" | "Int32" | "Bool" | "String"
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|MetaSound")
-	FMetaSoundResult SetNodeInputDefault(const FString& AssetPath,
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|MetaSound")
+	static FMetaSoundResult SetNodeInputDefault(const FString& AssetPath,
 	                                     const FString& NodeId,
 	                                     const FString& InputName,
 	                                     const FString& Value,
 	                                     const FString& DataType);
 
 	/** Update the editor graph position of a node. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|MetaSound")
-	FMetaSoundResult SetNodeLocation(const FString& AssetPath,
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|MetaSound")
+	static FMetaSoundResult SetNodeLocation(const FString& AssetPath,
 	                                 const FString& NodeId,
 	                                 float PosX,
 	                                 float PosY);
 
 private:
 	/** Load asset and begin a builder session. Returns nullptr and sets OutError on failure. */
-	UMetaSoundBuilderBase* BeginEditing(const FString& AssetPath, UMetaSoundSource** OutSource, FString& OutError);
+	static UMetaSoundBuilderBase* BeginEditing(const FString& AssetPath, UMetaSoundSource** OutSource, FString& OutError);
 
 	/** Register the graph and save the asset to disk. */
-	void CommitEditing(const FString& AssetPath, UMetaSoundSource* Source);
+	static void CommitEditing(const FString& AssetPath, UMetaSoundSource* Source);
 
 	/** Parse a GUID string, populating OutResult.Message on failure. */
-	bool ParseNodeGuid(const FString& NodeIdStr, FGuid& OutGuid, FMetaSoundResult& OutResult) const;
+	static bool ParseNodeGuid(const FString& NodeIdStr, FGuid& OutGuid, FMetaSoundResult& OutResult);
 
 	/** Build a FMetaSoundNodeInfo from the builder, class metadata, and node data. */
-	FMetaSoundNodeInfo BuildNodeInfo(UMetaSoundBuilderBase* Builder,
+	static FMetaSoundNodeInfo BuildNodeInfo(UMetaSoundBuilderBase* Builder,
 	                                 const struct FMetasoundFrontendClass& Class,
-	                                 const struct FMetasoundFrontendNode& Node) const;
+	                                 const struct FMetasoundFrontendNode& Node);
 };

@@ -15,6 +15,7 @@
 #include "Misc/Paths.h"
 #include "HAL/PlatformProcess.h"
 #include "HAL/PlatformFileManager.h"
+#include "Settings/VibeUEEditorSettings.h"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -78,6 +79,14 @@ static bool ExtractTerrainBool(const TMap<FString, FString>& Params, const FStri
 
 static FString GetVibeUEApiKey()
 {
+	// Primary: Editor Preferences > Plugins > VibeUE (UVibeUEEditorSettings::ApiKey).
+	if (const UVibeUEEditorSettings* Settings = GetDefault<UVibeUEEditorSettings>())
+	{
+		if (!Settings->ApiKey.IsEmpty())
+			return Settings->ApiKey;
+	}
+
+	// Backward-compat: the legacy [VibeUE] VibeUEApiKey key written by older builds.
 	FString Key;
 	GConfig->GetString(TEXT("VibeUE"), TEXT("VibeUEApiKey"), Key, GEditorPerProjectIni);
 	return Key;
@@ -259,7 +268,7 @@ static FString ActionGetWaterFeatures(const TMap<FString, FString>& Params)
 {
 	const FString ApiKey = GetVibeUEApiKey();
 	if (ApiKey.IsEmpty())
-		return BuildErrorJson(TEXT("NO_API_KEY"), TEXT("No VibeUE API key configured. Set it in VibeUE chat settings."));
+		return BuildErrorJson(TEXT("NO_API_KEY"), TEXT("No VibeUE API key configured. Set it in Editor Preferences > Plugins > VibeUE (get a free key at https://www.vibeue.com/login)."));
 
 	const double Lng = ExtractTerrainDouble(Params, TEXT("lng"), 0.0);
 	const double Lat = ExtractTerrainDouble(Params, TEXT("lat"), 0.0);
@@ -506,7 +515,7 @@ static FString ActionGenerateHeightmap(const TMap<FString, FString>& Params)
 {
 	const FString ApiKey = GetVibeUEApiKey();
 	if (ApiKey.IsEmpty())
-		return BuildErrorJson(TEXT("NO_API_KEY"), TEXT("No VibeUE API key configured. Set it in VibeUE chat settings."));
+		return BuildErrorJson(TEXT("NO_API_KEY"), TEXT("No VibeUE API key configured. Set it in Editor Preferences > Plugins > VibeUE (get a free key at https://www.vibeue.com/login)."));
 
 	const double Lng = ExtractTerrainDouble(Params, TEXT("lng"), 0.0);
 	const double Lat = ExtractTerrainDouble(Params, TEXT("lat"), 0.0);
@@ -611,7 +620,7 @@ static FString ActionPreviewElevation(const TMap<FString, FString>& Params)
 {
 	const FString ApiKey = GetVibeUEApiKey();
 	if (ApiKey.IsEmpty())
-		return BuildErrorJson(TEXT("NO_API_KEY"), TEXT("No VibeUE API key configured."));
+		return BuildErrorJson(TEXT("NO_API_KEY"), TEXT("No VibeUE API key configured. Set it in Editor Preferences > Plugins > VibeUE."));
 
 	const double Lng = ExtractTerrainDouble(Params, TEXT("lng"), 0.0);
 	const double Lat = ExtractTerrainDouble(Params, TEXT("lat"), 0.0);
@@ -653,7 +662,7 @@ static FString ActionGetMapImage(const TMap<FString, FString>& Params)
 {
 	const FString ApiKey = GetVibeUEApiKey();
 	if (ApiKey.IsEmpty())
-		return BuildErrorJson(TEXT("NO_API_KEY"), TEXT("No VibeUE API key configured."));
+		return BuildErrorJson(TEXT("NO_API_KEY"), TEXT("No VibeUE API key configured. Set it in Editor Preferences > Plugins > VibeUE."));
 
 	const double Lng     = ExtractTerrainDouble(Params, TEXT("lng"),      0.0);
 	const double Lat     = ExtractTerrainDouble(Params, TEXT("lat"),      0.0);

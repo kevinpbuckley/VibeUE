@@ -56,15 +56,6 @@ public:
 	static FString GetScreenshotsDir();
 
 	/**
-	 * Get the VibeUE chat memory directory under Project/Saved.
-	 * This is the persistent, per-project store for the in-editor chat memory tool.
-	 * Creates the directory if it doesn't exist.
-	 *
-	 * @return Absolute path to Project/Saved/VibeUE/Memory
-	 */
-	static FString GetMemoryDir();
-
-	/**
 	 * Get the VibeUE plugin version name (e.g. "3.0").
 	 * Reads from the plugin descriptor via IPluginManager.
 	 *

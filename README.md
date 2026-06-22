@@ -25,7 +25,9 @@ your editor through Unreal's standard MCP endpoint.
 > ⚠️ **VibeUE requires Unreal's native MCP to be set up first** — enable the **Unreal MCP** plugin
 > (which auto-enables **Toolset Registry**) and the **Editor Tools** plugin, then start the MCP server.
 > Follow Epic's guide: **[Unreal MCP in the Unreal Editor](https://dev.epicgames.com/documentation/unreal-engine/unreal-mcp-in-unreal-editor)**.
-> VibeUE then expands that endpoint — **no separate server, no API key, no in-editor chat.**
+> VibeUE then expands that endpoint — **no separate server and no in-editor chat.** A free API key
+> (set in **Editor Preferences → Plugins → VibeUE**) unlocks the real-world **terrain** tools; everything
+> else works without one.
 
 ---
 
@@ -43,6 +45,8 @@ VibeUE **complements** them — it focuses on the domains and depth the engine d
 - **UI** — UMG widgets with MVVM bindings, animation authoring, and preview/PIE validation.
 - **Higher-order Blueprint authoring** — timelines, event dispatchers, delegates, custom-event pins,
   comment boxes, and a batch `build_graph` builder.
+- **Editor safety** — `TransactionService` wraps the editor's transaction buffer (undo / redo /
+  checkpoints) so an agent can group and roll back its own edits — the engine's toolsets expose none.
 - **⚡ Performance & profiling** — VibeUE's standout: see the dedicated section below.
 - **Python-first access** — run any `unreal.*` Python in the editor and introspect the whole API.
 - **Web research** — search / fetch / geocode for in-context research and terrain workflows.
@@ -89,8 +93,8 @@ VibeUE plugs into three native UE 5.8+ systems:
    methods are callable from Python as `unreal.<Name>Service.<method>()`.
 2. **MCP server** (`ModelContextProtocol`) — a small set of VibeUE utility tools are registered
    directly on the endpoint: `execute_python_code`, `discover_python_module`/`_class`/`_function`,
-   `list_python_subsystems`, `deep_research`, `terrain_data`, `memory`.
-3. **Skills** (`AgentSkillToolset`) — ~88 markdown skill packs register as native `UAgentSkill`s,
+   `list_python_subsystems`, `deep_research`, `terrain_data`.
+3. **Skills** (`AgentSkillToolset`) — ~34 markdown skill packs register as native `UAgentSkill`s,
    discoverable via `ListSkills` and loaded lazily via `GetSkills`, alongside the engine's own skills.
 
 **Efficient usage (for agents):** `execute_python_code` is the workhorse — it batches a whole
@@ -186,7 +190,8 @@ for exact signatures before writing code.
 
 **Enabled automatically by VibeUE:** `PythonScriptPlugin` (the `unreal.*` API),
 `EditorScriptingUtilities`, and the domain plugins its services need — `Niagara`, `MetaSound`,
-`EnhancedInput`, `ModelViewViewModel`, `StateTree`, `MeshModelingToolset`. (VibeUE also depends on
+`EnhancedInput`, `ModelViewViewModel`, `StateTree`, `MeshModelingToolset`, `StructUtils`,
+`GameplayTagsEditor`. (VibeUE also depends on
 `ToolsetRegistry` + `ModelContextProtocol`, so enabling VibeUE pulls them in — but you still enable
 **Editor Tools** and start the server per Step 1.)
 
