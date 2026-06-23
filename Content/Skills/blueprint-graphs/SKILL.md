@@ -462,6 +462,30 @@ OWN functions (your custom functions, callable on self) plus the full parent hie
 functions. The returned `spawner_key` (`"FUNC <Class>::<Func>"`) feeds straight into
 `create_node_by_key` — this is how you add a **self-call** node deterministically.
 
+#### Full node coverage — every action-menu node, not just functions/events
+
+`discover_nodes` enumerates the **entire** Blueprint action database, so it also returns template/custom
+K2 nodes and variable get/set on other classes — e.g. **Get Subsystem** (`Get EnhancedInputLocalPlayerSubsystem`,
+`Get GameInstanceSubsystem`, …), **Cast To** nodes, etc. These come back with a faithful
+**`SPAWN <NodeClass>|<MenuName>`** key:
+
+```python
+# Get Enhanced Input Local Player Subsystem, fully bound (ReturnValue typed to the subsystem)
+hits = unreal.BlueprintService.discover_nodes(bp, "EnhancedInputLocalPlayerSubsystem", "", 100)
+key  = next(h.spawner_key for h in hits if h.node_class == "K2Node_GetSubsystem")
+nid  = unreal.BlueprintService.create_node_by_key(bp, "EventGraph", key, 0, 0)
+```
+
+`create_node_by_key` resolves a `SPAWN` key back to the exact action-database spawner and **invokes**
+it — the same path the editor's Add-Node menu uses — so the node is created fully bound (Get Subsystem's
+`CustomClass`, a variable's member reference, …), not as a blank node.
+
+> **Search specifically.** Node menu names are **spaceless** (`EnhancedInputLocalPlayerSubsystem`, not
+> "Enhanced Input …"), and a broad term like `"Subsystem"` matches hundreds of function nodes that can
+> crowd out the template nodes under `max_results`. Search the exact spaceless name (or raise
+> `max_results`) and filter by `node_class` (`K2Node_GetSubsystem`, `K2Node_GetSubsystemFromPC`,
+> `K2Node_GetEngineSubsystem`, `K2Node_GetEditorSubsystem`).
+
 ### ⚠️ Complex Graphs: Create and Verify One Node at a Time
 
 For fragile graph work such as `STT_*` task Blueprints, timers, delegate workflows, or any graph being built from a screenshot:
