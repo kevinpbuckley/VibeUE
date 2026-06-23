@@ -27,7 +27,7 @@ Unreal Engine 5.8 added a built-in MCP server and AI toolsets. VibeUE is an MCP 
 
 🛠️ HOW TO USE:
 
-VibeUE expands Unreal's native MCP, so set that up first (enable the Unreal MCP, Toolset Registry, and Editor Tools plugins and start the server — see Epic's docs), then install VibeUE and enable it. Its services, tools, and skills register onto the same endpoint alongside the engine's own. Point any MCP agent at the endpoint and go. The included agent guide (AGENTS.md.sample) teaches the efficient patterns: discover before you call, batch with execute_python_code, and load skills on demand.
+VibeUE expands Unreal's native MCP, so set that up first (enable the Unreal MCP, Toolset Registry, and Editor Tools plugins and start the server — see Epic's docs), then install VibeUE and enable it. Its services, tools, and skills register onto the same endpoint alongside the engine's own. Point any MCP agent at the endpoint and go. To set up the agent guide, run the console command VibeUE.GenerateAgentConfig — it writes VibeUE's guide to the right file for your agent (CLAUDE.md, GEMINI.md, AGENTS.md, or .github/copilot-instructions.md; pass All for every file), resolving the plugin's FAB or Git install location automatically. The guide teaches the efficient patterns: discover before you call, batch with execute_python_code, and load skills on demand.
 
 
 🔑 API KEY:

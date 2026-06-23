@@ -10,6 +10,8 @@ Module: VibeUE (Editor), 105 C++ source files. Win64. Unreal Engine 5.8+.
 
 Prerequisites — enable Unreal's native MCP stack first: Unreal MCP (ModelContextProtocol), Toolset Registry (ToolsetRegistry), and Editor Tools (EditorToolset), then start the MCP server (see Epic's docs). VibeUE auto-enables the engine plugins its services need: PythonScriptPlugin, EditorScriptingUtilities, EnhancedInput, Niagara, MetaSound, MeshModelingToolset, ModelViewViewModel, StateTree, GameplayTagsEditor.
 
+Agent setup — run the editor console command VibeUE.GenerateAgentConfig [ClaudeCode|Gemini|Codex|Cursor|Copilot|All] to write VibeUE's agent guide to the matching project file (CLAUDE.md, GEMINI.md, AGENTS.md, or .github/copilot-instructions.md). It resolves the plugin location automatically, so it works whether VibeUE was installed from FAB or Git; pass "import" to link the guide instead of copying it (Claude Code / Gemini only). Mirrors Epic's ModelContextProtocol.GenerateClientConfig for .mcp.json.
+
 API key — optional and free (vibeue.com/login), set in Editor Preferences → Plugins → VibeUE. It unlocks only the real-world terrain tools; everything else works without one.
 
 Docs: https://www.vibeue.com/docs
