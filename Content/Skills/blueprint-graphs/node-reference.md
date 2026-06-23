@@ -39,6 +39,50 @@ unreal.BlueprintService.connect_nodes(bp_path, graph, mesh_id, "CubeMesh", next_
 The `class` param must be the generated class name (`BP_Cube_C`, not `BP_Cube`). It
 resolves via the same 3-step class fallback as the engine `BlueprintTools.create`.
 
+### Setting a Member of Another Class / Component (`member_set` node)
+
+The write-side counterpart of `member_get`. Use it to SET a property that lives on
+another class — most commonly a **component property** such as
+`UCharacterMovementComponent::MaxWalkSpeed`. Plain `variable_set` only binds variables
+on the Blueprint itself (`SetSelfMember`); for a component property it produces a blank
+Set node with no value/Target pin. `member_set` uses `SetExternalMember` so the node
+comes out fully bound.
+
+```
+self (input, Target)   — the owning object; wire a Get of the component here
+<MemberName> (input)   — the value to set (e.g. "MaxWalkSpeed", real)
+execute / then         — exec in/out
+Output_Get (output)    — passthrough of the new value (use instead of a separate Get)
+```
+
+```python
+# Hold-to-sprint: IA_Sprint Started -> MaxWalkSpeed = 1000, Completed -> 600.
+# CharacterMovement is an inherited component, so variable_get resolves it on self.
+unreal.BlueprintService.build_graph(bp, "EventGraph",
+    [
+        {"ref": "Sprint", "type": "input_action", "params": {"action": "/Game/Input/Actions/IA_Sprint"}},
+        {"ref": "GetCMV1", "type": "variable_get", "params": {"variable": "CharacterMovement"}},
+        {"ref": "SetRun",  "type": "member_set",   "params": {"member": "MaxWalkSpeed", "class": "CharacterMovementComponent"}},
+        {"ref": "GetCMV2", "type": "variable_get", "params": {"variable": "CharacterMovement"}},
+        {"ref": "SetWalk", "type": "member_set",   "params": {"member": "MaxWalkSpeed", "class": "CharacterMovementComponent"}},
+    ],
+    [
+        {"from_": "Sprint.Started",            "to": "SetRun.execute"},
+        {"from_": "GetCMV1.CharacterMovement", "to": "SetRun.self"},
+        {"from_": "Sprint.Completed",          "to": "SetWalk.execute"},
+        {"from_": "GetCMV2.CharacterMovement", "to": "SetWalk.self"},
+    ],
+    [
+        {"node_ref": "SetRun",  "pin_name": "MaxWalkSpeed", "value": "1000.0"},
+        {"node_ref": "SetWalk", "pin_name": "MaxWalkSpeed", "value": "600.0"},
+    ],
+    True, True)
+```
+
+The `class` param is the property's owning class name (`CharacterMovementComponent`,
+not the `U`-prefixed C++ name). Round-trips: an external-member Set exported by
+`get_graph_definition` comes back as `member_set` (self variables stay `variable_set`).
+
 ### Validated Get Nodes (`validated_get` node)
 
 > The standalone `add_validated_get_node` method is **gone**. Create this node as the

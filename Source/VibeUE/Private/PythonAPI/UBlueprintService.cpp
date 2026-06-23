@@ -8622,6 +8622,57 @@ UEdGraphNode* UBlueprintService::CreateNodeFromDesc(
 		return GetNode;
 	}
 
+	// ── member_set ──
+	// Symmetric to member_get: SET a property that belongs to ANOTHER class (e.g. a
+	// component's property like UCharacterMovementComponent::MaxWalkSpeed). Produces a
+	// K2Node_VariableSet with bSelfContext=false, exposing the value pin plus a typed
+	// "self"/Target pin to wire the owning object (e.g. a Get CharacterMovement node).
+	// Use plain variable_set for properties on the Blueprint itself.
+	// Params: member = property name, class = owning class name (e.g. "CharacterMovementComponent").
+	if (Type.Equals(TEXT("member_set"), ESearchCase::IgnoreCase))
+	{
+		const FString* MemberName = Desc.Params.Find(TEXT("member"));
+		const FString* ClassName = Desc.Params.Find(TEXT("class"));
+		if (!MemberName || !ClassName)
+		{
+			OutError = FString::Printf(TEXT("Node '%s': member_set requires 'member' and 'class' params"), *Desc.Ref);
+			return nullptr;
+		}
+
+		UClass* OwnerClass = nullptr;
+		for (TObjectIterator<UClass> It; It; ++It)
+		{
+			if (It->GetName() == *ClassName)
+			{
+				OwnerClass = *It;
+				break;
+			}
+		}
+
+		if (!OwnerClass)
+		{
+			OutError = FString::Printf(TEXT("Node '%s': Class '%s' not found"), *Desc.Ref, **ClassName);
+			return nullptr;
+		}
+
+		FProperty* MemberProp = FindFProperty<FProperty>(OwnerClass, FName(**MemberName));
+		if (!MemberProp)
+		{
+			OutError = FString::Printf(TEXT("Node '%s': Member '%s' not found on '%s'"), *Desc.Ref, **MemberName, **ClassName);
+			return nullptr;
+		}
+
+		UK2Node_VariableSet* SetNode = NewObject<UK2Node_VariableSet>(Graph);
+		SetNode->VariableReference.SetExternalMember(FName(**MemberName), OwnerClass);
+		SetNode->NodePosX = PosX;
+		SetNode->NodePosY = PosY;
+		Graph->AddNode(SetNode, false, false);
+		SetNode->CreateNewGuid();
+		SetNode->PostPlacedNewNode();
+		SetNode->AllocateDefaultPins();
+		return SetNode;
+	}
+
 	// ── create_delegate ──
 	if (Type.Equals(TEXT("create_delegate"), ESearchCase::IgnoreCase))
 	{
@@ -9558,8 +9609,22 @@ bool UBlueprintService::GetGraphDefinition(
 		}
 		else if (UK2Node_VariableSet* SetNode = Cast<UK2Node_VariableSet>(Node))
 		{
-			Desc.Type = TEXT("variable_set");
-			Desc.Params.Add(TEXT("variable"), SetNode->VariableReference.GetMemberName().ToString());
+			// Mirror member_get: a set on an external class member (e.g. a component
+			// property) round-trips as member_set so the class binding is preserved.
+			if (SetNode->VariableReference.IsLocalScope() || SetNode->VariableReference.IsSelfContext())
+			{
+				Desc.Type = TEXT("variable_set");
+				Desc.Params.Add(TEXT("variable"), SetNode->VariableReference.GetMemberName().ToString());
+			}
+			else
+			{
+				Desc.Type = TEXT("member_set");
+				Desc.Params.Add(TEXT("member"), SetNode->VariableReference.GetMemberName().ToString());
+				if (UClass* MemberParent = SetNode->VariableReference.GetMemberParentClass())
+				{
+					Desc.Params.Add(TEXT("class"), MemberParent->GetName());
+				}
+			}
 			Desc.Ref = FString::Printf(TEXT("Set_%s_%d"), *SetNode->VariableReference.GetMemberName().ToString(), UnnamedIdx++);
 		}
 		else if (UK2Node_IfThenElse* BranchNode = Cast<UK2Node_IfThenElse>(Node))
