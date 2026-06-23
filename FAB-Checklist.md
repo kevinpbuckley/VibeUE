@@ -33,7 +33,7 @@ _Last verified: 2026-06-21 against the `5-8` branch (UE 5.8)._
 ### Documentation
 - [x] Publisher provides linked or in-editor documentation/tutorials
   - **README.md**: installation + usage guide (shipped)
-  - **Resources/**: user-facing documentation (shipped)
+  - **Resources/Icon128.png**: plugin icon shipped (Resources/BUILD_PLUGIN.md is a dev doc, excluded)
   - **docs/**: developer documentation (excluded from package by MakePlugin.ps1)
   - **Content/samples/AGENTS.md.sample**: agent integration guide (shipped)
 
@@ -46,8 +46,10 @@ _Last verified: 2026-06-21 against the `5-8` branch (UE 5.8)._
 
 ### .uplugin Configuration
 - [x] `EngineVersion` = **"5.8.0"**
-- [x] `WhitelistPlatforms` = Win64, Mac, Linux (matches Supported Target Platforms)
+- [x] `WhitelistPlatforms` = Win64 (matches Supported Target Platforms)
 - [x] `FabURL` set with Listing ID
+- [x] `DocsURL`, `SupportURL`, `CreatedByURL` populated (vibeue.com) — confirm `/support` resolves
+- [x] `Resources/Icon128.png` present (128×128) — placeholder lettermark; swap for final art if desired
 
 ### Copyright & Source Code
 - [x] All source/header files (**105 files**) contain the copyright notice
@@ -74,7 +76,7 @@ _Last verified: 2026-06-21 against the `5-8` branch (UE 5.8)._
 ### ✅ Passing
 - All shipped text accurate and in English (descriptions + .uplugin updated for 5.8)
 - Plugin file structure correct; no unused assets (orphan header removed)
-- Engine version 5.8 supported; platforms Win64/Mac/Linux
+- Engine version 5.8 supported; platform Win64
 - Documentation accessible (README.md + Resources/ + AGENTS.md.sample)
 - No offensive content; no redistributed Epic/Megascans content
 - EngineVersion + WhitelistPlatforms + FabURL configured
