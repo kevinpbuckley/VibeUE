@@ -37,6 +37,7 @@ Use the individual `add_*_node` + `connect_nodes` methods when:
 | `create_event` | `function` | Create Event node |
 | `validated_get` | `variable` | Validated Get (with exec pins) |
 | `member_get` | `member`, `class` | Get member from another class |
+| `member_set` | `member`, `class` | Set a property on another class (e.g. a component property like `CharacterMovementComponent::MaxWalkSpeed`). Produces a Set node with a value pin + typed `self`/Target pin — wire the owning object into `self`. Use `variable_set` for the Blueprint's own variables. |
 | `create_delegate` | `function` | Create Delegate node |
 | `make_struct` | `struct` | Make Struct node (`K2Node_MakeStruct`) for any struct type (engine or user-defined) |
 | `instanced_struct` | `struct` | Make Instanced Struct node — wraps a struct into `FInstancedStruct` |

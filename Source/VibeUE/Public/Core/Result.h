@@ -1,7 +1,5 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
-// Copyright Epic Games, Inc. All Rights Reserved.
-
 #pragma once
 
 #include "CoreMinimal.h"

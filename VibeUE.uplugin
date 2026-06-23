@@ -4,14 +4,14 @@
 	"VersionName": "5.0",
 	"EngineVersion": "5.8.0",
 	"FriendlyName": "VibeUE",
-	"Description": "In Editor AI Chat and Model Context Protocol server for Unreal Engine",
+	"Description": "MCP Expansion and AI Editor Toolset for Unreal Engine 5.8 — extends Unreal's native MCP server, ToolsetRegistry, and AgentSkill systems with deep editor automation.",
 	"Category": "Editor",
 	"CreatedBy": "Kevin Buckley",
-	"CreatedByURL": "",
+	"CreatedByURL": "https://www.vibeue.com",
 	"DocsURL": "https://www.vibeue.com/docs",
 	"MarketplaceURL": "",
 	"FabURL": "com.epicgames.launcher://ue/Fab/product/5ef22486-1aa5-459c-8e12-21c3290fe3cc",
-	"SupportURL": "",
+	"SupportURL": "https://www.vibeue.com/support",
 	"CanContainContent": true,
 	"IsBetaVersion": false,
 	"IsExperimentalVersion": false,
@@ -22,9 +22,7 @@
 			"Type": "Editor",
 			"LoadingPhase": "Default",
 			"WhitelistPlatforms": [
-				"Win64",
-				"Mac",
-				"Linux"
+				"Win64"
 			]
 		}
 	],
@@ -59,10 +57,6 @@
 		},
 		{
 			"Name": "MetaSound",
-			"Enabled": true
-		},
-		{
-			"Name": "StructUtils",
 			"Enabled": true
 		},
 		{

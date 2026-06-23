@@ -1,54 +1,44 @@
-🚀 VibeUE - AI-Powered Unreal Engine Development
+🚀 VibeUE — MCP Expansion + AI Editor Toolset for Unreal Engine 5.8+
 
-Revolutionize your Unreal Engine workflow with AI-powered Blueprint and UMG automation! VibeUE brings AI directly INTO Unreal Engine with a built-in In-Editor AI Chat Client - no external tools required. Also works as an MCP server for VS Code, Claude Code, Cursor, and AntiGravity.
+Unreal Engine 5.8 added a built-in MCP server and AI toolsets. VibeUE is an MCP Expansion that plugs straight into them and adds a deep AI Editor Toolset — a library of editor capabilities in the domains Epic's own toolsets don't cover. Any MCP-capable agent (Claude Code, Cursor, GitHub Copilot, Codex, Gemini, …) drives your editor through Unreal's standard MCP endpoint. No separate server, no in-editor chat.
 
 
 ✨ WHAT MAKES VIBEUE SPECIAL:
 
-• 🎮 IN-EDITOR AI CHAT - Built-in chat client inside Unreal Engine!
-• 30 Python API Services with 1020 Methods
-• 10 MCP Discovery & Execution Tools - Explore and execute Python
-• 34 Domain Skills - Lazy-loaded knowledge reducing context overhead 50-65%
-• Native C++ HTTP MCP Server - No Python dependency required
-• Complete Blueprint lifecycle management (create, compile, modify)
-• Animation System - Sequences, Blueprints, Montages, Skeletons with full editing
-• Advanced UMG widget development with property management & events
-• Niagara Systems & Emitters - Full particle system creation and editing
-• Enhanced Input System - Actions, Mapping Contexts, Modifiers & Triggers
-• Material & Material Instance editing with node graph support
-• StateTree Behavior - Create AI state machines with states, tasks, evaluators, and transitions
-• Sound Cues & MetaSounds - Build audio graphs, add nodes, wire pins, set properties procedurally
-• Project/Engine Settings - Direct access to editor configuration
-• FREE AI tier included - Get a free API key at vibeue.com!
+• 30 AICallable service toolsets exposing 890+ tools, registered onto the engine's own ToolsetRegistry and MCP server (every service is also callable from Python)
+• ~34 lazy-loaded domain skills served through Unreal's native AgentSkill system — full workflows and gotchas, loaded only when needed
+• 7 discovery & execution tools — run any unreal.* Python in the editor and introspect the whole API
+• Complements Epic's toolsets instead of duplicating them — it focuses on the depth the engine doesn't ship
 
 
-🛠️ CORE CAPABILITIES:
+🎯 WHAT IT ADDS ON TOP OF EPIC'S TOOLSETS:
 
-• In-Editor AI Chat: Chat with AI directly in Unreal - understand, learn, create
-• Blueprint Automation: Node graphs, functions, variables, components
-• UMG Mastery: Widget creation, styling, property management, events
-• Material Editor: Create materials, add nodes, connect pins, set parameters
-• Data Management: Data Assets & Data Tables with full CRUD operations
-• Enhanced Input: Input Actions, Mapping Contexts, Modifiers, Triggers
-• Asset Management: Import, export, search, save, organize content
-• Level Actors: Spawn, transform, set properties, attach/detach actors
-
-
-🎯 TWO WAYS TO USE:
-
-• In-Editor Chat: Get a free API key at vibeue.com, open chat window, start creating!
-• External MCP: Connect VS Code, Cursor, Claude Code via HTTP MCP
+• ⚡ Performance & profiling (flagship) — frame timing with a CPU-vs-GPU-bound verdict, Unreal Insights trace capture, and a trace+log analyser. Epic's toolsets can start PIE but can't measure anything.
+• ↩️ Editor undo / redo — a Transaction toolset to group many edits into one undo step, roll back, and inspect history. Epic ships no transaction toolset.
+• 🌍 Terrain & world — Landscape sculpting/heightmaps/splines, landscape auto-materials + Runtime Virtual Texture, Foliage, procedural Map Blockout, and real-world heightmaps + water features from GPS coordinates.
+• 🎬 Animation — AnimSequence keyframe editing, AnimMontage authoring, AnimBP state machines, and Skeleton bone/socket/retarget/blend-profile editing.
+• 🎆 Niagara depth — emitter color/curve authoring and Custom-HLSL scratch-pad modules.
+• 🎵 Audio — SoundCue and MetaSound graph authoring (create sources, add/wire DSP nodes, set defaults, manage graph I/O).
+• 🖼️ UI — UMG widgets with MVVM bindings, animation authoring, and preview/PIE validation.
+• 🧩 Higher-order Blueprint authoring — timelines, event dispatchers, delegates, custom-event pins, comment boxes, and a batch graph builder.
+• 🔧 StateTree, Gameplay Tags, Enhanced Input, Materials (+ node graph), UV mapping, Viewport control, and Project/Engine settings.
+• 🌐 Web research — search / fetch / geocode for in-context research and terrain workflows.
 
 
-📚 COMPREHENSIVE RESOURCES:
+🛠️ HOW TO USE:
 
-• Complete Documentation: https://www.vibeue.com/docs
-• Tool Reference Guide: https://www.vibeue.com/tools  
-• Video Tutorials: https://www.vibeue.com/videos
-• Free API Key: https://www.vibeue.com (sign up free!)
+VibeUE expands Unreal's native MCP, so set that up first (enable the Unreal MCP, Toolset Registry, and Editor Tools plugins and start the server — see Epic's docs), then install VibeUE and enable it. Its services, tools, and skills register onto the same endpoint alongside the engine's own. Point any MCP agent at the endpoint and go. The included agent guide (AGENTS.md.sample) teaches the efficient patterns: discover before you call, batch with execute_python_code, and load skills on demand.
 
 
-Transform your Unreal Engine development from manual to magical. Understand existing Blueprints, learn how materials work, and create new content through natural conversation!
+🔑 API KEY:
+
+VibeUE works without a key. A free API key (grab one at vibeue.com/login, set it in Editor Preferences → Plugins → VibeUE) unlocks only the real-world terrain tools — every other feature works without one.
 
 
-Requirements: Windows/Mac/Linux, Unreal Engine 5.7+, Python Script Plugin, EditorScriptingUtilities Plugin, Enhanced Input Plugin, AudioCapture Plugin, Niagara Plugin, MeshModelingToolset Plugin, ModelViewViewModel Plugin, StateTree Plugin
+📚 RESOURCES:
+
+• Project home: https://www.vibeue.com/v5-8
+• Free API key: https://www.vibeue.com/login
+
+
+Requirements: Win64 · Unreal Engine 5.8+ · Unreal's native MCP stack enabled (Unreal MCP, Toolset Registry, Editor Tools). VibeUE auto-enables the engine plugins its services need: Python Script Plugin, EditorScriptingUtilities, Enhanced Input, Niagara, MetaSound, MeshModelingToolset, ModelViewViewModel, StateTree, GameplayTagsEditor, plus ToolsetRegistry and ModelContextProtocol.

@@ -5594,7 +5594,6 @@ TArray<FBlueprintNodeTypeInfo> UBlueprintService::DiscoverNodes(
 	
 	// Track seen spawner keys to avoid duplicates
 	TSet<FString> SeenSpawnerKeys;
-	UEdGraph* EventGraph = ResolveBlueprintGraph(Blueprint, TEXT("EventGraph"));
 	
 	// Helper lambda to add a function to results
 	auto AddFunctionToResults = [&](UFunction* Func, const FString& InCategory, const FString& OwnerClassName) -> bool
@@ -5678,6 +5677,12 @@ TArray<FBlueprintNodeTypeInfo> UBlueprintService::DiscoverNodes(
 		return true;
 	};
 
+	// Surfaces ANY spawner from the Blueprint action database — events, functions,
+	// variable get/set, macros, and template/custom K2 nodes (Get Subsystem, Spawn
+	// Actor From Class, …). Function/event spawners get the round-trippable FUNC/EVENT
+	// keys; everything else gets a faithful "SPAWN <NodeClass>|<MenuName>" key that
+	// CreateNodeByKey resolves back to this exact spawner and Invokes (so the node is
+	// created fully bound, e.g. Get Subsystem's CustomClass / a variable's member ref).
 	auto AddNodeSpawnerToResults = [&](UBlueprintNodeSpawner* NodeSpawner) -> bool
 	{
 		if (!NodeSpawner || Results.Num() >= MaxResults)
@@ -5685,43 +5690,69 @@ TArray<FBlueprintNodeTypeInfo> UBlueprintService::DiscoverNodes(
 			return false;
 		}
 
-		UBlueprintEventNodeSpawner* EventSpawner = Cast<UBlueprintEventNodeSpawner>(NodeSpawner);
-		if (!EventSpawner)
+		UClass* SpawnNodeClass = NodeSpawner->NodeClass;
+		// Prime the DEFAULT (context-less) UI spec — pass nullptr, NEVER a real graph.
+		// Passing a TargetGraph makes the node-template cache run FindCompatibleGraph and
+		// check(TargetGraph != nullptr) (BlueprintNodeTemplateCache.cpp), which fatally
+		// asserts for any spawner whose node isn't compatible with that graph (function-
+		// only nodes, anim nodes, …). nullptr skips that whole branch and yields the same
+		// menu name the editor shows context-lessly.
+		const FBlueprintActionUiSpec& UiSpec = NodeSpawner->PrimeDefaultUiSpec(nullptr);
+		const FString DisplayName = UiSpec.MenuName.ToString();
+		if (DisplayName.IsEmpty())
 		{
 			return false;
 		}
+		const FString MenuCategory = UiSpec.Category.ToString();
+		const FString Keywords = UiSpec.Keywords.ToString();
 
-		if (EventSpawner->IsForCustomEvent())
+		FString SpawnerKey;
+		bool bIsPure = false;
+
+		if (UBlueprintEventNodeSpawner* EventSpawner = Cast<UBlueprintEventNodeSpawner>(NodeSpawner))
 		{
-			return false;
+			if (EventSpawner->IsForCustomEvent())
+			{
+				return false; // surfaced separately as "Add Custom Event..."
+			}
+
+			const UFunction* EventFunction = EventSpawner->GetEventFunction();
+			if (EventFunction)
+			{
+				UClass* OwnerClass = EventFunction->GetOwnerClass();
+				if (!OwnerClass || !Blueprint->ParentClass || !Blueprint->ParentClass->IsChildOf(OwnerClass))
+				{
+					return false; // only events this Blueprint can actually implement
+				}
+			}
+
+			SpawnerKey = BuildEventSpawnerKey(EventSpawner);
 		}
-
-		const UFunction* EventFunction = EventSpawner->GetEventFunction();
-		if (EventFunction)
+		else if (UBlueprintFunctionNodeSpawner* FunctionSpawner = Cast<UBlueprintFunctionNodeSpawner>(NodeSpawner))
 		{
-			UClass* OwnerClass = EventFunction->GetOwnerClass();
-			if (!OwnerClass || !Blueprint->ParentClass || !Blueprint->ParentClass->IsChildOf(OwnerClass))
+			const UFunction* Func = FunctionSpawner->GetFunction();
+			if (!Func || !Func->GetOwnerClass() || Func->HasMetaData(TEXT("BlueprintInternalUseOnly")))
 			{
 				return false;
 			}
+			SpawnerKey = FString::Printf(TEXT("FUNC %s::%s"), *Func->GetOwnerClass()->GetName(), *Func->GetName());
+			bIsPure = Func->HasAnyFunctionFlags(FUNC_BlueprintPure);
+		}
+		else
+		{
+			if (!SpawnNodeClass)
+			{
+				return false;
+			}
+			// CreateNodeByKey splits on the FIRST '|', so the node class name (which
+			// never contains '|') is always recovered even if a menu name does.
+			SpawnerKey = FString::Printf(TEXT("SPAWN %s|%s"), *SpawnNodeClass->GetName(), *DisplayName);
 		}
 
-		const FString SpawnerKey = BuildEventSpawnerKey(EventSpawner);
 		if (SpawnerKey.IsEmpty() || SeenSpawnerKeys.Contains(SpawnerKey))
 		{
 			return false;
 		}
-
-		UEdGraph* UiGraph = EventGraph;
-		if (!UiGraph && Blueprint->UbergraphPages.Num() > 0)
-		{
-			UiGraph = Blueprint->UbergraphPages[0].Get();
-		}
-
-		const FBlueprintActionUiSpec& UiSpec = NodeSpawner->PrimeDefaultUiSpec(UiGraph);
-		const FString DisplayName = UiSpec.MenuName.ToString();
-		const FString Keywords = UiSpec.Keywords.ToString();
-		const FString MenuCategory = UiSpec.Category.ToString();
 
 		if (!CategoryLower.IsEmpty() && !MenuCategory.ToLower().Contains(CategoryLower))
 		{
@@ -5730,11 +5761,9 @@ TArray<FBlueprintNodeTypeInfo> UBlueprintService::DiscoverNodes(
 
 		if (!SearchLower.IsEmpty())
 		{
-			const FString EventFunctionName = EventFunction ? EventFunction->GetName() : FString(TEXT("Custom Event"));
 			const bool bMatches = DisplayName.ToLower().Contains(SearchLower) ||
-				EventFunctionName.ToLower().Contains(SearchLower) ||
-				Keywords.ToLower().Contains(SearchLower);
-
+				Keywords.ToLower().Contains(SearchLower) ||
+				SpawnerKey.ToLower().Contains(SearchLower);
 			if (!bMatches)
 			{
 				return false;
@@ -5745,10 +5774,10 @@ TArray<FBlueprintNodeTypeInfo> UBlueprintService::DiscoverNodes(
 
 		FBlueprintNodeTypeInfo Info;
 		Info.DisplayName = DisplayName;
-		Info.Category = MenuCategory.IsEmpty() ? TEXT("Add Event") : MenuCategory;
-		Info.NodeClass = NodeSpawner->NodeClass ? NodeSpawner->NodeClass->GetName() : TEXT("K2Node_Event");
+		Info.Category = MenuCategory.IsEmpty() ? TEXT("Other") : MenuCategory;
+		Info.NodeClass = SpawnNodeClass ? SpawnNodeClass->GetName() : TEXT("K2Node_Event");
 		Info.SpawnerKey = SpawnerKey;
-		Info.bIsPure = false;
+		Info.bIsPure = bIsPure;
 		Info.bIsLatent = false;
 		Info.Tooltip = UiSpec.Tooltip.ToString();
 
@@ -6794,6 +6823,53 @@ FString UBlueprintService::CreateNodeByKey(
 		NewNode->AllocateDefaultPins();
 		NewNode->NodePosX = PosX;
 		NewNode->NodePosY = PosY;
+	}
+	else if (KeyType.Equals(TEXT("SPAWN"), ESearchCase::IgnoreCase))
+	{
+		// SPAWN <NodeClassName>|<MenuName> — re-find the exact action-database spawner
+		// (matched by node class + primed menu name) and Invoke it, so template /
+		// variable / custom nodes are created fully bound exactly as the editor's
+		// Add-Node menu would (e.g. Get Subsystem's CustomClass, a variable's member
+		// reference). Split on the FIRST '|' only — node class names never contain it.
+		FString NodeClassName, MenuName;
+		if (!KeyValue.Split(TEXT("|"), &NodeClassName, &MenuName))
+		{
+			UE_LOG(LogTemp, Error, TEXT("CreateNodeByKey: Invalid SPAWN key format: %s"), *KeyValue);
+			return FString();
+		}
+
+		const FBlueprintActionDatabase::FActionRegistry& ActionRegistry = FBlueprintActionDatabase::Get().GetAllActions();
+		UBlueprintNodeSpawner* MatchSpawner = nullptr;
+		for (const TPair<FObjectKey, FBlueprintActionDatabase::FActionList>& Entry : ActionRegistry)
+		{
+			for (UBlueprintNodeSpawner* Candidate : Entry.Value)
+			{
+				if (!Candidate || !Candidate->NodeClass || Candidate->NodeClass->GetName() != NodeClassName)
+				{
+					continue;
+				}
+				// Context-less prime (nullptr) — must match discovery, and avoids the
+				// node-template-cache assert for graph-incompatible spawners.
+				const FBlueprintActionUiSpec& CandidateUi = Candidate->PrimeDefaultUiSpec(nullptr);
+				if (CandidateUi.MenuName.ToString() == MenuName)
+				{
+					MatchSpawner = Candidate;
+					break;
+				}
+			}
+			if (MatchSpawner)
+			{
+				break;
+			}
+		}
+
+		if (!MatchSpawner)
+		{
+			UE_LOG(LogTemp, Error, TEXT("CreateNodeByKey: No action-database spawner matched SPAWN key '%s'"), *KeyValue);
+			return FString();
+		}
+
+		NewNode = MatchSpawner->Invoke(Graph, IBlueprintNodeBinder::FBindingSet(), FVector2D(PosX, PosY));
 	}
 	else if (KeyType.Equals(TEXT("STRUCT"), ESearchCase::IgnoreCase))
 	{
@@ -8622,6 +8698,57 @@ UEdGraphNode* UBlueprintService::CreateNodeFromDesc(
 		return GetNode;
 	}
 
+	// ── member_set ──
+	// Symmetric to member_get: SET a property that belongs to ANOTHER class (e.g. a
+	// component's property like UCharacterMovementComponent::MaxWalkSpeed). Produces a
+	// K2Node_VariableSet with bSelfContext=false, exposing the value pin plus a typed
+	// "self"/Target pin to wire the owning object (e.g. a Get CharacterMovement node).
+	// Use plain variable_set for properties on the Blueprint itself.
+	// Params: member = property name, class = owning class name (e.g. "CharacterMovementComponent").
+	if (Type.Equals(TEXT("member_set"), ESearchCase::IgnoreCase))
+	{
+		const FString* MemberName = Desc.Params.Find(TEXT("member"));
+		const FString* ClassName = Desc.Params.Find(TEXT("class"));
+		if (!MemberName || !ClassName)
+		{
+			OutError = FString::Printf(TEXT("Node '%s': member_set requires 'member' and 'class' params"), *Desc.Ref);
+			return nullptr;
+		}
+
+		UClass* OwnerClass = nullptr;
+		for (TObjectIterator<UClass> It; It; ++It)
+		{
+			if (It->GetName() == *ClassName)
+			{
+				OwnerClass = *It;
+				break;
+			}
+		}
+
+		if (!OwnerClass)
+		{
+			OutError = FString::Printf(TEXT("Node '%s': Class '%s' not found"), *Desc.Ref, **ClassName);
+			return nullptr;
+		}
+
+		FProperty* MemberProp = FindFProperty<FProperty>(OwnerClass, FName(**MemberName));
+		if (!MemberProp)
+		{
+			OutError = FString::Printf(TEXT("Node '%s': Member '%s' not found on '%s'"), *Desc.Ref, **MemberName, **ClassName);
+			return nullptr;
+		}
+
+		UK2Node_VariableSet* SetNode = NewObject<UK2Node_VariableSet>(Graph);
+		SetNode->VariableReference.SetExternalMember(FName(**MemberName), OwnerClass);
+		SetNode->NodePosX = PosX;
+		SetNode->NodePosY = PosY;
+		Graph->AddNode(SetNode, false, false);
+		SetNode->CreateNewGuid();
+		SetNode->PostPlacedNewNode();
+		SetNode->AllocateDefaultPins();
+		return SetNode;
+	}
+
 	// ── create_delegate ──
 	if (Type.Equals(TEXT("create_delegate"), ESearchCase::IgnoreCase))
 	{
@@ -9558,8 +9685,22 @@ bool UBlueprintService::GetGraphDefinition(
 		}
 		else if (UK2Node_VariableSet* SetNode = Cast<UK2Node_VariableSet>(Node))
 		{
-			Desc.Type = TEXT("variable_set");
-			Desc.Params.Add(TEXT("variable"), SetNode->VariableReference.GetMemberName().ToString());
+			// Mirror member_get: a set on an external class member (e.g. a component
+			// property) round-trips as member_set so the class binding is preserved.
+			if (SetNode->VariableReference.IsLocalScope() || SetNode->VariableReference.IsSelfContext())
+			{
+				Desc.Type = TEXT("variable_set");
+				Desc.Params.Add(TEXT("variable"), SetNode->VariableReference.GetMemberName().ToString());
+			}
+			else
+			{
+				Desc.Type = TEXT("member_set");
+				Desc.Params.Add(TEXT("member"), SetNode->VariableReference.GetMemberName().ToString());
+				if (UClass* MemberParent = SetNode->VariableReference.GetMemberParentClass())
+				{
+					Desc.Params.Add(TEXT("class"), MemberParent->GetName());
+				}
+			}
 			Desc.Ref = FString::Printf(TEXT("Set_%s_%d"), *SetNode->VariableReference.GetMemberName().ToString(), UnnamedIdx++);
 		}
 		else if (UK2Node_IfThenElse* BranchNode = Cast<UK2Node_IfThenElse>(Node))

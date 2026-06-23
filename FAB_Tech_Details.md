@@ -1,11 +1,15 @@
-In-Editor AI Chat & MCP Server for Blueprint/UMG/Animation/Niagara/Landscape/Foliage automation. Built-in chat client inside Unreal Engine or connect VS Code, Claude Code, Cursor, and AntiGravity via native C++ HTTP MCP server with 10 discovery/execution tools.
+MCP Expansion + AI Editor Toolset for Unreal Engine 5.8+. Plugs into UE5.8's native MCP server, ToolsetRegistry, and AgentSkill system and adds the editor depth Epic's own toolsets don't cover. Drive your editor from any MCP agent (Claude Code, Cursor, Copilot, Codex, Gemini). No separate server, no in-editor chat.
 
-Python API Services - 30 specialized services with 1020 methods, including ViewportService (19) for full viewport camera/layout control, StateTreeService (94) for full StateTree asset editing, EditorTransactionService (16) for undo/redo and transaction management, MetaSoundService (17) for MetaSound graph authoring, and broad coverage for animation, Blueprints, widgets, landscape, Niagara, audio, settings, and data workflows.
+Service toolsets — 30 AICallable service toolsets exposing 891 tools, registered onto the engine's MCP endpoint. Standouts: BlueprintService (101), StateTreeService (95), AnimSequenceService (89), LandscapeService (68), AnimMontageService (62), WidgetService (42), SoundCueService & SkeletonService (38), MaterialNodeService (34), InputService & UVMappingService & LandscapeMaterialService (22-23), MetaSoundService (20, audio graph authoring), ViewportService (17), TransactionService (14, editor undo/redo), PerformanceService (11, frame timing + Unreal Insights trace), plus broad coverage for Niagara, foliage, landscape materials + RVT, gameplay tags, and project/engine settings. Every service is callable both as an AICallable MCP tool and from Python (unreal.<Name>Service.*).
 
-Skills System - 34 lazy-loaded domain skills reducing context overhead 50-65% while maintaining comprehensive domain guidance.
+Discovery & execution — 7 MCP tools: execute_python_code, discover_python_module/_class/_function, list_python_subsystems, deep_research (web search/fetch/geocode), and terrain_data (real-world heightmaps + water features).
 
-Module: VibeUE (Editor) with 163 C++ classes enabling Blueprint/UMG/Material/Enhanced Input/Data/Landscape/StateTree automation.
+Skills — ~34 lazy-loaded domain skill packs served through Unreal's native AgentSkill system, reducing agent context overhead while preserving full domain guidance.
 
-Windows 64-bit, Unreal Engine 5.7+, Requires: Python Script Plugin, EditorScriptingUtilities, Enhanced Input, AudioCapture, Niagara, MeshModelingToolset, ModelViewViewModel, StateTree.
+Module: VibeUE (Editor), 105 C++ source files. Win64. Unreal Engine 5.8+.
 
-Docs: https://www.vibeue.com/docs | FREE API at vibeue.com or use OpenRouter for Claude/GPT-4 | No Python dependency - native C++
+Prerequisites — enable Unreal's native MCP stack first: Unreal MCP (ModelContextProtocol), Toolset Registry (ToolsetRegistry), and Editor Tools (EditorToolset), then start the MCP server (see Epic's docs). VibeUE auto-enables the engine plugins its services need: PythonScriptPlugin, EditorScriptingUtilities, EnhancedInput, Niagara, MetaSound, MeshModelingToolset, ModelViewViewModel, StateTree, GameplayTagsEditor.
+
+API key — optional and free (vibeue.com/login), set in Editor Preferences → Plugins → VibeUE. It unlocks only the real-world terrain tools; everything else works without one.
+
+Docs: https://www.vibeue.com/docs

@@ -38,7 +38,6 @@ tool in a toolset (the most token-heavy thing here); reach for a **skill** plus 
 - `list_python_subsystems` — list editor subsystems.
 - `deep_research` — web search / page fetch / geocode (see §5).
 - `terrain_data` — real-world heightmaps + water splines (see §5).
-- `memory` — persistent cross-session notes (only write when the user asks).
 
 **VibeUE services (call from Python inside `execute_python_code`):** `unreal.<Name>Service.<method>()`
 — Blueprint, BlueprintGraph (via BlueprintService), Material(+Node), Widget, Skeleton, AnimSequence,
