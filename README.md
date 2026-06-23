@@ -136,20 +136,25 @@ onto the same endpoint, alongside the engine's own.
 
 ### Step 3 — Connect your agent
 
-Generate a client config from the editor console — this writes `.mcp.json` at the project root:
+Two console commands from the editor (open the console with `` ` ``):
+
+**1. Write the MCP server config** (`.mcp.json` at the project root):
 ```
 ModelContextProtocol.GenerateClientConfig ClaudeCode
 ```
-(supports `ClaudeCode`, `Cursor`, `VSCode`, `Gemini`, `Codex`, or `All`.) Then add VibeUE's agent
-guide so the assistant uses the efficient patterns. **Claude Code** — `CLAUDE.md` at the project root:
-```markdown
-# My Unreal Project
+(supports `ClaudeCode`, `Cursor`, `VSCode`, `Gemini`, `Codex`, or `All`.)
 
-@Plugins/VibeUE/Content/samples/AGENTS.md.sample
+**2. Write VibeUE's agent guide** so the assistant uses the efficient patterns:
 ```
-**Cursor / Copilot / Codex / others** — copy `Plugins/VibeUE/Content/samples/AGENTS.md.sample` to that
-tool's rules file (`.cursor/rules/vibeue.mdc`, `.github/copilot-instructions.md`, `AGENTS.md`, …). See
-[`Content/samples/README.md`](Content/samples/README.md).
+VibeUE.GenerateAgentConfig ClaudeCode
+```
+This writes the guide to the correct file for your agent — `CLAUDE.md` (Claude Code), `GEMINI.md`
+(Gemini), `AGENTS.md` (Codex / Cursor), or `.github/copilot-instructions.md` (Copilot) — or pass
+`All` to write CLAUDE.md + GEMINI.md + AGENTS.md at once. It resolves the plugin location
+automatically, so it works whether VibeUE was installed from **FAB** or **Git**. The guide goes in a
+managed block, so re-run any time to refresh without disturbing your own notes. Pass `import` to link
+the guide with a one-line `@import` instead of copying it (Claude Code / Gemini only — other agents
+don't resolve imports, so they always get a copy).
 
 > The MCP server is loopback-only with no authentication — same-machine use only (per Epic's docs).
 

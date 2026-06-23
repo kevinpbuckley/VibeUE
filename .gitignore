@@ -1,8 +1,5 @@
 # Unreal Engine Plugin .gitignore
 
-# Proxy config (contains bearer token — keep out of git)
-vibeue-proxy.json
-
 # MCP-specific log files
 unreal_mcp.log
 vibe_ue.log
