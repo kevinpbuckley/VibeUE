@@ -32,7 +32,7 @@ asset_tools = unreal.AssetToolsHelpers.get_asset_tools()
 asset_tools.create_asset("MainMenu", "/Game/UI", unreal.WidgetBlueprint, factory)
 ```
 
-Runnable: `scripts/create_widget.pyx`.
+Runnable: `scripts/create_widget.txt`.
 
 ## Build a Menu
 
@@ -55,7 +55,7 @@ for btn_name, btn_text in [("PlayButton", "PLAY"), ("QuitButton", "QUIT")]:
 unreal.EditorAssetLibrary.save_asset(path)
 ```
 
-Runnable: `scripts/build_menu.pyx`.
+Runnable: `scripts/build_menu.txt`.
 
 ## Canvas Positioning
 
@@ -105,7 +105,7 @@ for s in snapshots:
 ```
 
 For a single widget use `get_component_snapshot(path, "PlayButton")`. For names-only hierarchy use
-`get_hierarchy(path)` (returns `FWidgetInfo`). Runnable: `scripts/inspect_hierarchy.pyx`.
+`get_hierarchy(path)` (returns `FWidgetInfo`). Runnable: `scripts/inspect_hierarchy.txt`.
 
 ## Font Styling
 
@@ -130,7 +130,7 @@ applied = unreal.WidgetService.get_font(path, "HeaderTitle")
 print(applied.size, applied.typeface, applied.color)
 ```
 
-Runnable: `scripts/apply_font.pyx`. Field names: `reference.md` → FWidgetFontInfo.
+Runnable: `scripts/apply_font.txt`. Field names: `reference.md` → FWidgetFontInfo.
 
 ## Brush Styling
 
@@ -156,7 +156,7 @@ applied = unreal.WidgetService.get_brush(path, "BackgroundImage", "Brush")
 print(applied.draw_as, applied.tint_color, applied.corner_radius)
 ```
 
-Runnable: `scripts/apply_brush.pyx`. Field names: `reference.md` → FWidgetBrushInfo.
+Runnable: `scripts/apply_brush.txt`. Field names: `reference.md` → FWidgetBrushInfo.
 
 ## Widget Animation
 
@@ -181,7 +181,7 @@ for anim in unreal.WidgetService.list_animations(path):
     print(anim.animation_name, anim.duration, anim.track_count)
 ```
 
-Runnable: `scripts/create_animation.pyx`.
+Runnable: `scripts/create_animation.txt`.
 
 ## Bind Event
 
@@ -239,7 +239,7 @@ result = unreal.WidgetService.capture_preview("/Game/UI/WBP_MainMenu", 1280, 720
 print(result.success, result.output_path, result.error_message)
 ```
 
-Runnable: `scripts/capture_preview.pyx`.
+Runnable: `scripts/capture_preview.txt`.
 
 ## PIE Runtime Check
 
@@ -266,4 +266,4 @@ if handle.valid:
 ws.stop_pie()
 ```
 
-Runnable: `scripts/pie_inspect.pyx`.
+Runnable: `scripts/pie_inspect.txt`.

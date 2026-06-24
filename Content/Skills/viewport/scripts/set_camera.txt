@@ -1,0 +1,19 @@
+# Copyright Buckley Builds LLC 2026 All Rights Reserved.
+
+# set_camera.txt — Set the viewport view mode and position the editor camera.
+#
+# Sample script for the viewport skill. Run via execute_python_code.
+# NOTE: camera get/set moved to the engine EditorAppToolset (GetCameraTransform/SetCameraTransform/
+# FocusOnActors, via call_tool). ViewportService still owns view mode / FOV / exposure / layout.
+import unreal
+vp = unreal.ViewportService
+
+vp.set_view_mode("Lit")        # Lit, Unlit, Wireframe, DetailLighting, etc.
+vp.set_fov(75.0)
+
+# Position the camera (engine EditorAppToolset.SetCameraTransform, or the editor subsystem directly):
+unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).set_level_viewport_camera_info(
+    unreal.Vector(1000, 1000, 800),
+    unreal.Rotator(pitch=-30, yaw=-135))  # kwargs: positional order is (Roll, Pitch, Yaw)
+
+print("viewport:", vp.get_viewport_info())

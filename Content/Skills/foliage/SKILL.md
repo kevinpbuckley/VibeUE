@@ -312,4 +312,4 @@ if unreal.FoliageService.has_foliage_instances("/Game/Meshes/SM_Tree_01"):
 
 ## Sample scripts (run via `execute_python_code`)
 
-- **`scripts/scatter_foliage.pyx`** — create a foliage type from a mesh and scatter instances onto the surface.
+- **`scripts/scatter_foliage.txt`** — create a foliage type from a mesh and scatter instances onto the surface.

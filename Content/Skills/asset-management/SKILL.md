@@ -392,4 +392,4 @@ result's `asset_class_path.asset_name` to learn the real class name.
 
 ## Sample scripts (run via `execute_python_code`)
 
-- **`scripts/find_and_save.pyx`** — find an asset (Asset Registry / `EditorAssetLibrary`) and duplicate + save it.
+- **`scripts/find_and_save.txt`** — find an asset (Asset Registry / `EditorAssetLibrary`) and duplicate + save it.

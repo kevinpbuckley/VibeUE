@@ -299,4 +299,4 @@ r.message      # str — human-readable status or error
 
 ## Sample scripts (run via `execute_python_code`)
 
-- **`scripts/create_sound_cue.pyx`** — create a SoundCue (optionally from a wave) and add nodes.
+- **`scripts/create_sound_cue.txt`** — create a SoundCue (optionally from a wave) and add nodes.

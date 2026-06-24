@@ -695,8 +695,8 @@ ticking during the wait period.
 
 ## Sample scripts (run via `execute_python_code`)
 
-- **`scripts/build_event_graph.pyx`** — wire Event BeginPlay → Print String, verify connection, compile.
-- **`scripts/timer_with_custom_event.pyx`** — non-blocking Set Timer by Event + Custom Event callback.
+- **`scripts/build_event_graph.txt`** — wire Event BeginPlay → Print String, verify connection, compile.
+- **`scripts/timer_with_custom_event.txt`** — non-blocking Set Timer by Event + Custom Event callback.
 
 ## Sub-docs Available
 

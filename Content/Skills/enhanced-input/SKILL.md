@@ -150,4 +150,4 @@ keys = unreal.InputService.get_available_keys()
 
 ## Sample scripts (run via `execute_python_code`)
 
-- **`scripts/setup_input.pyx`** — create an Input Action + Mapping Context and bind a key.
+- **`scripts/setup_input.txt`** — create an Input Action + Mapping Context and bind a key.

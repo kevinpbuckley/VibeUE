@@ -155,9 +155,9 @@ print(node_types)
 
 | Task | Sub-doc | Sample script |
 |------|---------|---------------|
-| Create / load a PCG graph | (above) | `scripts/build_pcg_graph.pyx` |
-| Add / identify / discover nodes | (above) | `scripts/build_pcg_graph.pyx` |
-| Connect pins / position / remove | `workflows.md` | `scripts/build_pcg_graph.pyx` |
+| Create / load a PCG graph | (above) | `scripts/build_pcg_graph.txt` |
+| Add / identify / discover nodes | (above) | `scripts/build_pcg_graph.txt` |
+| Connect pins / position / remove | `workflows.md` | `scripts/build_pcg_graph.txt` |
 | Place a PCGVolume and generate | `workflows.md` → Placing a PCGVolume | — |
 | Surface Sampler → Mesh Spawner | `workflows.md` → Full Example | — |
 | Settings property names / SMS config | `reference.md` | — |
@@ -170,4 +170,4 @@ print(node_types)
 
 ## Sample scripts (run via `execute_python_code`)
 
-- **`scripts/build_pcg_graph.pyx`** — create a PCG graph and add Surface Sampler + Static Mesh Spawner nodes (native PCG API).
+- **`scripts/build_pcg_graph.txt`** — create a PCG graph and add Surface Sampler + Static Mesh Spawner nodes (native PCG API).

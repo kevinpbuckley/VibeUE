@@ -376,10 +376,10 @@ unreal.EditorAssetLibrary.save_asset(bp)
 
 | Task | Workflow | Sample script (run via `execute_python_code`) |
 |------|----------|-----------------------------------------------|
-| Create a Blueprint + variables | `workflows.md` → Create a Blueprint | `scripts/create_blueprint.pyx` |
-| Add components + set properties | `workflows.md` → Add components | `scripts/add_component.pyx` |
-| Add an event dispatcher (delegate) | `workflows.md` → Event dispatcher | `scripts/event_dispatcher.pyx` |
-| Implement a Blueprint interface | `workflows.md` → Implement an interface | `scripts/add_interface.pyx` |
+| Create a Blueprint + variables | `workflows.md` → Create a Blueprint | `scripts/create_blueprint.txt` |
+| Add components + set properties | `workflows.md` → Add components | `scripts/add_component.txt` |
+| Add an event dispatcher (delegate) | `workflows.md` → Event dispatcher | `scripts/event_dispatcher.txt` |
+| Implement a Blueprint interface | `workflows.md` → Implement an interface | `scripts/add_interface.txt` |
 | Inspect a Blueprint (components, parent class) | `introspection.md` | — |
 | Node-level graph editing | load the **`blueprint-graphs`** skill | — |
 

@@ -1,0 +1,40 @@
+# Copyright Buckley Builds LLC 2026 All Rights Reserved.
+
+# create_instance.txt — Create a material instance and override parameters.
+#
+# Sample script for the materials skill. Run via execute_python_code.
+#
+# Material instance BASICS (create the instance, set scalar/vector/texture overrides) are CUT
+# from MaterialService. The CANONICAL MCP path is the engine MaterialInstanceTools toolset
+# via call_tool:
+#   MIT = "editor_toolset.toolsets.material_instance.MaterialInstanceTools"
+#   call_tool(tool_name="create_material_instance", toolset_name=MIT,
+#             arguments={"parent_material": PARENT, "asset_name": NAME, "folder_path": FOLDER})
+#   call_tool(tool_name="set_vector_parameter", toolset_name=MIT,
+#             arguments={"instance_path": ip, "parameter_name": "BaseColor",
+#                        "r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0})
+#   call_tool(tool_name="set_scalar_parameter", toolset_name=MIT,
+#             arguments={"instance_path": ip, "parameter_name": "Roughness", "value": 0.3})
+# (VibeUE KEEPS MaterialService.set_instance_parameters_bulk for setting many params at once.)
+#
+# This script is pure Python (no call_tool), so it uses the native MaterialEditingLibrary
+# equivalents, which produce the same result.
+import unreal
+mel = unreal.MaterialEditingLibrary
+
+PARENT = "/Game/Materials/M_Character"
+NAME = "MI_PlayerRed"
+FOLDER = "/Game/Materials/"
+ip = FOLDER + NAME
+
+parent = unreal.load_asset(PARENT)
+# Create the instance asset (engine MaterialInstanceTools is the canonical MCP path).
+factory = unreal.MaterialInstanceConstantFactoryNew()
+factory.set_editor_property("initial_parent", parent)
+mi = unreal.AssetToolsHelpers.get_asset_tools().create_asset(
+    NAME, FOLDER.rstrip("/"), unreal.MaterialInstanceConstant, factory)
+
+mel.set_material_instance_vector_parameter_value(mi, "BaseColor", unreal.LinearColor(1.0, 0.0, 0.0, 1.0))
+mel.set_material_instance_scalar_parameter_value(mi, "Roughness", 0.3)
+unreal.EditorAssetLibrary.save_asset(ip)
+print("instance:", ip)

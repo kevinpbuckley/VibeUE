@@ -153,4 +153,4 @@ classes, etc.), use the engine **`ConfigSettingsToolset`** via `call_tool`.
 
 ## Sample scripts (run via `execute_python_code`)
 
-- **`scripts/set_cvars.pyx`** — read scalability and set a console variable.
+- **`scripts/set_cvars.txt`** — read scalability and set a console variable.

@@ -431,4 +431,4 @@ for machine in machines:
 
 ## Sample scripts (run via `execute_python_code`)
 
-- **`scripts/build_state_machine.pyx`** — add a state machine with two states, set state animations, add a transition, compile.
+- **`scripts/build_state_machine.txt`** — add a state machine with two states, set state animations, add a transition, compile.

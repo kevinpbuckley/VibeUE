@@ -34,15 +34,15 @@ Now load it back via `LoadLandcoverGridJson` and confirm the round-tripped grid 
 
 ---
 
-## Load the Verkhova Fixture (no live landscape needed)
+## Pipeline Input
 
-Load the bundled Verkhova fixture from `Plugins/VibeUE/Source/VibeUE/Tests/MapBlockout/example_data/landcover_grid.json` and report the grid dimensions and layer names.
+The stages below run against the landcover grid you exported in **Stage 0**. If you restarted since then, re-load the saved grid via `LoadLandcoverGridJson` on `<Project>/Saved/MapBlockout/_Test/landcover_grid.json` and report its dimensions and layer names.
 
 ---
 
 ## Stage 1 — Roads
 
-Build a `MapBlockoutConfig` with `level_name="VerkhovaTest"`, seed=7, map the layers `crop=L1, soil=L2, flood=L3, forest=L4` (those are the layer names in the Verkhova fixture). Set `tree_coverage_band = Vector2D(25, 40)` — Verkhova's crop layer is very dense (mean weight 0.627), so the default (30, 40) tree floor leaves no headroom after fields claim 58–59% coverage. The (25, 40) band is the validated working setting for this fixture; the contributor can use (30, 40) on landscapes with less aggressive cropland. Then call `generate_roads` against the Verkhova grid + this config.
+Build a `MapBlockoutConfig` with `level_name="MapBlockoutTest"`, seed=7, map the layers `crop=Crop, soil=Soil, flood=Water, forest=Forest` (substitute your landscape's painted layer names). If your crop layer is very dense, the default tree floor `(30, 40)` can leave no headroom after fields claim ~58–60% coverage — lower it to `tree_coverage_band = Vector2D(25, 40)` if Stage 4 can't reach its band. Then call `generate_roads` against the exported grid + this config.
 
 How many roads did it produce? How many are Main vs Dirt? Did the Stage 1 gate pass? Show the failing checks if any.
 
@@ -86,7 +86,7 @@ Run `place_railway` with Stages 1–4. How long is the railway in km? How many b
 
 ## Final Pass + One-Call Pipeline
 
-Run `run_full_pipeline` against the Verkhova grid with the config. Did `final_gate.all_passed` come back true? Report `output_files` — there should be exactly 8 files written to `<Project>/Saved/MapBlockout/VerkhovaTest/`.
+Run `run_full_pipeline` against the exported grid with the config. Did `final_gate.all_passed` come back true? Report `output_files` — there should be exactly 8 files written to `<Project>/Saved/MapBlockout/MapBlockoutTest/`.
 
 ---
 
@@ -104,9 +104,9 @@ Each PNG should be non-empty (> 1 KB).
 
 ---
 
-## Verkhova Smoke Test
+## Pipeline Smoke Test
 
-The Verkhova fixture is the canonical test input — same data the host-Python `map_designer.py` produces a clean pass against. Running `run_full_pipeline` on it should produce a passing run with:
+A full run on a well-painted ~12 km landscape should produce a passing run with:
 
 - ~12 km map (world span ≈ 1,200,000 cm)
 - ≥ 15 POIs
@@ -122,7 +122,7 @@ Run the pipeline and confirm every one of those holds.
 
 ## One-Call Convenience: RunFullPipelineForLandscape
 
-If you have a live landscape (not just a JSON fixture), call `run_full_pipeline_for_landscape("Landscape1", config)` and verify it produces the same 8 deliverables. Report any check failures.
+To run the whole pipeline directly from a live landscape in one call, use `run_full_pipeline_for_landscape("Landscape1", config)` and verify it produces the same 8 deliverables. Report any check failures.
 
 ---
 
@@ -137,7 +137,7 @@ Feed those rivers into a new config (`cfg.rivers = rivers`) and re-run `run_full
 
 # Map Blockout Materialization Tests
 
-These exercise the `materialize_*` methods that turn a passing pipeline run into actual engine geometry. They require a **live landscape** (the plan-only Verkhova fixture is not enough — materializers need a real `ALandscape` actor to draw splines, paint, and spawn into).
+These exercise the `materialize_*` methods that turn a passing pipeline run into actual engine geometry. They require a **live landscape** — a plan-only grid is not enough; materializers need a real `ALandscape` actor to draw splines, paint, and spawn into.
 
 **Prereqs:**
 - A live landscape labeled `Landscape1` in the open level
@@ -246,13 +246,13 @@ Report any gate failure with the failing check name and message, and any materia
 
 These deliberately drive the pipeline into failing gates and exercise the repair knobs. The MapDesigner spec's whole point is that every failure is *named* and there's a specific knob to turn — these tests prove that loop works.
 
-Run sequentially. Each `---` is one prompt. Uses the Verkhova fixture so no live landscape is needed.
+Run sequentially. Each `---` is one prompt. Reuses the landcover grid exported in Stage 0.
 
 ---
 
 ## Setup
 
-Load the Verkhova fixture from `Plugins/VibeUE/Source/VibeUE/Tests/MapBlockout/example_data/landcover_grid.json`. Build a base config (`level_name="VerkhovaRecovery"`, layers `crop=L1, soil=L2, flood=L3, forest=L4`, seed=7) and confirm `run_full_pipeline` passes all gates as a baseline.
+Using the landcover grid exported in Stage 0 (or re-load it via `LoadLandcoverGridJson`), build a base config (`level_name="MapBlockoutRecovery"`, layers `crop=Crop, soil=Soil, flood=Water, forest=Forest`, seed=7) and confirm `run_full_pipeline` passes all gates as a baseline.
 
 ---
 
@@ -314,7 +314,7 @@ Set up a config where the forest layer has very low signal near the strongpoint 
 
 ---
 
-Restore `cfg.layers.forest = "L4"` (the Verkhova fixture's forest layer) and re-run. The check should pass.
+Restore `cfg.layers.forest = "Forest"` (your forest layer) and re-run. The check should pass.
 
 ---
 

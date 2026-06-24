@@ -1,0 +1,19 @@
+# Copyright Buckley Builds LLC 2026 All Rights Reserved.
+
+# safe_discovery.txt — Discover skeletons + animations WITHOUT loading assets (no crashes).
+#
+# Sample script for the animation-editing skill. Run via execute_python_code.
+# NEVER unreal.load_asset() in a loop — it causes access violations. Use these metadata queries.
+import unreal
+ass = unreal.AnimSequenceService
+sks = unreal.SkeletonService
+
+# Skeletons in the project
+skeletons = sks.list_skeletons("/Game")
+print("skeletons:", len(skeletons))
+
+# Animations for the first skeleton (metadata only, no loading)
+if skeletons:
+    skeleton_path = str(skeletons[0]).split(" ")[0]
+    for a in ass.find_animations_for_skeleton(skeleton_path)[:10]:
+        print(f"{a.anim_name}  frames={a.frame_count}  dur={a.duration:.2f}s  {a.anim_path}")

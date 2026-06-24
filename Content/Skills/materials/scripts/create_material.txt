@@ -1,0 +1,52 @@
+# Copyright Buckley Builds LLC 2026 All Rights Reserved.
+
+# create_material.txt — Create a material with BaseColor + Roughness params, compile, verify.
+#
+# Sample script for the materials skill. Run via execute_python_code.
+#
+# Material BASICS (create the asset, add expressions, wire outputs) are CUT from
+# MaterialService / MaterialNodeService. The CANONICAL MCP path is the engine MaterialTools
+# toolset via call_tool:
+#   call_tool(tool_name="create_material",
+#             toolset_name="editor_toolset.toolsets.material.MaterialTools",
+#             arguments={"folder_path": FOLDER, "asset_name": NAME})
+#   call_tool(tool_name="connect_to_output",
+#             toolset_name="editor_toolset.toolsets.material.MaterialTools",
+#             arguments={"expression": expr.id, "output_name": "", "material_property": "MP_BaseColor"})
+# VibeUE KEEPS MaterialNodeService.create_parameter (and the batch_* graph authoring calls) for
+# parameter/graph work driven by node ids.
+#
+# This script is pure Python (no call_tool), so it uses the native MaterialEditingLibrary
+# equivalents — create_material_expression / connect_material_property — which produce the same
+# result and hand back real UMaterialExpression objects to connect.
+import unreal
+ms, mns = unreal.MaterialService, unreal.MaterialNodeService
+mel = unreal.MaterialEditingLibrary
+
+NAME = "M_Character"
+FOLDER = "/Game/Materials/"
+path = FOLDER + NAME
+if unreal.EditorAssetLibrary.does_asset_exist(path):
+    unreal.EditorAssetLibrary.delete_asset(path)
+
+# Create the material asset (engine MaterialTools.create_material is the canonical MCP path).
+mat = unreal.AssetToolsHelpers.get_asset_tools().create_asset(
+    NAME, FOLDER.rstrip("/"), unreal.Material, unreal.MaterialFactoryNew())
+
+# Add the parameter expressions and wire them to the material outputs.
+color = mel.create_material_expression(mat, unreal.MaterialExpressionVectorParameter, -500, 0)
+color.set_editor_property("parameter_name", "BaseColor")
+color.set_editor_property("default_value", unreal.LinearColor(0.8, 0.2, 0.2, 1.0))
+mel.connect_material_property(color, "", unreal.MaterialProperty.MP_BASE_COLOR)
+
+rough = mel.create_material_expression(mat, unreal.MaterialExpressionScalarParameter, -500, 100)
+rough.set_editor_property("parameter_name", "Roughness")
+rough.set_editor_property("default_value", 0.5)
+mel.connect_material_property(rough, "", unreal.MaterialProperty.MP_ROUGHNESS)
+
+ms.compile_material(path)
+mns.layout_expressions(path)
+unreal.EditorAssetLibrary.save_asset(path)
+
+diag = mns.get_material_diagnostics(path)
+print("compiled_ok:", diag.is_compiled_ok, "expressions:", diag.expression_count)

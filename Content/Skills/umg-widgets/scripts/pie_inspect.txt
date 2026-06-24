@@ -1,0 +1,34 @@
+# Copyright Buckley Builds LLC 2026 All Rights Reserved.
+
+# pie_inspect.txt — Spawn a Widget Blueprint in PIE and read a live property, then clean up.
+#
+# Sample script for the umg-widgets skill. Run via execute_python_code.
+#
+# IMPORTANT: start_pie() is asynchronous — PIE is not ready in the same execution call.
+# Run start_pie() FIRST (one call), then run this spawn/read/cleanup block in a SECOND call,
+# otherwise spawn_widget_in_pie returns handle.valid == False ("PIE is not running.").
+#
+# get_live_property and remove_widget_from_pie take the HANDLE OBJECT (not handle.instance_id).
+import unreal
+
+WIDGET_PATH = "/Game/Blueprints/TestWidget"
+LIVE_WIDGET = "TitleText"
+LIVE_PROPERTY = "RenderOpacity"
+
+ws = unreal.WidgetService
+
+# Step 1 (run on its own first if PIE is not already running):
+if not ws.is_pie_running():
+    ws.start_pie()
+    print("PIE starting — re-run the spawn block below in a separate call once PIE is live.")
+
+# Step 2 (run after PIE is fully running):
+if ws.is_pie_running():
+    handle = ws.spawn_widget_in_pie(WIDGET_PATH)
+    print("spawned:", handle.valid, "id:", handle.instance_id, "err:", handle.error_message)
+    if handle.valid:
+        value = ws.get_live_property(handle, LIVE_WIDGET, LIVE_PROPERTY)
+        print(f"{LIVE_WIDGET}.{LIVE_PROPERTY} =", value)
+        ws.remove_widget_from_pie(handle)
+    ws.stop_pie()
+    print("pie running after cleanup:", ws.is_pie_running())

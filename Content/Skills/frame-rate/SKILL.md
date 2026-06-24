@@ -108,4 +108,4 @@ VSync can only go as high as the display refresh rate.
 
 ## Sample scripts (run via `execute_python_code`)
 
-- **`scripts/uncap_fps.pyx`** — read all five caps, then uncap to a target FPS.
+- **`scripts/uncap_fps.txt`** — read all five caps, then uncap to a target FPS.

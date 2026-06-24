@@ -243,4 +243,4 @@ unreal.ViewportService.set_exposure_game_settings()
 
 ## Sample scripts (run via `execute_python_code`)
 
-- **`scripts/set_camera.pyx`** — position the editor camera and set the view mode.
+- **`scripts/set_camera.txt`** — position the editor camera and set the view mode.

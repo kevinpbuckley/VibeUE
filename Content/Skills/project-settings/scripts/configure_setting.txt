@@ -1,0 +1,18 @@
+# Copyright Buckley Builds LLC 2026 All Rights Reserved.
+
+# configure_setting.txt — Discover settings classes and read/write a project setting.
+#
+# Sample script for the project-settings skill. Run via execute_python_code.
+# NOTE: registered-setting categories (list/get/set_setting, get/set_category_settings_as_json) moved
+# to the engine ConfigSettingsToolset (call_tool). VibeUE keeps discover_settings_classes + raw INI.
+import unreal
+ps = unreal.ProjectSettingsService
+
+# Discover the available UDeveloperSettings classes -> their INI section + file
+for c in ps.discover_settings_classes()[:10]:
+    print(c.class_name, "->", c.config_section, "in", c.config_file)
+
+# Read / write a known INI section+key directly:
+sec, file = "/Script/EngineSettings.GeneralProjectSettings", "DefaultGame.ini"
+print("ProjectName:", ps.get_ini_value(sec, "ProjectName", file))
+# ps.set_ini_value(sec, "ProjectName", "My Game", file); ps.save_all_config()

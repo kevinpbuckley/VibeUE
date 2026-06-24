@@ -1,0 +1,46 @@
+# Copyright Buckley Builds LLC 2026 All Rights Reserved.
+
+# create_blueprint.txt — Create a Blueprint with variables, then compile + save.
+#
+# Sample script for the blueprints skill. Run via execute_python_code.
+#
+# CANONICAL PATH: Blueprint create / add_variable / compile_blueprint are engine BlueprintTools
+# toolset calls now (BlueprintService.create_blueprint / add_variable / compile_blueprint were cut):
+#   call_tool(tool_name="create",
+#             toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
+#             arguments={"folder_path": FOLDER, "asset_name": NAME, "asset_type": PARENT_CLASS})
+#   call_tool(tool_name="add_variable",
+#             toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
+#             arguments={"blueprint": path, "name": "Health", "type_name": "float"})
+#   call_tool(tool_name="compile_blueprint",
+#             toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
+#             arguments={"blueprint": path})
+#
+# This script must stay pure-Python (it runs inside execute_python_code), so it uses the native
+# unreal.* equivalents below. The BlueprintTools toolset calls above are the canonical interface.
+import unreal
+
+NAME = "BP_Player"
+PARENT_CLASS = unreal.Character   # e.g. unreal.Actor, unreal.Pawn, unreal.Character
+FOLDER = "/Game/Blueprints"
+
+asset_path = f"{FOLDER}/{NAME}"
+if unreal.EditorAssetLibrary.does_asset_exist(asset_path):
+    unreal.EditorAssetLibrary.delete_asset(asset_path)
+
+# Create the Blueprint via the Blueprint factory (pure-Python equivalent of BlueprintTools.create).
+factory = unreal.BlueprintFactory()
+factory.set_editor_property("parent_class", PARENT_CLASS)
+asset_tools = unreal.AssetToolsHelpers.get_asset_tools()
+bp = asset_tools.create_asset(NAME, FOLDER, unreal.Blueprint, factory)
+print("created:", asset_path)
+
+# Add variables. Pure-Python add uses BlueprintEditorLibrary; the canonical path is
+# BlueprintTools.add_variable (blueprint, name, type_name) shown in the header comment.
+unreal.BlueprintEditorLibrary.add_member_variable(bp, "Health",  unreal.BlueprintEditorLibrary.generate_blueprint_variable_type("float"))
+unreal.BlueprintEditorLibrary.add_member_variable(bp, "IsAlive", unreal.BlueprintEditorLibrary.generate_blueprint_variable_type("bool"))
+
+# Compile (pure-Python equivalent of BlueprintTools.compile_blueprint).
+unreal.BlueprintEditorLibrary.compile_blueprint(bp)
+print("compiled:", asset_path)
+unreal.EditorAssetLibrary.save_asset(asset_path)

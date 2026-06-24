@@ -411,4 +411,4 @@ For unwrap operations, export the layout PNG and visually inspect it (read the P
 
 ## Sample scripts (run via `execute_python_code`)
 
-- **`scripts/inspect_uvs.pyx`** — inspect UV channels/health and export a UV layout image.
+- **`scripts/inspect_uvs.txt`** — inspect UV channels/health and export a UV layout image.

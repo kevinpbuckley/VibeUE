@@ -46,7 +46,7 @@ import unreal
 unreal.EditorAssetLibrary.save_asset(path)
 ```
 
-Runnable: `scripts/create_blueprint.pyx`.
+Runnable: `scripts/create_blueprint.txt`.
 
 ## Add components with properties
 
@@ -78,7 +78,7 @@ Components added without a parent go to root level: the first scene component re
 DefaultSceneRoot as root; later parentless ones become floating siblings. Pass the parent name,
 or use `reparent_component` / `set_root_component`, to build a hierarchy.
 
-Runnable: `scripts/add_component.pyx`.
+Runnable: `scripts/add_component.txt`.
 
 ## Event dispatcher (multicast delegate)
 
@@ -101,7 +101,7 @@ unreal.EditorAssetLibrary.save_asset(bp)
 ```
 
 Subscribe elsewhere with `add_delegate_bind_on_variable` (preferred, when the dispatcher lives on a
-variable's class) or `add_delegate_bind_node` (lower-level). Runnable: `scripts/event_dispatcher.pyx`.
+variable's class) or `add_delegate_bind_node` (lower-level). Runnable: `scripts/event_dispatcher.txt`.
 
 ## Implement a Blueprint interface
 
@@ -115,4 +115,4 @@ unreal.EditorAssetLibrary.save_asset(bp)
 # Implement interface functions with override_function(bp, "OnInteract")
 ```
 
-Runnable: `scripts/add_interface.pyx`.
+Runnable: `scripts/add_interface.txt`.

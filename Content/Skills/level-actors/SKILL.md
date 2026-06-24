@@ -563,4 +563,4 @@ print(f"Absolute: loc={loc}, rot={rot}, scale={scale}")
 
 ## Sample scripts (run via `execute_python_code`)
 
-- **`scripts/manipulate_actors.pyx`** — list level actors, find by class, move/rotate by name.
+- **`scripts/manipulate_actors.txt`** — list level actors, find by class, move/rotate by name.

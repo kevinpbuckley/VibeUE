@@ -1,0 +1,26 @@
+# Copyright Buckley Builds LLC 2026 All Rights Reserved.
+
+# find_and_save.txt — Find an asset, then duplicate + save it.
+#
+# Sample script for the asset-management skill. Run via execute_python_code.
+# NOTE: search/find/move/duplicate/save moved to the engine AssetTools toolset (call_tool) or
+# EditorAssetLibrary / the Asset Registry. VibeUE's AssetDiscoveryService keeps only crash-safe
+# import/export + Content Browser selection + is_asset_open.
+import unreal
+
+ar = unreal.AssetRegistryHelpers.get_asset_registry()
+
+# Search by class under a narrow path (avoid broad /Game listings)
+f = unreal.ARFilter(
+    package_paths=["/Game/Blueprints"],
+    class_paths=[unreal.TopLevelAssetPath("/Script/Engine", "Blueprint")],
+    recursive_paths=True)
+for a in ar.get_assets(f)[:10]:
+    print(" ", a.asset_name, a.package_path)
+
+# Duplicate + save via EditorAssetLibrary (true copy, references fixed up on rename)
+src = "/Game/Blueprints/BP_Player"
+if unreal.EditorAssetLibrary.does_asset_exist(src):
+    dup = unreal.EditorAssetLibrary.duplicate_asset(src, src + "_Copy")
+    unreal.EditorAssetLibrary.save_asset(src + "_Copy")
+    print("duplicated:", dup is not None)

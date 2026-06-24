@@ -13,8 +13,7 @@
  * MapDesigner spec's pass/fail checks; the orchestrator stops at the first failing
  * gate and reports which check failed.
  *
- * Authoritative spec: docs/design/map-designer-spec.md. The host-Python reference
- * implementation lives at Source/VibeUE/Tests/MapBlockout/reference/.
+ * Authoritative spec: docs/design/map-designer-spec.md.
  */
 
 
@@ -652,8 +651,8 @@ public:
 	 * @param bSynthesizeFloodFromHeight - add an extra layer named "FloodFromHeight"
 	 *        derived from the lowest FloodPercentile% of the heightmap. Useful when
 	 *        the source landscape has no painted water layer — map it as
-	 *        `cfg.layers.flood = "FloodFromHeight"`. Mirrors host-Python's
-	 *        `build_inputs.py --flood-from-height` flag.
+	 *        `cfg.layers.flood = "FloodFromHeight"`. Mirrors the host-Python
+	 *        `--flood-from-height` behaviour.
 	 * @param FloodPercentile            - lowest %% of terrain treated as flood (default 8).
 	 * @return Bounds + height + per-layer weights, or bSuccess=false + ErrorMessage
 	 */
@@ -693,7 +692,7 @@ public:
 	 * spine. Per-point widths come from `2 * dt * meters_per_pixel` so wide rivers
 	 * get wide-river bridges and narrow tributaries get narrow ones.
 	 *
-	 * Mirrors `reference/river_centerline_reference.py` from the host-Python.
+	 * Mirrors the host-Python river-centerline reference algorithm.
 	 *
 	 * @param WaterMask    - binary mask (1 = water)
 	 * @param WorldLo      - landcover grid's WorldLo (sets world-space coords)

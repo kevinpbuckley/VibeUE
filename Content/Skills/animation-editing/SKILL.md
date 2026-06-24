@@ -97,13 +97,13 @@ read the reference pose first (`get_reference_pose`).
 
 | Task | Workflow | Sample script |
 |------|----------|---------------|
-| Discover skeletons/animations safely | `workflows.md` → Inspect skeleton | `scripts/safe_discovery.pyx` |
+| Discover skeletons/animations safely | `workflows.md` → Inspect skeleton | `scripts/safe_discovery.txt` |
 | Build a skeleton profile | `workflows.md` → Inspect skeleton | — |
-| Edit one bone (preview/validate/bake) | `workflows.md` → single bone edit | `scripts/preview_validate_bake.pyx` |
-| Edit a bone chain atomically | `workflows.md` → multi-bone edit | `scripts/multi_bone_edit.pyx` |
+| Edit one bone (preview/validate/bake) | `workflows.md` → single bone edit | `scripts/preview_validate_bake.txt` |
+| Edit a bone chain atomically | `workflows.md` → multi-bone edit | `scripts/multi_bone_edit.txt` |
 | Set manual joint constraints | `workflows.md` → set constraints | — |
-| Learn constraints from animations | `workflows.md` → learn constraints | `scripts/learn_constraints.pyx` |
-| Copy / mirror a pose | `workflows.md` → copy/mirror | `scripts/mirror_pose.pyx` |
+| Learn constraints from animations | `workflows.md` → learn constraints | `scripts/learn_constraints.txt` |
+| Copy / mirror a pose | `workflows.md` → copy/mirror | `scripts/mirror_pose.txt` |
 | Retarget preview | `workflows.md` → retargeting | — |
 
 ## Sub-docs

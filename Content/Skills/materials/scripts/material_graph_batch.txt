@@ -1,0 +1,45 @@
+# Copyright Buckley Builds LLC 2026 All Rights Reserved.
+
+# material_graph_batch.txt — Build a small graph with batch create + connect (one transaction each).
+#
+# Sample script for the materials skill. Run via execute_python_code.
+# create_parameter and batch_connect_expressions are surviving VibeUE MaterialNodeService calls —
+# batch ops are much faster than per-node. Arrays must be equal length.
+#
+# Generic single-node creation (add_expression) and output wiring (connect_to_output) are CUT
+# from MaterialNodeService — the CANONICAL MCP path is the engine MaterialTools toolset:
+#   MT = "editor_toolset.toolsets.material.MaterialTools"
+#   mult = call_tool(tool_name="add_expression", toolset_name=MT,
+#                    arguments={"material_or_function": PATH, "expression_class": "Multiply",
+#                               "x": -300, "y": 50})
+#   call_tool(tool_name="connect_to_output", toolset_name=MT,
+#             arguments={"expression": mult.id, "output_name": "", "material_property": "MP_BaseColor"})
+# This script is pure Python (no call_tool), so it creates the generic node and wires the output with
+# the native MaterialEditingLibrary, then resolves that node's MaterialNodeService id (via
+# list_expressions) so the surviving batch_connect_expressions can wire the parameters into it.
+import unreal
+ms, mns = unreal.MaterialService, unreal.MaterialNodeService
+mel = unreal.MaterialEditingLibrary
+
+PATH = "/Game/Materials/M_Character"   # must already exist
+mat = unreal.load_asset(PATH)
+
+# Create TintColor (Vector) * Intensity (Scalar) -> BaseColor.
+tint = mns.create_parameter(PATH, "Vector", "TintColor", "Surface", "1,1,1,1", -600, 0)
+inten = mns.create_parameter(PATH, "Scalar", "Intensity", "Surface", "1.0", -600, 150)
+# Generic node natively (engine MaterialTools.add_expression is the canonical MCP path).
+mult = mel.create_material_expression(mat, unreal.MaterialExpressionMultiply, -300, 50)
+mult_id = next(e.id for e in mns.list_expressions(PATH) if e.class_name.endswith("Multiply"))
+
+mns.batch_connect_expressions(
+    PATH,
+    [tint.id, inten.id],     # source ids
+    ["", ""],                # source output names ("" = first)
+    [mult_id, mult_id],      # target ids
+    ["A", "B"],              # target input names
+)
+# Output wiring natively (engine MaterialTools.connect_to_output is the canonical MCP path).
+mel.connect_material_property(mult, "", unreal.MaterialProperty.MP_BASE_COLOR)
+ms.compile_material(PATH)
+unreal.EditorAssetLibrary.save_asset(PATH)
+print("diag:", mns.get_material_diagnostics(PATH).is_compiled_ok)

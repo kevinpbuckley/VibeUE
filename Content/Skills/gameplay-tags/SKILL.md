@@ -220,4 +220,4 @@ Single-tag **add / remove / rename** and **list-all** are provided by Unreal 5.8
 
 ## Sample scripts (run via `execute_python_code`)
 
-- **`scripts/add_tags.pyx`** — register gameplay tags and list them.
+- **`scripts/add_tags.txt`** — register gameplay tags and list them.

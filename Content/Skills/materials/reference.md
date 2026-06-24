@@ -71,7 +71,7 @@ Property gotchas: `MaterialExpressionTypeInfo` uses `display_name` (not `name`);
    `material_property` e.g. `"MP_BaseColor"`) for each `output_connections` entry.
 9. `compile_material`.
 
-Runnable: `scripts/export_graph.pyx` (export side).
+Runnable: `scripts/export_graph.txt` (export side).
 
 ## Material Functions
 

@@ -309,4 +309,4 @@ material skill through `GetSkills` (AgentSkillToolset):
 
 ## Sample scripts (run via `execute_python_code`)
 
-- **`scripts/sculpt_terrain.pyx`** — create a landscape and sculpt procedural mountain/valley features.
+- **`scripts/sculpt_terrain.txt`** — create a landscape and sculpt procedural mountain/valley features.

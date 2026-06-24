@@ -77,7 +77,7 @@ FMapBlockoutLandcoverGrid UMapBlockoutService::ExportLandcoverGrid(
 	}
 
 	// World bounds: symmetric, origin-centred square half-span, matching the
-	// host-Python export_terrain_data.py contract. Span derives from the
+	// host-Python export contract. Span derives from the
 	// landscape's resolution * scale (cm/quad).
 	const float HalfSpanX = (Info.ResolutionX > 0 ? (Info.ResolutionX - 1) : 0) * Info.Scale.X * 0.5f;
 	const float HalfSpanY = (Info.ResolutionY > 0 ? (Info.ResolutionY - 1) : 0) * Info.Scale.Y * 0.5f;
@@ -116,7 +116,7 @@ FMapBlockoutLandcoverGrid UMapBlockoutService::ExportLandcoverGrid(
 	}
 
 	// Optional: synthesize a "FloodFromHeight" layer by thresholding the lowest
-	// FloodPercentile% of the heightmap. Mirrors build_inputs.py --flood-from-height.
+	// FloodPercentile% of the heightmap (the host-Python --flood-from-height behaviour).
 	// Useful when the source landscape has no painted water layer.
 	if (bSynthesizeFloodFromHeight && Result.HeightNormalized.Num() == Result.GridN * Result.GridN)
 	{
@@ -266,7 +266,7 @@ FMapBlockoutLandcoverGrid UMapBlockoutService::LoadLandcoverGridJson(const FStri
 // =========================================================================
 // River centerline extraction
 //
-// Algorithm (port of reference/river_centerline_reference.py):
+// Algorithm (river-centerline extraction):
 //   1. Pick the largest 8-connected water component (drops ponds/lakes).
 //   2. Euclidean distance transform: each water cell's distance to the
 //      nearest non-water cell — recovers the medial axis (high DT = center

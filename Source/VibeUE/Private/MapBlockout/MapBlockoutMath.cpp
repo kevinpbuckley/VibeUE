@@ -3,8 +3,8 @@
 #include "MapBlockout/MapBlockoutMath.h"
 #include "Math/UnrealMathUtility.h"
 
-// Pure-C++ port of the numpy + scipy.ndimage primitives the host-Python
-// reference (Source/VibeUE/Tests/MapBlockout/reference/map_designer.py) uses.
+// Pure-C++ port of the numpy + scipy.ndimage primitives the original
+// host-Python reference implementation used.
 // No UE engine deps beyond TArray + FMath.
 
 namespace MapBlockoutMath
