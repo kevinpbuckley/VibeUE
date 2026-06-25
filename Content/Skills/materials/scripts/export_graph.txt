@@ -1,0 +1,22 @@
+# Copyright Buckley Builds LLC 2026 All Rights Reserved.
+
+# export_graph.txt — Export and inspect a material's node graph (read before modifying).
+#
+# Sample script for the materials skill. Run via execute_python_code.
+# ALWAYS export+review an existing material before adding/reconnecting nodes.
+import unreal, json
+ms, mns = unreal.MaterialService, unreal.MaterialNodeService
+
+PATH = "/Game/Materials/M_Character"
+
+info = ms.get_material_info(PATH)
+print(f"blend={info.blend_mode} shading={info.shading_model}")
+
+graph = json.loads(mns.export_material_graph(PATH))
+print(f"expressions={len(graph['expressions'])} connections={len(graph['connections'])} "
+      f"outputs={len(graph['output_connections'])}")
+for e in graph["expressions"]:
+    label = e.get("parameter_name") or e["class"]
+    print(f"  [{e['id']}] {e['class']} ({e['pos_x']},{e['pos_y']}) {label}")
+for oc in graph["output_connections"]:
+    print(f"  output '{oc['property']}' <- {oc['expression_id']}")

@@ -1,0 +1,35 @@
+# Copyright Buckley Builds LLC 2026 All Rights Reserved.
+
+# add_component.txt — Add components (with a child) and set their properties.
+#
+# Sample script for the blueprints skill. Run via execute_python_code.
+# Compile after adding components, before setting properties that depend on them.
+#
+# add_component / set_component_property are surviving VibeUE delta methods (kept as-is).
+# CANONICAL compile path is the engine BlueprintTools toolset:
+#   call_tool(tool_name="compile_blueprint",
+#             toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
+#             arguments={"blueprint": BP_PATH})
+# This script stays pure-Python, so it compiles via the native BlueprintEditorLibrary equivalent.
+import unreal
+bs = unreal.BlueprintService
+
+BP_PATH = "/Game/Blueprints/BP_Player"
+
+def compile_bp(path):
+    # Pure-Python equivalent of BlueprintTools.compile_blueprint (the canonical interface).
+    unreal.BlueprintEditorLibrary.compile_blueprint(unreal.load_asset(path))
+
+bs.add_component(BP_PATH, "StaticMeshComponent", "BodyMesh")          # parent defaults to root
+bs.add_component(BP_PATH, "PointLightComponent", "Glow", "BodyMesh")  # child of BodyMesh
+compile_bp(BP_PATH)
+
+# property values are strings; UE strips the lowercase b prefix (bVisible -> set as "bVisible" key here is fine)
+bs.set_component_property(BP_PATH, "BodyMesh", "bVisible", "true")
+bs.set_component_property(BP_PATH, "Glow", "Intensity", "5000.0")
+# LightColor is FColor: integer bytes 0-255 (LinearColor-style 0-1 floats give a near-black light)
+bs.set_component_property(BP_PATH, "Glow", "LightColor", "(R=255,G=127,B=0,A=255)")
+
+compile_bp(BP_PATH)
+print("compiled:", BP_PATH)
+unreal.EditorAssetLibrary.save_asset(BP_PATH)

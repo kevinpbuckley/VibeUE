@@ -1,0 +1,47 @@
+# Copyright Buckley Builds LLC 2026 All Rights Reserved.
+
+# timer_with_custom_event.txt — Non-blocking timer: Set Timer by Event + a Custom Event callback.
+#
+# Sample script for the blueprint-graphs skill. Run via execute_python_code.
+# Use this pattern (NOT Delay) when the Blueprint must keep ticking during the wait.
+# Create + verify one node at a time for fragile graphs; re-find custom events by returned GUID.
+#
+# Method notes after the consolidation:
+#   - The standalone add_function_call_node is GONE — the Set Timer by Event node is created as a
+#     build_graph "function_call" descriptor (ref_to_node_id maps the ref back to its GUID).
+#     (For a single node you could instead use the engine BlueprintTools.create_node tool via
+#      call_tool(toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools", ...).)
+#   - add_custom_event_node / set_node_pin_value / connect_nodes SURVIVE — they are the VibeUE delta.
+#   - compile goes through the engine BlueprintTools.compile_blueprint tool via call_tool.
+import unreal
+bs = unreal.BlueprintService
+
+BP = "/Game/Blueprints/BP_GraphTest"   # must already exist
+GRAPH = "EventGraph"
+
+# 1. Set Timer by Event node — build_graph function_call (K2_SetTimerDelegate is a known name)
+r = bs.build_graph(BP, GRAPH,
+    [{"ref": "Timer", "type": "function_call",
+      "params": {"class": "KismetSystemLibrary", "function": "K2_SetTimerDelegate"}}],
+    [], [], False, False)
+timer_id = r.ref_to_node_id["Timer"]
+assert timer_id, "timer node not created"
+bs.set_node_pin_value(BP, GRAPH, timer_id, "Time", "1.0")
+bs.set_node_pin_value(BP, GRAPH, timer_id, "bLooping", "false")
+
+# 2. Custom Event callback (re-find it by the returned GUID — titles can be multi-line)
+custom_id = bs.add_custom_event_node(BP, GRAPH, "OnTimerFinished", 600, 300)
+custom = next((n for n in bs.get_nodes_in_graph(BP, GRAPH) if n.node_id == custom_id), None)
+assert custom, "custom event not found after create"
+
+# 3. Wire CustomEvent.OutputDelegate -> Timer.Delegate
+assert bs.connect_nodes(BP, GRAPH, custom_id, "OutputDelegate", timer_id, "Delegate")
+
+# 4. Verify + compile (compile via the engine BlueprintTools toolset)
+for c in bs.get_connections(BP, GRAPH):
+    print(f"{c.source_node_title}.{c.source_pin_name} -> {c.target_node_title}.{c.target_pin_name}")
+result = call_tool(tool_name="compile_blueprint",
+                   toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
+                   arguments={"blueprint": BP})
+print("compile:", result.get("success"), "errors:", result.get("num_errors"))
+unreal.EditorAssetLibrary.save_asset(BP)

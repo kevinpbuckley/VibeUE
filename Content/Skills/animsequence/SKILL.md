@@ -321,4 +321,4 @@ Load these sibling docs for deeper coverage of specific topics:
 
 ## Sample scripts (run via `execute_python_code`)
 
-- **`scripts/inspect_sequence.pyx`** — safely inspect AnimSequences for a skeleton (metadata, no asset loading).
+- **`scripts/inspect_sequence.txt`** — safely inspect AnimSequences for a skeleton (metadata, no asset loading).

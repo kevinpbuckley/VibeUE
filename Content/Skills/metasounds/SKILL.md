@@ -477,4 +477,4 @@ stereo mixer, search `list_available_nodes("Mixer")` for a `(Stereo, …)` varia
 
 ## Sample scripts (run via `execute_python_code`)
 
-- **`scripts/create_metasound.pyx`** — create a MetaSound Source and list available node types.
+- **`scripts/create_metasound.txt`** — create a MetaSound Source and list available node types.

@@ -1,0 +1,31 @@
+# Copyright Buckley Builds LLC 2026 All Rights Reserved.
+
+# add_socket.txt — Add a socket to a skeletal mesh and verify (ENGINE SkeletalMeshTools).
+#
+# Sample script for the skeleton skill. Run via execute_python_code.
+#
+# ARCHITECTURE: socket CRUD and bone enumeration are owned by the ENGINE toolset
+# editor_toolset.toolsets.skeletal_mesh.SkeletalMeshTools — call with call_tool. VibeUE's
+# SkeletonService keeps bone transform/hierarchy edits, retargeting, curves, blend profiles,
+# and constraints (not sockets). Discover exact schemas with
+# describe_toolset("editor_toolset.toolsets.skeletal_mesh.SkeletalMeshTools").
+import unreal
+
+TS = "editor_toolset.toolsets.skeletal_mesh.SkeletalMeshTools"
+MESH = {"refPath": "/Game/Characters/SKM_Mannequin"}   # skeletal mesh asset
+SOCKET = "WeaponSocket"
+BONE = "hand_r"
+
+# Add the socket (always attached to the skeletal mesh; there is no add-to-skeleton flag):
+call_tool(TS, "add_socket", {"mesh": MESH, "socket_name": SOCKET, "bone_name": BONE})
+
+# Set its offset transform relative to the bone:
+call_tool(TS, "set_socket_transform", {
+    "mesh": MESH, "socket_name": SOCKET,
+    "transform": {"location": {"x": 10, "y": 0, "z": 0},
+                  "rotation": {"pitch": 0, "yaw": 90, "roll": 0},
+                  "scale": {"x": 1, "y": 1, "z": 1}},
+})
+
+# Verify:
+print("sockets:", call_tool(TS, "get_socket_names", {"mesh": MESH}))

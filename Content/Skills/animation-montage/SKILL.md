@@ -373,4 +373,4 @@ unreal.EditorAssetLibrary.save_asset(path)
 
 ## Sample scripts (run via `execute_python_code`)
 
-- **`scripts/create_montage.pyx`** — create a montage from an animation and add named sections.
+- **`scripts/create_montage.txt`** — create a montage from an animation and add named sections.

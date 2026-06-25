@@ -299,11 +299,11 @@ Common material property internal names: `TwoSided`, `BlendMode`, `ShadingModel`
 
 | Task | Workflow | Sample script |
 |------|----------|---------------|
-| Create a material (+ params) | `workflows.md` → Create a basic material | `scripts/create_material.pyx` |
-| Create a material instance | `workflows.md` → Create a material instance | `scripts/create_instance.pyx` |
+| Create a material (+ params) | `workflows.md` → Create a basic material | `scripts/create_material.txt` |
+| Create a material instance | `workflows.md` → Create a material instance | `scripts/create_instance.txt` |
 | Add texture / math / function / HLSL nodes | `workflows.md` | — |
-| Build a graph with batch ops | `workflows.md` → Batch create/connect/set | `scripts/material_graph_batch.pyx` |
-| Inspect/export an existing graph | `reference.md` → Export JSON schema | `scripts/export_graph.pyx` |
+| Build a graph with batch ops | `workflows.md` → Batch create/connect/set | `scripts/material_graph_batch.txt` |
+| Inspect/export an existing graph | `reference.md` → Export JSON schema | `scripts/export_graph.txt` |
 | Recreate a material from export | `reference.md` → Recreate from export | — |
 | Verify wiring / compile | Critical Rules → `get_material_diagnostics` | — |
 

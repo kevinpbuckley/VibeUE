@@ -1,0 +1,16 @@
+# Copyright Buckley Builds LLC 2026 All Rights Reserved.
+
+# set_cvars.txt — Read scalability and set a console variable (EngineSettingsService).
+#
+# Sample script for the engine-settings skill. Run via execute_python_code.
+# NOTE: registered-setting categories (list/get/set_setting, get_category_settings_as_json) moved to
+# the engine ConfigSettingsToolset (call_tool). VibeUE keeps cvars / scalability / raw engine INI.
+import unreal
+es = unreal.EngineSettingsService
+
+print("scalability:", es.get_scalability_settings())
+print("set cvar:", es.set_console_variable("r.ScreenPercentage", "100"))
+
+# Raw engine INI read (when you know the section/key):
+print("ray tracing:", es.get_engine_ini_value(
+    "/Script/Engine.RendererSettings", "bEnableRayTracing", "Engine.ini"))

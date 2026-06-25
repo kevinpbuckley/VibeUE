@@ -1,0 +1,32 @@
+# Copyright Buckley Builds LLC 2026 All Rights Reserved.
+
+# event_dispatcher.txt — Add a Blueprint Event Dispatcher (multicast delegate) with a parameter.
+#
+# Sample script for the blueprints skill. Run via execute_python_code.
+# Use the dedicated dispatcher API — NOT add_variable(..., "EventDispatcher") (not a real type).
+#
+# add_event_dispatcher / add_event_dispatcher_parameter / add_call_delegate_node are surviving
+# VibeUE delta methods (kept as-is). CANONICAL compile path is the engine BlueprintTools toolset:
+#   call_tool(tool_name="compile_blueprint",
+#             toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
+#             arguments={"blueprint": BP_PATH})
+# This script stays pure-Python, so it compiles via the native BlueprintEditorLibrary equivalent.
+import unreal
+bs = unreal.BlueprintService
+
+BP_PATH = "/Game/Blueprints/BP_Player"
+
+# 1. Create the dispatcher (skeleton recompiles inline; callable immediately)
+print("dispatcher:", bs.add_event_dispatcher(BP_PATH, "OnDied"))
+
+# 2. Add a parameter to its signature (subscribers receive it as an input)
+print("param:", bs.add_event_dispatcher_parameter(BP_PATH, "OnDied", "Killer", "Actor"))
+
+# 3. Spawn the "Call OnDied" broadcast node in the EventGraph (wire something into its execute pin)
+call_id = bs.add_call_delegate_node(BP_PATH, "EventGraph", "OnDied", 1400, -700)
+print("call node id:", call_id)
+
+# 4. Compile (pure-Python equivalent of BlueprintTools.compile_blueprint) + save
+unreal.BlueprintEditorLibrary.compile_blueprint(unreal.load_asset(BP_PATH))
+print("compiled:", BP_PATH)
+unreal.EditorAssetLibrary.save_asset(BP_PATH)

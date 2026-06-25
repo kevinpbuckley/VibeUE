@@ -53,7 +53,7 @@ asset_tools.create_asset("MainMenu", "/Game/UI", unreal.WidgetBlueprint, factory
 ```
 
 Do **not** call `BlueprintEditorLibrary.get_blueprint_class()`, `unreal.create_widget_blueprint()`, or
-`WidgetService.create_widget()` — none exist. (Runnable: `scripts/create_widget.pyx`.)
+`WidgetService.create_widget()` — none exist. (Runnable: `scripts/create_widget.txt`.)
 
 ### 🚨 Hierarchy: set the root first, parents before children
 
@@ -91,7 +91,7 @@ still shows the old value, your value string didn't match the struct's member la
 Use `set_font` / `set_brush` (with `WidgetFontInfo` / `WidgetBrushInfo`) when changing a complete font
 or brush — they keep related fields together. Use `set_property` only for single leaf values or slot
 aliases like `Position X`, `Size Y`, `Anchor Min X`. See `reference.md` for every field name; runnable
-examples in `scripts/apply_font.pyx` and `scripts/apply_brush.pyx`.
+examples in `scripts/apply_font.txt` and `scripts/apply_brush.txt`.
 
 `set_brush` requires a **`slot_name`**: `set_brush(widget_path, component_name, slot_name, brush_info)`
 (for an Image the slot is `"Brush"`). `set_font` takes an optional `property_name` that defaults to `"Font"`.
@@ -112,7 +112,7 @@ examples in `scripts/apply_font.pyx` and `scripts/apply_brush.pyx`.
 
 `add_animation_track` / `add_keyframe` target actual widget properties or slot aliases
 (`RenderOpacity`, `ColorAndOpacity`, `Position X/Y`, `Size X/Y`). Always create the animation first,
-then the track, then keyframes. (Runnable: `scripts/create_animation.pyx`.)
+then the track, then keyframes. (Runnable: `scripts/create_animation.txt`.)
 
 ### 🚨 Preview vs PIE — different purposes
 
@@ -214,19 +214,19 @@ Sample scripts under `scripts/` are **runnable examples** — edit the variables
 
 | Task | Workflow | Sample script (run via `execute_python_code`) |
 |------|----------|-----------------------------------------------|
-| Create a Widget Blueprint | `workflows.md` → Create Widget Blueprint | `scripts/create_widget.pyx` |
-| Build a menu (root + panel + buttons) | `workflows.md` → Build a Menu | `scripts/build_menu.pyx` |
+| Create a Widget Blueprint | `workflows.md` → Create Widget Blueprint | `scripts/create_widget.txt` |
+| Build a menu (root + panel + buttons) | `workflows.md` → Build a Menu | `scripts/build_menu.txt` |
 | Position widgets on a CanvasPanel | `workflows.md` → Canvas Positioning | — |
-| Inspect a widget (hierarchy + properties) | `workflows.md` → Inspect a Widget | `scripts/inspect_hierarchy.pyx` |
-| Apply full font styling | `workflows.md` → Font Styling | `scripts/apply_font.pyx` |
-| Apply full brush styling | `workflows.md` → Brush Styling | `scripts/apply_brush.pyx` |
-| Author a widget animation | `workflows.md` → Widget Animation | `scripts/create_animation.pyx` |
+| Inspect a widget (hierarchy + properties) | `workflows.md` → Inspect a Widget | `scripts/inspect_hierarchy.txt` |
+| Apply full font styling | `workflows.md` → Font Styling | `scripts/apply_font.txt` |
+| Apply full brush styling | `workflows.md` → Brush Styling | `scripts/apply_brush.txt` |
+| Author a widget animation | `workflows.md` → Widget Animation | `scripts/create_animation.txt` |
 | Bind a widget event to a function | `workflows.md` → Bind Event | — |
 | Rename / remove a widget | `workflows.md` → Edit the Hierarchy | — |
-| Edit slot layout (z-order, alignment, padding) / reparent | SKILL.md → Slot editing | `scripts/edit_slots.pyx` |
-| Capture a preview PNG | `workflows.md` → Capture Preview | `scripts/capture_preview.pyx` |
-| Inspect a widget live in PIE | `workflows.md` → PIE Runtime Check | `scripts/pie_inspect.pyx` |
-| Add MVVM ViewModel + bindings | `mvvm.md` | `scripts/mvvm_hud.pyx` |
+| Edit slot layout (z-order, alignment, padding) / reparent | SKILL.md → Slot editing | `scripts/edit_slots.txt` |
+| Capture a preview PNG | `workflows.md` → Capture Preview | `scripts/capture_preview.txt` |
+| Inspect a widget live in PIE | `workflows.md` → PIE Runtime Check | `scripts/pie_inspect.txt` |
+| Add MVVM ViewModel + bindings | `mvvm.md` | `scripts/mvvm_hud.txt` |
 
 ## Sub-docs
 

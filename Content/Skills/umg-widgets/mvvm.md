@@ -102,7 +102,7 @@ for b in unreal.WidgetService.list_view_model_bindings(path):
 
 ### Full MVVM HUD setup
 
-See `scripts/mvvm_hud.pyx` for the complete runnable example (create WBP → build hierarchy →
+See `scripts/mvvm_hud.txt` for the complete runnable example (create WBP → build hierarchy →
 add ViewModel → create bindings → save).
 
 ### Remove bindings and ViewModel

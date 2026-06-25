@@ -264,4 +264,4 @@ unreal.EnumStructService.add_struct_property(path, "Scores", "int32", "", "Map")
 
 ## Sample scripts (run via `execute_python_code`)
 
-- **`scripts/create_enum_struct.pyx`** — create a UserDefinedEnum (+values) and a UserDefinedStruct.
+- **`scripts/create_enum_struct.txt`** — create a UserDefinedEnum (+values) and a UserDefinedStruct.

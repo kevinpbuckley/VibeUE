@@ -61,7 +61,7 @@ ms.compile_material(path)
 unreal.EditorAssetLibrary.save_asset(path)
 mns.layout_expressions(path)   # auto-arrange into clean columns
 ```
-Runnable: `scripts/create_material.pyx`.
+Runnable: `scripts/create_material.txt`.
 
 ## Create a material instance
 
@@ -89,7 +89,7 @@ call_tool(
 )
 unreal.EditorAssetLibrary.save_asset(ip)
 ```
-Runnable: `scripts/create_instance.pyx`. (For per-actor tiling on Megascans surfaces, prefer a child MI
+Runnable: `scripts/create_instance.txt`. (For per-actor tiling on Megascans surfaces, prefer a child MI
 with the `Tiling` scalar overridden — see SKILL.md Critical Rules.) For setting many instance
 parameters at once, VibeUE keeps `ms.set_instance_parameters_bulk(...)`.
 
@@ -205,4 +205,4 @@ call_tool(
     arguments={"expression": created[0].id, "output_name": "", "material_property": "MP_BaseColor"},
 )
 ```
-Runnable: `scripts/material_graph_batch.pyx`.
+Runnable: `scripts/material_graph_batch.txt`.

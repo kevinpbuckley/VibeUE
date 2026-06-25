@@ -206,4 +206,4 @@ result = unreal.ProjectSettingsService.set_ini_value(
 
 ## Sample scripts (run via `execute_python_code`)
 
-- **`scripts/configure_setting.pyx`** — discover settings classes and read/write a project setting.
+- **`scripts/configure_setting.txt`** — discover settings classes and read/write a project setting.

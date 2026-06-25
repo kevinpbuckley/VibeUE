@@ -7,8 +7,7 @@
 #include "HAL/PlatformFileManager.h"
 
 // Stage 1-5 generators, the Final Pass, the renderers, and the orchestrators.
-// Cell-for-cell port of the host-Python reference at
-// Source/VibeUE/Tests/MapBlockout/reference/map_designer.py. Each check name
+// Cell-for-cell port of the documented map-blockout algorithm. Each check name
 // matches a CHECK in docs/design/map-designer-spec.md.
 
 namespace

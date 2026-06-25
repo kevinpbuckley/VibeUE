@@ -506,4 +506,4 @@ unreal.BlueprintService.add_event_node(bp_path, "EventGraph", "ReceiveLatentEnte
 
 ## Sample scripts (run via `execute_python_code`)
 
-- **`scripts/build_state_tree.pyx`** — create a StateTree, add states + a transition (see api-reference.md for task struct names).
+- **`scripts/build_state_tree.txt`** — create a StateTree, add states + a transition (see api-reference.md for task struct names).

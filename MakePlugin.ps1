@@ -53,7 +53,8 @@ $ExcludeDirectories = @(
     "dist",              # Python distribution directories
     "*.egg-info",        # Python package metadata
     "docs",              # Development documentation (user docs moved to Resources)
-    "node_modules"       # Node.js modules
+    "node_modules",      # Node.js modules
+    "FabImages"          # Marketplace listing screenshots (uploaded to Fab separately, not shipped in plugin)
 )
 
 $ExcludeFiles = @(
@@ -76,6 +77,7 @@ $ExcludeFiles = @(
 
 # Development-only files that shouldn't be in marketplace submission
 $ExcludeDevFiles = @(
+    "LICENSE",               # Custom MIT license — Fab requires the Fab License only; kept in the Git repo, stripped from the Fab package
     "CLAUDE.md",             # Claude AI context (development only)
     "DEAD_HANDLERS_DELETED.md",
     "HANDLER_AUDIT.md", 

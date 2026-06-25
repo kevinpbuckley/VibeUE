@@ -69,7 +69,7 @@ the engine's `DataTableTools` / `DataAssetTools` / `EditorAppToolset` capture / 
 **Rewritten — basics redirected to engine, VibeUE delta kept (17):** asset-management, level-actors,
 viewport, gameplay-tags, engine-settings, project-settings, frame-rate, blueprints, blueprint-graphs,
 materials, umg-widgets, niagara-systems, niagara-emitters, skeleton, pie-testing, profiling, vibeue.
-Each skill (and its sample `.pyx` scripts) was checked against the current `U<Name>Service.h`; cut
+Each skill (and its sample `.txt` scripts) was checked against the current `U<Name>Service.h`; cut
 methods were replaced with the engine toolset (`call_tool`) or native `unreal.*` Python, and
 `vibeue-skills-manager` was replaced with `ListSkills`/`GetSkills` on `AgentSkillToolset`.
 
