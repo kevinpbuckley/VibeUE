@@ -40,8 +40,8 @@ AInstancedFoliageActor* UFoliageService::GetOrCreateFoliageActor(UWorld* World)
 		return nullptr;
 	}
 
-	// Find existing IFA
-	for (TActorIterator<AInstancedFoliageActor> It(World); It; ++It)
+	// Find existing IFA (return the first one if any exist)
+	if (TActorIterator<AInstancedFoliageActor> It(World); It)
 	{
 		return *It;
 	}
