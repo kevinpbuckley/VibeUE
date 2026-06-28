@@ -80,6 +80,43 @@ Search "Cast To Pawn". Confirm a `K2Node_DynamicCast` result comes back with a `
 
 ---
 
+## Async / latent action nodes (SPAWN keys)
+
+Async action nodes (the online-session family and friends) register through a *function*
+spawner whose factory is marked `BlueprintInternalUseOnly`, yet the real node is a
+`K2Node_AsyncAction`. Discovery must NOT drop these (the bug from issue #483) and must surface
+them with a `SPAWN K2Node_AsyncAction|...` key — never a `FUNC ...::Create Session` key (a FUNC
+key would build a plain Call Function node, not the async node).
+
+Run each of these searches and confirm a result comes back whose `node_class` is
+`K2Node_AsyncAction` and whose `spawner_key` starts with `SPAWN K2Node_AsyncAction|`:
+
+- "Create Session"
+- "Find Sessions"
+- "Join Session"
+- "Destroy Session"
+
+Confirm NONE of these return zero results, and that the returned key is a `SPAWN` key (not a
+`FUNC` key). This is the exact regression: before the fix these four returned 0 hits.
+
+---
+
+## Other latent / async nodes are discoverable
+
+Confirm these common latent/async nodes also enumerate (each should return at least one usable
+result — a `FUNC` key for latent library calls, or a `SPAWN K2Node_AsyncAction|...` key for
+async-action nodes):
+
+- "Delay" — latent `FUNC` call (KismetSystemLibrary::Delay).
+- "AI MoveTo" — async/latent movement node.
+- "Load Stream Level" — latent `FUNC` call.
+- "Open Level" — `FUNC` travel call (the Blueprint-facing replacement for raw ClientTravel).
+
+Report the `node_class` and `spawner_key` for each. The point: latent/async coverage is no
+longer a blind spot in discovery.
+
+---
+
 # Deterministic Creation From Keys
 
 Each discovered `spawner_key` must feed straight back into `create_node_by_key` and produce the
@@ -96,6 +133,18 @@ Take the `FUNC ...::Jump` key from the Jump search and create that node in BP_No
 ## Create a bound Get Subsystem node from a SPAWN key
 
 Take the `SPAWN K2Node_GetSubsystem|Get EnhancedInputWorldSubsystem` key (search "EnhancedInputWorldSubsystem" if you need the exact key) and create that node. Then read the node's pins and confirm its `ReturnValue` output pin is typed to the EnhancedInputWorldSubsystem class — i.e. the node came out BOUND to its subsystem, not as a blank node. This is the key behavior: `SPAWN` keys invoke the real editor spawner.
+
+---
+
+## Discovery ↔ creation parity for an async node
+
+Take the `SPAWN K2Node_AsyncAction|Create Session` key returned by the "Create Session" search
+above and feed it straight into `create_node_by_key` on BP_NodeDiscoveryTest's EventGraph.
+Confirm a valid node ID comes back, the node is a `K2Node_AsyncAction`, and reading its pins
+shows the async exec outputs (`then` plus `OnSuccess` / `On Success` and `OnFailure` / `On
+Failure`). This proves the key discovery surfaces is exactly the key creation accepts — the same
+node the editor's right-click menu would add — so an agent never has to fall back to C++ for
+session nodes.
 
 ---
 
@@ -122,7 +171,8 @@ Delete BP_NodeDiscoveryTest.
 1. No-arg "Get" search returns ≤ 20 results; `max_results = 100` returns more — proving the cap bounds payload size and discovery never returns the whole database at once.
 2. A specific term yields a small, relevant result set; the category filter narrows to that category.
 3. Spaceless menu names: "EnhancedInput" matches where "Enhanced Input" does not.
-4. Full coverage: FUNC (functions), EVENT (events), and SPAWN (Get Subsystem variants, Cast To) keys all appear.
-5. `create_node_by_key` works for FUNC and SPAWN keys; a SPAWN'd Get Subsystem node is bound (ReturnValue typed to the subsystem class).
-6. ForEachLoop / standard macros are correctly NOT returned as spawner keys.
-7. BP_NodeDiscoveryTest compiles, then is deleted.
+4. Full coverage: FUNC (functions), EVENT (events), and SPAWN (Get Subsystem variants, Cast To, async actions) keys all appear.
+5. Async/latent coverage: "Create Session", "Find Sessions", "Join Session", "Destroy Session" each return a `K2Node_AsyncAction` result with a `SPAWN K2Node_AsyncAction|...` key (never 0 hits, never a FUNC key); Delay / AI MoveTo / Load Stream Level / Open Level all enumerate.
+6. `create_node_by_key` works for FUNC and SPAWN keys; a SPAWN'd Get Subsystem node is bound (ReturnValue typed to the subsystem class); the `SPAWN K2Node_AsyncAction|Create Session` key creates the real async node with `then` / `OnSuccess` / `OnFailure` exec outputs (discovery ↔ creation parity).
+7. ForEachLoop / standard macros are correctly NOT returned as spawner keys.
+8. BP_NodeDiscoveryTest compiles, then is deleted.
