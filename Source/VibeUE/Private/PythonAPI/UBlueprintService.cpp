@@ -5708,6 +5708,7 @@ TArray<FBlueprintNodeTypeInfo> UBlueprintService::DiscoverNodes(
 
 		FString SpawnerKey;
 		bool bIsPure = false;
+		bool bIsLatent = false;
 
 		if (UBlueprintEventNodeSpawner* EventSpawner = Cast<UBlueprintEventNodeSpawner>(NodeSpawner))
 		{
@@ -5730,13 +5731,30 @@ TArray<FBlueprintNodeTypeInfo> UBlueprintService::DiscoverNodes(
 		}
 		else if (UBlueprintFunctionNodeSpawner* FunctionSpawner = Cast<UBlueprintFunctionNodeSpawner>(NodeSpawner))
 		{
-			const UFunction* Func = FunctionSpawner->GetFunction();
-			if (!Func || !Func->GetOwnerClass() || Func->HasMetaData(TEXT("BlueprintInternalUseOnly")))
+			// Async / latent action nodes (Create/Find/Join/Destroy Session, AI MoveTo, …)
+			// register a UBlueprintFunctionNodeSpawner but OVERRIDE NodeClass to the async
+			// node — see UK2Node_AsyncAction::GetMenuActions — and point GetFunction() at a
+			// proxy *factory* marked BlueprintInternalUseOnly. Treating those as functions
+			// would (a) reject them on the internal-use check below and (b) even if kept,
+			// emit a "FUNC <Proxy>::<Factory>" key that CreateNodeByKey turns into a plain
+			// Call Function node, NOT the async node. Detect the node-class override and emit
+			// the "SPAWN <NodeClass>|<MenuName>" key that CreateNodeByKey re-resolves back to
+			// THIS spawner and Invokes — giving discovery <-> creation parity for async nodes.
+			if (SpawnNodeClass && !SpawnNodeClass->IsChildOf(UK2Node_CallFunction::StaticClass()))
 			{
-				return false;
+				SpawnerKey = FString::Printf(TEXT("SPAWN %s|%s"), *SpawnNodeClass->GetName(), *DisplayName);
+				bIsLatent = true;
 			}
-			SpawnerKey = FString::Printf(TEXT("FUNC %s::%s"), *Func->GetOwnerClass()->GetName(), *Func->GetName());
-			bIsPure = Func->HasAnyFunctionFlags(FUNC_BlueprintPure);
+			else
+			{
+				const UFunction* Func = FunctionSpawner->GetFunction();
+				if (!Func || !Func->GetOwnerClass() || Func->HasMetaData(TEXT("BlueprintInternalUseOnly")))
+				{
+					return false;
+				}
+				SpawnerKey = FString::Printf(TEXT("FUNC %s::%s"), *Func->GetOwnerClass()->GetName(), *Func->GetName());
+				bIsPure = Func->HasAnyFunctionFlags(FUNC_BlueprintPure);
+			}
 		}
 		else
 		{
@@ -5778,7 +5796,7 @@ TArray<FBlueprintNodeTypeInfo> UBlueprintService::DiscoverNodes(
 		Info.NodeClass = SpawnNodeClass ? SpawnNodeClass->GetName() : TEXT("K2Node_Event");
 		Info.SpawnerKey = SpawnerKey;
 		Info.bIsPure = bIsPure;
-		Info.bIsLatent = false;
+		Info.bIsLatent = bIsLatent;
 		Info.Tooltip = UiSpec.Tooltip.ToString();
 
 		TArray<FString> ParsedKeywords;
