@@ -108,15 +108,35 @@ Check those layout settings.
 
 ## Event Bindings
 
-When the play button is clicked, it should call a function. Set that up.
+First create a function called OnPlayClicked on the widget blueprint. Then bind the play button's
+OnClicked event to call it.
 
 ---
 
-Add a hover event too.
+Prove the binding is real, not just a "success" return value: list the nodes in the EventGraph and
+confirm there is a K2Node_ComponentBoundEvent titled "On Clicked (PlayButton)", and that its exec
+("then") output is connected to the OnPlayClicked function call. (A stub that only logs the request
+would leave the EventGraph with no such node — that is the regression we are guarding against.)
 
 ---
 
-Verify the events are bound.
+Bind the same OnClicked event a second time and confirm it did NOT create a duplicate event node —
+there should still be exactly one ComponentBoundEvent for PlayButton.
+
+---
+
+Try to bind a non-existent event named "OnBogusEvent" on the play button. This must report failure
+(return False) and must NOT create any node — binding should never silently claim success for an
+event that doesn't exist. Use get_available_events to confirm OnBogusEvent isn't a real event.
+
+---
+
+Add a hover event too (bind OnHovered to a handler function you create first).
+
+---
+
+Verify the events are bound by re-reading the EventGraph and reporting the bound event nodes and
+their wired function calls as evidence.
 
 ---
 
