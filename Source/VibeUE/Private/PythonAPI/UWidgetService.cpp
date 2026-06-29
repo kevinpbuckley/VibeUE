@@ -55,6 +55,9 @@
 #include "Components/PanelSlot.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
+#include "K2Node_ComponentBoundEvent.h"
+#include "K2Node_CallFunction.h"
+#include "EdGraphSchema_K2.h"
 #include "Animation/WidgetAnimation.h"
 #include "Animation/WidgetAnimationBinding.h"
 #include "Animation/MovieSceneMarginTrack.h"
@@ -375,6 +378,64 @@ namespace
 		}
 
 		return false;
+	}
+
+	// When a property name fails to resolve, suggest the alias that actually works. Whole-struct
+	// guesses like "Anchors"/"Alignment"/"Size" are the common false-negative that makes an agent
+	// wrongly conclude "no such capability exists" — point it at the scalar slot aliases instead.
+	// Returns an empty string when there's no specific suggestion.
+	FString BuildSlotPropertyHint(UWidget* Widget, const FString& PropertyName)
+	{
+		const FString Name = PropertyName.TrimStartAndEnd();
+		const bool bCanvas = Widget && Widget->Slot && Widget->Slot->IsA<UCanvasPanelSlot>();
+		const bool bBoxOrOverlay = Widget && Widget->Slot &&
+			(Widget->Slot->IsA<UVerticalBoxSlot>() || Widget->Slot->IsA<UHorizontalBoxSlot>() || Widget->Slot->IsA<UOverlaySlot>());
+
+		auto Eq = [&Name](const TCHAR* S) { return Name.Equals(S, ESearchCase::IgnoreCase); };
+
+		if (Eq(TEXT("Anchors")) || Eq(TEXT("Anchor")))
+		{
+			return bCanvas || !Widget || !Widget->Slot
+				? TEXT("'Anchor Min X', 'Anchor Min Y', 'Anchor Max X', 'Anchor Max Y' (Canvas slot scalars)")
+				: TEXT("anchors apply only to Canvas Panel children");
+		}
+		if (Eq(TEXT("Alignment")))
+		{
+			if (bCanvas) return TEXT("'Alignment X' and 'Alignment Y' (Canvas pivot)");
+			if (bBoxOrOverlay) return TEXT("'Horizontal Alignment' / 'Vertical Alignment' (accepts Fill/Left/Center/Right/Top/Bottom)");
+			return TEXT("'Alignment X/Y' (Canvas) or 'Horizontal/Vertical Alignment' (Box/Overlay)");
+		}
+		if (Eq(TEXT("Position")) || Eq(TEXT("Offset")) || Eq(TEXT("Offsets")))
+		{
+			return TEXT("'Position X', 'Position Y', 'Size X', 'Size Y' (Canvas slot)");
+		}
+		if (Eq(TEXT("Size")))
+		{
+			if (bBoxOrOverlay) return TEXT("'Size Rule' and 'Size Value' (Box slot)");
+			return TEXT("'Size X' and 'Size Y' (Canvas slot)");
+		}
+		if (Eq(TEXT("Margin")))
+		{
+			return TEXT("'Padding' (or 'Padding Left/Top/Right/Bottom')");
+		}
+		if (Eq(TEXT("Color")) || Eq(TEXT("Colour")) || Eq(TEXT("Tint")))
+		{
+			return TEXT("text: 'ColorAndOpacity', image: 'ColorAndOpacity', button: 'Background Color' — value as UE struct text '(R=..,G=..,B=..,A=..)'");
+		}
+		return FString();
+	}
+
+	// Compose the "not found" warning with an optional did-you-mean hint and a generic pointer.
+	FString BuildPropertyNotFoundMessage(const TCHAR* Func, UWidget* Widget, const FString& ComponentName, const FString& PropertyName)
+	{
+		FString Msg = FString::Printf(TEXT("UWidgetService::%s: Property '%s' not found on widget '%s'."), Func, *PropertyName, *ComponentName);
+		const FString Hint = BuildSlotPropertyHint(Widget, PropertyName);
+		if (!Hint.IsEmpty())
+		{
+			Msg += FString::Printf(TEXT(" Did you mean %s?"), *Hint);
+		}
+		Msg += TEXT(" Slot layout is set via scalar aliases (see the umg-widgets skill); use list_properties for component property names.");
+		return Msg;
 	}
 
 	// Normalize a friendly slot-alias value into the form ImportText expects.
@@ -1754,7 +1815,7 @@ FString UWidgetService::GetProperty(
 	FResolvedWidgetProperty Resolved;
 	if (!ResolveWidgetProperty(Widget, PropertyName, Resolved))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::GetProperty: Property '%s' not found on widget '%s'"), *PropertyName, *ComponentName);
+		UE_LOG(LogTemp, Warning, TEXT("%s"), *BuildPropertyNotFoundMessage(TEXT("GetProperty"), Widget, ComponentName, PropertyName));
 		return FString();
 	}
 
@@ -1785,7 +1846,7 @@ bool UWidgetService::SetProperty(
 	FResolvedWidgetProperty Resolved;
 	if (!ResolveWidgetProperty(Widget, PropertyName, Resolved))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::SetProperty: Property '%s' not found on widget '%s'"), *PropertyName, *ComponentName);
+		UE_LOG(LogTemp, Warning, TEXT("%s"), *BuildPropertyNotFoundMessage(TEXT("SetProperty"), Widget, ComponentName, PropertyName));
 		return false;
 	}
 
@@ -2821,17 +2882,109 @@ bool UWidgetService::BindEvent(
 		return false;
 	}
 
-	// Note: Full event binding requires complex Blueprint graph manipulation
-	// This is a simplified implementation that logs the binding request
-	// For full implementation, use the Blueprint function service
+	// 1. Resolve the widget component so we know its class (the delegate owner).
+	UWidget* Widget = FindWidgetByName(WidgetBP, WidgetName);
+	if (!Widget)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::BindEvent: Widget '%s' not found in '%s'"), *WidgetName, *WidgetPath);
+		return false;
+	}
+	UClass* WidgetClass = Widget->GetClass();
 
-	UE_LOG(LogTemp, Log, TEXT("UWidgetService::BindEvent: Binding request - Widget: %s, Event: %s -> Function: %s"), *WidgetName, *EventName, *FunctionName);
+	// 2. Verify the event (a multicast delegate) actually exists on that widget class.
+	const FName EventFName(*EventName);
+	if (!FindFProperty<FMulticastDelegateProperty>(WidgetClass, EventFName))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::BindEvent: Event '%s' does not exist on widget '%s' (%s). Use get_available_events to list valid events."),
+			*EventName, *WidgetName, *WidgetClass->GetName());
+		return false;
+	}
 
-	// Mark as modified
-	WidgetBP->Modify();
-	FBlueprintEditorUtils::MarkBlueprintAsModified(WidgetBP);
+	// 3. The widget must be a Blueprint variable for an event to bind to it. Promote it if needed.
+	const FName WidgetFName(*WidgetName);
+	auto FindWidgetVarProp = [WidgetBP, WidgetFName]() -> FObjectProperty*
+	{
+		UClass* SkelClass = WidgetBP->SkeletonGeneratedClass ? WidgetBP->SkeletonGeneratedClass : WidgetBP->GeneratedClass;
+		return SkelClass ? FindFProperty<FObjectProperty>(SkelClass, WidgetFName) : nullptr;
+	};
+	FObjectProperty* VariableProperty = FindWidgetVarProp();
+	if (!VariableProperty)
+	{
+		if (!Widget->bIsVariable)
+		{
+			Widget->bIsVariable = true;
+		}
+		FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBP);
+		FKismetEditorUtilities::CompileBlueprint(WidgetBP);
+		VariableProperty = FindWidgetVarProp();
+	}
+	if (!VariableProperty)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::BindEvent: Could not resolve widget variable '%s' on '%s' after promoting it to a variable"), *WidgetName, *WidgetPath);
+		return false;
+	}
 
-	return true;
+	// 4. Create the component-bound event node (mirrors the UMG designer's "+" button), or reuse an existing one.
+	const UK2Node_ComponentBoundEvent* BoundNode =
+		FKismetEditorUtilities::FindBoundEventForComponent(WidgetBP, EventFName, VariableProperty->GetFName());
+	if (!BoundNode)
+	{
+		FKismetEditorUtilities::CreateNewBoundEventForClass(WidgetClass, EventFName, WidgetBP, VariableProperty, /*bShouldJumpToNode=*/false);
+		BoundNode = FKismetEditorUtilities::FindBoundEventForComponent(WidgetBP, EventFName, VariableProperty->GetFName());
+	}
+	if (!BoundNode)
+	{
+		UE_LOG(LogTemp, Error, TEXT("UWidgetService::BindEvent: Failed to create bound event '%s' for widget '%s' in '%s'"), *EventName, *WidgetName, *WidgetPath);
+		return false;
+	}
+
+	// 5. Optionally wire the event's exec output to a call to the named handler function.
+	//    Best-effort: the bound event node is itself a valid handler, so a missing function is a warning, not a failure.
+	if (!FunctionName.IsEmpty())
+	{
+		UEdGraph* Graph = BoundNode->GetGraph();
+		UClass* SkelClass = WidgetBP->SkeletonGeneratedClass ? WidgetBP->SkeletonGeneratedClass : WidgetBP->GeneratedClass;
+		UFunction* HandlerFunction = SkelClass ? SkelClass->FindFunctionByName(FName(*FunctionName)) : nullptr;
+		UEdGraphPin* ThenPin = BoundNode->FindPin(UEdGraphSchema_K2::PN_Then, EGPD_Output);
+
+		if (!HandlerFunction)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("UWidgetService::BindEvent: Bound event '%s' created, but handler function '%s' was not found on '%s' — create the function first to auto-wire it. The event node is still available as a handler."),
+				*EventName, *FunctionName, *WidgetPath);
+		}
+		else if (Graph && ThenPin && ThenPin->LinkedTo.Num() == 0)
+		{
+			// Idempotent: only wire when the event's exec output is still unconnected.
+			UK2Node_CallFunction* CallNode = NewObject<UK2Node_CallFunction>(Graph);
+			CallNode->SetFromFunction(HandlerFunction);
+			Graph->AddNode(CallNode, false, false);
+			CallNode->CreateNewGuid();
+			CallNode->PostPlacedNewNode();
+			CallNode->AllocateDefaultPins();
+			CallNode->NodePosX = BoundNode->NodePosX + 400;
+			CallNode->NodePosY = BoundNode->NodePosY;
+
+			UEdGraphPin* CallExecPin = CallNode->FindPin(UEdGraphSchema_K2::PN_Execute, EGPD_Input);
+			const UEdGraphSchema_K2* K2Schema = GetDefault<UEdGraphSchema_K2>();
+			if (CallExecPin && K2Schema && K2Schema->TryCreateConnection(ThenPin, CallExecPin))
+			{
+				UE_LOG(LogTemp, Log, TEXT("UWidgetService::BindEvent: Wired %s.%s -> %s()"), *WidgetName, *EventName, *FunctionName);
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("UWidgetService::BindEvent: Bound event '%s' created, but could not auto-wire exec to '%s' (exec pin missing or incompatible)"), *EventName, *FunctionName);
+			}
+		}
+	}
+
+	// 6. Persist and verify.
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBP);
+	FKismetEditorUtilities::CompileBlueprint(WidgetBP);
+
+	const bool bBound = FKismetEditorUtilities::FindBoundEventForComponent(WidgetBP, EventFName, VariableProperty->GetFName()) != nullptr;
+	UE_LOG(LogTemp, Log, TEXT("UWidgetService::BindEvent: %s — Widget: %s, Event: %s -> Function: %s"),
+		bBound ? TEXT("BOUND") : TEXT("FAILED"), *WidgetName, *EventName, *FunctionName);
+	return bBound;
 }
 
 bool UWidgetService::RenameWidget(
