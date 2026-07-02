@@ -2,7 +2,18 @@
 
 #include "PythonAPI/USoundCueService.h"
 
+// SoundCue.h declares an override of the deprecated
+// Audio::ILegacyParameterTransmitter::GetReferencedObjects, which trips C4996
+// (promoted to C2220 by this module's bWarningsAsErrors) purely from including
+// the header — VibeUE never calls the deprecated API itself. See GitHub #491.
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable: 4996)
+#endif
 #include "Sound/SoundCue.h"
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 #include "Sound/SoundWave.h"
 #include "Sound/SoundNode.h"
 #include "Sound/SoundNodeWavePlayer.h"

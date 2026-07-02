@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Dom/JsonValue.h"
 #include "Dom/JsonObject.h"
+#include "Layout/Margin.h"
 
 /**
  * Smart JSON value parsing utilities.

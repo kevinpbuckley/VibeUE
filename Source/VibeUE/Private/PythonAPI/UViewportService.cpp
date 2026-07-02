@@ -5,7 +5,19 @@
 #include "LevelEditor.h"
 #include "SLevelViewport.h"
 #include "SEditorViewport.h"
+// LevelEditorViewport.h declares an override of the deprecated
+// FEditorViewportClient::DropObjectsAtCoordinates, which trips C4996
+// (promoted to C2220 by this module's bWarningsAsErrors) purely from
+// including the header — VibeUE never calls the deprecated overload
+// itself. See GitHub #491.
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable: 4996)
+#endif
 #include "LevelEditorViewport.h"
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 #include "LevelViewportActions.h"
 #include "EditorViewportClient.h"
 
