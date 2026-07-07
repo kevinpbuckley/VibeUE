@@ -725,6 +725,12 @@ public:
 	 * @param ComponentCountX - Number of components in X direction
 	 * @param ComponentCountY - Number of components in Y direction
 	 * @param LandscapeLabel - Optional display label
+	 * @param WorldPartitionGridSize - 0 (default) keeps the single monolithic
+	 *        ALandscape. In a World Partition level, pass a grid size in components
+	 *        (e.g. 2) to split the landscape into ALandscapeStreamingProxy actors —
+	 *        the same as the editor's New Landscape tool in a WP world. Fails with
+	 *        an error if the current level is not World Partition. Heightmap import
+	 *        and all edit operations work across the proxies transparently.
 	 * @return Create result with actor label
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
@@ -736,7 +742,8 @@ public:
 		int32 QuadsPerSection = 63,
 		int32 ComponentCountX = 8,
 		int32 ComponentCountY = 8,
-		const FString& LandscapeLabel = TEXT(""));
+		const FString& LandscapeLabel = TEXT(""),
+		int32 WorldPartitionGridSize = 0);
 
 	/**
 	 * Delete a landscape from the level.
@@ -798,10 +805,14 @@ public:
 	static FHeightmapDimensions GetHeightmapDimensions(const FString& FilePath);
 
 	/**
-	 * Resize a heightmap file to a target resolution using bilinear interpolation.
+	 * Resize a heightmap file to a target resolution.
 	 *
 	 * Reads a 16-bit grayscale PNG heightmap, resamples it to the target dimensions,
 	 * and saves the result. Use this to match a heightmap to a landscape's resolution.
+	 *
+	 * Default interpolation is bicubic (Catmull-Rom): upsampling a low-res DEM with
+	 * bilinear produces piecewise-planar facets that read as "blocky" terraces on
+	 * flat plains; bicubic is C1-continuous so normals stay smooth.
 	 *
 	 * Workflow: generate_heightmap → GetHeightmapDimensions → ResizeHeightmap → ImportHeightmap
 	 *
@@ -809,6 +820,7 @@ public:
 	 * @param TargetWidth - Desired output width in pixels (must match landscape resolution_x)
 	 * @param TargetHeight - Desired output height in pixels (must match landscape resolution_y)
 	 * @param OutputPath - Absolute path for the resized output file. If empty, appends "_resized" to source filename
+	 * @param Interpolation - "bicubic" (default, smooth) or "bilinear" (legacy, faster)
 	 * @return Result with success status, dimensions, output file path
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
@@ -816,7 +828,8 @@ public:
 		const FString& SourcePath,
 		int32 TargetWidth,
 		int32 TargetHeight,
-		const FString& OutputPath = TEXT(""));
+		const FString& OutputPath = TEXT(""),
+		const FString& Interpolation = TEXT("bicubic"));
 
 	/**
 	 * Calculate the vertex resolution a landscape will have for given configuration parameters.

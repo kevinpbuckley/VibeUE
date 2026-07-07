@@ -12,6 +12,7 @@
 #include "LandscapeDataAccess.h"
 #include "LandscapeEditLayer.h"
 #include "LandscapeEditorModule.h"
+#include "LandscapeSubsystem.h"
 #include "LandscapeFileFormatInterface.h"
 #include "EditorAssetLibrary.h"
 #include "Editor.h"
@@ -278,7 +279,8 @@ FLandscapeCreateResult ULandscapeService::CreateLandscape(
 	int32 QuadsPerSection,
 	int32 ComponentCountX,
 	int32 ComponentCountY,
-	const FString& LandscapeLabel)
+	const FString& LandscapeLabel,
+	int32 WorldPartitionGridSize)
 {
 	FLandscapeCreateResult Result;
 
@@ -286,6 +288,17 @@ FLandscapeCreateResult ULandscapeService::CreateLandscape(
 	if (!World)
 	{
 		Result.ErrorMessage = TEXT("No editor world available");
+		UE_LOG(LogTemp, Error, TEXT("ULandscapeService::CreateLandscape: %s"), *Result.ErrorMessage);
+		return Result;
+	}
+
+	// Validate the WP request up front — ChangeGridSize is a silent no-op in a
+	// non-partitioned world, so failing late would leave a monolithic landscape
+	// while claiming success (issue #394).
+	ULandscapeSubsystem* LandscapeSubsystem = World->GetSubsystem<ULandscapeSubsystem>();
+	if (WorldPartitionGridSize > 0 && (!LandscapeSubsystem || !LandscapeSubsystem->IsGridBased()))
+	{
+		Result.ErrorMessage = TEXT("WorldPartitionGridSize requires a World Partition level — the current level is not partitioned. Create in a WP level, or omit the parameter for a monolithic landscape.");
 		UE_LOG(LogTemp, Error, TEXT("ULandscapeService::CreateLandscape: %s"), *Result.ErrorMessage);
 		return Result;
 	}
@@ -384,6 +397,22 @@ FLandscapeCreateResult ULandscapeService::CreateLandscape(
 	if (LandscapeInfo)
 	{
 		LandscapeInfo->UpdateComponentLayerAllowList();
+	}
+
+	// World Partition: split the freshly imported landscape into a grid of
+	// ALandscapeStreamingProxy actors — the same call the editor's New Landscape
+	// tool makes in a WP world (issue #394). Edit ops already fan out across
+	// proxies by landscape GUID, so everything downstream keeps working.
+	if (WorldPartitionGridSize > 0 && LandscapeSubsystem)
+	{
+		if (!LandscapeInfo)
+		{
+			Result.ErrorMessage = TEXT("Landscape imported but has no LandscapeInfo — cannot apply World Partition grid size");
+			UE_LOG(LogTemp, Error, TEXT("ULandscapeService::CreateLandscape: %s"), *Result.ErrorMessage);
+			return Result;
+		}
+		LandscapeSubsystem->ChangeGridSize(LandscapeInfo, static_cast<uint32>(WorldPartitionGridSize));
+		UE_LOG(LogTemp, Log, TEXT("ULandscapeService::CreateLandscape: Applied World Partition grid size %d (landscape split into streaming proxies)"), WorldPartitionGridSize);
 	}
 
 	Result.bSuccess = true;
@@ -789,13 +818,21 @@ FHeightmapResizeResult ULandscapeService::ResizeHeightmap(
 	const FString& SourcePath,
 	int32 TargetWidth,
 	int32 TargetHeight,
-	const FString& OutputPath)
+	const FString& OutputPath,
+	const FString& Interpolation)
 {
 	FHeightmapResizeResult Result;
 
 	if (TargetWidth <= 0 || TargetHeight <= 0)
 	{
 		Result.ErrorMessage = FString::Printf(TEXT("Invalid target dimensions: %dx%d"), TargetWidth, TargetHeight);
+		return Result;
+	}
+
+	const bool bBicubic = !Interpolation.Equals(TEXT("bilinear"), ESearchCase::IgnoreCase);
+	if (bBicubic && !Interpolation.Equals(TEXT("bicubic"), ESearchCase::IgnoreCase))
+	{
+		Result.ErrorMessage = FString::Printf(TEXT("Unknown interpolation '%s' — use \"bicubic\" or \"bilinear\""), *Interpolation);
 		return Result;
 	}
 
@@ -870,33 +907,69 @@ FHeightmapResizeResult ULandscapeService::ResizeHeightmap(
 		return Result;
 	}
 
-	// Bilinear resample uint16 data
+	// Resample uint16 data. Bicubic (Catmull-Rom) by default: bilinear upsampling of
+	// a low-res DEM is only C0-continuous, so flat plains come out as visible planar
+	// facets ("blocky" terraces, issue #393); Catmull-Rom is C1 so normals stay smooth.
 	TArray<uint16> ResizedData;
 	ResizedData.SetNumUninitialized(TargetWidth * TargetHeight);
 
 	const float ScaleX = static_cast<float>(SrcDims.Width - 1) / static_cast<float>(TargetWidth - 1);
 	const float ScaleY = static_cast<float>(SrcDims.Height - 1) / static_cast<float>(TargetHeight - 1);
 
+	auto SampleClamped = [&SourceData, &SrcDims](int32 X, int32 Y) -> float
+	{
+		X = FMath::Clamp(X, 0, SrcDims.Width - 1);
+		Y = FMath::Clamp(Y, 0, SrcDims.Height - 1);
+		return static_cast<float>(SourceData[Y * SrcDims.Width + X]);
+	};
+
+	// Catmull-Rom weight for 4 taps at offsets -1..2 around the sample point.
+	auto CatmullRom = [](float P0, float P1, float P2, float P3, float T) -> float
+	{
+		const float T2 = T * T;
+		const float T3 = T2 * T;
+		return 0.5f * ((2.0f * P1)
+			+ (-P0 + P2) * T
+			+ (2.0f * P0 - 5.0f * P1 + 4.0f * P2 - P3) * T2
+			+ (-P0 + 3.0f * P1 - 3.0f * P2 + P3) * T3);
+	};
+
 	for (int32 Y = 0; Y < TargetHeight; Y++)
 	{
 		const float SrcY = Y * ScaleY;
 		const int32 Y0 = FMath::FloorToInt(SrcY);
-		const int32 Y1 = FMath::Min(Y0 + 1, SrcDims.Height - 1);
 		const float Fy = SrcY - static_cast<float>(Y0);
 
 		for (int32 X = 0; X < TargetWidth; X++)
 		{
 			const float SrcX = X * ScaleX;
 			const int32 X0 = FMath::FloorToInt(SrcX);
-			const int32 X1 = FMath::Min(X0 + 1, SrcDims.Width - 1);
 			const float Fx = SrcX - static_cast<float>(X0);
 
-			const float TL = static_cast<float>(SourceData[Y0 * SrcDims.Width + X0]);
-			const float TR = static_cast<float>(SourceData[Y0 * SrcDims.Width + X1]);
-			const float BL = static_cast<float>(SourceData[Y1 * SrcDims.Width + X0]);
-			const float BR = static_cast<float>(SourceData[Y1 * SrcDims.Width + X1]);
-
-			const float Interpolated = FMath::Lerp(FMath::Lerp(TL, TR, Fx), FMath::Lerp(BL, BR, Fx), Fy);
+			float Interpolated;
+			if (bBicubic)
+			{
+				float Rows[4];
+				for (int32 Row = 0; Row < 4; Row++)
+				{
+					const int32 SampleY = Y0 - 1 + Row;
+					Rows[Row] = CatmullRom(
+						SampleClamped(X0 - 1, SampleY),
+						SampleClamped(X0,     SampleY),
+						SampleClamped(X0 + 1, SampleY),
+						SampleClamped(X0 + 2, SampleY),
+						Fx);
+				}
+				Interpolated = CatmullRom(Rows[0], Rows[1], Rows[2], Rows[3], Fy);
+			}
+			else
+			{
+				const float TL = SampleClamped(X0,     Y0);
+				const float TR = SampleClamped(X0 + 1, Y0);
+				const float BL = SampleClamped(X0,     Y0 + 1);
+				const float BR = SampleClamped(X0 + 1, Y0 + 1);
+				Interpolated = FMath::Lerp(FMath::Lerp(TL, TR, Fx), FMath::Lerp(BL, BR, Fx), Fy);
+			}
 			ResizedData[Y * TargetWidth + X] = static_cast<uint16>(FMath::Clamp(FMath::RoundToInt(Interpolated), 0, 65535));
 		}
 	}
@@ -2488,7 +2561,11 @@ bool ULandscapeService::SetLandscapeProperty(
 	Landscape->Modify();
 
 	const TCHAR* ValuePtr = *Value;
-	Property->ImportText_Direct(ValuePtr, Property->ContainerPtrToValuePtr<void>(Landscape), Landscape, PPF_None);
+	if (!Property->ImportText_Direct(ValuePtr, Property->ContainerPtrToValuePtr<void>(Landscape), Landscape, PPF_None))
+	{
+		UE_LOG(LogTemp, Error, TEXT("ULandscapeService::SetLandscapeProperty: Failed to parse value '%s' for property '%s'"), *Value, *PropertyName);
+		return false;
+	}
 	Landscape->PostEditChange();
 
 	return true;
