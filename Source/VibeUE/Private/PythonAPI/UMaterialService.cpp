@@ -17,6 +17,7 @@
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "Editor.h"
 #include "UObject/SavePackage.h"
+#include "Misc/DefaultValueHelper.h"
 #include "Misc/PackageName.h"
 #include "Engine/Texture.h"
 #include "StaticParameterSet.h"
@@ -273,19 +274,34 @@ bool UMaterialService::StringToPropertyValue(FProperty* Property, void* Containe
 	// Float
 	if (FFloatProperty* FloatProp = CastField<FFloatProperty>(Property))
 	{
-		FloatProp->SetPropertyValue(ValuePtr, FCString::Atof(*Value));
+		float FloatValue = 0.0f;
+		if (!FDefaultValueHelper::ParseFloat(Value, FloatValue))
+		{
+			return false;
+		}
+		FloatProp->SetPropertyValue(ValuePtr, FloatValue);
 		return true;
 	}
 	// Double
 	if (FDoubleProperty* DoubleProp = CastField<FDoubleProperty>(Property))
 	{
-		DoubleProp->SetPropertyValue(ValuePtr, FCString::Atod(*Value));
+		double DoubleValue = 0.0;
+		if (!FDefaultValueHelper::ParseDouble(Value, DoubleValue))
+		{
+			return false;
+		}
+		DoubleProp->SetPropertyValue(ValuePtr, DoubleValue);
 		return true;
 	}
 	// Int
 	if (FIntProperty* IntProp = CastField<FIntProperty>(Property))
 	{
-		IntProp->SetPropertyValue(ValuePtr, FCString::Atoi(*Value));
+		int32 IntValue = 0;
+		if (!FDefaultValueHelper::ParseInt(Value, IntValue))
+		{
+			return false;
+		}
+		IntProp->SetPropertyValue(ValuePtr, IntValue);
 		return true;
 	}
 	// Byte/Enum
@@ -294,13 +310,21 @@ bool UMaterialService::StringToPropertyValue(FProperty* Property, void* Containe
 		if (UEnum* Enum = ByteProp->Enum)
 		{
 			int64 EnumValue = ResolveEnumValue(Enum, Value);
-			if (EnumValue != INDEX_NONE)
+			if (EnumValue == INDEX_NONE)
 			{
-				ByteProp->SetPropertyValue(ValuePtr, static_cast<uint8>(EnumValue));
-				return true;
+				// Don't fall through to Atoi for enum-backed bytes — a bad name would silently become 0.
+				UE_LOG(LogTemp, Error, TEXT("UMaterialService::StringToPropertyValue: '%s' is not a valid value for enum %s"), *Value, *Enum->GetName());
+				return false;
 			}
+			ByteProp->SetPropertyValue(ValuePtr, static_cast<uint8>(EnumValue));
+			return true;
 		}
-		ByteProp->SetPropertyValue(ValuePtr, static_cast<uint8>(FCString::Atoi(*Value)));
+		int32 ByteValue = 0;
+		if (!FDefaultValueHelper::ParseInt(Value, ByteValue))
+		{
+			return false;
+		}
+		ByteProp->SetPropertyValue(ValuePtr, static_cast<uint8>(ByteValue));
 		return true;
 	}
 	if (FEnumProperty* EnumProp = CastField<FEnumProperty>(Property))

@@ -809,6 +809,11 @@ static bool SetPropertyValueFromString(FProperty* Property, void* ValuePtr, cons
 
 	if (FNumericProperty* NumericProperty = CastField<FNumericProperty>(Property))
 	{
+		// SetNumericPropertyValueFromString returns void and silently coerces bad input to 0 — validate first.
+		if (!FCString::IsNumeric(*Value))
+		{
+			return false;
+		}
 		NumericProperty->SetNumericPropertyValueFromString(ValuePtr, *Value);
 		return true;
 	}

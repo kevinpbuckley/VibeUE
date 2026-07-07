@@ -164,9 +164,13 @@ FInputCreateResult UInputService::CreateAction(
 	}
 	
 	// Save the asset
-	UEditorAssetLibrary::SaveAsset(FullPath, false);
-	
-	Result.bSuccess = true;
+	Result.bSuccess = UEditorAssetLibrary::SaveAsset(FullPath, false);
+	if (!Result.bSuccess)
+	{
+		Result.ErrorMessage = FString::Printf(TEXT("Failed to save asset '%s'"), *FullPath);
+		return Result;
+	}
+
 	Result.AssetPath = FullPath + TEXT(".") + ActionName;
 	
 	return Result;
@@ -302,9 +306,13 @@ FInputCreateResult UInputService::CreateMappingContext(
 	}
 	
 	// Save the asset
-	UEditorAssetLibrary::SaveAsset(FullPath, false);
-	
-	Result.bSuccess = true;
+	Result.bSuccess = UEditorAssetLibrary::SaveAsset(FullPath, false);
+	if (!Result.bSuccess)
+	{
+		Result.ErrorMessage = FString::Printf(TEXT("Failed to save asset '%s'"), *FullPath);
+		return Result;
+	}
+
 	Result.AssetPath = FullPath + TEXT(".") + ContextName;
 	
 	return Result;

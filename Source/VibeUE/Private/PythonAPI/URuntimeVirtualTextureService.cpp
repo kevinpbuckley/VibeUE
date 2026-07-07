@@ -185,9 +185,14 @@ FRVTCreateResult URuntimeVirtualTextureService::CreateRuntimeVirtualTexture(
 	NewRVT->MarkPackageDirty();
 
 	// Save the asset
-	UEditorAssetLibrary::SaveAsset(FullAssetPath, false);
+	Result.bSuccess = UEditorAssetLibrary::SaveAsset(FullAssetPath, false);
+	if (!Result.bSuccess)
+	{
+		Result.ErrorMessage = FString::Printf(TEXT("Failed to save RVT asset '%s'"), *FullAssetPath);
+		UE_LOG(LogTemp, Error, TEXT("URuntimeVirtualTextureService::CreateRuntimeVirtualTexture: %s"), *Result.ErrorMessage);
+		return Result;
+	}
 
-	Result.bSuccess = true;
 	Result.AssetPath = FullAssetPath;
 
 	UE_LOG(LogTemp, Log, TEXT("URuntimeVirtualTextureService::CreateRuntimeVirtualTexture: Created '%s' (type=%s)"),

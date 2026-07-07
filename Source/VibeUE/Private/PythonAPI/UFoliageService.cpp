@@ -632,7 +632,12 @@ FFoliageTypeCreateResult UFoliageService::CreateFoliageType(
 	FString PackageFileName = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
 	FSavePackageArgs SaveArgs;
 	SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
-	UPackage::SavePackage(Package, FoliageType, *PackageFileName, SaveArgs);
+	if (!UPackage::SavePackage(Package, FoliageType, *PackageFileName, SaveArgs))
+	{
+		Result.ErrorMessage = FString::Printf(TEXT("Failed to save package '%s'"), *PackageName);
+		UE_LOG(LogTemp, Error, TEXT("UFoliageService::CreateFoliageType: %s"), *Result.ErrorMessage);
+		return Result;
+	}
 
 	Result.bSuccess = true;
 	Result.AssetPath = FoliageType->GetPathName();

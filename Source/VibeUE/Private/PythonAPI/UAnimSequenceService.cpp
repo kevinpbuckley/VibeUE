@@ -600,7 +600,11 @@ FString UAnimSequenceService::CreateFromPose(
 
 	// Mark as modified and save
 	NewAnimSeq->MarkPackageDirty();
-	UEditorAssetLibrary::SaveAsset(FullPath);
+	if (!UEditorAssetLibrary::SaveAsset(FullPath))
+	{
+		UE_LOG(LogTemp, Error, TEXT("UAnimSequenceService::CreateFromPose: Failed to save asset: %s"), *FullPath);
+		return FString();
+	}
 
 	UE_LOG(LogTemp, Log, TEXT("UAnimSequenceService::CreateFromPose: Created animation: %s"), *FullPath);
 	return FullPath;
@@ -826,7 +830,11 @@ FString UAnimSequenceService::CreateAnimSequence(
 
 	// Mark as modified and save
 	NewAnimSeq->MarkPackageDirty();
-	UEditorAssetLibrary::SaveAsset(FullPath);
+	if (!UEditorAssetLibrary::SaveAsset(FullPath))
+	{
+		UE_LOG(LogTemp, Error, TEXT("UAnimSequenceService::CreateAnimSequence: Failed to save asset: %s"), *FullPath);
+		return FString();
+	}
 
 	UE_LOG(LogTemp, Log, TEXT("UAnimSequenceService::CreateAnimSequence: Created animation: %s with %d bone tracks"), *FullPath, TracksAdded);
 	return FullPath;

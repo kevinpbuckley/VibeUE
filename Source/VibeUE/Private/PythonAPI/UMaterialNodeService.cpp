@@ -1635,8 +1635,14 @@ int32 UMaterialNodeService::BatchSetProperties(
 			}
 		}
 
-		Property->ImportText_Direct(*PropertyValues[i], PropertyPtr, Expression, PPF_None);
-		SuccessCount++;
+		if (Property->ImportText_Direct(*PropertyValues[i], PropertyPtr, Expression, PPF_None))
+		{
+			SuccessCount++;
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("UMaterialNodeService::BatchSetProperties: Failed to parse value '%s' for property '%s'"), *PropertyValues[i], *PropertyNames[i]);
+		}
 	}
 
 	// Single refresh at end
@@ -3079,11 +3085,16 @@ FMaterialCreateResult UMaterialNodeService::CreateMaterialFunction(
 		Function->bExposeToLibrary = bExposeToLibrary;
 	}
 
-	Result.bSuccess = true;
 	Result.AssetPath = NewAsset->GetPathName();
 
 	// Save immediately
-	UEditorAssetLibrary::SaveAsset(Result.AssetPath, false);
+	Result.bSuccess = UEditorAssetLibrary::SaveAsset(Result.AssetPath, false);
+	if (!Result.bSuccess)
+	{
+		Result.ErrorMessage = FString::Printf(TEXT("Failed to save material function asset '%s'"), *Result.AssetPath);
+		UE_LOG(LogTemp, Error, TEXT("UMaterialNodeService::CreateMaterialFunction: %s"), *Result.ErrorMessage);
+		return Result;
+	}
 
 	UE_LOG(LogTemp, Log, TEXT("UMaterialNodeService::CreateMaterialFunction: Created '%s' at '%s'"),
 		*FunctionName, *Result.AssetPath);
@@ -3134,7 +3145,11 @@ FString UMaterialNodeService::AddFunctionInput(
 	Function->PostEditChange();
 
 	// Save
-	UEditorAssetLibrary::SaveAsset(FunctionPath, false);
+	if (!UEditorAssetLibrary::SaveAsset(FunctionPath, false))
+	{
+		UE_LOG(LogTemp, Error, TEXT("UMaterialNodeService::AddFunctionInput: Failed to save '%s'"), *FunctionPath);
+		return FString();
+	}
 
 	FString Id = GetExpressionId(NewInput);
 	UE_LOG(LogTemp, Log, TEXT("UMaterialNodeService::AddFunctionInput: Added input '%s' (type=%s) to '%s', id=%s"),
@@ -3179,7 +3194,11 @@ FString UMaterialNodeService::AddFunctionOutput(
 
 	Function->PostEditChange();
 
-	UEditorAssetLibrary::SaveAsset(FunctionPath, false);
+	if (!UEditorAssetLibrary::SaveAsset(FunctionPath, false))
+	{
+		UE_LOG(LogTemp, Error, TEXT("UMaterialNodeService::AddFunctionOutput: Failed to save '%s'"), *FunctionPath);
+		return FString();
+	}
 
 	FString Id = GetExpressionId(NewOutput);
 	UE_LOG(LogTemp, Log, TEXT("UMaterialNodeService::AddFunctionOutput: Added output '%s' to '%s', id=%s"),
@@ -3451,7 +3470,10 @@ int32 UMaterialNodeService::CleanupUnusedExpressions(const FString& AssetPath)
 			Function->GetExpressionCollection().RemoveExpression(Expr);
 		}
 		Function->PostEditChange();
-		UEditorAssetLibrary::SaveAsset(AssetPath, false);
+		if (!UEditorAssetLibrary::SaveAsset(AssetPath, false))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("UMaterialNodeService::CleanupUnusedExpressions: Failed to save '%s'"), *AssetPath);
+		}
 	}
 
 	UE_LOG(LogTemp, Log, TEXT("UMaterialNodeService::CleanupUnusedExpressions: Removed %d unused expression(s) from %s"),

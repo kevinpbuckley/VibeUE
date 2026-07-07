@@ -1596,7 +1596,11 @@ FString UAnimMontageService::CreateMontageFromAnimation(
 	NewMontage->BlendOutTriggerTime = -1.0f;
 
 	NewMontage->MarkPackageDirty();
-	UEditorAssetLibrary::SaveAsset(FullPath);
+	if (!UEditorAssetLibrary::SaveAsset(FullPath))
+	{
+		UE_LOG(LogTemp, Error, TEXT("UAnimMontageService::CreateMontageFromAnimation: Failed to save asset: %s"), *FullPath);
+		return FString();
+	}
 
 	UE_LOG(LogTemp, Log, TEXT("UAnimMontageService::CreateMontageFromAnimation: Created montage: %s"), *FullPath);
 	return FullPath;
@@ -1664,7 +1668,11 @@ FString UAnimMontageService::CreateEmptyMontage(
 	NewMontage->BlendOut.SetBlendTime(0.25f);
 
 	NewMontage->MarkPackageDirty();
-	UEditorAssetLibrary::SaveAsset(FullPath);
+	if (!UEditorAssetLibrary::SaveAsset(FullPath))
+	{
+		UE_LOG(LogTemp, Error, TEXT("UAnimMontageService::CreateEmptyMontage: Failed to save asset: %s"), *FullPath);
+		return FString();
+	}
 
 	UE_LOG(LogTemp, Log, TEXT("UAnimMontageService::CreateEmptyMontage: Created montage: %s"), *FullPath);
 	return FullPath;
