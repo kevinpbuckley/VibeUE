@@ -283,13 +283,13 @@ UMetaSoundBuilderBase* UMetaSoundService::BeginEditing(const FString& AssetPath,
 	return Builder;
 }
 
-void UMetaSoundService::CommitEditing(const FString& AssetPath, UMetaSoundSource* Source)
+bool UMetaSoundService::CommitEditing(const FString& AssetPath, UMetaSoundSource* Source)
 {
 	UMetaSoundEditorSubsystem::GetChecked().RegisterGraphWithFrontend(*Source);
 	// Notify any open MetaSound editor window to resync its graph view.
 	// Without this, the editor displays stale state until the asset is closed/reopened.
 	Source->PostEditChange();
-	UEditorAssetLibrary::SaveAsset(AssetPath, false);
+	return UEditorAssetLibrary::SaveAsset(AssetPath, false);
 }
 
 // ============================================================================
@@ -396,7 +396,11 @@ FMetaSoundResult UMetaSoundService::CreateMetaSound(const FString& PackagePath,
 
 			if (bModified)
 			{
-				CommitEditing(FullPath, NewSource);
+				if (!CommitEditing(FullPath, NewSource))
+				{
+					UE_LOG(LogMetaSoundService, Warning,
+					       TEXT("CreateMetaSound: SaveAsset failed for '%s'"), *FullPath);
+				}
 				UEditorAssetLibrary::SaveAsset(FullPath, false);
 			}
 		}
@@ -476,7 +480,10 @@ FMetaSoundResult UMetaSoundService::SaveMetaSound(const FString& AssetPath)
 		return Fail(LoadError);
 	}
 
-	CommitEditing(AssetPath, Source);
+	if (!CommitEditing(AssetPath, Source))
+	{
+		return Fail(FString::Printf(TEXT("SaveMetaSound: SaveAsset failed for '%s'"), *AssetPath));
+	}
 	return Succeed(AssetPath, TEXT("Saved"));
 }
 
@@ -594,7 +601,10 @@ FMetaSoundResult UMetaSoundService::AddNode(const FString& AssetPath,
 	Builder->SetNodeLocation(NodeHandle, FVector2D(PosX, PosY), LocR);
 #endif
 
-	CommitEditing(AssetPath, Source);
+	if (!CommitEditing(AssetPath, Source))
+	{
+		return Fail(FString::Printf(TEXT("AddNode: SaveAsset failed for '%s'"), *AssetPath));
+	}
 
 	const FString NodeId = NodeHandle.NodeID.ToString(EGuidFormats::DigitsWithHyphens);
 	return Succeed(AssetPath,
@@ -626,7 +636,10 @@ FMetaSoundResult UMetaSoundService::RemoveNode(const FString& AssetPath, const F
 		return Fail(FString::Printf(TEXT("RemoveNode: node '%s' not found"), *NodeId));
 	}
 
-	CommitEditing(AssetPath, Source);
+	if (!CommitEditing(AssetPath, Source))
+	{
+		return Fail(FString::Printf(TEXT("RemoveNode: SaveAsset failed for '%s'"), *AssetPath));
+	}
 	return Succeed(AssetPath, TEXT("Node removed"), NodeId);
 }
 
@@ -914,7 +927,10 @@ FMetaSoundResult UMetaSoundService::ConnectNodes(const FString& AssetPath,
 		return Fail(FString::Printf(TEXT("ConnectNodes: connection failed (type mismatch or already connected)")));
 	}
 
-	CommitEditing(AssetPath, Source);
+	if (!CommitEditing(AssetPath, Source))
+	{
+		return Fail(FString::Printf(TEXT("ConnectNodes: SaveAsset failed for '%s'"), *AssetPath));
+	}
 	return Succeed(AssetPath, FString::Printf(TEXT("Connected %s.%s -> %s.%s"),
 	                                           *FromNodeId, *OutputName, *ToNodeId, *InputName));
 }
@@ -956,7 +972,10 @@ FMetaSoundResult UMetaSoundService::DisconnectPin(const FString& AssetPath,
 		return Fail(FString::Printf(TEXT("DisconnectPin: pin '%s' was not connected"), *InputName));
 	}
 
-	CommitEditing(AssetPath, Source);
+	if (!CommitEditing(AssetPath, Source))
+	{
+		return Fail(FString::Printf(TEXT("DisconnectPin: SaveAsset failed for '%s'"), *AssetPath));
+	}
 	return Succeed(AssetPath, FString::Printf(TEXT("Disconnected %s.%s"), *NodeId, *InputName));
 }
 
@@ -986,7 +1005,10 @@ FMetaSoundResult UMetaSoundService::AddGraphInput(const FString& AssetPath,
 		return Fail(FString::Printf(TEXT("AddGraphInput: failed to add '%s' (%s)"), *InputName, *DataType));
 	}
 
-	CommitEditing(AssetPath, Source);
+	if (!CommitEditing(AssetPath, Source))
+	{
+		return Fail(FString::Printf(TEXT("AddGraphInput: SaveAsset failed for '%s'"), *AssetPath));
+	}
 	return Succeed(AssetPath, FString::Printf(TEXT("Added graph input '%s:%s'"), *InputName, *DataType));
 }
 
@@ -1010,7 +1032,10 @@ FMetaSoundResult UMetaSoundService::AddGraphOutput(const FString& AssetPath,
 		return Fail(FString::Printf(TEXT("AddGraphOutput: failed to add '%s' (%s)"), *OutputName, *DataType));
 	}
 
-	CommitEditing(AssetPath, Source);
+	if (!CommitEditing(AssetPath, Source))
+	{
+		return Fail(FString::Printf(TEXT("AddGraphOutput: SaveAsset failed for '%s'"), *AssetPath));
+	}
 	return Succeed(AssetPath, FString::Printf(TEXT("Added graph output '%s:%s'"), *OutputName, *DataType));
 }
 
@@ -1031,7 +1056,10 @@ FMetaSoundResult UMetaSoundService::RemoveGraphInput(const FString& AssetPath, c
 		return Fail(FString::Printf(TEXT("RemoveGraphInput: input '%s' not found"), *InputName));
 	}
 
-	CommitEditing(AssetPath, Source);
+	if (!CommitEditing(AssetPath, Source))
+	{
+		return Fail(FString::Printf(TEXT("RemoveGraphInput: SaveAsset failed for '%s'"), *AssetPath));
+	}
 	return Succeed(AssetPath, FString::Printf(TEXT("Removed graph input '%s'"), *InputName));
 }
 
@@ -1052,7 +1080,10 @@ FMetaSoundResult UMetaSoundService::RemoveGraphOutput(const FString& AssetPath, 
 		return Fail(FString::Printf(TEXT("RemoveGraphOutput: output '%s' not found"), *OutputName));
 	}
 
-	CommitEditing(AssetPath, Source);
+	if (!CommitEditing(AssetPath, Source))
+	{
+		return Fail(FString::Printf(TEXT("RemoveGraphOutput: SaveAsset failed for '%s'"), *AssetPath));
+	}
 	return Succeed(AssetPath, FString::Printf(TEXT("Removed graph output '%s'"), *OutputName));
 }
 
@@ -1117,7 +1148,10 @@ FMetaSoundResult UMetaSoundService::SetNodeInputDefault(const FString& AssetPath
 		                            *InputName, *NodeId));
 	}
 
-	CommitEditing(AssetPath, Source);
+	if (!CommitEditing(AssetPath, Source))
+	{
+		return Fail(FString::Printf(TEXT("SetNodeInputDefault: SaveAsset failed for '%s'"), *AssetPath));
+	}
 	return Succeed(AssetPath, FString::Printf(TEXT("Set %s.%s = %s"), *NodeId, *InputName, *Value));
 }
 
@@ -1146,7 +1180,10 @@ FMetaSoundResult UMetaSoundService::SetNodeLocation(const FString& AssetPath,
 		return Fail(FString::Printf(TEXT("SetNodeLocation: node '%s' not found"), *NodeId));
 	}
 
-	CommitEditing(AssetPath, Source);
+	if (!CommitEditing(AssetPath, Source))
+	{
+		return Fail(FString::Printf(TEXT("SetNodeLocation: SaveAsset failed for '%s'"), *AssetPath));
+	}
 	return Succeed(AssetPath, FString::Printf(TEXT("Moved node to (%.0f, %.0f)"), PosX, PosY), NodeId);
 #else
 	return Fail(TEXT("SetNodeLocation: requires editor build"));

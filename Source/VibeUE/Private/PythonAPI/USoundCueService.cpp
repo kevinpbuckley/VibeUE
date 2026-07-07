@@ -319,9 +319,13 @@ FSoundCueResult USoundCueService::DuplicateSoundCue(const FString& SourcePath, c
 		return Result;
 	}
 
-	UEditorAssetLibrary::SaveAsset(DestPath, false);
+	Result.bSuccess = UEditorAssetLibrary::SaveAsset(DestPath, false);
+	if (!Result.bSuccess)
+	{
+		Result.Message = FString::Printf(TEXT("SaveAsset failed for '%s'"), *DestPath);
+		return Result;
+	}
 
-	Result.bSuccess  = true;
 	Result.AssetPath = Duplicate->GetPathName();
 	Result.Message   = FString::Printf(TEXT("Duplicated '%s' → '%s'"), *SourcePath, *DestPath);
 	return Result;

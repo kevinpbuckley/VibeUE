@@ -110,6 +110,46 @@ To remove a specific edge, disconnect the output pin on the source node (e.g. `"
 | `pin.current_value` | `pin.default_value` |
 | `pin.sub_pins` | *(does not exist)* |
 
+### ⚠️ Read graphs cheaply: `get_graph_summary()` first, filtered `get_nodes_in_graph()` second
+
+A full `get_nodes_in_graph()` dump of a big graph is the most token-expensive read in this toolset
+(every node ships its full pin list twice). Default reading order:
+
+```python
+# 1. Fixed-size overview — payload independent of graph size
+s = unreal.BlueprintService.get_graph_summary(bp_path, "EventGraph")  # None if bp/graph not found
+print(s.node_count, s.connection_count, s.compile_status)
+print(s.entry_points)      # ["Event BeginPlay|<node_id>", ...]
+print(s.node_type_counts)  # ["K2Node_CallFunction x12", ...]
+
+# 2. Drill in with filters: max nodes, name/type/id substring, and pins off
+nodes = unreal.BlueprintService.get_nodes_in_graph(bp_path, "EventGraph", 25, "SpawnActor", False)
+# args 3-5 are optional: max_nodes=0 (all), name_filter="" (all), include_pins=True
+```
+
+Only fall back to the unfiltered full dump when you genuinely need every pin of every node.
+
+### ⚠️ Component/widget bound events: use `create_component_bound_event()`, never `create_node_by_key`
+
+A `K2Node_ComponentBoundEvent` (e.g. *On Clicked (MyButton)*) built via `create_node_by_key` +
+`configure_node` **compiles clean but never fires at runtime** — the delegate binding params
+(including the generated handler function name) can only be initialized atomically:
+
+```python
+node_id = unreal.BlueprintService.create_component_bound_event(
+    bp_path, "EventGraph", "MyButton", "OnClicked", 100, 100)
+```
+
+Idempotent: if the bound event already exists, the existing node's id is returned. Works for any
+component delegate (`OnComponentBeginOverlap`, widget `OnClicked`/`OnValueChanged`, ...).
+
+### ⚠️ Override events are idempotent
+
+`create_node_by_key("EVENT Actor::ReceiveBeginPlay")` (and `EVENT CUSTOM::Name`) returns the
+**existing** node's id when the blueprint already has that event — a blueprint can hold each
+override event only once, and a duplicate would break compilation. Don't treat "node id I didn't
+just place" as an error; wire into it.
+
 ### ⚠️ `discover_nodes()` vs `get_nodes_in_graph()` — Different Object Types
 
 `get_nodes_in_graph()` returns **`FBlueprintNodeInfo`** objects — these have `node_title`, `node_id`, `pos_x`, `pos_y`, `node_type`.

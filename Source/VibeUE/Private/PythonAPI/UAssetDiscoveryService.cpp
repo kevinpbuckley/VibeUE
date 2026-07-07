@@ -147,7 +147,11 @@ FString UAssetDiscoveryService::ImportAsset(
 
 	FAssetRegistryModule::AssetCreated(NewObj);
 	Package->MarkPackageDirty();
-	UEditorAssetLibrary::SaveLoadedAsset(NewObj, false);
+	if (!UEditorAssetLibrary::SaveLoadedAsset(NewObj, false))
+	{
+		OutError = FString::Printf(TEXT("Failed to save imported asset '%s'"), *NewObj->GetPathName());
+		return FString();
+	}
 
 	UE_LOG(LogTemp, Log, TEXT("UAssetDiscoveryService::ImportAsset: imported '%s' -> '%s'"), *SourceFilePath, *NewObj->GetPathName());
 	return NewObj->GetPathName();

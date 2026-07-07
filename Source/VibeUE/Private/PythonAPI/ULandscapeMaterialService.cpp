@@ -771,9 +771,14 @@ FLandscapeLayerInfoCreateResult ULandscapeMaterialService::CreateLayerInfoObject
 	LayerInfoObj->MarkPackageDirty();
 
 	// Save the asset
-	UEditorAssetLibrary::SaveAsset(FullAssetPath, false);
+	Result.bSuccess = UEditorAssetLibrary::SaveAsset(FullAssetPath, false);
+	if (!Result.bSuccess)
+	{
+		Result.ErrorMessage = FString::Printf(TEXT("Failed to save layer info asset '%s'"), *FullAssetPath);
+		UE_LOG(LogTemp, Error, TEXT("ULandscapeMaterialService::CreateLayerInfoObject: %s"), *Result.ErrorMessage);
+		return Result;
+	}
 
-	Result.bSuccess = true;
 	Result.AssetPath = FullAssetPath;
 	Result.LayerName = LayerName;
 
@@ -1719,9 +1724,13 @@ FLandscapeAutoMaterialResult ULandscapeMaterialService::CreateAutoMaterial(
 	}
 
 	// Save the material
-	UEditorAssetLibrary::SaveAsset(Result.MaterialAssetPath, false);
-
-	Result.bSuccess = true;
+	Result.bSuccess = UEditorAssetLibrary::SaveAsset(Result.MaterialAssetPath, false);
+	if (!Result.bSuccess)
+	{
+		Result.ErrorMessage = FString::Printf(TEXT("Failed to save material asset '%s'"), *Result.MaterialAssetPath);
+		UE_LOG(LogTemp, Error, TEXT("ULandscapeMaterialService::CreateAutoMaterial: %s"), *Result.ErrorMessage);
+		return Result;
+	}
 	UE_LOG(LogTemp, Log, TEXT("ULandscapeMaterialService::CreateAutoMaterial: Created auto-material '%s' with %d layers"),
 		*Result.MaterialAssetPath, LayerConfigs.Num());
 

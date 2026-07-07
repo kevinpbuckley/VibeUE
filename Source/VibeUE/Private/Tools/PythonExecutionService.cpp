@@ -225,18 +225,30 @@ TResult<FPythonExecutionResult> FPythonExecutionService::ExecuteCode(
 			CrashMessage = FString::Printf(TEXT("Python execution caused a crash (exception code: 0x%08X). The Python code may have accessed invalid memory."), SEHResult.ExceptionCode);
 		}
 
-		// A caught access violation / assertion leaves the CPython runtime in an undefined state;
-		// it cannot be reinitialized in-process. Give the caller actionable guidance instead of
-		// letting subsequent calls fail identically with no explanation.
-		if (GbPythonInterpreterCrashed)
+		// A caught fault often originates in engine C++ called from Python, not in
+		// CPython itself — in that case the interpreter (and GIL) are still healthy and
+		// the session can keep working. Probe with a no-op through the same SEH wrapper:
+		// clean probe → recovered; probe faults too → genuinely wedged (issue #399).
+		FPythonCommandEx ProbeCommand;
+		ProbeCommand.Command = TEXT("pass");
+		ProbeCommand.ExecutionMode = EPythonCommandExecutionMode::ExecuteStatement;
+		ProbeCommand.Flags = EPythonCommandFlags::None;
+		const FSEHExecutionResult ProbeResult = ExecutePythonWithSEH(PythonPlugin, &ProbeCommand);
+		if (!ProbeResult.bCrashed && ProbeResult.bSuccess)
 		{
-			CrashMessage += TEXT(" NOTE: the Python interpreter has now crashed more than once this session and is unrecoverable in-process — restart the editor (BuildAndLaunch) to restore Python execution.");
+			GbPythonInterpreterCrashed = false;
+			CrashMessage += TEXT(" NOTE: the interpreter responded to a post-crash probe — the session has been recovered and further Python calls will execute normally. Dirty assets touched by the crashed script may still be corrupt; verify before saving.");
+		}
+		else if (GbPythonInterpreterCrashed)
+		{
+			CrashMessage += TEXT(" NOTE: the post-crash probe failed and the interpreter has crashed repeatedly this session — it is unrecoverable in-process; restart the editor (BuildAndLaunch) to restore Python execution.");
+			GbPythonInterpreterCrashed = true;
 		}
 		else
 		{
-			CrashMessage += TEXT(" NOTE: the interpreter may now be unstable; if further commands keep failing identically, restart the editor (BuildAndLaunch).");
+			CrashMessage += TEXT(" NOTE: the post-crash probe failed — the interpreter is unstable; if further commands keep failing identically, restart the editor (BuildAndLaunch).");
+			GbPythonInterpreterCrashed = true;
 		}
-		GbPythonInterpreterCrashed = true;
 
 		UE_LOG(LogTemp, Error, TEXT("%s"), *CrashMessage);
 	}

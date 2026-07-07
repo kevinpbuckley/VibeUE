@@ -58,6 +58,45 @@ struct FBlueprintGraphInfo
 };
 
 /**
+ * Fixed-size overview of a single graph — the cheap first read before deciding
+ * whether a full get_nodes_in_graph dump is needed. Payload size is independent
+ * of graph size (the histogram/entry lists are one line per distinct type/event,
+ * not per node).
+ */
+USTRUCT(BlueprintType)
+struct FBlueprintGraphSummary
+{
+	GENERATED_BODY()
+
+	/** Tab name as shown in the My Blueprint panel */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	FString GraphName;
+
+	/** "Ubergraph" | "Function" | "Macro" | "DelegateSignature" */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	FString GraphKind;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	int32 NodeCount = 0;
+
+	/** Number of pin-to-pin links in the graph */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	int32 ConnectionCount = 0;
+
+	/** Blueprint-level compile status: UpToDate | UpToDateWithWarnings | Dirty | Error | Unknown */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	FString CompileStatus;
+
+	/** Titles of entry-point nodes (events, custom events, function entry) with their node ids: "Title|NodeId" */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	TArray<FString> EntryPoints;
+
+	/** Node class histogram, most frequent first: "K2Node_CallFunction x12" */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	TArray<FString> NodeTypeCounts;
+};
+
+/**
  * Detailed information about a blueprint variable (for get_info action)
  */
 USTRUCT(BlueprintType)
@@ -1824,19 +1863,56 @@ public:
 	/**
 	 * Get all nodes in a graph.
 	 *
+	 * On large graphs the full dump is expensive — prefer get_graph_summary first,
+	 * then narrow this call with the optional filters.
+	 *
 	 * @param BlueprintPath - Full path to the blueprint
 	 * @param GraphName - Name of the graph
+	 * @param MaxNodes - Cap on returned nodes; 0 = unlimited (default)
+	 * @param NameFilter - Case-insensitive substring match against node title,
+	 *                     node type, or node id; empty = all nodes
+	 * @param bIncludePins - False drops the pins/pin_names arrays (the bulk of the
+	 *                       payload) leaving id/type/title/position per node
 	 * @return Array of node information
 	 *
 	 * Example:
 	 *   nodes = unreal.BlueprintService.get_nodes_in_graph("/Game/BP_Player", "ApplyDamage")
 	 *   for node in nodes:
 	 *       print(f"{node.node_title} at ({node.pos_x}, {node.pos_y})")
+	 *
+	 * Example - terse read of just the SpawnActor nodes, no pin data:
+	 *   nodes = unreal.BlueprintService.get_nodes_in_graph("/Game/BP_Player", "EventGraph", 25, "SpawnActor", False)
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints")
 	static TArray<FBlueprintNodeInfo> GetNodesInGraph(
 		const FString& BlueprintPath,
-		const FString& GraphName
+		const FString& GraphName,
+		int32 MaxNodes = 0,
+		const FString& NameFilter = TEXT(""),
+		bool bIncludePins = true
+	);
+
+	/**
+	 * Get a fixed-size overview of a graph: node/connection counts, blueprint
+	 * compile status, entry points, and a node-class histogram. Use this as the
+	 * default first read on any graph — its payload does not grow with graph
+	 * size, unlike get_nodes_in_graph.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param GraphName - Name of the graph
+	 * @param OutSummary - Filled with the summary on success
+	 * @return True if the blueprint and graph were found
+	 *
+	 * Example:
+	 *   s = unreal.BlueprintService.get_graph_summary("/Game/BP_Player", "EventGraph")
+	 *   if s[0]:
+	 *       print(s[1].node_count, s[1].compile_status, s[1].entry_points)
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints")
+	static bool GetGraphSummary(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		FBlueprintGraphSummary& OutSummary
 	);
 
 	/**
@@ -1917,6 +1993,38 @@ public:
 		const FString& BlueprintPath,
 		const FString& GraphName,
 		const FString& EventName,
+		float PosX = 0.0f,
+		float PosY = 0.0f
+	);
+
+	/**
+	 * Create a component-bound event node (e.g. "On Clicked (MyButton)") — the same
+	 * node the Designer's green "+" next to an event creates. This is the ONLY
+	 * path that produces a runtime-live bound event: it initializes the delegate
+	 * binding params (including the auto-generated handler function name) that the
+	 * compiler needs to register the handler. Building the node manually via
+	 * create_node_by_key + configure_node compiles clean but never fires.
+	 *
+	 * If a bound event for this component+delegate already exists in the blueprint,
+	 * its node ID is returned instead of creating a duplicate.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint (widget or actor)
+	 * @param GraphName - Name of the event graph (typically "EventGraph"; must be an ubergraph)
+	 * @param ComponentName - Variable name of the component (e.g. "MyButton")
+	 * @param DelegateName - Delegate property name on the component class (e.g. "OnClicked", "OnComponentBeginOverlap")
+	 * @param PosX - X position in the graph
+	 * @param PosY - Y position in the graph
+	 * @return Node ID (GUID) if successful, empty string otherwise
+	 *
+	 * Example:
+	 *   node_id = unreal.BlueprintService.create_component_bound_event("/Game/UI/WBP_Menu", "EventGraph", "MyButton", "OnClicked", 100, 100)
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints")
+	static FString CreateComponentBoundEvent(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		const FString& ComponentName,
+		const FString& DelegateName,
 		float PosX = 0.0f,
 		float PosY = 0.0f
 	);

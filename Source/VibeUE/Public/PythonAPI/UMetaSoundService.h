@@ -414,8 +414,8 @@ private:
 	/** Load asset and begin a builder session. Returns nullptr and sets OutError on failure. */
 	static UMetaSoundBuilderBase* BeginEditing(const FString& AssetPath, UMetaSoundSource** OutSource, FString& OutError);
 
-	/** Register the graph and save the asset to disk. */
-	static void CommitEditing(const FString& AssetPath, UMetaSoundSource* Source);
+	/** Register the graph and save the asset to disk. Returns false if the save failed. */
+	static bool CommitEditing(const FString& AssetPath, UMetaSoundSource* Source);
 
 	/** Parse a GUID string, populating OutResult.Message on failure. */
 	static bool ParseNodeGuid(const FString& NodeIdStr, FGuid& OutGuid, FMetaSoundResult& OutResult);

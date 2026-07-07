@@ -114,7 +114,7 @@ Four Python utility functions help match heightmaps to landscapes:
 | Function | Purpose |
 |----------|---------|
 | `get_heightmap_dimensions(file_path)` | Read width/height/bitdepth of a PNG or RAW heightmap file |
-| `resize_heightmap(source, width, height, output)` | Bilinear resample a 16-bit heightmap to new dimensions |
+| `resize_heightmap(source, width, height, output, interpolation)` | Resample a 16-bit heightmap to new dimensions. Default `interpolation="bicubic"` (Catmull-Rom, smooth normals); pass `"bilinear"` only if you need the legacy behavior — bilinear upsampling of a low-res DEM produces blocky planar facets on flat plains |
 | `calculate_landscape_resolution(cx, cy, quads, sections)` | Compute resolution from landscape config parameters |
 | `find_landscape_config_for_resolution(width, height)` | Find the best landscape config that matches a given resolution |
 
@@ -140,6 +140,38 @@ If you already have a heightmap at a non-matching resolution:
    - Find a landscape config that matches: `find_landscape_config_for_resolution(width, height)`
    - Or resize the heightmap to match your landscape: `resize_heightmap(source, target_w, target_h)`
 3. Create landscape / import resized heightmap
+
+### World Partition landscapes (streaming proxies)
+
+In a **World Partition** level, pass `world_partition_grid_size` (components per proxy grid cell,
+e.g. `2`) to `create_landscape` to split the landscape into `ALandscapeStreamingProxy` actors —
+the same thing the editor's New Landscape tool does in a WP world:
+
+```python
+result = unreal.LandscapeService.create_landscape(
+    unreal.Vector(0, 0, 0), unreal.Rotator(0, 0, 0), unreal.Vector(100, 100, 100),
+    sections_per_component=1, quads_per_section=63,
+    component_count_x=8, component_count_y=8,
+    landscape_label="WPLandscape", world_partition_grid_size=2)
+```
+
+- The default `world_partition_grid_size=0` keeps the single monolithic `ALandscape` (old behavior).
+- The call **fails with an error if the level is not World Partition** — the engine's grid split is
+  a silent no-op there, so VibeUE refuses instead of pretending.
+- `import_heightmap`, sculpting, painting, and region edits are proxy-transparent: they resolve the
+  parent `ALandscape` and fan updates out to every proxy sharing its landscape GUID. Nothing else
+  in your workflow changes.
+
+### Blocky / faceted flat areas (plains)
+
+Low-res source DEMs upsampled to landscape resolution show planar facets on flat terrain. Fixes,
+in order of preference:
+
+1. `resize_heightmap(..., interpolation="bicubic")` — now the default; re-run the resize+import if
+   the landscape was built with an older (bilinear) resize.
+2. Increase `blur_passes` (20–40) on `terrain_data generate_heightmap` for plains-heavy regions.
+3. Material-level smoothing without touching heights: derive a world-space smoothed normal in the
+   landscape material (see `landscape-materials` skill) when height data must stay pixel-exact.
 
 ### Landscape Scale
 

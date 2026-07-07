@@ -70,6 +70,14 @@ Try a shorter summary with just 50 nodes max.
 
 ---
 
+Give me a one-screen overview of TestActor's event graph — node count, connection count, compile status, entry points, and which node types dominate — without dumping every node. (Expected: a single get_graph_summary call, NOT a full get_nodes_in_graph dump.)
+
+---
+
+List only the SpawnActor-related nodes in the event graph, without pin details. (Expected: get_nodes_in_graph with name_filter="SpawnActor" and include_pins=False — the reply should not contain a full-graph dump.)
+
+---
+
 ## More Configuration
 
 Set the initial lifespan on TestActor.
@@ -87,6 +95,26 @@ Recompile TestActor.
 ---
 
 Check the state to make sure it compiled cleanly.
+
+---
+
+## Graph Layout (Set Timer regression — issue #354)
+
+In TestActor's event graph, build this: BeginPlay → Set Timer by Function Name (looping, 2s) calling a custom event named OnTimerTick, and give OnTimerTick a body of 6+ nodes (e.g. increment a counter, branch on it, two print strings). Then auto-align the whole graph.
+
+---
+
+Screenshot the graph and confirm: BeginPlay's chain is ABOVE the OnTimerTick chain (the custom event must not be laid out above the primary event), no overlapping nodes.
+
+---
+
+## Bound Events (issue #386)
+
+Create a widget blueprint WBP_BoundEventTest with a Button variable named TestButton. Add an On Clicked bound event for TestButton wired to a Print String saying "clicked". (Expected: create_component_bound_event, NOT create_node_by_key + configure_node.)
+
+---
+
+Compile, run PIE, click the button, and confirm the print fires. Then ask for the bound event again — it must reuse the existing node, not create a duplicate.
 
 ---
 

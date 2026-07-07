@@ -1160,10 +1160,115 @@ FNiagaraScratchResult UNiagaraScratchPadService::AddModuleOutput(
 // Apply
 // =====================================================================
 
+namespace
+{
+	// A scratch module left with duplicate same-named pins on a Map Get/Set node (the
+	// pre-7bca8ce non-idempotency, or manual edits) makes ANY later system compile fire
+	// a fatal "Array index out of bounds" assert inside ReallocatePins — taking down the
+	// editor. Detect it up front so ApplyChanges can refuse with a clear error instead
+	// (issue #432).
+	bool ValidateScratchGraphsForCompile(UNiagaraSystem* System, FString& OutError)
+	{
+		for (const FNiagaraEmitterHandle& Handle : System->GetEmitterHandles())
+		{
+			const FVersionedNiagaraEmitterData* EmitterData = Handle.GetEmitterData();
+			if (!EmitterData || !EmitterData->ScratchPads) continue;
+			for (UNiagaraScript* Scratch : EmitterData->ScratchPads->Scripts)
+			{
+				if (!Scratch) continue;
+				const auto* Src = Cast<UNiagaraScriptSource>(Scratch->GetLatestSource());
+				if (!Src || !Src->NodeGraph) continue;
+
+				for (UEdGraphNode* Node : Src->NodeGraph->Nodes)
+				{
+					if (!IsMapGet(Node) && !IsMapSet(Node)) continue;
+
+					TSet<FName> InputNames;
+					TSet<FName> OutputNames;
+					for (const UEdGraphPin* Pin : Node->Pins)
+					{
+						if (!Pin) continue;
+						TSet<FName>& Names = (Pin->Direction == EGPD_Input) ? InputNames : OutputNames;
+						bool bAlreadyThere = false;
+						Names.Add(Pin->PinName, &bAlreadyThere);
+						if (bAlreadyThere)
+						{
+							OutError = FString::Printf(
+								TEXT("Scratch module '%s' (emitter '%s') has duplicate %s pins named '%s' on a %s node (%s) — compiling this graph would crash the editor. Remove the duplicate pin (remove_node_pin) before apply_changes."),
+								*Scratch->GetName(), *Handle.GetName().ToString(),
+								Pin->Direction == EGPD_Input ? TEXT("input") : TEXT("output"),
+								*Pin->PinName.ToString(),
+								IsMapGet(Node) ? TEXT("MapGet") : TEXT("MapSet"),
+								*Node->NodeGuid.ToString());
+							return false;
+						}
+					}
+				}
+			}
+		}
+		return true;
+	}
+
+	// Collect the real Niagara compiler diagnostics from every script in the system.
+	void CollectCompileMessages(UNiagaraSystem* System, bool bErrorsOnly, TArray<FString>& OutMessages)
+	{
+		TArray<TPair<FString, UNiagaraScript*>> Scripts;
+		Scripts.Emplace(TEXT("SystemSpawn"), System->GetSystemSpawnScript());
+		Scripts.Emplace(TEXT("SystemUpdate"), System->GetSystemUpdateScript());
+		for (const FNiagaraEmitterHandle& Handle : System->GetEmitterHandles())
+		{
+			const FVersionedNiagaraEmitterData* EmitterData = Handle.GetEmitterData();
+			if (!EmitterData) continue;
+			TArray<UNiagaraScript*> EmitterScripts;
+			EmitterData->GetScripts(EmitterScripts, /*bCompilableOnly=*/true);
+			for (UNiagaraScript* Script : EmitterScripts)
+			{
+				Scripts.Emplace(Handle.GetName().ToString(), Script);
+			}
+		}
+
+		for (const TPair<FString, UNiagaraScript*>& Entry : Scripts)
+		{
+			UNiagaraScript* Script = Entry.Value;
+			if (!Script) continue;
+
+#if WITH_EDITORONLY_DATA
+			const FNiagaraVMExecutableData& VMData = Script->GetVMExecutableData();
+			if (VMData.LastCompileStatus == ENiagaraScriptCompileStatus::NCS_Error && !VMData.ErrorMsg.IsEmpty())
+			{
+				OutMessages.Add(FString::Printf(TEXT("Error: [%s/%s] %s"), *Entry.Key, *Script->GetName(), *VMData.ErrorMsg));
+			}
+			for (const FNiagaraCompileEvent& Event : VMData.LastCompileEvents)
+			{
+				const bool bIsError = Event.Severity == FNiagaraCompileEventSeverity::Error;
+				const bool bIsWarning = Event.Severity == FNiagaraCompileEventSeverity::Warning;
+				if (!bIsError && (bErrorsOnly || !bIsWarning))
+				{
+					continue;
+				}
+				OutMessages.Add(FString::Printf(TEXT("%s: [%s/%s] %s%s"),
+					bIsError ? TEXT("Error") : TEXT("Warning"),
+					*Entry.Key, *Script->GetName(),
+					*Event.Message,
+					Event.NodeGuid.IsValid() ? *FString::Printf(TEXT(" (node %s)"), *Event.NodeGuid.ToString()) : TEXT("")));
+			}
+#endif
+		}
+	}
+}
+
 bool UNiagaraScratchPadService::ApplyChanges(const FString& SystemPath)
 {
 	UNiagaraSystem* System = LoadSystem(SystemPath);
 	if (!System) return false;
+
+	// Refuse to compile a corrupt scratch graph — the engine assert it would fire is fatal.
+	FString ValidationError;
+	if (!ValidateScratchGraphsForCompile(System, ValidationError))
+	{
+		UE_LOG(LogTemp, Error, TEXT("ApplyChanges: %s"), *ValidationError);
+		return false;
+	}
 
 	// Notify each scratch script graph that it has changed so its ChangeID bumps. This is what
 	// triggers callers (the stack function-call nodes that reference it) to pick up the new
@@ -1198,7 +1303,33 @@ bool UNiagaraScratchPadService::ApplyChanges(const FString& SystemPath)
 	System->WaitForCompilationComplete();
 
 	UEditorAssetLibrary::SaveLoadedAsset(System);
+
+	// Surface the real compiler diagnostics instead of a bare true/false — a compile
+	// with errors is a failure the caller must see (issues #432, #352).
+	TArray<FString> CompileErrors;
+	CollectCompileMessages(System, /*bErrorsOnly=*/true, CompileErrors);
+	if (CompileErrors.Num() > 0)
+	{
+		for (const FString& Msg : CompileErrors)
+		{
+			UE_LOG(LogTemp, Error, TEXT("ApplyChanges: %s"), *Msg);
+		}
+		return false;
+	}
 	return true;
+}
+
+TArray<FString> UNiagaraScratchPadService::GetCompileMessages(const FString& SystemPath, bool bErrorsOnly)
+{
+	TArray<FString> Messages;
+	UNiagaraSystem* System = LoadSystem(SystemPath);
+	if (!System)
+	{
+		Messages.Add(FString::Printf(TEXT("Error: failed to load Niagara system '%s'"), *SystemPath));
+		return Messages;
+	}
+	CollectCompileMessages(System, bErrorsOnly, Messages);
+	return Messages;
 }
 
 #undef LOCTEXT_NAMESPACE
