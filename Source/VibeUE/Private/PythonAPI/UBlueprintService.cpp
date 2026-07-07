@@ -22,7 +22,9 @@
 #include "K2Node_CallArrayFunction.h"   // For array library functions with wildcard pins
 #include "K2Node_GetArrayItem.h"        // For Array Get (replaces deprecated Array_Get)
 #include "K2Node_CreateDelegate.h"
+#include "K2Node_ComponentBoundEvent.h"
 #include "K2Node_CustomEvent.h"
+#include "EdGraphSchema_K2_Actions.h"
 #include "K2Node_DynamicCast.h"
 #include "K2Node_Event.h"
 #include "K2Node_EnhancedInputAction.h"  // For Enhanced Input Action event nodes
@@ -1534,6 +1536,27 @@ bool UBlueprintService::SetRootComponent(
 	// the auto-generated DefaultSceneRoot while the old root is being detached below.
 	SCS->AddNode(NewRootNode);
 
+	// RemoveChildNode/RemoveNode do NOT clear the serialized parent linkage. A root
+	// node that still names a parent deserializes as attached — after save+reload the
+	// SCS has no root and the cooker fires the cyclic-SCS ensure (issue #371).
+	NewRootNode->ParentComponentOrVariableName = NAME_None;
+	NewRootNode->ParentComponentOwnerClassName = NAME_None;
+	NewRootNode->bIsParentComponentNative = false;
+
+	// Attach a node as a same-SCS child of the new root. ParentComponentOrVariableName
+	// is reserved for attachment to INHERITED (parent-class/native) components — the
+	// engine's hierarchy fixup fires the "possible cyclic linkage" ensure on load/cook
+	// when it names the node's own SCS parent (issue #371). Same-SCS attachment is the
+	// ChildNodes array alone, with the inherited-parent linkage cleared.
+	auto AttachUnderNewRoot = [NewRootNode](USCS_Node* Child)
+	{
+		NewRootNode->AddChildNode(Child);
+		Child->Modify();
+		Child->ParentComponentOrVariableName = NAME_None;
+		Child->ParentComponentOwnerClassName = NAME_None;
+		Child->bIsParentComponentNative = false;
+	};
+
 	// If there was a current root, we need to handle it
 	if (CurrentRootNode && CurrentRootNode != NewRootNode)
 	{
@@ -1550,9 +1573,7 @@ bool UBlueprintService::SetRootComponent(
 		if (CurrentRootNode != SCS->GetDefaultSceneRootNode())
 		{
 			// Make the old user-created root a child of the new root
-			NewRootNode->AddChildNode(CurrentRootNode);
-			// CRITICAL: Call SetParent to properly set ParentComponentOrVariableName
-			CurrentRootNode->SetParent(NewRootNode);
+			AttachUnderNewRoot(CurrentRootNode);
 		}
 		// The auto-generated DefaultSceneRoot is dropped outright (matching the Blueprint
 		// editor); the SCS recreates it automatically if the blueprint ever needs one again.
@@ -1563,9 +1584,7 @@ bool UBlueprintService::SetRootComponent(
 	{
 		if (Child && Child != NewRootNode && Child != CurrentRootNode)
 		{
-			NewRootNode->AddChildNode(Child);
-			// CRITICAL: Call SetParent to properly set ParentComponentOrVariableName
-			Child->SetParent(NewRootNode);
+			AttachUnderNewRoot(Child);
 		}
 	}
 
@@ -1584,13 +1603,24 @@ bool UBlueprintService::SetRootComponent(
 	for (USCS_Node* Node : OtherSceneRoots)
 	{
 		SCS->RemoveNode(Node);
-		NewRootNode->AddChildNode(Node);
-		Node->SetParent(NewRootNode);
+		AttachUnderNewRoot(Node);
 	}
+
+	// Let the SCS reconcile its RootNodes/default-root state before the compile —
+	// this is what persists the root designation through save+reload (issue #371).
+	SCS->ValidateSceneRootNodes();
 
 	// Mark blueprint as structurally modified
 	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
-	
+
+	// Verify the promoted node actually reads back as the scene root; report the
+	// failure instead of claiming success (issue #352: no silent failures).
+	if (FindActualSceneRootNode(SCS) != NewRootNode)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetRootComponent: '%s' did not persist as scene root of %s after validation"), *ComponentName, *BlueprintPath);
+		return false;
+	}
+
 	UE_LOG(LogTemp, Log, TEXT("SetRootComponent: Set '%s' as root component in %s"), *ComponentName, *BlueprintPath);
 	return true;
 }
@@ -3121,6 +3151,87 @@ FString UBlueprintService::AddCustomEventNode(
 	return SpawnedNode->NodeGuid.ToString();
 }
 
+FString UBlueprintService::CreateComponentBoundEvent(
+	const FString& BlueprintPath,
+	const FString& GraphName,
+	const FString& ComponentName,
+	const FString& DelegateName,
+	float PosX,
+	float PosY)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("CreateComponentBoundEvent: Failed to load blueprint: %s"), *BlueprintPath);
+		return FString();
+	}
+
+	UEdGraph* Graph = ResolveBlueprintGraph(Blueprint, GraphName);
+	if (!Graph)
+	{
+		UE_LOG(LogTemp, Error, TEXT("CreateComponentBoundEvent: Graph '%s' not found in %s"), *GraphName, *BlueprintPath);
+		return FString();
+	}
+	if (!Blueprint->UbergraphPages.Contains(Graph))
+	{
+		UE_LOG(LogTemp, Error, TEXT("CreateComponentBoundEvent: Graph '%s' is not an event graph — bound events only live in ubergraphs"), *GraphName);
+		return FString();
+	}
+
+	// The component variable is a property on the (skeleton) generated class.
+	UClass* OwnerClass = Blueprint->SkeletonGeneratedClass ? Blueprint->SkeletonGeneratedClass : Blueprint->GeneratedClass;
+	if (!OwnerClass)
+	{
+		UE_LOG(LogTemp, Error, TEXT("CreateComponentBoundEvent: %s has no generated class — compile the blueprint first"), *BlueprintPath);
+		return FString();
+	}
+
+	FObjectProperty* ComponentProperty = FindFProperty<FObjectProperty>(OwnerClass, *ComponentName);
+	if (!ComponentProperty)
+	{
+		UE_LOG(LogTemp, Error, TEXT("CreateComponentBoundEvent: Component variable '%s' not found on %s (is it marked as a variable?)"), *ComponentName, *OwnerClass->GetName());
+		return FString();
+	}
+
+	const FMulticastDelegateProperty* DelegateProperty = FindFProperty<FMulticastDelegateProperty>(ComponentProperty->PropertyClass, *DelegateName);
+	if (!DelegateProperty)
+	{
+		UE_LOG(LogTemp, Error, TEXT("CreateComponentBoundEvent: Delegate '%s' not found on component class %s"), *DelegateName, *ComponentProperty->PropertyClass->GetName());
+		return FString();
+	}
+
+	// Idempotent: a component+delegate pair can only have one bound event in a
+	// blueprint — reuse it rather than creating a dead duplicate.
+	if (const UK2Node_ComponentBoundEvent* Existing = FKismetEditorUtilities::FindBoundEventForComponent(Blueprint, DelegateProperty->GetFName(), ComponentProperty->GetFName()))
+	{
+		UE_LOG(LogTemp, Log, TEXT("CreateComponentBoundEvent: Bound event for %s.%s already exists — returning existing node"), *ComponentName, *DelegateName);
+		return Existing->NodeGuid.ToString();
+	}
+
+	// Same path as the Designer's green "+": spawn the node and atomically
+	// initialize the binding params (ComponentPropertyName, DelegatePropertyName,
+	// EventReference, and the generated CustomFunctionName the compiler registers
+	// the runtime handler under). See FKismetEditorUtilities::CreateNewBoundEventForClass.
+	UK2Node_ComponentBoundEvent* NewNode = FEdGraphSchemaAction_K2NewNode::SpawnNode<UK2Node_ComponentBoundEvent>(
+		Graph,
+		FVector2D(PosX, PosY),
+		EK2NewNodeFlags::None,
+		[ComponentProperty, DelegateProperty](UK2Node_ComponentBoundEvent* NewInstance)
+		{
+			NewInstance->InitializeComponentBoundEventParams(ComponentProperty, DelegateProperty);
+		});
+	if (!NewNode)
+	{
+		UE_LOG(LogTemp, Error, TEXT("CreateComponentBoundEvent: Failed to spawn bound event node for %s.%s"), *ComponentName, *DelegateName);
+		return FString();
+	}
+
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+	UE_LOG(LogTemp, Log, TEXT("CreateComponentBoundEvent: Created bound event %s.%s in %s"), *ComponentName, *DelegateName, *GraphName);
+
+	return NewNode->NodeGuid.ToString();
+}
+
 // Returns true if the editable-pin node already has a user-defined pin with this name.
 // (Avoids UK2Node_EditablePinBase::UserDefinedPinExists, which isn't exported from BlueprintGraph.)
 static bool VibeUE_HasUserDefinedPin(const UK2Node_EditablePinBase* Node, const FName PinName)
@@ -4473,7 +4584,10 @@ bool UBlueprintService::ConnectNodes(
 
 TArray<FBlueprintNodeInfo> UBlueprintService::GetNodesInGraph(
 	const FString& BlueprintPath,
-	const FString& GraphName)
+	const FString& GraphName,
+	int32 MaxNodes,
+	const FString& NameFilter,
+	bool bIncludePins)
 {
 	TArray<FBlueprintNodeInfo> NodeInfos;
 
@@ -4503,28 +4617,117 @@ TArray<FBlueprintNodeInfo> UBlueprintService::GetNodesInGraph(
 		NodeInfo.PosX = Node->NodePosX;
 		NodeInfo.PosY = Node->NodePosY;
 
-		// Get pin names (for quick reference)
-		for (UEdGraphPin* Pin : Node->Pins)
+		if (!NameFilter.IsEmpty()
+			&& !NodeInfo.NodeTitle.Contains(NameFilter)
+			&& !NodeInfo.NodeType.Contains(NameFilter)
+			&& !NodeInfo.NodeId.Contains(NameFilter))
 		{
-			if (Pin)
-			{
-				NodeInfo.PinNames.Add(Pin->PinName.ToString());
+			continue;
+		}
 
-				// Also add detailed pin info
-				FBlueprintPinInfo PinInfo;
-				PinInfo.PinName = Pin->PinName.ToString();
-				PinInfo.PinType = Pin->PinType.PinCategory.ToString();
-				PinInfo.bIsInput = (Pin->Direction == EGPD_Input);
-				PinInfo.bIsConnected = Pin->LinkedTo.Num() > 0;
-				PinInfo.DefaultValue = Pin->DefaultValue;
-				NodeInfo.Pins.Add(PinInfo);
+		if (bIncludePins)
+		{
+			// Get pin names (for quick reference)
+			for (UEdGraphPin* Pin : Node->Pins)
+			{
+				if (Pin)
+				{
+					NodeInfo.PinNames.Add(Pin->PinName.ToString());
+
+					// Also add detailed pin info
+					FBlueprintPinInfo PinInfo;
+					PinInfo.PinName = Pin->PinName.ToString();
+					PinInfo.PinType = Pin->PinType.PinCategory.ToString();
+					PinInfo.bIsInput = (Pin->Direction == EGPD_Input);
+					PinInfo.bIsConnected = Pin->LinkedTo.Num() > 0;
+					PinInfo.DefaultValue = Pin->DefaultValue;
+					NodeInfo.Pins.Add(PinInfo);
+				}
 			}
 		}
 
 		NodeInfos.Add(NodeInfo);
+
+		if (MaxNodes > 0 && NodeInfos.Num() >= MaxNodes)
+		{
+			break;
+		}
 	}
 
 	return NodeInfos;
+}
+
+bool UBlueprintService::GetGraphSummary(
+	const FString& BlueprintPath,
+	const FString& GraphName,
+	FBlueprintGraphSummary& OutSummary)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GetGraphSummary: Failed to load blueprint: %s"), *BlueprintPath);
+		return false;
+	}
+
+	UEdGraph* Graph = FindGraph(Blueprint, GraphName);
+	if (!Graph)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GetGraphSummary: Graph '%s' not found in %s"), *GraphName, *BlueprintPath);
+		return false;
+	}
+
+	OutSummary.GraphName = Graph->GetName();
+
+	OutSummary.GraphKind = TEXT("Ubergraph");
+	if (Blueprint->FunctionGraphs.Contains(Graph)) { OutSummary.GraphKind = TEXT("Function"); }
+	else if (Blueprint->MacroGraphs.Contains(Graph)) { OutSummary.GraphKind = TEXT("Macro"); }
+	else if (Blueprint->DelegateSignatureGraphs.Contains(Graph)) { OutSummary.GraphKind = TEXT("DelegateSignature"); }
+
+	switch (Blueprint->Status)
+	{
+	case BS_UpToDate:             OutSummary.CompileStatus = TEXT("UpToDate"); break;
+	case BS_UpToDateWithWarnings: OutSummary.CompileStatus = TEXT("UpToDateWithWarnings"); break;
+	case BS_Dirty:                OutSummary.CompileStatus = TEXT("Dirty"); break;
+	case BS_Error:                OutSummary.CompileStatus = TEXT("Error"); break;
+	default:                      OutSummary.CompileStatus = TEXT("Unknown"); break;
+	}
+
+	OutSummary.NodeCount = 0;
+	OutSummary.ConnectionCount = 0;
+	TMap<FString, int32> TypeCounts;
+	for (UEdGraphNode* Node : Graph->Nodes)
+	{
+		if (!Node)
+		{
+			continue;
+		}
+		OutSummary.NodeCount++;
+		TypeCounts.FindOrAdd(Node->GetClass()->GetName())++;
+
+		for (UEdGraphPin* Pin : Node->Pins)
+		{
+			// Count each link once, from its output side.
+			if (Pin && Pin->Direction == EGPD_Output)
+			{
+				OutSummary.ConnectionCount += Pin->LinkedTo.Num();
+			}
+		}
+
+		if (Node->IsA<UK2Node_Event>() || Node->IsA<UK2Node_FunctionEntry>())
+		{
+			OutSummary.EntryPoints.Add(FString::Printf(TEXT("%s|%s"),
+				*Node->GetNodeTitle(ENodeTitleType::ListView).ToString(),
+				*Node->NodeGuid.ToString()));
+		}
+	}
+
+	TypeCounts.ValueSort([](int32 A, int32 B) { return A > B; });
+	for (const TPair<FString, int32>& Pair : TypeCounts)
+	{
+		OutSummary.NodeTypeCounts.Add(FString::Printf(TEXT("%s x%d"), *Pair.Key, Pair.Value));
+	}
+
+	return true;
 }
 
 namespace
@@ -5481,9 +5684,15 @@ bool UBlueprintService::SetProperty(
 		return false;
 	}
 
-	// Import property value from string
+	// Import property value from string. ImportText returns null on parse failure —
+	// report it instead of saving an unchanged asset and claiming success (issue #352).
 	void* PropertyAddr = Property->ContainerPtrToValuePtr<void>(CDO);
-	Property->ImportText_Direct(*PropertyValue, PropertyAddr, nullptr, PPF_None);
+	if (!Property->ImportText_Direct(*PropertyValue, PropertyAddr, CDO, PPF_None))
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetProperty: Failed to parse '%s' for property '%s' (%s) — value rejected by ImportText"),
+			*PropertyValue, *PropertyName, *Property->GetClass()->GetName());
+		return false;
+	}
 
 	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
 	UEditorAssetLibrary::SaveAsset(BlueprintPath, false);
@@ -6672,15 +6881,18 @@ bool UBlueprintService::ConfigureNode(
 			return false;
 		}
 	}
-	else if (FSoftClassProperty* SoftClassProp = CastField<FSoftClassProperty>(Property))
-	{
-		// Use generic import for soft class references
-		Property->ImportText_Direct(*Value, PropertyAddr, nullptr, PPF_None);
-	}
 	else
 	{
-		// Use generic import
-		Property->ImportText_Direct(*Value, PropertyAddr, nullptr, PPF_None);
+		// Generic import (soft class refs included). ImportText returns null when the
+		// value fails to parse (e.g. a bare string handed to a struct property) — a
+		// silent no-op unless we surface it (issue #386).
+		const TCHAR* ImportResult = Property->ImportText_Direct(*Value, PropertyAddr, nullptr, PPF_None);
+		if (!ImportResult)
+		{
+			UE_LOG(LogTemp, Error, TEXT("ConfigureNode: Failed to parse '%s' for property '%s' (%s) on node '%s' — value rejected by ImportText"),
+				*Value, *PropertyName, *Property->GetClass()->GetName(), *NodeId);
+			return false;
+		}
 	}
 
 	// Reconstruct node to apply changes
@@ -6787,6 +6999,17 @@ FString UBlueprintService::CreateNodeByKey(
 				}
 			}
 
+			// Idempotent: a named custom event already in the blueprint is returned
+			// instead of duplicated — a second same-named event is a compile error.
+			if (!CustomEventName.IsNone())
+			{
+				if (UK2Node_Event* Existing = FBlueprintEditorUtils::FindCustomEventNode(Blueprint, CustomEventName))
+				{
+					UE_LOG(LogTemp, Log, TEXT("CreateNodeByKey: Custom event '%s' already exists — returning existing node"), *CustomEventName.ToString());
+					return Existing->NodeGuid.ToString();
+				}
+			}
+
 			EventSpawner = UBlueprintEventNodeSpawner::Create(UK2Node_CustomEvent::StaticClass(), CustomEventName);
 		}
 		else
@@ -6811,6 +7034,17 @@ FString UBlueprintService::CreateNodeByKey(
 			{
 				UE_LOG(LogTemp, Error, TEXT("CreateNodeByKey: Event function '%s' not found in class '%s'"), *FunctionName, *ClassName);
 				return FString();
+			}
+
+			// Idempotent: an override event (BeginPlay/Tick/overlap/...) can exist only
+			// once per blueprint. Creating a second one yields two same-named event nodes
+			// that both error out ("found more than one function with the same name") and
+			// the graph looks "not connected" (issue #349). Do what the editor does on
+			// double-click: return the existing node.
+			if (UK2Node_Event* Existing = FBlueprintEditorUtils::FindOverrideForFunction(Blueprint, EventFunction->GetOwnerClass(), EventFunction->GetFName()))
+			{
+				UE_LOG(LogTemp, Log, TEXT("CreateNodeByKey: Override event '%s' already exists in %s — returning existing node"), *FunctionName, *BlueprintPath);
+				return Existing->NodeGuid.ToString();
 			}
 
 			EventSpawner = UBlueprintEventNodeSpawner::Create(EventFunction);
@@ -9152,9 +9386,15 @@ namespace VibeUELayout
 			// predecessors), then everything else — so the dropped edge is the genuine
 			// loop-back rather than an arbitrary forward edge, and loop bodies still flow L->R.
 			TArray<UEdGraphNode*> SeedOrder;
+			// Primary events (BeginPlay/Tick/input/overrides) seed before custom events so
+			// the main event chain gets the earliest visit ranks (issue #354).
 			for (UEdGraphNode* SN : Nodes)
 			{
-				if (SN->IsA<UK2Node_Event>() || SN->IsA<UK2Node_CustomEvent>()) { SeedOrder.AddUnique(SN); }
+				if (SN->IsA<UK2Node_Event>() && !SN->IsA<UK2Node_CustomEvent>()) { SeedOrder.AddUnique(SN); }
+			}
+			for (UEdGraphNode* SN : Nodes)
+			{
+				if (SN->IsA<UK2Node_CustomEvent>()) { SeedOrder.AddUnique(SN); }
 			}
 			for (UEdGraphNode* SN : Nodes)
 			{
@@ -9274,18 +9514,27 @@ namespace VibeUELayout
 			}
 		}
 
-		// Rank components: those containing events first, then larger ones (keeps the
-		// main event/function chain at the top).
+		// Rank components: those containing primary events (BeginPlay/Tick/input — real
+		// entry points) first, then any-event components, then larger ones. A timer
+		// callback Custom Event lives in its own component (the timer links by function
+		// name, not a wire), and without the primary-event key a large callback body
+		// out-ranked the small BeginPlay chain and was drawn above it (issue #354).
 		TArray<int32> CompNodeCount;
 		TArray<int32> CompEventCount;
+		TArray<int32> CompPrimaryEventCount;
 		CompNodeCount.Init(0, NumComp);
 		CompEventCount.Init(0, NumComp);
+		CompPrimaryEventCount.Init(0, NumComp);
 		for (const TPair<UEdGraphNode*, int32>& Pair : Comp)
 		{
 			CompNodeCount[Pair.Value]++;
 			if (Pair.Key->IsA<UK2Node_Event>() || Pair.Key->IsA<UK2Node_CustomEvent>())
 			{
 				CompEventCount[Pair.Value]++;
+				if (!Pair.Key->IsA<UK2Node_CustomEvent>())
+				{
+					CompPrimaryEventCount[Pair.Value]++;
+				}
 			}
 		}
 		TArray<int32> CompOrder;
@@ -9295,6 +9544,7 @@ namespace VibeUELayout
 		}
 		CompOrder.Sort([&](int32 A, int32 B)
 		{
+			if (CompPrimaryEventCount[A] != CompPrimaryEventCount[B]) return CompPrimaryEventCount[A] > CompPrimaryEventCount[B];
 			if (CompEventCount[A] != CompEventCount[B]) return CompEventCount[A] > CompEventCount[B];
 			return CompNodeCount[A] > CompNodeCount[B];
 		});
