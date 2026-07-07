@@ -2172,6 +2172,9 @@ TArray<FLandscapeLayerInfo_Custom> ULandscapeService::ListLayers(const FString& 
 	return Result;
 }
 
+// Defined later in this file (near the paint functions).
+static ULandscapeLayerInfoObject* FindLayerInfoByName(ULandscapeInfo* Info, const FString& LayerName);
+
 bool ULandscapeService::AddLayer(
 	const FString& LandscapeNameOrLabel,
 	const FString& LayerInfoAssetPath)
@@ -2206,10 +2209,24 @@ bool ULandscapeService::AddLayer(
 
 	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "AddLayer", "Add Landscape Layer"));
 
-	// Add layer info to landscape
-	int32 LayerIndex = Info->Layers.Num();
-	FLandscapeInfoLayerSettings NewLayerSettings(LayerInfoObj, Landscape);
-	Info->Layers.Add(NewLayerSettings);
+	// Register in the PERSISTENT per-proxy target-layer list FIRST. ULandscapeInfo is a
+	// transient object rebuilt from the proxies' TargetLayers on every map load — writing
+	// only Info->Layers (the old behaviour) meant the layer (and all painted weights for it)
+	// silently vanished on save/reload.
+	const FName LayerFName = LayerInfoObj->GetLayerName();
+	if (!Landscape->HasTargetLayer(LayerFName))
+	{
+		Landscape->Modify();
+		Landscape->AddTargetLayer(LayerFName, FLandscapeTargetLayerSettings(LayerInfoObj));
+	}
+
+	// Keep the transient LandscapeInfo in sync for this session (AddTargetLayer's
+	// PostEditChange may already have refreshed it — guard against a duplicate entry).
+	if (!FindLayerInfoByName(Info, LayerFName.ToString()))
+	{
+		FLandscapeInfoLayerSettings NewLayerSettings(LayerInfoObj, Landscape);
+		Info->Layers.Add(NewLayerSettings);
+	}
 
 	// Update the component layer allowlist
 	Info->UpdateComponentLayerAllowList();
