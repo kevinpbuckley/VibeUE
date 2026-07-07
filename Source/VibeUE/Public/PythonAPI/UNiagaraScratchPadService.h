@@ -467,13 +467,37 @@ public:
 	 * Finalize scratch-pad edits: refresh every stack module that references a scratch script, rebuild the
 	 * system's emitter compiled nodes, recompile, and save. Call this once after a batch of graph edits.
 	 *
-	 * @return True if recompilation succeeded with no errors
+	 * Before compiling, the scratch graphs are validated (e.g. duplicate same-named pins on Map Get/Set
+	 * nodes, which would fire a fatal engine assert inside RequestCompile) — a corrupt graph fails fast
+	 * with a clear error instead of crashing the editor. On compile errors, the real per-script Niagara
+	 * compiler messages are logged and False is returned; fetch them with get_compile_messages.
+	 *
+	 * @return True if validation and recompilation succeeded with no errors
 	 *
 	 * Example:
 	 *   ok = unreal.NiagaraScratchPadService.apply_changes("/Game/VFX/NS_Fx")
+	 *   if not ok:
+	 *       print(unreal.NiagaraScratchPadService.get_compile_messages("/Game/VFX/NS_Fx"))
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (AICallable, DisplayName = "Apply Scratch Changes"))
 	static bool ApplyChanges(const FString& SystemPath);
+
+	/**
+	 * Get the real Niagara compiler diagnostics from the system's last compile — one line per issue,
+	 * formatted "Severity: [Script] Message". Replaces the useless catch-all "System is invalid after
+	 * compilation": walks every script in the system (system spawn/update + each emitter's scripts) and
+	 * reads its last compile status, error summary, and per-node compile events.
+	 *
+	 * @param SystemPath - Full path to the Niagara System asset
+	 * @param bErrorsOnly - True (default) returns only errors; False includes warnings
+	 * @return One formatted line per diagnostic; empty if the last compile was clean
+	 *
+	 * Example:
+	 *   for line in unreal.NiagaraScratchPadService.get_compile_messages("/Game/VFX/NS_Fx"):
+	 *       print(line)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (AICallable, DisplayName = "Get Compile Messages"))
+	static TArray<FString> GetCompileMessages(const FString& SystemPath, bool bErrorsOnly = true);
 
 	// (All internal helpers are file-static in UNiagaraScratchPadService.cpp.)
 };

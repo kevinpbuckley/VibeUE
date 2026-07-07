@@ -159,6 +159,28 @@ public:
 		float Alpha = 1.0f);
 
 	/**
+	 * Set an emitter's simulation target (CPU vs GPU compute).
+	 *
+	 * GPU-only data interfaces (Grid2DCollection, Grid3DCollection, RenderTarget2D, ...)
+	 * make a CPU emitter's system invalid at compile time — switch the emitter to
+	 * "GPU" before wiring them. The system is recompiled after the change; on compile
+	 * errors check NiagaraScratchPadService.get_compile_messages.
+	 *
+	 * @param SystemPath - Full path to the Niagara system
+	 * @param EmitterName - Name of the emitter
+	 * @param SimTarget - "CPU"/"CPUSim" or "GPU"/"GPUComputeSim"
+	 * @return True if the target was set (or already matched) and the recompile ran
+	 *
+	 * Example:
+	 *   unreal.NiagaraEmitterService.set_sim_target("/Game/VFX/NS_TrackPainter", "Painter", "GPU")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraEmitter", meta = (AICallable, DisplayName = "Set Sim Target"))
+	static bool SetSimTarget(
+		const FString& SystemPath,
+		const FString& EmitterName,
+		const FString& SimTarget);
+
+	/**
 	 * Get the color curve keyframes from a ColorFromCurve module.
 	 *
 	 * Returns an array of keyframes, each containing time and RGBA values.

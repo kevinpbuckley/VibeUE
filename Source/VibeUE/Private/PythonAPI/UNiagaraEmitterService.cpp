@@ -477,6 +477,77 @@ bool UNiagaraEmitterService::SetColorTint(
 	return bRGBSet && bAlphaSet;
 }
 
+bool UNiagaraEmitterService::SetSimTarget(
+	const FString& SystemPath,
+	const FString& EmitterName,
+	const FString& SimTarget)
+{
+	UNiagaraSystem* System = LoadNiagaraSystem(SystemPath);
+	if (!System)
+	{
+		UE_LOG(LogTemp, Error, TEXT("UNiagaraEmitterService::SetSimTarget - Failed to load system: %s"), *SystemPath);
+		return false;
+	}
+
+	FNiagaraEmitterHandle* Handle = FindEmitterHandle(System, EmitterName);
+	if (!Handle)
+	{
+		UE_LOG(LogTemp, Error, TEXT("UNiagaraEmitterService::SetSimTarget - Emitter '%s' not found in %s"), *EmitterName, *SystemPath);
+		return false;
+	}
+
+	FVersionedNiagaraEmitterData* EmitterData = Handle->GetEmitterData();
+	if (!EmitterData)
+	{
+		UE_LOG(LogTemp, Error, TEXT("UNiagaraEmitterService::SetSimTarget - Emitter '%s' has no emitter data"), *EmitterName);
+		return false;
+	}
+
+	// Accept "CPU"/"GPU" shorthands as well as the enum names.
+	ENiagaraSimTarget NewTarget;
+	if (SimTarget.Equals(TEXT("CPU"), ESearchCase::IgnoreCase) || SimTarget.Equals(TEXT("CPUSim"), ESearchCase::IgnoreCase))
+	{
+		NewTarget = ENiagaraSimTarget::CPUSim;
+	}
+	else if (SimTarget.Equals(TEXT("GPU"), ESearchCase::IgnoreCase) || SimTarget.Equals(TEXT("GPUComputeSim"), ESearchCase::IgnoreCase))
+	{
+		NewTarget = ENiagaraSimTarget::GPUComputeSim;
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("UNiagaraEmitterService::SetSimTarget - Unknown sim target '%s' — use \"CPU\" or \"GPU\""), *SimTarget);
+		return false;
+	}
+
+	if (EmitterData->SimTarget == NewTarget)
+	{
+		UE_LOG(LogTemp, Log, TEXT("UNiagaraEmitterService::SetSimTarget - Emitter '%s' already targets %s"), *EmitterName, *SimTarget);
+		return true;
+	}
+
+	// The emitter data lives on the versioned UNiagaraEmitter, not the system —
+	// Modify() it so the change transacts and persists.
+	UNiagaraEmitter* Emitter = Handle->GetInstance().Emitter;
+	if (Emitter)
+	{
+		Emitter->Modify();
+	}
+	EmitterData->SimTarget = NewTarget;
+	if (Emitter)
+	{
+		Emitter->MarkPackageDirty();
+	}
+
+	System->Modify();
+	System->MarkPackageDirty();
+	System->RequestCompile(false);
+	System->WaitForCompilationComplete();
+
+	UE_LOG(LogTemp, Log, TEXT("UNiagaraEmitterService::SetSimTarget - Set emitter '%s' sim target to %s and recompiled"), *EmitterName,
+		NewTarget == ENiagaraSimTarget::GPUComputeSim ? TEXT("GPUComputeSim") : TEXT("CPUSim"));
+	return true;
+}
+
 // =================================================================
 // Color Curve Manipulation (Hue Shifting)
 // =================================================================

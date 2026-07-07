@@ -118,8 +118,23 @@ unreal.NiagaraScratchPadService.add_module_output(S, E, MOD, "Particles.Splatted
 unreal.NiagaraScratchPadService.connect_pins(S, E, MOD, HLSL, "Splatted", mapset, "Particles.Splatted")
 
 # 6. Apply + recompile + save (one call)
-unreal.NiagaraScratchPadService.apply_changes(S)
+ok = unreal.NiagaraScratchPadService.apply_changes(S)
+if not ok:
+    # Real per-script compiler diagnostics — no more guessing from "System is invalid"
+    for line in unreal.NiagaraScratchPadService.get_compile_messages(S):
+        print(line)
 ```
+
+### Compile failures are debuggable now
+
+- `apply_changes` **validates the scratch graphs before compiling** (duplicate same-named Map
+  Get/Set pins used to fire a fatal engine assert and crash the editor — now it refuses with an
+  error naming the node/pin) and returns `False` when the compile produced errors.
+- `get_compile_messages(system_path, errors_only=True)` returns the actual Niagara translator
+  messages per script (`"Error: [Emitter/Script] message (node <guid>)"`). Call it after any failed
+  compile instead of bisecting the graph.
+- GPU-only data interfaces on a CPU emitter (below) are the most common cause — fix with
+  `unreal.NiagaraEmitterService.set_sim_target(S, "Emitter", "GPU")`, which recompiles the system.
 
 ### `add_module_input` / `add_module_output` are idempotent — call once per name
 
@@ -167,9 +182,11 @@ If a bare name doesn't resolve, pass the full `Namespace::Op` string.
 > only.** If their inputs/writes appear in an emitter whose Sim Target is **CPU** (the default for a
 > `minimal` emitter), `compile_with_results` returns `success=False` with the generic message
 > `"System is invalid after compilation"` — this is a Niagara constraint, not a service failure. Set
-> the emitter to **GPUComputeSim** before wiring grid/render-target logic. A Custom HLSL bool output
-> wired to a plain `Particles.*` attribute compiles fine on CPU; it's the grid/RT data interfaces that
-> force GPU. When you hit "System is invalid", first check the emitter's Sim Target.
+> the emitter to **GPUComputeSim** before wiring grid/render-target logic:
+> `unreal.NiagaraEmitterService.set_sim_target(S, "Emitter", "GPU")` (accepts "CPU"/"GPU", recompiles).
+> A Custom HLSL bool output wired to a plain `Particles.*` attribute compiles fine on CPU; it's the
+> grid/RT data interfaces that force GPU. When you hit "System is invalid", check
+> `get_compile_messages(S)` and the emitter's Sim Target first.
 
 ### One pattern that fixes most "input not found" errors
 
