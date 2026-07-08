@@ -306,6 +306,11 @@ else:
         print(f"In use by: {ref}")
 ```
 
+> ⚠️ **Deleting levels:** `delete_asset` on a recently-loaded `.umap` can return `True` (asset gone
+> from the registry) yet **leave the package file on disk**, so `delete_directory` on its folder then
+> fails. After deleting level assets, verify the `Content/...` folder on disk and remove leftover
+> `.umap` files manually.
+
 ### Import / Export Textures (VibeUE — crash-safe)
 
 ```python

@@ -101,12 +101,33 @@ for %%V in (%UE_VERSIONS%) do (
     )
 )
 
-echo ERROR: Could not find Unreal Engine installation.
-echo Please ensure Unreal Engine 5.3+ is installed via Epic Games Launcher.
+REM Auto-detection failed (common on installs where the Epic launcher didn't
+REM register a drive, e.g. a non-default install drive) — ask for a manual path
+REM instead of just giving up.
 echo.
+echo Could not auto-detect Unreal Engine.
 echo Checked:
 echo   - Common installation paths for versions: %UE_VERSIONS%
 echo   - Windows Registry (HKLM\SOFTWARE\EpicGames\Unreal Engine)
+echo.
+
+:manual_ue_prompt
+set "UE_PATH_INPUT="
+set /p "UE_PATH_INPUT=Enter the full path to your Unreal Engine install (e.g. D:\Program Files\Epic Games\UE_5.8), or press Enter to abort: "
+if "%UE_PATH_INPUT%"=="" goto :ue_not_found
+if exist "%UE_PATH_INPUT%\Engine\Build\BatchFiles\RunUAT.bat" (
+    set "UE_PATH=%UE_PATH_INPUT%"
+    echo Using manually entered UE path: !UE_PATH!
+    goto :ue_found
+) else (
+    echo That path doesn't look like an Unreal Engine install ^(expected "%UE_PATH_INPUT%\Engine\Build\BatchFiles\RunUAT.bat"^).
+    echo.
+    goto :manual_ue_prompt
+)
+
+:ue_not_found
+echo ERROR: Could not find Unreal Engine installation.
+echo Please ensure Unreal Engine 5.3+ is installed via Epic Games Launcher.
 echo.
 pause
 exit /b 1

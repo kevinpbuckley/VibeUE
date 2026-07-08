@@ -35,10 +35,17 @@ asset_tools = unreal.AssetToolsHelpers.get_asset_tools()
 bp = asset_tools.create_asset(NAME, FOLDER, unreal.Blueprint, factory)
 print("created:", asset_path)
 
-# Add variables. Pure-Python add uses BlueprintEditorLibrary; the canonical path is
-# BlueprintTools.add_variable (blueprint, name, type_name) shown in the header comment.
-unreal.BlueprintEditorLibrary.add_member_variable(bp, "Health",  unreal.BlueprintEditorLibrary.generate_blueprint_variable_type("float"))
-unreal.BlueprintEditorLibrary.add_member_variable(bp, "IsAlive", unreal.BlueprintEditorLibrary.generate_blueprint_variable_type("bool"))
+# Add variables — use the BlueprintTools toolset call from the header comment (canonical).
+# GOTCHA (verified UE 5.8): BlueprintEditorLibrary.generate_blueprint_variable_type does NOT
+# exist, and unreal.EdGraphPinType is script-opaque (no settable pin_category), so
+# add_member_variable can only produce default-typed (int) variables from pure Python.
+# There is no pure-Python typed-variable path — go through the toolset:
+#   call_tool(tool_name="add_variable",
+#             toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
+#             arguments={"blueprint": asset_path, "name": "Health", "type_name": "float"})
+#   call_tool(tool_name="add_variable",
+#             toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
+#             arguments={"blueprint": asset_path, "name": "IsAlive", "type_name": "bool"})
 
 # Compile (pure-Python equivalent of BlueprintTools.compile_blueprint).
 unreal.BlueprintEditorLibrary.compile_blueprint(bp)

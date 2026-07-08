@@ -99,7 +99,7 @@ result = unreal.BlueprintService.build_graph(
     True   # compile after
 )
 
-print(f"Success: {result.b_success}")
+print(f"Success: {result.success}")   # field is `success` (NOT `b_success` — UE Python strips the bool `b` prefix)
 print(f"Nodes: {result.nodes_created}/{result.nodes_created + result.nodes_failed}")
 print(f"Connections: {result.connections_made}/{result.connections_made + result.connections_failed}")
 if result.errors:
@@ -186,7 +186,7 @@ result = unreal.BlueprintService.build_graph(
     ],
     [], True, True
 )
-print(f"Success: {result.b_success}, errors: {result.errors}")
+print(f"Success: {result.success}, errors: {result.errors}")
 ```
 
 **Target (self)** on the Broadcast node connects to `self` by default when the Blueprint is the correct class (`StateTreeTaskBlueprintBase`). You do not need to wire it manually.
@@ -278,11 +278,40 @@ for n in nodes:
 
 Both methods use the same layered (Sugiyama-style) algorithm:
 - **Columns by dependency depth** — layer = longest path over the combined exec **and** data edge graph, so inputs sit to the left and flow rightward into the exec/Set nodes that consume them (a deep `Get → math → Clamp → Set` chain steps across columns instead of stacking in one).
+- **Pure nodes sit next to their consumers** — after layering, pure (exec-less) nodes — getters, math, comparisons — are pulled rightward (ALAP) to the column just left of their nearest consumer. A getter feeding a column-7 node lands in column 6, not column 0 with a graph-spanning wire.
 - **Cycle-safe** — back-edges (a loop body wired back to its loop, recursion, a Reset re-entry) are detected via DFS and excluded from column assignment, so a cycle can never inflate graph width. The back-edge is still drawn as a wire. DFS is seeded from event entry points so the dropped edge is the genuine loop-back.
 - **Crossing reduction** — median ordering sweeps; fan-out siblings (a branch's then/else, a sequence's outputs, a loop's body/completed) keep their output-pin order top-to-bottom.
 - **Straight backbones** — Y aligns each node to the median center of its neighbors, weighted toward **exec** neighbors, so the execution spine stays horizontal while data feeds in from the side. A branch sits at the midpoint of its then/else targets.
 - **Independent components** get separate non-overlapping vertical bands; rows are spaced by node size (pin count).
-- **Idempotent** — running it twice moves nothing. Column width 420 px.
+- **Measured column widths** — column X advances by the widest node actually in each column (estimated from title/pin-label text; min 280 px, gap 140 px) instead of a fixed stride, so skinny getter columns pack tight and wide SpawnActor columns get room.
+- **Comment boxes survive** — comment nodes are never layered; each one is re-fitted around the nodes it contained before the layout moved them.
+- **Idempotent** — running it twice moves nothing.
+
+**Group hints → comment boxes.** Any `build_graph` node descriptor can carry a `"group":"<title>"`
+param. After the layout phase, each distinct title becomes a comment box wrapping its members'
+final positions; the box GUID is returned in `ref_to_node_id` under `"group:<title>"`.
+
+```python
+{"ref": "GetHP", "type": "variable_get", "params": {"variable": "Health", "group": "Damage Math"}}
+```
+
+**Audit the result with `analyze_graph_layout`** — measures the current layout without changing it.
+Returns JSON: `nodeOverlaps` (+pairs), `wireCrossings`, `backwardExecWires` (+list), `longWires`
+(>1500 px), wire lengths, `execWireMeanAbsDeltaY` (0 = straight backbone), graph `bounds`, an
+`issues` array (empty = clean), and per-node bounding boxes `{id, title, x, y, width, height}`.
+
+```python
+import json
+# bool return is folded away by UE Python — the two out-strings come back as a tuple
+report, err = unreal.BlueprintService.analyze_graph_layout(bp_path, "EventGraph")
+data = json.loads(report)
+if data["issues"]:
+    # fix with auto_layout_selected_nodes / set_node_position using data["nodes"] boxes, re-check
+    print(data["issues"])
+```
+
+The loop that produces readable graphs: `build_graph(auto_layout=True)` → `analyze_graph_layout`
+→ fix → re-check. Don't hand-place coordinates first; let the layout run, then correct outliers.
 
 **`auto_layout_graph`** — repositions **every** node in the graph:
 
@@ -343,7 +372,7 @@ result = unreal.BlueprintService.build_graph(
 ### Error Handling
 
 `build_graph` returns `FBuildGraphResult` with detailed audit:
-- `b_success` — `True` only if zero node failures AND zero compile errors
+- `success` — `True` only if zero node failures AND zero compile errors (Python name for `bSuccess`; there is no `b_success` attribute)
 - `nodes_created` / `nodes_failed` — individual node creation results
 - `connections_made` / `connections_failed` — wiring results
 - `defaults_set` / `defaults_failed` — pin default results
