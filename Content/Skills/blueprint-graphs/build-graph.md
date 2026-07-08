@@ -99,7 +99,7 @@ result = unreal.BlueprintService.build_graph(
     True   # compile after
 )
 
-print(f"Success: {result.b_success}")
+print(f"Success: {result.success}")   # field is `success` (NOT `b_success` — UE Python strips the bool `b` prefix)
 print(f"Nodes: {result.nodes_created}/{result.nodes_created + result.nodes_failed}")
 print(f"Connections: {result.connections_made}/{result.connections_made + result.connections_failed}")
 if result.errors:
@@ -186,7 +186,7 @@ result = unreal.BlueprintService.build_graph(
     ],
     [], True, True
 )
-print(f"Success: {result.b_success}, errors: {result.errors}")
+print(f"Success: {result.success}, errors: {result.errors}")
 ```
 
 **Target (self)** on the Broadcast node connects to `self` by default when the Blueprint is the correct class (`StateTreeTaskBlueprintBase`). You do not need to wire it manually.
@@ -372,7 +372,7 @@ result = unreal.BlueprintService.build_graph(
 ### Error Handling
 
 `build_graph` returns `FBuildGraphResult` with detailed audit:
-- `b_success` — `True` only if zero node failures AND zero compile errors
+- `success` — `True` only if zero node failures AND zero compile errors (Python name for `bSuccess`; there is no `b_success` attribute)
 - `nodes_created` / `nodes_failed` — individual node creation results
 - `connections_made` / `connections_failed` — wiring results
 - `defaults_set` / `defaults_failed` — pin default results

@@ -27,7 +27,7 @@ result = bs.build_graph(BP, GRAPH,
     True,  # auto-layout
     True,  # compile after
 )
-print("build_graph success:", result.b_success)
+print("build_graph success:", result.success)   # field is `success` (not b_success)
 print("nodes:", result.nodes_created, "connections:", result.connections_made)
 for e in result.errors:
     print("  ERROR:", e)

@@ -12,7 +12,7 @@ into the engine's `ToolsetRegistry` and are reachable through the MCP tools you 
 There are two ways to act on the editor. Pick the cheap one:
 
 - **`execute_python_code` — your workhorse.** Runs an arbitrary Python script in the editor in **one
-  round-trip**. Every VibeUE service is exposed to Python (`unreal.BlueprintService.add_variable(...)`)
+  round-trip**. Every VibeUE service is exposed to Python (`unreal.BlueprintService.build_graph(...)`)
   and sits next to the whole native `unreal.*` API in the same script. **Batch aggressively** — do a
   whole multi-step task (create + edit + compile + verify) in a single call, and `print()` only what
   you need back.
@@ -122,10 +122,16 @@ sub = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
 # VibeUE services are static classes, called directly:
 info = unreal.BlueprintService.get_blueprint_info("/Game/MyBP")
 
-# Batch a whole task in ONE execute_python_code call, printing evidence as you go:
-bp = unreal.BlueprintService.create_blueprint("BP_Enemy", "Actor", "/Game/Blueprints"); print("CREATED:", bp)
-unreal.BlueprintService.add_variable(bp, "Health", "float"); print("ADDED: Health")
-unreal.BlueprintService.compile_blueprint(bp); print("COMPILED:", bp)
+# Batch a whole task in ONE execute_python_code call, printing evidence as you go.
+# Blueprint create / variables / compile are ENGINE-side (native libs + BlueprintTools toolset),
+# NOT BlueprintService (it owns graphs/components/timelines — see discover_python_class):
+import json
+factory = unreal.BlueprintFactory(); factory.set_editor_property("ParentClass", unreal.Actor)
+bp = unreal.AssetToolsHelpers.get_asset_tools().create_asset("BP_Enemy", "/Game/Blueprints", unreal.Blueprint, factory); print("CREATED:", bp)
+unreal.ToolsetRegistry.execute_tool("editor_toolset.toolsets.blueprint.BlueprintTools", "add_variable",
+    json.dumps({"blueprint": {"refPath": "/Game/Blueprints/BP_Enemy.BP_Enemy"},   # refPath = full object path
+                "name": "Health", "type_name": "float"})); print("ADDED: Health")
+unreal.BlueprintEditorLibrary.compile_blueprint(bp); print("COMPILED: BP_Enemy")
 ```
 
 ---
@@ -189,8 +195,9 @@ When asked to rebuild / relaunch / test, use the project script — not manual `
   after each op so a mid-script failure can be undone.
 - **Idempotent: check before create.** Use the service `*_exists()` (or `unreal.EditorAssetLibrary.does_asset_exist`)
   before creating, to avoid duplicates.
-- **Compile after structure changes.** `unreal.BlueprintService.compile_blueprint(path)` after adding
-  variables/functions/components.
+- **Compile after structure changes.** `unreal.BlueprintEditorLibrary.compile_blueprint(unreal.EditorAssetLibrary.load_asset(path))`
+  after adding variables/functions/components (there is no `BlueprintService.compile_blueprint`;
+  `build_graph`'s compile flag also works for graph edits).
 - **Verify success with evidence.** For Blueprint/Widget/Material/AnimGraph/StateTree edits, a successful
   tool call isn't proof — re-read the asset (`get_nodes_in_graph`, `get_connections`, compile result)
   and report brief evidence.
