@@ -924,7 +924,12 @@ struct FGraphNodeDesc
 	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
 	FString Type;
 
-	/** Type-specific parameters (e.g. "class":"KismetMathLibrary", "function":"Clamp") */
+	/**
+	 * Type-specific parameters (e.g. "class":"KismetMathLibrary", "function":"Clamp").
+	 * Any node type also accepts an optional "group":"<title>" layout hint — after
+	 * BuildGraph's auto-layout phase, each distinct title becomes a comment box
+	 * wrapping its member nodes (GUID returned in RefToNodeId under "group:<title>").
+	 */
 	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
 	TMap<FString, FString> Params;
 };
@@ -3328,6 +3333,32 @@ public:
 		const FString& BlueprintPath,
 		const FString& GraphName,
 		const TArray<FString>& NodeIds,
+		FString& OutError
+	);
+
+	/**
+	 * Measure the visual quality of a graph's current layout WITHOUT changing it.
+	 * Returns a JSON report with: nodeCount, wireCount, execWireCount, nodeOverlaps
+	 * (+ overlappingPairs), wireCrossings, backwardExecWires (+ list), longWires,
+	 * total/avg wire length, execWireMeanAbsDeltaY (0 = perfectly straight exec
+	 * backbone), graph bounds, an "issues" summary array (empty = layout looks
+	 * clean), and per-node bounding boxes {id, title, x, y, width, height} so an
+	 * agent can audit and correct placement.
+	 *
+	 * Intended loop: build_graph(auto_layout=True) → analyze_graph_layout → if
+	 * "issues" is non-empty, fix (auto_layout_selected_nodes / set_node_position)
+	 * and re-check. Comment boxes are ignored (decoration, not structure).
+	 *
+	 * Python Usage (bool return is folded away — the two out-strings come back as a tuple):
+	 *   report, err = unreal.BlueprintService.analyze_graph_layout("/Game/BP_Player", "EventGraph")
+	 *   data = json.loads(report)
+	 *   assert data["nodeOverlaps"] == 0 and data["backwardExecWires"] == 0
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints|BatchGraph")
+	static bool AnalyzeGraphLayout(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		FString& OutReportJson,
 		FString& OutError
 	);
 

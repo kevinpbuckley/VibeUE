@@ -1,59 +1,57 @@
 ---
 name: node-layout
-description: Node layout best practices for Blueprint graphs - constants, execution flow, data flow, branch layout, repositioning Entry/Result nodes
+description: Node layout for Blueprint graphs - auto-layout first, audit with analyze_graph_layout, group hints for comment boxes, when (rarely) to hand-place
 ---
 
 This sub-doc continues from skill.md → "Node Layout Best Practices".
 
 ## Node Layout Best Practices
 
-### Layout Constants
+**Default: let auto-layout do it, then audit.** Do NOT hand-place coordinates as a first resort —
+the C++ layered layout knows about dependency depth, cycles, pure-node adjacency, measured node
+widths, component bands, and comment boxes, and it is idempotent.
 
 ```python
-GRID_H = 200   # Horizontal spacing
-GRID_V = 150   # Vertical spacing
-DATA_ROW = -150  # Data getters above execution
-EXEC_ROW = 0     # Main execution row
+import unreal, json
+
+# 1. Build with auto_layout=True (or run auto_layout_graph on an existing graph)
+result = unreal.BlueprintService.build_graph(bp, "EventGraph", nodes, conns, defaults, True, True)
+
+# 2. Audit — empty "issues" means the layout is clean
+# (bool return is folded away by UE Python — the two out-strings come back as a tuple)
+report, err = unreal.BlueprintService.analyze_graph_layout(bp, "EventGraph")
+data = json.loads(report)
+print(data["issues"])   # e.g. ["2 overlapping node pair(s)", "1 backward exec wire(s) — ..."]
+
+# 3. If issues remain, fix the outliers only, then re-audit
+#    data["nodes"] gives per-node bounding boxes {id, title, x, y, width, height}
+unreal.BlueprintService.auto_layout_selected_nodes(bp, "EventGraph", [bad_id_1, bad_id_2])
 ```
 
-### Execution Flow (Left to Right)
+### What the metrics mean
+
+- `nodeOverlaps` / `overlappingPairs` — must be 0; any overlap is a fail.
+- `backwardExecWires` — exec flowing right-to-left. 0 except deliberate loop-backs (a cycle
+  contributes exactly one: the loop wire).
+- `wireCrossings` — straight-line approximation; a readable graph keeps this well under the
+  wire count.
+- `longWires` — wires over 1500 px; usually a producer far from its consumer.
+- `execWireMeanAbsDeltaY` — 0 means a perfectly horizontal exec backbone.
+
+### Grouping into comment boxes
+
+Add `"group":"<title>"` to any build_graph node descriptor — each distinct title becomes a
+comment box wrapping its members after layout (GUID under `ref_to_node_id["group:<title>"]`).
+Re-running `auto_layout_graph` re-fits existing comment boxes around the nodes they contained.
 
 ```python
-# Entry (0,0) → Branch (200,0) → SetVar (400,0) → Return (800,0)
+{"ref": "GetHP", "type": "variable_get", "params": {"variable": "Health", "group": "Damage Math"}}
 ```
 
-### Data Flow (Above Execution)
+### When to hand-place (`set_node_position`)
 
-Position is supplied per node. With `build_graph`, set `auto_layout=False` and place nodes with
-explicit pixel coordinates in a follow-up `set_node_position` pass (build_graph node descriptors
-don't carry coordinates); the intent is getters above the exec row:
-
-```python
-# Getters at Y=-150, math at Y=-75, execution at Y=0
-# build_graph node types: variable_get @ (200,-150), math @ (200,-75), branch @ (200,0)
-# Create them in one batch, then set_node_position each to the coordinates above.
-```
-
-### Branch Layout (True/False Paths)
-
-```python
-# True path: Y=0 (same row)
-# False path: Y=150 (offset down)
-# Two variable_set nodes (build_graph) — Armor @ (400,0) "True", Health @ (400,150) "False" —
-# placed via set_node_position after creation.
-```
-
-### Reposition Entry/Result (CRITICAL)
-
-Entry and Result nodes are stacked at (0,0) by default:
-
-```python
-nodes = unreal.BlueprintService.get_nodes_in_graph(bp_path, func_name)
-for node in nodes:
-    if "FunctionEntry" in node.node_type:
-        unreal.BlueprintService.set_node_position(bp_path, func_name, node.node_id, 0, 0)
-    elif "FunctionResult" in node.node_type:
-        unreal.BlueprintService.set_node_position(bp_path, func_name, node.node_id, 800, 0)
-```
-
----
+Only for deliberate visual conventions the algorithm can't know — e.g. pinning a FunctionResult
+at a fixed spot, or matching a human-authored graph's style. Layout runs left-to-right from
+roughly (100, 100); exec flows rightward, data feeders sit in the column left of their consumer,
+a branch's True path lands above its False path. If you hand-place, re-run
+`analyze_graph_layout` afterwards to prove you didn't introduce overlaps.

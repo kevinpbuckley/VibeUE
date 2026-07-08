@@ -59,7 +59,8 @@ call_tool(
 )
 ms.compile_material(path)
 unreal.EditorAssetLibrary.save_asset(path)
-mns.layout_expressions(path)   # auto-arrange into clean columns
+# NOTE: there is no layout_expressions API — position nodes at creation time via the
+# editor_x/editor_y args (as above); MaterialNodeService has no graph-wide auto-arrange.
 ```
 Runnable: `scripts/create_material.txt`.
 
