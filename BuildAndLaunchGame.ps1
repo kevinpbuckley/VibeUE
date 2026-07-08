@@ -82,9 +82,28 @@ if (-not $enginePath) {
     }
 }
 
+# Fourth try: ask for a manual path rather than just giving up (the Epic launcher
+# doesn't always register a drive, e.g. an engine installed on a non-default drive).
 if (-not $enginePath) {
-    Write-Host "ERROR: Could not locate Unreal Engine '$engineAssociation'. Set the path manually or ensure it is registered." -ForegroundColor Red
-    exit 1
+    Write-Host "Could not auto-detect Unreal Engine '$engineAssociation' from the registry or common install paths." -ForegroundColor Yellow
+    # Non-interactive session (CI, agent-run builds): fail fast instead of prompting.
+    if ([Console]::IsInputRedirected -or ([Environment]::GetCommandLineArgs() -match '^-NonI')) {
+        Write-Host "ERROR: Non-interactive session - cannot prompt for a path. Set the engine path manually or register the install." -ForegroundColor Red
+        exit 1
+    }
+    while (-not $enginePath) {
+        $manualPath = Read-Host "Enter the full path to your Unreal Engine install (e.g. D:\Program Files\Epic Games\UE_$engineAssociation), or leave blank to abort"
+        if ([string]::IsNullOrWhiteSpace($manualPath)) {
+            Write-Host "ERROR: No Unreal Engine path provided. Aborting." -ForegroundColor Red
+            exit 1
+        }
+        $manualPath = $manualPath.Trim().Trim('"')
+        if (Test-Path (Join-Path $manualPath "Engine\Build\BatchFiles\Build.bat")) {
+            $enginePath = $manualPath
+        } else {
+            Write-Host "That path doesn't look like an Unreal Engine install (expected Engine\Build\BatchFiles\Build.bat under it)." -ForegroundColor Red
+        }
+    }
 }
 
 $buildBat  = Join-Path $enginePath "Engine\Build\BatchFiles\Build.bat"
