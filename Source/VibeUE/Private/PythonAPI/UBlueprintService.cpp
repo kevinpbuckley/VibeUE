@@ -1848,6 +1848,54 @@ bool UBlueprintService::ReparentComponent(
 // VARIABLE MANAGEMENT (Phase 1)
 // ============================================================================
 
+bool UBlueprintService::AddMemberVariable(
+	const FString& BlueprintPath,
+	const FString& VariableName,
+	const FString& VariableType,
+	const FString& DefaultValue,
+	bool bIsArray,
+	const FString& ContainerType)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddMemberVariable: Failed to load blueprint: %s"), *BlueprintPath);
+		return false;
+	}
+
+	for (const FBPVariableDescription& Var : Blueprint->NewVariables)
+	{
+		if (Var.VarName.ToString() == VariableName)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("AddMemberVariable: Variable '%s' already exists in %s"), *VariableName, *BlueprintPath);
+			return false;
+		}
+	}
+
+	FEdGraphPinType PinType;
+	FString ErrorMessage;
+	if (!FBlueprintTypeParser::ParseTypeString(VariableType, PinType, bIsArray, ContainerType, ErrorMessage))
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddMemberVariable: Failed to parse type '%s': %s"), *VariableType, *ErrorMessage);
+		return false;
+	}
+
+	FBPVariableDescription NewVar;
+	NewVar.VarName = FName(*VariableName);
+	NewVar.VarGuid = FGuid::NewGuid();
+	NewVar.VarType = PinType;
+	NewVar.FriendlyName = VariableName;
+	NewVar.Category = FText::FromString(TEXT("Default"));
+	NewVar.DefaultValue = DefaultValue;
+	NewVar.PropertyFlags = CPF_Edit | CPF_BlueprintVisible | CPF_DisableEditOnInstance;
+
+	Blueprint->NewVariables.Add(NewVar);
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+
+	UE_LOG(LogTemp, Log, TEXT("AddMemberVariable: Added variable '%s' of type '%s' to %s"), *VariableName, *VariableType, *BlueprintPath);
+	return true;
+}
+
 bool UBlueprintService::SetVariableDefaultValue(
 	const FString& BlueprintPath,
 	const FString& VariableName,

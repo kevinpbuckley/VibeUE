@@ -204,15 +204,14 @@ st_path = "/Game/StateTree/ST_Cube"
 state_path = "Root/Rotating"
 transition_index = 0  # from get_state_tree_info
 
-# Step 1: The task Blueprint needs a FStateTreeDelegateDispatcher member variable.
-# ⚠️ KNOWN GAP: there is currently no scripted way to CREATE one — BlueprintService.add_variable
-# was removed in the Epic-overlap consolidation, the engine BlueprintTools.add_variable only
-# supports basic types (bool/int/float/.../Vector/Rotator/Transform), and the Python safety
-# layer blocks constructing the EdGraphPinType that BlueprintEditorLibrary.add_member_variable
-# needs for struct types. Until member-variable creation is restored, the dispatcher variable
-# must already exist on the task (added by a human in the editor, or baked into the task class).
-assert unreal.BlueprintService.variable_exists(bp_path, "FinishRotatingDispatcher"), \
-    "Task has no FinishRotatingDispatcher variable — see the known gap above"
+# Step 1: Add the FStateTreeDelegateDispatcher member variable the binding needs.
+# add_member_variable is the struct/object/enum-capable door (the engine's
+# BlueprintTools.add_variable covers basic types only).
+if not unreal.BlueprintService.variable_exists(bp_path, "FinishRotatingDispatcher"):
+    result = unreal.BlueprintService.add_member_variable(bp_path, "FinishRotatingDispatcher", "FStateTreeDelegateDispatcher")
+    assert result, "add_member_variable failed — check the type string"
+    unreal.BlueprintEditorLibrary.compile_blueprint(unreal.EditorAssetLibrary.load_asset(bp_path))
+    unreal.EditorAssetLibrary.save_asset(bp_path)
 
 # Step 2: Set the transition trigger to OnDelegate
 result = unreal.StateTreeService.update_transition(st_path, state_path, transition_index, trigger="OnDelegate")
@@ -243,7 +242,8 @@ In `STT_Rotate`'s Blueprint graph, call the dispatcher to trigger the transition
 
 #### Notes
 
-- `FStateTreeDelegateDispatcher` is a USTRUCT member variable on the task — see the known gap in Step 1: no scripted door currently creates struct-typed member variables.
+- `FStateTreeDelegateDispatcher` is a USTRUCT — use type string `"FStateTreeDelegateDispatcher"` with `add_member_variable`.
+- `bind_transition_to_delegate` matches the task by its **registered class name** (`STT_Rotate_C`) — the Blueprint asset path that `add_task` accepts is NOT accepted here (live-verified).
 - The dispatcher variable must be on the task that is **in the same state** as the `OnDelegate` transition.
 - After `bind_transition_to_delegate`, the compile error about the missing binding will resolve.
 
