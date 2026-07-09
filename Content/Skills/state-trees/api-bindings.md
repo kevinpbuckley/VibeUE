@@ -204,12 +204,15 @@ st_path = "/Game/StateTree/ST_Cube"
 state_path = "Root/Rotating"
 transition_index = 0  # from get_state_tree_info
 
-# Step 1: Add a FStateTreeDelegateDispatcher variable to the Blueprint task
-if not unreal.BlueprintService.variable_exists(bp_path, "FinishRotatingDispatcher"):
-    result = unreal.BlueprintService.add_variable(bp_path, "FinishRotatingDispatcher", "FStateTreeDelegateDispatcher")
-    assert result, "Failed to add FinishRotatingDispatcher variable"
-    unreal.BlueprintService.compile_blueprint(bp_path)
-    unreal.EditorAssetLibrary.save_asset(bp_path)
+# Step 1: The task Blueprint needs a FStateTreeDelegateDispatcher member variable.
+# ⚠️ KNOWN GAP: there is currently no scripted way to CREATE one — BlueprintService.add_variable
+# was removed in the Epic-overlap consolidation, the engine BlueprintTools.add_variable only
+# supports basic types (bool/int/float/.../Vector/Rotator/Transform), and the Python safety
+# layer blocks constructing the EdGraphPinType that BlueprintEditorLibrary.add_member_variable
+# needs for struct types. Until member-variable creation is restored, the dispatcher variable
+# must already exist on the task (added by a human in the editor, or baked into the task class).
+assert unreal.BlueprintService.variable_exists(bp_path, "FinishRotatingDispatcher"), \
+    "Task has no FinishRotatingDispatcher variable — see the known gap above"
 
 # Step 2: Set the transition trigger to OnDelegate
 result = unreal.StateTreeService.update_transition(st_path, state_path, transition_index, trigger="OnDelegate")
@@ -240,7 +243,7 @@ In `STT_Rotate`'s Blueprint graph, call the dispatcher to trigger the transition
 
 #### Notes
 
-- `FStateTreeDelegateDispatcher` is a USTRUCT — use type string `"FStateTreeDelegateDispatcher"` with `add_variable`.
+- `FStateTreeDelegateDispatcher` is a USTRUCT member variable on the task — see the known gap in Step 1: no scripted door currently creates struct-typed member variables.
 - The dispatcher variable must be on the task that is **in the same state** as the `OnDelegate` transition.
 - After `bind_transition_to_delegate`, the compile error about the missing binding will resolve.
 
@@ -379,7 +382,7 @@ unreal.BlueprintService.set_component_property(bp_path, "StateTree", "StateTree"
 
 # CORRECT — sets the FStateTreeReference struct that the editor reads
 unreal.BlueprintService.set_component_property(bp_path, "StateTree", "StateTreeRef", st_path)
-unreal.BlueprintService.compile_blueprint(bp_path)
+unreal.BlueprintEditorLibrary.compile_blueprint(unreal.EditorAssetLibrary.load_asset(bp_path))
 unreal.EditorAssetLibrary.save_asset(bp_path)
 ```
 

@@ -1,6 +1,6 @@
 ---
 name: blueprint-tasks
-description: Create and edit STT_* StateTree Blueprint Tasks - discover parent class, create_blueprint, ReceiveLatentTick / ReceiveLatentEnterState event functions, registered task type names, and extended FStateTree* info fields
+description: Create and edit STT_* StateTree Blueprint Tasks - discover parent class, create via the engine BlueprintFactory, ReceiveLatentTick / ReceiveLatentEnterState event functions, registered task type names, and extended FStateTree* info fields
 ---
 
 This sub-doc continues from skill.md → "Creating & Editing StateTree Blueprint Tasks".
@@ -16,8 +16,9 @@ edit Blueprint internals:
 - Overriding functions (`GetDescription`, `ReceiveLatentTick`, `ReceiveLatentEnterState`, etc.)
 - Adding nodes or wiring pins in a function graph
 
-**Always discover the exact class name first** — the same discovery pattern works for both
-`create_blueprint` and `reparent_blueprint`.
+**Always discover the exact class name first**, then create with the engine's
+`BlueprintFactory` (`BlueprintService.create_blueprint` was removed in the Epic-overlap
+consolidation — Blueprint creation is engine-side now).
 
 ### Discovery Workflow
 
@@ -27,29 +28,27 @@ result = discover_python_module("unreal", name_filter="StateTreeTask")
 # Review returned names — look for the blueprint-safe base class
 # Typical result: "StateTreeTaskBlueprintBase" (short name used directly below)
 
-# Step 2: Use the exact name from discovery — create_blueprint resolves it via object search
-path = unreal.BlueprintService.create_blueprint(
-    "STT_MyTask",               # blueprint name
-    "StateTreeTaskBlueprintBase",  # exact name from Step 1
-    "/Game/StateTree"           # destination folder
-)
-assert path, "create_blueprint returned empty — class name not found or plugin not loaded"
-print(f"Created: {path}")
+# Step 2: Create with the engine BlueprintFactory, ParentClass = the class from Step 1
+factory = unreal.BlueprintFactory()
+factory.set_editor_property("ParentClass", unreal.StateTreeTaskBlueprintBase)
+bp = unreal.AssetToolsHelpers.get_asset_tools().create_asset(
+    "STT_MyTask", "/Game/StateTree", unreal.Blueprint, factory)
+assert bp, "create_asset returned None — folder invalid or an asset with that name already exists"
+print(f"Created: {bp.get_path_name()}")
 ```
 
-The short class name (e.g. `"StateTreeTaskBlueprintBase"`) is resolved via a full object search
-across all loaded modules — the same string works for both `create_blueprint` and `reparent_blueprint`.
-If `create_blueprint` returns an empty string, the class was not found.
+`unreal.<ClassName>` must exist for the discovered short name (it does for any loaded class);
+if Python raises AttributeError, the plugin that defines the class is not loaded.
 
 ### ⚠️ Never Guess the Parent Class — Discover First
 
 ```python
-# WRONG — guessing; creates a plain Actor, not usable as a StateTree task
-unreal.BlueprintService.create_blueprint("STT_MyTask", "Actor", "/Game/StateTree")
+# WRONG — guessing; a plain Actor parent is not usable as a StateTree task
+factory.set_editor_property("ParentClass", unreal.Actor)
 
-# CORRECT — discover exact name, then pass it
+# CORRECT — discover the exact class first, then set it as ParentClass
 # discover_python_module("unreal", name_filter="StateTreeTask") → confirms "StateTreeTaskBlueprintBase"
-unreal.BlueprintService.create_blueprint("STT_MyTask", "StateTreeTaskBlueprintBase", "/Game/StateTree")
+factory.set_editor_property("ParentClass", unreal.StateTreeTaskBlueprintBase)
 ```
 
 ### StateTree Task Blueprint Event Functions
@@ -82,7 +81,7 @@ print(f"Enter node: {enter_id}")
 exit_id = unreal.BlueprintService.add_event_node(bp_path, "EventGraph", "ReceiveExitState", 0, 400)
 print(f"Exit node: {exit_id}")
 
-unreal.BlueprintService.compile_blueprint(bp_path)
+unreal.BlueprintEditorLibrary.compile_blueprint(unreal.EditorAssetLibrary.load_asset(bp_path))
 unreal.EditorAssetLibrary.save_asset(bp_path)
 ```
 
