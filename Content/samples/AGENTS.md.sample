@@ -186,6 +186,8 @@ When asked to rebuild / relaunch / test, use the project script — not manual `
 - `./Plugins/VibeUE/BuildAndLaunchGame.ps1` (stops the editor, builds, relaunches).
 - `-StrictRebuild` for a full plugin recompile under warnings-as-errors; `-Clean` to wipe artifacts;
   `-SkipBuild` to relaunch only.
+- On Linux: `./Plugins/VibeUE/BuildAndLaunchGame.sh --engine /path/to/UE5`.
+  Use `--strict-rebuild`, `--clean`, or `--skip-build` for the corresponding operations.
 
 ---
 

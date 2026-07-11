@@ -46,7 +46,7 @@ _Last verified: 2026-06-21 against the `5-8` branch (UE 5.8)._
 
 ### .uplugin Configuration
 - [x] `EngineVersion` = **"5.8.0"**
-- [x] `WhitelistPlatforms` = Win64 (matches Supported Target Platforms)
+- [x] `WhitelistPlatforms` = Win64 + Linux (matches supported target platforms)
 - [x] `FabURL` set with Listing ID
 - [x] `DocsURL`, `SupportURL`, `CreatedByURL` populated (vibeue.com) — confirm `/support` resolves
 - [x] `Resources/Icon128.png` present (128×128) — placeholder lettermark; swap for final art if desired
@@ -76,7 +76,7 @@ _Last verified: 2026-06-21 against the `5-8` branch (UE 5.8)._
 ### ✅ Passing
 - All shipped text accurate and in English (descriptions + .uplugin updated for 5.8)
 - Plugin file structure correct; no unused assets (orphan header removed)
-- Engine version 5.8 supported; platform Win64
+- Engine version 5.8 supported; platforms Win64 and Linux
 - Documentation accessible (README.md + Resources/ + AGENTS.md.sample)
 - No offensive content; no redistributed Epic/Megascans content
 - EngineVersion + WhitelistPlatforms + FabURL configured

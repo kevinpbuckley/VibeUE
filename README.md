@@ -126,10 +126,15 @@ Epic's guide: **[Unreal MCP in the Unreal Editor](https://dev.epicgames.com/docu
 cd /path/to/YourProject/Plugins
 git clone https://github.com/kevinpbuckley/VibeUE.git
 ```
-Build with the project script (don't run `Build.bat` directly):
+Build with the project script:
 ```
 Plugins/VibeUE/BuildAndLaunchGame.ps1                  # builds + launches the editor
 Plugins/VibeUE/BuildAndLaunchGame.ps1 -StrictRebuild   # full recompile (warnings-as-errors)
+```
+On Linux, use:
+```bash
+Plugins/VibeUE/BuildAndLaunchGame.sh --engine /path/to/UE5
+Plugins/VibeUE/BuildAndLaunchGame.sh --engine /path/to/UE5 --strict-rebuild
 ```
 Then **Edit → Plugins** → enable **VibeUE** and restart. Its services, tools, and skills now register
 onto the same endpoint, alongside the engine's own.
