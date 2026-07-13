@@ -31,7 +31,12 @@ public:
 	}
 
 private:
+	/** Re-adds the bridged VibeUE tools after ModelContextProtocol.RefreshTools drops every registered MCP tool */
+	void HandleMCPRefreshTools();
+
 	// False when running as a commandlet (cook, etc.) — services are skipped to
 	// avoid keeping UnrealEditor-Cmd.exe alive after the commandlet finishes.
 	bool bServicesInitialized = false;
-}; 
+
+	FDelegateHandle OnRefreshToolsHandle;
+};
