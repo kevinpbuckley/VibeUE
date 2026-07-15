@@ -1392,6 +1392,38 @@ public:
 	// ============================================================================
 
 	/**
+	 * Add a member variable to a blueprint, with full type-string support (struct, object,
+	 * enum, and container types — parsed by the same type parser as function local variables).
+	 *
+	 * This is the Epic-less delta of variable creation: the engine's BlueprintTools.add_variable
+	 * covers BASIC types only (bool/int/float/name/string/text/Vector/Rotator/Transform...).
+	 * Use this method when the variable's type is a struct, object, or enum — e.g. the
+	 * FStateTreeDelegateDispatcher member that bind_transition_to_delegate requires.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param VariableName - Name for the new variable (fails if it already exists)
+	 * @param VariableType - Type string, e.g. "float", "FVector", "FStateTreeDelegateDispatcher",
+	 *                       "AActor" (same format as add_function_local_variable)
+	 * @param DefaultValue - Optional default value as a string
+	 * @param bIsArray - Make it an array of VariableType
+	 * @param ContainerType - "", "Array", "Set", or "Map" (overrides bIsArray when set)
+	 * @return True if the variable was added
+	 *
+	 * Example:
+	 *   if not unreal.BlueprintService.variable_exists(bp_path, "FinishRotatingDispatcher"):
+	 *       unreal.BlueprintService.add_member_variable(bp_path, "FinishRotatingDispatcher", "FStateTreeDelegateDispatcher")
+	 *       unreal.BlueprintEditorLibrary.compile_blueprint(unreal.EditorAssetLibrary.load_asset(bp_path))
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints")
+	static bool AddMemberVariable(
+		const FString& BlueprintPath,
+		const FString& VariableName,
+		const FString& VariableType,
+		const FString& DefaultValue = TEXT(""),
+		bool bIsArray = false,
+		const FString& ContainerType = TEXT(""));
+
+	/**
 	 * Set the default value of an existing variable.
 	 *
 	 * @param BlueprintPath - Full path to the blueprint
@@ -3117,8 +3149,7 @@ public:
 	 *
 	 * Example:
 	 *   if not unreal.BlueprintService.variable_exists(bp_path, "Health"):
-	 *       # Add engine-side: BlueprintTools.add_variable via execute_tool (basic types only).
-	 *       pass
+	 *       unreal.BlueprintService.add_member_variable(bp_path, "Health", "float")
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints|Exists")
 	static bool VariableExists(const FString& BlueprintPath, const FString& VariableName);
