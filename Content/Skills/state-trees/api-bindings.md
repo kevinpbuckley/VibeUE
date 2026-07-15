@@ -204,11 +204,13 @@ st_path = "/Game/StateTree/ST_Cube"
 state_path = "Root/Rotating"
 transition_index = 0  # from get_state_tree_info
 
-# Step 1: Add a FStateTreeDelegateDispatcher variable to the Blueprint task
+# Step 1: Add the FStateTreeDelegateDispatcher member variable the binding needs.
+# add_member_variable is the struct/object/enum-capable door (the engine's
+# BlueprintTools.add_variable covers basic types only).
 if not unreal.BlueprintService.variable_exists(bp_path, "FinishRotatingDispatcher"):
-    result = unreal.BlueprintService.add_variable(bp_path, "FinishRotatingDispatcher", "FStateTreeDelegateDispatcher")
-    assert result, "Failed to add FinishRotatingDispatcher variable"
-    unreal.BlueprintService.compile_blueprint(bp_path)
+    result = unreal.BlueprintService.add_member_variable(bp_path, "FinishRotatingDispatcher", "FStateTreeDelegateDispatcher")
+    assert result, "add_member_variable failed — check the type string"
+    unreal.BlueprintEditorLibrary.compile_blueprint(unreal.EditorAssetLibrary.load_asset(bp_path))
     unreal.EditorAssetLibrary.save_asset(bp_path)
 
 # Step 2: Set the transition trigger to OnDelegate
@@ -240,7 +242,8 @@ In `STT_Rotate`'s Blueprint graph, call the dispatcher to trigger the transition
 
 #### Notes
 
-- `FStateTreeDelegateDispatcher` is a USTRUCT — use type string `"FStateTreeDelegateDispatcher"` with `add_variable`.
+- `FStateTreeDelegateDispatcher` is a USTRUCT — use type string `"FStateTreeDelegateDispatcher"` with `add_member_variable`.
+- `bind_transition_to_delegate` matches the task by its **registered class name** (`STT_Rotate_C`) — the Blueprint asset path that `add_task` accepts is NOT accepted here (live-verified).
 - The dispatcher variable must be on the task that is **in the same state** as the `OnDelegate` transition.
 - After `bind_transition_to_delegate`, the compile error about the missing binding will resolve.
 
@@ -379,7 +382,7 @@ unreal.BlueprintService.set_component_property(bp_path, "StateTree", "StateTree"
 
 # CORRECT — sets the FStateTreeReference struct that the editor reads
 unreal.BlueprintService.set_component_property(bp_path, "StateTree", "StateTreeRef", st_path)
-unreal.BlueprintService.compile_blueprint(bp_path)
+unreal.BlueprintEditorLibrary.compile_blueprint(unreal.EditorAssetLibrary.load_asset(bp_path))
 unreal.EditorAssetLibrary.save_asset(bp_path)
 ```
 

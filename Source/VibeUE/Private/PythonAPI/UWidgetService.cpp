@@ -755,6 +755,41 @@ namespace
 		return Property->ImportText_Direct(*PropertyValue, ValuePtr, Object, PPF_None) != nullptr;
 	}
 
+	// UMG "optional override" values (USizeBox::WidthOverride/HeightOverride/MinDesiredWidth/…,
+	// UImage aspect-ratio overrides, etc.) are inert unless their companion bOverride_<Name> bool
+	// is also set — that bool is the "checkbox" the UMG designer ticks for you. Writing only the
+	// value field silently no-ops: the layout engine keeps ignoring it (e.g. a SizeBox width that
+	// never clamps, so the box fills its parent). Whenever we set such a value directly on an
+	// object, raise the matching bOverride_ companion so the intent actually applies. (issue #508)
+	void RaiseOverrideCompanionIfPresent(UObject* Object, const FProperty* ValueProperty)
+	{
+		if (!Object || !ValueProperty)
+		{
+			return;
+		}
+
+		// Only direct object members carry a bOverride_ companion; struct-nested fields
+		// (e.g. WidgetStyle.Normal.TintColor) don't, and GetOwnerClass() is null for those.
+		UClass* OwnerClass = ValueProperty->GetOwnerClass();
+		if (!OwnerClass || !Object->GetClass()->IsChildOf(OwnerClass))
+		{
+			return;
+		}
+
+		const FString CompanionName = FString(TEXT("bOverride_")) + ValueProperty->GetName();
+		FBoolProperty* OverrideFlag = FindFProperty<FBoolProperty>(Object->GetClass(), *CompanionName);
+		if (!OverrideFlag)
+		{
+			return;
+		}
+
+		void* FlagPtr = OverrideFlag->ContainerPtrToValuePtr<void>(Object);
+		if (!OverrideFlag->GetPropertyValue(FlagPtr))
+		{
+			OverrideFlag->SetPropertyValue(FlagPtr, true);
+		}
+	}
+
 	FString GetLastPathSegment(const FString& PropertyPath)
 	{
 		FString Left;
@@ -1880,6 +1915,10 @@ bool UWidgetService::SetProperty(
 		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::SetProperty: Failed to parse value '%s' for property '%s'"), *PropertyValue, *PropertyName);
 		return false;
 	}
+
+	// An override value alone is ignored unless its bOverride_ companion is set — flip it so the
+	// value takes effect (e.g. SizeBox WidthOverride actually clamps instead of no-op'ing).
+	RaiseOverrideCompanionIfPresent(Resolved.TargetObject, Resolved.Property);
 
 	Resolved.TargetObject->Modify();
 	// If we wrote to the widget's slot (layout/alignment/z-order), the change is structural —

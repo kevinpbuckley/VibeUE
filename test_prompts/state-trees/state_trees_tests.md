@@ -1024,3 +1024,86 @@ What is the Patrol task's "WaitTime" set to right now in /Game/AI/PatrolAI?
 Return the literal value plus, if it's a binding, the source path.
 ```
 
+
+---
+
+# StateTree Tests — Dispatcher Member Variable + OnDelegate End-to-End
+
+`bind_transition_to_delegate` requires a `FStateTreeDelegateDispatcher` member variable on the
+task Blueprint. Struct-typed member variables are created with
+`unreal.BlueprintService.add_member_variable` — the engine's `BlueprintTools.add_variable`
+rejects struct types. This section builds the whole flow from nothing and probes the refusal
+paths. Everything lives under /Game/StateTree/Tests; delete pre-existing test assets silently.
+
+---
+
+### 1. Create the task Blueprint
+
+```
+Create a StateTree task Blueprint called STT_DelegateProbe in /Game/StateTree/Tests.
+Discover the blueprint-safe parent class first — do not guess it. (Expected: created
+engine-side via BlueprintFactory with ParentClass=StateTreeTaskBlueprintBase +
+AssetTools.create_asset; BlueprintService.create_blueprint no longer exists.)
+```
+
+---
+
+### 2. Add the dispatcher member variable
+
+```
+Add a member variable "ProbeFinished" of type FStateTreeDelegateDispatcher to
+STT_DelegateProbe, compile, and save. Verify by reading the variable back with its type.
+(Expected: add_member_variable returns True; the variable read-back shows the
+FStateTreeDelegateDispatcher struct type.)
+```
+
+---
+
+### 3. Duplicate-name refusal
+
+```
+Try adding "ProbeFinished" to STT_DelegateProbe a second time. (Expected:
+add_member_variable returns False; the variable list still contains exactly one
+"ProbeFinished".)
+```
+
+---
+
+### 4. Unknown-type refusal
+
+```
+Try adding a variable "Bogus" of type "FTotallyNotARealStruct" to STT_DelegateProbe.
+(Expected: add_member_variable returns False with a type-parse error in the log; no
+variable was added.)
+```
+
+---
+
+### 5. Container types
+
+```
+Add an array member variable "Waypoints" of element type FVector to STT_DelegateProbe,
+compile, and verify the read-back reports an array of FVector.
+```
+
+---
+
+### 6. Wire the OnDelegate transition end-to-end
+
+```
+Create a StateTree ST_DelegateProbe in /Game/StateTree/Tests with states Root/Working and
+Root/Done, using STT_DelegateProbe as the Working state's task. Set the Working → Done
+transition trigger to OnDelegate and bind it to the task's "ProbeFinished" dispatcher.
+Compile the StateTree. (Expected: bind_transition_to_delegate matches the task by its
+REGISTERED CLASS NAME "STT_DelegateProbe_C" — the asset path that add_task accepts is not
+accepted there; the StateTree compiles clean with no missing-binding error.)
+```
+
+---
+
+### 7. Cleanup
+
+```
+Delete ST_DelegateProbe and STT_DelegateProbe and verify both are gone.
+```
+

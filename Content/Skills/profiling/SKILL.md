@@ -44,7 +44,10 @@ The whole API is small — read the live signatures once with
 
 | Method | Purpose |
 |--------|---------|
-| `frame_timing()` | Game/Render/GPU/RHI thread ms + a CPU-vs-GPU `bound` verdict + a `hint`. **Run FIRST.** |
+| `frame_timing(target_fps=60.0)` | Game/Render/GPU/RHI thread ms + a CPU-vs-GPU `bound` verdict + a `hint`, plus a per-thread `budget` breakdown gated against `target_fps` (`budget.meets_target` PASS/FAIL). **Run FIRST.** |
+| `force_hitch(thread="game", ms=250.0, frames=1)` | Validation helper — deliberately stall a KNOWN thread (`"game"`/`"render"`/`"both"`/`"gpu"`) to confirm the verdict fires. CPU paths are self-measuring: validate from the SAME response (`observed_peak_*_ms`, `verdict_matched_expect`) — do NOT follow up with `frame_timing`. Only the async `gpu` path is read back on a following frame. Clamped (≤5000 ms, ~10 s total) for safety. |
+| `report(title=..., source="both", file="")` | Write a self-contained, shareable HTML report (live verdict + budget + analyse stats + a data-driven "fix in this order" list) to `Saved/VibeUE/Performance/report_<timestamp>.html`. |
+| `start_pie()` / `stop_pie()` | In-process PIE so `frame_timing`/`force_hitch` read a live game world (PIE starts on the next tick — read on a following frame, `pie_running` flips true). Quick checks only; prefer `start_standalone` when the numbers must be trusted. |
 | `start_trace(name="mcp_capture", channels="")` | Start an Insights trace to file (default channel set if `channels` empty). |
 | `stop_trace()` | Stop the active trace; returns the trace file path + size. |
 | `get_trace_status()` | Whether a trace is active and which channels are enabled. |
@@ -100,6 +103,11 @@ Read `frame_timing()` against this table: if `game_thread_ms = 25`, you are hard
 16.66 ms; to hit 120 FPS, under 8.33 ms. Always state the bottleneck thread's ms next to the
 target budget so the gap is explicit (e.g. "game thread 25 ms vs 16.66 ms for 60 FPS → must
 cut 8.3 ms on the game thread").
+
+You don't have to do this arithmetic yourself: `frame_timing(target_fps=...)` returns the gate —
+the `budget` block carries each thread's headroom / `over_budget` against the per-frame budget and
+a single `budget.meets_target` PASS/FAIL you can assert on (CI-style perf checks included). To
+prove the verdict logic works against a known ground truth, use `force_hitch` (see the API table).
 
 ## 🛠️ CVars tune the renderer — they do NOT fix the game thread
 

@@ -218,9 +218,17 @@ unreal.EditorAssetLibrary.rename_asset(
 
 ### Creating Widget Blueprints
 
-`unreal.BlueprintService.create_blueprint(name, "UserWidget", path)` creates a proper
-`WidgetBlueprint` (it detects UserWidget-derived parents and uses the UMG factory). For designing
-the widget afterwards (hierarchy, slots, bindings), load the **umg-widgets** skill.
+Use the engine's `WidgetBlueprintFactory` — a plain `BlueprintFactory` with a UserWidget
+parent creates a regular Blueprint, not a `WidgetBlueprint` (the removed
+`BlueprintService.create_blueprint` used to pick the UMG factory automatically):
+
+```python
+factory = unreal.WidgetBlueprintFactory()
+factory.set_editor_property("ParentClass", unreal.UserWidget)
+wbp = unreal.AssetToolsHelpers.get_asset_tools().create_asset("WBP_Menu", "/Game/UI", None, factory)
+```
+
+For designing the widget afterwards (hierarchy, slots, bindings), load the **umg-widgets** skill.
 
 ---
 
