@@ -429,6 +429,35 @@ Verify the anchor settings are correct.
 
 ---
 
+## Override-Value Test (bOverride_ companions)
+
+UMG "optional override" values (SizeBox WidthOverride/HeightOverride/MinDesiredWidth, image
+aspect-ratio overrides, …) are inert unless their companion bOverride_ bool is set — setting the
+value through the widget property API must raise the companion automatically, or the value
+silently no-ops (issue #508).
+
+---
+
+Add a SizeBox called "ClampBox" to MainContainer, and put a button inside it.
+
+---
+
+Set ClampBox's width override to 300 and height override to 120 through the widget property API.
+
+---
+
+Read back WidthOverride, HeightOverride, AND the companion flags bOverride_WidthOverride and bOverride_HeightOverride. (Expected: values 300/120 and BOTH companion booleans true — if a companion stayed false, the SizeBox is silently ignoring the value and filling its parent, which is the regression.)
+
+---
+
+Set ClampBox's minimum desired width to 150 and verify bOverride_MinDesiredWidth flipped to true as well.
+
+---
+
+Remove ClampBox and verify the hierarchy is back to how it was.
+
+---
+
 ## Cleanup Test
 
 Delete TestWidget2 completely.

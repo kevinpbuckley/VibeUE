@@ -127,6 +127,23 @@ call_tool("add_object_variable", "editor_toolset.toolsets.blueprint.BlueprintToo
      "object_class": {"refPath": "/Script/Niagara.NiagaraSystem"}})
 ```
 
+### Struct/object/enum types from Python — `add_member_variable` (VibeUE delta)
+
+From inside `execute_python_code`, `unreal.BlueprintService.add_member_variable(bp_path, name,
+type_string, default="", is_array=False, container_type="")` creates a member variable with full
+type-string support — structs, objects, enums, and containers — in one batchable Python call
+(no `call_tool` round-trip). It takes the same type strings as `add_function_local_variable`
+(`"float"`, `"FVector"`, `"FStateTreeDelegateDispatcher"`, `"AActor"`):
+
+```python
+unreal.BlueprintService.add_member_variable(bp_path, "FinishRotatingDispatcher", "FStateTreeDelegateDispatcher")
+unreal.BlueprintService.add_member_variable(bp_path, "Waypoints", "FVector", "", True)  # FVector array
+unreal.BlueprintEditorLibrary.compile_blueprint(unreal.EditorAssetLibrary.load_asset(bp_path))
+```
+
+Returns `False` (with the reason in the log) on a duplicate name or an unresolvable type string.
+Compile after adding — the variable is registered but the class is only rebuilt on compile.
+
 ### ⚠️ Adding a function graph — engine `BlueprintTools.add_function_graph`
 
 Creating a function graph moved to the engine toolset (`create_function` / `add_function` on
@@ -276,17 +293,16 @@ To add a StateTree delegate dispatcher variable to a Blueprint task (e.g. `STT_*
 
 ```python
 # Use type "FStateTreeDelegateDispatcher" — NOT "EventDispatcher".
-# add_variable is the engine BlueprintTools toolset call (BlueprintService.add_variable was cut):
-call_tool(
-    tool_name="add_variable",
-    toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
-    arguments={"blueprint": bp_path, "name": "FinishRotatingDispatcher", "type_name": "FStateTreeDelegateDispatcher"},
-)
+# The engine's BlueprintTools.add_variable REJECTS this type ("Unknown type" — basic types
+# only, live-verified); use the VibeUE struct-capable door instead:
+unreal.BlueprintService.add_member_variable(bp_path, "FinishRotatingDispatcher", "FStateTreeDelegateDispatcher")
+unreal.BlueprintEditorLibrary.compile_blueprint(unreal.EditorAssetLibrary.load_asset(bp_path))
 ```
 
 `"EventDispatcher"` is a Blueprint-only concept and is not a valid type string. The correct type
 for StateTree delegate transitions is the USTRUCT `FStateTreeDelegateDispatcher`.
-After adding this variable, use `bind_transition_to_delegate` on the StateTree to link it to a transition.
+After adding this variable, use `bind_transition_to_delegate` on the StateTree to link it to a
+transition — it matches the task by **registered class name** (`STT_Rotate_C`), not asset path.
 
 ### Event Dispatchers (regular Blueprint multicast delegates)
 
