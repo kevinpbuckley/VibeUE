@@ -149,7 +149,7 @@ ModelContextProtocol.GenerateClientConfig ClaudeCode
 VibeUE.GenerateAgentConfig ClaudeCode
 ```
 This writes the guide to the correct file for your agent — `CLAUDE.md` (Claude Code), `GEMINI.md`
-(Gemini), `AGENTS.md` (Codex / Cursor), or `.github/copilot-instructions.md` (Copilot) — or pass
+(Gemini), `AGENTS.md` (Codex / Hermes / Cursor), or `.github/copilot-instructions.md` (Copilot) — or pass
 `All` to write CLAUDE.md + GEMINI.md + AGENTS.md at once. It resolves the plugin location
 automatically, so it works whether VibeUE was installed from **FAB** or **Git**. The guide goes in a
 managed block, so re-run any time to refresh without disturbing your own notes. Pass `import` to link

@@ -122,7 +122,7 @@ static FAutoConsoleCommandWithArgsAndOutputDevice TestToolCommand(
 // path is the whole reason this command exists.
 //
 // Each agent expects a different memory file, and only Claude Code (CLAUDE.md) and Gemini
-// CLI (GEMINI.md) resolve `@path` imports — Codex (AGENTS.md), Cursor (AGENTS.md) and
+// CLI (GEMINI.md) resolve `@path` imports — Codex/Hermes (AGENTS.md), Cursor (AGENTS.md) and
 // Copilot do not. So the default COPIES the guide in (universal); pass "import" to instead
 // write a one-line `@<resolved sample path>` for the two agents that support it (others
 // fall back to copy). Copilot also reads AGENTS.md/CLAUDE.md/GEMINI.md, so "All" covers it.
@@ -173,7 +173,7 @@ static void GenerateVibeUEAgentConfig(const TArray<FString>& Args, FOutputDevice
 	{
 		Targets.Add(TPair<FString, bool>(TEXT(".github/copilot-instructions.md"), false));
 	}
-	else if (Client == TEXT("codex") || Client == TEXT("cursor") || Client == TEXT("agents") || Client == TEXT("agent"))
+	else if (Client == TEXT("codex") || Client == TEXT("hermes") || Client == TEXT("cursor") || Client == TEXT("agents") || Client == TEXT("agent"))
 	{
 		Targets.Add(TPair<FString, bool>(TEXT("AGENTS.md"), false));
 	}
@@ -181,11 +181,11 @@ static void GenerateVibeUEAgentConfig(const TArray<FString>& Args, FOutputDevice
 	{
 		Targets.Add(TPair<FString, bool>(TEXT("CLAUDE.md"), true));   // Claude Code
 		Targets.Add(TPair<FString, bool>(TEXT("GEMINI.md"), true));   // Gemini CLI
-		Targets.Add(TPair<FString, bool>(TEXT("AGENTS.md"), false));  // Codex, Cursor (and Copilot reads it too)
+		Targets.Add(TPair<FString, bool>(TEXT("AGENTS.md"), false));  // Codex, Hermes, Cursor (and Copilot reads it too)
 	}
 	else
 	{
-		Ar.Logf(TEXT("VibeUE.GenerateAgentConfig: unknown client '%s'. Use: ClaudeCode | Gemini | Codex | Cursor | Copilot | All."), *Client);
+		Ar.Logf(TEXT("VibeUE.GenerateAgentConfig: unknown client '%s'. Use: ClaudeCode | Gemini | Codex | Hermes | Cursor | Copilot | All."), *Client);
 		return;
 	}
 
@@ -279,14 +279,15 @@ static void GenerateVibeUEAgentConfig(const TArray<FString>& Args, FOutputDevice
 		}
 	}
 
+	const FString McpConfigClient = (Client == TEXT("hermes")) ? TEXT("Codex") : ((Args.Num() > 0) ? Args[0] : TEXT("All"));
 	Ar.Logf(TEXT("VibeUE.GenerateAgentConfig: done (source: %s). Tip: also run 'ModelContextProtocol.GenerateClientConfig %s' to write .mcp.json."),
-		*SamplePath, (Args.Num() > 0) ? *Args[0] : TEXT("All"));
+		*SamplePath, *McpConfigClient);
 }
 
 static FAutoConsoleCommandWithArgsAndOutputDevice GenerateAgentConfigCommand(
 	TEXT("VibeUE.GenerateAgentConfig"),
 	TEXT("Write the VibeUE agent guide to the project root from the bundled sample. ")
-	TEXT("Usage: VibeUE.GenerateAgentConfig [ClaudeCode|Gemini|Codex|Cursor|Copilot|All] [import]. ")
+	TEXT("Usage: VibeUE.GenerateAgentConfig [ClaudeCode|Gemini|Codex|Hermes|Cursor|Copilot|All] [import]. ")
 	TEXT("Default All -> CLAUDE.md + GEMINI.md + AGENTS.md. 'import' writes a one-line @import for Claude/Gemini (others copy)."),
 	FConsoleCommandWithArgsAndOutputDeviceDelegate::CreateStatic(GenerateVibeUEAgentConfig)
 );
