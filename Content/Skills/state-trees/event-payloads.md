@@ -72,3 +72,16 @@ result = unreal.BlueprintService.build_graph(
   new nodes in between.
 - Not passing the `struct` param to `instanced_struct` — the `Value` pin stays a wildcard and
   connections will fail at compile time.
+
+## Tag-only events, and sending from Python (live-verified 2026-07-03)
+
+- `FGameplayTag` **cannot be constructed from Python** (TagName is read-only; the constructor
+  routes to MakeLiteralGameplayTag which takes a tag, not a name). To send a tagged StateTree
+  event from a script, author a one-shot Blueprint chain instead: custom event ->
+  `make_struct` (`/Script/StateTreeModule.StateTreeEvent`, full path required) -> set the `Tag`
+  pin default to `(TagName="My.Tag")` -> `SendStateTreeEvent` on the StateTree component — then
+  trigger it with `controller_or_actor.call_method("MyCustomEvent")`.
+- An `OnEvent` transition's tag must be a **registered** gameplay tag before
+  `update_transition(..., event_tag=...)` sticks — otherwise the compile keeps failing with
+  "On Event Transition requires at least tag or payload". Register via the engine
+  `GameplayTagsToolset.AddTag` (`tagName`, `tagSource="DefaultGameplayTags.ini"`).

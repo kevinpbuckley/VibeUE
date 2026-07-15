@@ -1508,7 +1508,7 @@ public:
 	 * @param BlueprintPath - Full path to the blueprint
 	 * @param DispatcherName - Name of the event dispatcher
 	 * @param ParameterName - Name of the new parameter
-	 * @param ParameterType - Type string (same format as add_variable)
+	 * @param ParameterType - Type string (same type-string format as add_function_local_variable)
 	 * @param bIsArray - Whether the parameter is an array
 	 * @param ContainerType - Container type: "Array", "Set", "Map", or empty
 	 * @return True if successful
@@ -1590,7 +1590,7 @@ public:
 	 * @param BlueprintPath - Full path to the blueprint
 	 * @param FunctionName - Name of the function
 	 * @param ParameterName - Name of the parameter
-	 * @param ParameterType - Type string (same format as AddVariable)
+	 * @param ParameterType - Type string (same type-string format as add_function_local_variable)
 	 * @param bIsOutput - Whether this is an output parameter
 	 * @param bIsReference - Whether this is passed by reference
 	 * @param DefaultValue - Default value as a string (optional)
@@ -1621,7 +1621,7 @@ public:
 	 * @param BlueprintPath - Full path to the blueprint
 	 * @param FunctionName - Name of the function
 	 * @param VariableName - Name of the local variable
-	 * @param VariableType - Type string (same format as AddVariable)
+	 * @param VariableType - Type string (same type-string format as add_function_local_variable)
 	 * @param DefaultValue - Default value as a string (optional)
 	 * @param bIsArray - Whether this is an array type
 	 * @param ContainerType - Container type: "Array", "Set", "Map", or empty
@@ -2044,7 +2044,7 @@ public:
 	 * @param GraphName - Name of the graph containing the node (e.g. "EventGraph")
 	 * @param NodeId - GUID of the Custom Event node
 	 * @param ParameterName - Name of the new input pin
-	 * @param ParameterType - Type string (same format as add_variable, e.g. "float", "FRotator", "AActor")
+	 * @param ParameterType - Type string (same type-string format as add_function_local_variable, e.g. "float", "FRotator", "AActor")
 	 * @param bIsArray - Whether the parameter is an array
 	 * @param ContainerType - Container type: "Array", "Set", "Map", or empty
 	 * @return True if the pin was added
@@ -2093,7 +2093,7 @@ public:
 	 * @param NodeId - GUID of the Custom Event node
 	 * @param ParameterName - Current name of the input pin to modify
 	 * @param NewName - New name for the pin, or empty to keep the current name
-	 * @param NewType - New type string (same format as add_variable), or empty to keep the current type
+	 * @param NewType - New type string (same type-string format as add_function_local_variable), or empty to keep the current type
 	 * @param bIsArray - Whether the new type is an array (only used when NewType is provided)
 	 * @param ContainerType - Container type for the new type: "Array", "Set", "Map", or empty (only used when NewType is provided)
 	 * @return True if the pin was found and modified
@@ -3102,7 +3102,8 @@ public:
 	 *
 	 * Example:
 	 *   if not unreal.BlueprintService.blueprint_exists("/Game/Blueprints/BP_Enemy"):
-	 *       unreal.BlueprintService.create_blueprint("BP_Enemy", "Actor", "/Game/Blueprints")
+	 *       # Create engine-side: BlueprintFactory (set ParentClass) + AssetTools.create_asset.
+	 *       pass
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints|Exists")
 	static bool BlueprintExists(const FString& BlueprintPath);
@@ -3116,7 +3117,8 @@ public:
 	 *
 	 * Example:
 	 *   if not unreal.BlueprintService.variable_exists(bp_path, "Health"):
-	 *       unreal.BlueprintService.add_variable(bp_path, "Health", "float")
+	 *       # Add engine-side: BlueprintTools.add_variable via execute_tool (basic types only).
+	 *       pass
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints|Exists")
 	static bool VariableExists(const FString& BlueprintPath, const FString& VariableName);

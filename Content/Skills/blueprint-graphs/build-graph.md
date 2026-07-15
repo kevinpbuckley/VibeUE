@@ -107,6 +107,21 @@ if result.errors:
         print(f"  ERROR: {e}")
 ```
 
+### ⚠️ Hard-won gotchas (live-verified 2026-07-03)
+
+- **`make_struct` needs the FULL struct path for engine structs** — `"FStateTreeEvent"` and
+  `"StateTreeEvent"` both fail with "Struct type not found"; `"/Script/StateTreeModule.StateTreeEvent"`
+  works. Short names only resolve for user-defined structs.
+- **`build_graph` returns `None` on ANY partial failure** (e.g. 2/3 nodes created) — it does NOT
+  return a result with per-item errors. Check the editor log (`LogTemp: BuildGraph: ...`) for which
+  node/connection/default failed, then repair incrementally with `get_nodes_in_graph` +
+  `connect_nodes` + `set_node_pin_value`.
+- **Pin defaults on existing nodes**: use `set_node_pin_value(bp, graph, node_id, pin, value)` —
+  struct pins accept serialized text, e.g. a GameplayTag pin takes `(TagName="My.Tag")`.
+- The engine `BlueprintTools.compile_blueprint` tool (via `call_tool`) requires the FULL object
+  path (`/Game/X/BP_Foo.BP_Foo`); from Python prefer
+  `unreal.BlueprintEditorLibrary.compile_blueprint(loaded_bp)`.
+
 ### Example: Branch with Math
 
 ```python
