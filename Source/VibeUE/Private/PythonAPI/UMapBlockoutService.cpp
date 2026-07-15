@@ -234,7 +234,7 @@ FMapBlockoutLandcoverGrid UMapBlockoutService::LoadLandcoverGridJson(const FStri
 	}
 
 	const int32 N = Out.GridN;
-	for (const auto& Pair : Root->Values)
+	for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Root->Values)
 	{
 		if (Pair.Key == TEXT("N") || Pair.Key == TEXT("lo") || Pair.Key == TEXT("hi") || Pair.Key == TEXT("landscape")) { continue; }
 		const TArray<TSharedPtr<FJsonValue>>* Rows = nullptr;
