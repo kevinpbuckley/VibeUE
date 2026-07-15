@@ -13,6 +13,7 @@
 #include "ToolsetRegistry/UToolsetRegistry.h"
 #include "ToolsetRegistry/ToolsetDefinition.h"
 #include "Core/VibeUEMCPToolBridge.h"
+#include "IModelContextProtocolModule.h"
 #include "UObject/UObjectHash.h"
 #include "UObject/UObjectIterator.h"
 #include "Utils/VibeUEPaths.h"
@@ -380,10 +381,37 @@ void FModule::RegisterToolsets()
 
 	// Dynamic FToolRegistry tools -> Epic's MCP endpoint (independent of ToolsetRegistry).
 	VibeUEMCPToolBridge::RegisterAll();
+
+	// ModelContextProtocol.RefreshTools drops every registered MCP tool and broadcasts
+	// OnRefreshTools for providers to re-add themselves (Epic's editor module does this for
+	// ToolsetRegistry adapters, so the service toolsets above survive on their own). Without
+	// this subscription the bridged tools stay gone until the next editor restart.
+	if (IModelContextProtocolModule* MCPModule = IModelContextProtocolModule::Get();
+		MCPModule && !OnRefreshToolsHandle.IsValid())
+	{
+		OnRefreshToolsHandle = MCPModule->OnRefreshTools().AddRaw(this, &FModule::HandleMCPRefreshTools);
+	}
+}
+
+void FModule::HandleMCPRefreshTools()
+{
+	// RefreshTools already emptied the MCP module's tool list; UnregisterAll() only clears
+	// the bridge's now-stale tracking list so RegisterAll() starts from a clean slate.
+	VibeUEMCPToolBridge::UnregisterAll();
+	VibeUEMCPToolBridge::RegisterAll();
 }
 
 void FModule::UnregisterToolsets()
 {
+	if (OnRefreshToolsHandle.IsValid())
+	{
+		if (IModelContextProtocolModule* MCPModule = IModelContextProtocolModule::Get())
+		{
+			MCPModule->OnRefreshTools().Remove(OnRefreshToolsHandle);
+		}
+		OnRefreshToolsHandle.Reset();
+	}
+
 	VibeUEMCPToolBridge::UnregisterAll();
 
 	if (UToolsetRegistry::IsAvailable())
