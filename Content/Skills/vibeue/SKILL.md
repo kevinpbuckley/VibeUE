@@ -16,24 +16,41 @@ code** in a domain, or you will guess wrong property names and spiral into disco
 Skills are discovered and read through the engine `AgentSkillToolset`, invoked with `call_tool`:
 
 ```
-# List every available skill (name + description)
-call_tool(toolset="ToolsetRegistry.AgentSkillToolset", tool="ListSkills")
+# List every available skill (full path → description)
+call_tool(toolset_name="ToolsetRegistry.AgentSkillToolset", tool_name="ListSkills", arguments={})
 
-# Read one or more skills (returns their SKILL.md content + sub-doc list)
-call_tool(toolset="ToolsetRegistry.AgentSkillToolset", tool="GetSkills", args={"skills": ["pcg", "materials"]})
+# Read one or more skills — GetSkills takes the FULL paths that ListSkills returns
+call_tool(toolset_name="ToolsetRegistry.AgentSkillToolset", tool_name="GetSkills",
+          arguments={"skillPaths": ["/VibeUE/Python/init_unreal_PY.VibeUE_pcg",
+                                    "/VibeUE/Python/init_unreal_PY.VibeUE_materials"]})
 ```
 
-> Run `describe_toolset` on `ToolsetRegistry.AgentSkillToolset` for the exact tool/argument names
-> if the call signature differs in your build. The old `vibeue-skills-manager` tool no longer exists.
+> **Naming rule (verified live):** skill pack `<slug>` registers as `VibeUE_<slug>` (hyphens →
+> underscores) and sub-doc `<slug>/<file>.md` as `VibeUE_<slug>__<file>`, all under the path prefix
+> `/VibeUE/Python/init_unreal_PY.`. Short names such as `"pcg"` or `"state-trees/api-reference"`
+> return an **empty result with no error** — always pass full paths, taking them from `ListSkills`
+> when unsure. Run `describe_toolset` on `ToolsetRegistry.AgentSkillToolset` if the call signature
+> differs in your build. The old `vibeue-skills-manager` tool no longer exists.
 
-| Task | Load this skill |
-|---|---|
-| Blueprints | `blueprints` |
-| PCG / procedural generation / scatter | `pcg` |
-| Materials | `materials` |
-| State Trees | `state-trees` |
-| Play / test / run / PIE | `pie-testing` |
-| Profiling / FPS / Insights traces | `profiling` |
+**Route by functional area.** Find the area whose scope matches the task, then `GetSkills` the
+listed skill(s) — full paths per the naming rule above. The *NOT for* column is the disambiguator —
+when two areas seem to fit, the one that *excludes* your task is telling you where to go instead.
+
+| Functional area | Use for — **NOT** for… | Load skill(s) |
+|---|---|---|
+| **Scene & actors** | place / move / arrange / organize / tag actors in a level — NOT gameplay logic (→ Blueprints), NOT world-scale terrain/foliage (→ Environment), NOT attaching a Niagara/particle component (→ VFX) | `level-actors` |
+| **Blueprints & gameplay logic** | author Blueprint classes & graphs, Enhanced Input, gameplay tags — NOT AI behavior (→ AI), NOT AnimBP graphs (→ Animation), NOT C++/source (coding-agent handoff) | `blueprints`, `blueprint-graphs`, `enhanced-input`, `gameplay-tags` |
+| **AI** | author StateTree logic — states, tasks, transitions, event payloads, delegate bindings — NOT character body animation (→ Animation), NOT generic actor placement (→ Scene) | `state-trees` |
+| **Animation & rigging** | AnimBP state machines, AnimSequence keyframes, montages, bone/skeleton editing & retarget — NOT cinematic timelines (Epic Sequencer), NOT AI movement (→ AI), NOT authoring sound assets (→ Audio) | `animation-blueprint`, `animsequence`, `animation-editing`, `animation-montage`, `skeleton` |
+| **Materials & shading** | materials, instances, graph nodes, Custom HLSL — NOT Niagara particle materials (→ VFX), NOT landscape auto-materials (→ Environment) | `materials` |
+| **VFX (Niagara)** | particle systems, emitters, scratch-pad HLSL, attaching/placing a Niagara component on an actor — NOT surface materials (→ Materials) | `niagara-systems`, `niagara-emitters` |
+| **UI (UMG)** | widget blueprints, layout, fonts/brushes, MVVM — NOT the gameplay behind the UI (→ Blueprints) | `umg-widgets` |
+| **Environment (world-scale)** | landscape sculpt/paint, landscape materials, foliage, PCG, map blockout, real-world terrain — NOT single-actor placement (→ Scene), NOT sound/audio (→ Audio) | `landscape`, `landscape-materials`, `landscape-auto-material`, `foliage`, `pcg`, `map-blockout`, `terrain-data` |
+| **Audio** | MetaSound and SoundCue authoring — ambient, character/footstep, UI sounds — NOT triggering sounds from gameplay logic (→ Blueprints), NOT anim-notify wiring (→ Animation) | `metasounds`, `sound-cues` |
+| **Assets, data & project** | import/export assets, UV mapping, enums/structs, engine & project settings — NOT actors placed in a level (→ Scene) | `asset-management`, `uv-mapping`, `enum-struct`, `engine-settings`, `project-settings` |
+| **Diagnostics, testing & run** | start/stop/query PIE, profile (CPU-vs-GPU / Insights), uncap frame rate — NOT fixing the logic a bug points to (→ its authoring area) | `pie-testing`, `profiling`, `frame-rate` |
+| **Camera & viewport** | viewport camera, view mode, FOV, exposure, layout — NOT material look (→ Materials), NOT placing/editing light actors (→ Scene) | `viewport` |
+| **Cinematics · Physics** | Sequencer cinematics and Physics assets (ragdoll/skeletal) are **Epic-native** — VibeUE adds no skill here — NOT enabling simulate-physics on a level actor (→ Scene) | *(none — use `list_toolsets`: `animation_toolset.*` / `PhysicsToolsets`)* |
 
 A loaded skill gives you:
 - workflows, gotchas, and property formats for the domain
