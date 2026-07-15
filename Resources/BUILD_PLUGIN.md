@@ -101,18 +101,15 @@ To verify the plugin works after building:
 
 ## Platform Support
 
-Currently, the build script supports:
-- ✅ Windows (Win64)
+Build and launch scripts are available for Windows and Linux:
+- ✅ Windows (Win64): `BuildAndLaunchGame.ps1`
+- ✅ Linux: `BuildAndLaunchGame.sh --engine /path/to/UE5`
 - ⏳ Mac (coming soon)
-- ⏳ Linux (coming soon)
 
-For Mac/Linux, you can manually build using:
+For manual Linux builds, use:
 ```bash
-# Navigate to UE installation
-cd /Path/To/UE_5.7
-
-# Build the plugin
-Engine/Build/BatchFiles/Mac/Build.sh MyProjectEditor Mac Development /Path/To/MyProject.uproject -waitmutex
+/Path/To/UE5/Engine/Build/BatchFiles/Linux/Build.sh \
+  MyProjectEditor Linux Development /Path/To/MyProject.uproject -waitmutex
 ```
 
 ## Integration with IDEs
