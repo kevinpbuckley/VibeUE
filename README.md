@@ -131,7 +131,7 @@ Build with the project script:
 Plugins/VibeUE/BuildAndLaunchGame.ps1                  # builds + launches the editor
 Plugins/VibeUE/BuildAndLaunchGame.ps1 -StrictRebuild   # full recompile (warnings-as-errors)
 ```
-On Linux, use:
+On Linux or macOS, use the platform-detecting shell script:
 ```bash
 Plugins/VibeUE/BuildAndLaunchGame.sh --engine /path/to/UE5
 Plugins/VibeUE/BuildAndLaunchGame.sh --engine /path/to/UE5 --strict-rebuild
