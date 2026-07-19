@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build and launch an Unreal Engine project on Linux or macOS. This script may live anywhere in the project tree.
+# Build and launch an Unreal Engine project on Linux. This script may live anywhere in the project tree.
 set -euo pipefail
 
 mode="Development"
@@ -59,24 +59,10 @@ if [[ -z "$engine_root" ]]; then
 fi
 
 engine_root="$(cd -- "$engine_root" && pwd -P)"
-case "$(uname -s)" in
-    Linux)
-        platform="Linux"
-        build_script="$engine_root/Engine/Build/BatchFiles/Linux/Build.sh"
-        editor_bin="$engine_root/Engine/Binaries/Linux/UnrealEditor"
-        ;;
-    Darwin)
-        platform="Mac"
-        build_script="$engine_root/Engine/Build/BatchFiles/Mac/Build.sh"
-        editor_bin="$engine_root/Engine/Binaries/Mac/UnrealEditor.app/Contents/MacOS/UnrealEditor"
-        ;;
-    *)
-        echo "ERROR: BuildAndLaunchGame.sh supports Linux and macOS only." >&2
-        exit 1
-        ;;
-esac
+build_script="$engine_root/Engine/Build/BatchFiles/Linux/Build.sh"
+editor_bin="$engine_root/Engine/Binaries/Linux/UnrealEditor"
 if [[ ! -x "$build_script" || ! -x "$editor_bin" ]]; then
-    echo "ERROR: $engine_root does not contain executable $platform Build.sh and UnrealEditor binaries." >&2
+    echo "ERROR: $engine_root does not contain executable Linux Build.sh and UnrealEditor binaries." >&2
     exit 1
 fi
 
@@ -85,22 +71,18 @@ project_name="$(basename -- "${project_path%.uproject}")"
 
 stop_editor() {
     local pids
-    pids="$(pgrep -f "UnrealEditor.*$project_path" || true)"
+    pids="$(pgrep -f -- "UnrealEditor.*$project_path" || true)"
     [[ -z "$pids" ]] && return
 
     echo "Stopping the running editor for $project_name..."
-    while IFS= read -r pid; do
-        [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
-    done <<< "$pids"
+    kill $pids 2>/dev/null || true
     for _ in {1..15}; do
         sleep 1
-        pids="$(pgrep -f "UnrealEditor.*$project_path" || true)"
+        pids="$(pgrep -f -- "UnrealEditor.*$project_path" || true)"
         [[ -z "$pids" ]] && return
     done
     echo "Editor did not exit gracefully; terminating it."
-    while IFS= read -r pid; do
-        [[ -n "$pid" ]] && kill -KILL "$pid" 2>/dev/null || true
-    done <<< "$pids"
+    kill -KILL $pids 2>/dev/null || true
 }
 
 remove_artifacts() {
@@ -110,7 +92,7 @@ remove_artifacts() {
     done
 }
 
-echo "=== $project_name $platform Build and Launch ==="
+echo "=== $project_name Linux Build and Launch ==="
 echo "Project: $project_path"
 echo "Engine:  $engine_root"
 echo "Mode:    $mode"
@@ -127,7 +109,7 @@ elif [[ "$strict_rebuild" == true ]]; then
 fi
 
 if [[ "$skip_build" == false ]]; then
-    "$build_script" "${project_name}Editor" "$platform" "$mode" "$project_path" -waitmutex
+    "$build_script" "${project_name}Editor" Linux "$mode" "$project_path" -waitmutex
 fi
 
 exec "$editor_bin" "$project_path"
