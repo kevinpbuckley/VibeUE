@@ -17,7 +17,13 @@ public class VibeUE : ModuleRules
 		// engine APIs) fail the build here instead of surfacing only on contributors'
 		// clean installs. See PR #438.
 		bWarningsAsErrors = true;
-		
+
+		// FabService (issue #517) talks to fab.com via the signed-in Epic account's EOS auth token,
+		// reusing the login the editor/launcher already holds. EOSSDK provides the SDK headers and the
+		// WITH_EOS_SDK=1 define; EOSShared provides IEOSSDKManager. bRequiresPlatformSDK mirrors the
+		// engine Fab plugin's own Build.cs so the platform SDK is available.
+		bRequiresPlatformSDK = true;
+
 		// Ensure proper debug symbol generation for PDB files
 		if (Target.Configuration == UnrealTargetConfiguration.Debug || 
 		    Target.Configuration == UnrealTargetConfiguration.DebugGame ||
@@ -105,6 +111,9 @@ public class VibeUE : ModuleRules
 				"StaticMeshDescription",  // For FStaticMeshAttributes / FStaticMeshOperations / FUVMapParameters
 				"ToolsetRegistry",        // UE 5.8 native AI toolset registry — exposes services as AICallable tools on Epic's MCP endpoint
 				"ModelContextProtocol",   // UE 5.8 native MCP server — VibeUE's dynamic tools are bridged onto Epic's endpoint
+				"EOSSDK",                 // FabService (#517): Epic Online Services SDK — headers + WITH_EOS_SDK=1 for Fab auth token
+				"EOSShared",              // FabService (#517): IEOSSDKManager (create/enumerate + auto-tick EOS platforms)
+				"Fab",                    // FabService (#517): reuse the engine Fab plugin's FAB_API downloader (FFabDownloadRequest / queue)
 			}
 		);
 

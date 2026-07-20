@@ -1,0 +1,362 @@
+// Copyright Buckley Builds LLC 2026 All Rights Reserved.
+
+#include "PythonAPI/UFabService.h"
+#include "Fab/FabAuthBridge.h"
+#include "Fab/FabLibraryClient.h"
+#include "Fab/FabEndpoints.h"
+
+#include "Json.h"
+#include "Misc/EngineVersion.h"
+
+DEFINE_LOG_CATEGORY_STATIC(LogFabService, Log, All);
+
+// ---------------------------------------------------------------------------
+// Session state — the owned library is fetched once and cached in-process.
+// ---------------------------------------------------------------------------
+
+static TArray<FFabLibraryAsset> GLibraryCache;
+static bool GLibraryCached = false;
+
+// ---------------------------------------------------------------------------
+// JSON response helpers (same contract as the other VibeUE services)
+// ---------------------------------------------------------------------------
+
+static FString OkJson(TSharedPtr<FJsonObject> Obj)
+{
+	Obj->SetBoolField(TEXT("success"), true);
+	FString Out;
+	TSharedRef<TJsonWriter<>> W = TJsonWriterFactory<>::Create(&Out);
+	FJsonSerializer::Serialize(Obj.ToSharedRef(), W);
+	return Out;
+}
+
+static FString ErrJson(const FString& Code, const FString& Msg)
+{
+	TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+	Obj->SetBoolField(TEXT("success"), false);
+	Obj->SetStringField(TEXT("error_code"), Code);
+	Obj->SetStringField(TEXT("error"), Msg);
+	FString Out;
+	TSharedRef<TJsonWriter<>> W = TJsonWriterFactory<>::Create(&Out);
+	FJsonSerializer::Serialize(Obj.ToSharedRef(), W);
+	return Out;
+}
+
+// "5.8" for the running engine.
+static FString CurrentEngineVersion()
+{
+	const FEngineVersion& V = FEngineVersion::Current();
+	return FString::Printf(TEXT("%u.%u"), (uint32)V.GetMajor(), (uint32)V.GetMinor());
+}
+
+static FString BaseUrl()
+{
+	// Prod is the engine Fab plugin's default environment. (Environment overrides live in the Fab
+	// plugin's private settings; if we ever need them, expose GetUrlFromEnvironment via a small patch.)
+	return VibeUE::Fab::ProdBaseUrl();
+}
+
+// Ensure logged in, returning a ready-to-return NOT_AUTHENTICATED error JSON in OutErr if not.
+static bool RequireAuth(double TimeoutSeconds, FString& OutErr)
+{
+	if (!FVibeFabAuth::IsSupported())
+	{
+		OutErr = ErrJson(TEXT("UNSUPPORTED"), TEXT("The EOS SDK is not available in this editor build, so Fab auth is unavailable."));
+		return false;
+	}
+	FString Err;
+	if (!FVibeFabAuth::EnsureLoggedIn(TimeoutSeconds, Err))
+	{
+		const FString State = FVibeFabAuth::GetStateString();
+		const FString Code = State == TEXT("pending") ? TEXT("AUTH_PENDING") : TEXT("NOT_AUTHENTICATED");
+		OutErr = ErrJson(Code, Err.IsEmpty()
+			? TEXT("Not signed into Fab. Open the Fab window (or launch the editor from the Epic Games Launcher) to sign in, then retry.")
+			: Err);
+		return false;
+	}
+	return true;
+}
+
+// Fill the in-process cache if needed.
+static bool EnsureLibrary(bool bRefresh, FString& OutErr)
+{
+	if (GLibraryCached && !bRefresh)
+	{
+		return true;
+	}
+	const FString Token = FVibeFabAuth::GetAccessToken();
+	const FString Account = FVibeFabAuth::GetEpicAccountId();
+	int32 HttpCode = 0;
+	FString Err;
+	TArray<FFabLibraryAsset> Fetched;
+	if (!FVibeFabLibrary::Fetch(BaseUrl(), Account, Token, /*PageSize*/ 1000, /*Timeout*/ 45.0, Fetched, HttpCode, Err))
+	{
+		OutErr = ErrJson(HttpCode == 401 || HttpCode == 403 ? TEXT("AUTH_REJECTED") : TEXT("LIBRARY_FETCH_FAILED"), Err);
+		return false;
+	}
+	GLibraryCache = MoveTemp(Fetched);
+	GLibraryCached = true;
+	return true;
+}
+
+static const FFabLibraryAsset* FindAsset(const FString& AssetId)
+{
+	return GLibraryCache.FindByPredicate([&](const FFabLibraryAsset& A) { return A.AssetId == AssetId; });
+}
+
+// Compact projection for ListLibrary.
+static TSharedPtr<FJsonObject> CompactAsset(const FFabLibraryAsset& A, const FString& EngineVersion)
+{
+	TSharedPtr<FJsonObject> O = MakeShared<FJsonObject>();
+	O->SetStringField(TEXT("id"), A.AssetId);
+	O->SetStringField(TEXT("title"), A.Title);
+	O->SetStringField(TEXT("type"), A.DeriveAssetType());
+	O->SetStringField(TEXT("source"), A.Source);
+	O->SetStringField(TEXT("distribution_method"), A.DistributionMethod);
+	O->SetStringField(TEXT("listing_type"), A.ListingType);
+	O->SetBoolField(TEXT("compatible"), A.SupportsEngine(EngineVersion));
+	if (A.Images.Num() > 0)
+	{
+		O->SetStringField(TEXT("thumbnail_url"), A.Images[0].Url);
+	}
+	return O;
+}
+
+// ---------------------------------------------------------------------------
+// AuthStatus
+// ---------------------------------------------------------------------------
+
+FString UFabService::AuthStatus(float TimeoutSeconds)
+{
+	if (!FVibeFabAuth::IsSupported())
+	{
+		return ErrJson(TEXT("UNSUPPORTED"), TEXT("The EOS SDK is not available in this editor build, so Fab auth is unavailable."));
+	}
+
+	FString Err;
+	const bool bLoggedIn = FVibeFabAuth::EnsureLoggedIn(FMath::Max(1.0f, TimeoutSeconds), Err);
+	const FString State = FVibeFabAuth::GetStateString();
+
+	TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+	Obj->SetBoolField(TEXT("authenticated"), bLoggedIn);
+	Obj->SetStringField(TEXT("state"), State);
+	Obj->SetStringField(TEXT("engine_version"), CurrentEngineVersion());
+	if (bLoggedIn)
+	{
+		Obj->SetStringField(TEXT("epic_account_id"), FVibeFabAuth::GetEpicAccountId());
+		Obj->SetStringField(TEXT("message"), TEXT("Signed into Fab. The owned library is reachable."));
+	}
+	else if (State == TEXT("pending"))
+	{
+		Obj->SetStringField(TEXT("message"), TEXT("Login in progress — call auth_status again in a moment to let it resolve."));
+	}
+	else
+	{
+		Obj->SetStringField(TEXT("message"), Err.IsEmpty()
+			? TEXT("Not signed into Fab. Open the Fab window (Window > Fab) or launch the editor from the Epic Games Launcher, then retry.")
+			: Err);
+	}
+	return OkJson(Obj);
+}
+
+// ---------------------------------------------------------------------------
+// ListLibrary
+// ---------------------------------------------------------------------------
+
+FString UFabService::ListLibrary(const FString& NameFilter, const FString& TypeFilter, const FString& EngineVersion,
+                                 int32 Limit, int32 Offset, bool Refresh)
+{
+	FString AuthErr;
+	if (!RequireAuth(15.0, AuthErr))
+	{
+		return AuthErr;
+	}
+	FString LibErr;
+	if (!EnsureLibrary(Refresh, LibErr))
+	{
+		return LibErr;
+	}
+
+	const FString EngineVer = EngineVersion.IsEmpty() ? CurrentEngineVersion() : EngineVersion;
+	const FString NameLower = NameFilter.ToLower();
+	const FString TypeLower = TypeFilter.ToLower();
+
+	// Filter.
+	TArray<const FFabLibraryAsset*> Filtered;
+	for (const FFabLibraryAsset& A : GLibraryCache)
+	{
+		if (!NameLower.IsEmpty() && !A.Title.ToLower().Contains(NameLower))
+		{
+			continue;
+		}
+		if (!TypeLower.IsEmpty())
+		{
+			const bool bTypeMatch = A.DeriveAssetType().ToLower().Contains(TypeLower)
+				|| A.DistributionMethod.ToLower().Contains(TypeLower)
+				|| A.Source.ToLower().Contains(TypeLower);
+			if (!bTypeMatch)
+			{
+				continue;
+			}
+		}
+		Filtered.Add(&A);
+	}
+
+	// Page.
+	const int32 SafeOffset = FMath::Clamp(Offset, 0, Filtered.Num());
+	const int32 SafeLimit = Limit <= 0 ? Filtered.Num() : Limit;
+	const int32 End = FMath::Min(SafeOffset + SafeLimit, Filtered.Num());
+
+	TArray<TSharedPtr<FJsonValue>> Results;
+	int32 CompatibleCount = 0;
+	for (int32 i = SafeOffset; i < End; ++i)
+	{
+		Results.Add(MakeShared<FJsonValueObject>(CompactAsset(*Filtered[i], EngineVer)));
+	}
+	for (const FFabLibraryAsset* A : Filtered)
+	{
+		if (A->SupportsEngine(EngineVer))
+		{
+			++CompatibleCount;
+		}
+	}
+
+	TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+	Obj->SetArrayField(TEXT("results"), Results);
+	Obj->SetNumberField(TEXT("returned"), Results.Num());
+	Obj->SetNumberField(TEXT("total_matched"), Filtered.Num());
+	Obj->SetNumberField(TEXT("total_owned"), GLibraryCache.Num());
+	Obj->SetNumberField(TEXT("total_compatible"), CompatibleCount);
+	Obj->SetNumberField(TEXT("offset"), SafeOffset);
+	Obj->SetStringField(TEXT("engine_version"), EngineVer);
+	return OkJson(Obj);
+}
+
+// ---------------------------------------------------------------------------
+// GetAsset
+// ---------------------------------------------------------------------------
+
+FString UFabService::GetAsset(const FString& AssetId)
+{
+	if (AssetId.IsEmpty())
+	{
+		return ErrJson(TEXT("BAD_ARGUMENT"), TEXT("AssetId is required."));
+	}
+	FString AuthErr;
+	if (!RequireAuth(15.0, AuthErr))
+	{
+		return AuthErr;
+	}
+	FString LibErr;
+	if (!EnsureLibrary(false, LibErr))
+	{
+		return LibErr;
+	}
+
+	const FFabLibraryAsset* A = FindAsset(AssetId);
+	if (!A)
+	{
+		return ErrJson(TEXT("ASSET_NOT_OWNED"), FString::Printf(TEXT("No owned asset with id '%s' in the library. Call list_library (Refresh=true) if it was purchased recently."), *AssetId));
+	}
+
+	const FString EngineVer = CurrentEngineVersion();
+
+	TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+	Obj->SetStringField(TEXT("id"), A->AssetId);
+	Obj->SetStringField(TEXT("asset_namespace"), A->AssetNamespace);
+	Obj->SetStringField(TEXT("title"), A->Title);
+	Obj->SetStringField(TEXT("description"), A->Description);
+	Obj->SetStringField(TEXT("listing_type"), A->ListingType);
+	Obj->SetStringField(TEXT("seller"), A->Seller);
+	Obj->SetStringField(TEXT("source"), A->Source);
+	Obj->SetStringField(TEXT("distribution_method"), A->DistributionMethod);
+	Obj->SetStringField(TEXT("type"), A->DeriveAssetType());
+	Obj->SetStringField(TEXT("url"), A->Url);
+	Obj->SetBoolField(TEXT("compatible"), A->SupportsEngine(EngineVer));
+	Obj->SetStringField(TEXT("engine_version"), EngineVer);
+
+	TArray<TSharedPtr<FJsonValue>> Versions;
+	for (const FFabProjectVersion& PV : A->ProjectVersions)
+	{
+		TSharedPtr<FJsonObject> V = MakeShared<FJsonObject>();
+		V->SetStringField(TEXT("artifact_id"), PV.ArtifactId);
+		TArray<TSharedPtr<FJsonValue>> EVs;
+		for (const FString& EV : PV.EngineVersions) { EVs.Add(MakeShared<FJsonValueString>(EV)); }
+		V->SetArrayField(TEXT("engine_versions"), EVs);
+		TArray<TSharedPtr<FJsonValue>> Plats;
+		for (const FString& P : PV.TargetPlatforms) { Plats.Add(MakeShared<FJsonValueString>(P)); }
+		V->SetArrayField(TEXT("target_platforms"), Plats);
+		Versions.Add(MakeShared<FJsonValueObject>(V));
+	}
+	Obj->SetArrayField(TEXT("project_versions"), Versions);
+
+	TArray<TSharedPtr<FJsonValue>> AllEng;
+	for (const FString& EV : A->AllEngineVersions()) { AllEng.Add(MakeShared<FJsonValueString>(EV)); }
+	Obj->SetArrayField(TEXT("engine_versions"), AllEng);
+
+	TArray<TSharedPtr<FJsonValue>> Imgs;
+	for (const FFabLibraryAsset::FImage& Img : A->Images)
+	{
+		TSharedPtr<FJsonObject> IO = MakeShared<FJsonObject>();
+		IO->SetStringField(TEXT("url"), Img.Url);
+		IO->SetStringField(TEXT("type"), Img.Type);
+		IO->SetNumberField(TEXT("width"), Img.Width);
+		IO->SetNumberField(TEXT("height"), Img.Height);
+		Imgs.Add(MakeShared<FJsonValueObject>(IO));
+	}
+	Obj->SetArrayField(TEXT("images"), Imgs);
+
+	return OkJson(Obj);
+}
+
+// ---------------------------------------------------------------------------
+// ImportAsset / ImportStatus — Phase 2 (download + import). The download half of
+// the engine Fab plugin is FAB_API-exported and reusable; the built-in IMPORT
+// workflows are Private and the signed-manifest negotiation is not in engine C++,
+// so this path is finalized after Phase 1 (discovery) is validated live and the
+// import-reuse approach is chosen. Until then these report their status honestly
+// rather than pretending to import. See docs/design/fab-service-spec.md §2/§4.1.
+// ---------------------------------------------------------------------------
+
+FString UFabService::ImportAsset(const FString& AssetId, const FString& EngineVersion, const FString& Quality, const FString& Format)
+{
+	if (AssetId.IsEmpty())
+	{
+		return ErrJson(TEXT("BAD_ARGUMENT"), TEXT("AssetId is required."));
+	}
+	FString AuthErr;
+	if (!RequireAuth(15.0, AuthErr))
+	{
+		return AuthErr;
+	}
+	FString LibErr;
+	if (!EnsureLibrary(false, LibErr))
+	{
+		return LibErr;
+	}
+	const FFabLibraryAsset* A = FindAsset(AssetId);
+	if (!A)
+	{
+		return ErrJson(TEXT("ASSET_NOT_OWNED"), FString::Printf(TEXT("No owned asset with id '%s'."), *AssetId));
+	}
+	const FString EngineVer = EngineVersion.IsEmpty() ? CurrentEngineVersion() : EngineVersion;
+	if (!A->SupportsEngine(EngineVer))
+	{
+		TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetBoolField(TEXT("success"), false);
+		Obj->SetStringField(TEXT("error_code"), TEXT("ENGINE_VERSION_MISMATCH"));
+		Obj->SetStringField(TEXT("error"), FString::Printf(TEXT("'%s' has no version for engine %s."), *A->Title, *EngineVer));
+		TArray<TSharedPtr<FJsonValue>> AllEng;
+		for (const FString& EV : A->AllEngineVersions()) { AllEng.Add(MakeShared<FJsonValueString>(EV)); }
+		Obj->SetArrayField(TEXT("available_engine_versions"), AllEng);
+		FString Out; TSharedRef<TJsonWriter<>> W = TJsonWriterFactory<>::Create(&Out); FJsonSerializer::Serialize(Obj.ToSharedRef(), W); return Out;
+	}
+
+	return ErrJson(TEXT("IMPORT_NOT_AVAILABLE"),
+		TEXT("Discovery is live; import is Phase 2. The engine Fab plugin's download machinery is reusable, but its built-in import workflows are private and the signed-download negotiation is not exposed in engine C++ — the import path is finalized after Phase 1 is validated and the reuse approach (small engine patch vs. reimplement) is chosen. See docs/design/fab-service-spec.md."));
+}
+
+FString UFabService::ImportStatus(const FString& AssetId)
+{
+	return ErrJson(TEXT("IMPORT_NOT_AVAILABLE"), TEXT("No import is in progress — import (Phase 2) is not yet enabled. See ImportAsset."));
+}
