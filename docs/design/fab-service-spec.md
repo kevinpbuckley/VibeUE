@@ -2,9 +2,24 @@
 
 **Issue:** [kevinpbuckley/VibeUE#517](https://github.com/kevinpbuckley/VibeUE/issues/517) — "Add ability to import already owned FAB assets. No purchase functionality."
 
-**Status:** Draft for review
+**Status:** Phase 1 (discovery) + Phase 2 (import of BuildPatch pack/plugin assets) implemented & validated
+live. glTF/FBX/Quixel import is future work.
 **Target engine:** UE 5.8 (Fab plugin `0.0.13`, ships with source in `Engine/Plugins/Fab/`)
 **Owning module:** `VibeUE` (Editor)
+
+> **Implementation notes (validated live against a real 405-asset account):**
+> - **Auth (Route A2):** own EOS platform with the Fab plugin's baked creds (read reflectively from
+>   `/Fab/Data/FabEos.FabEos`), `PersistentAuth` login reusing the launcher session, token via
+>   `EOS_Auth_CopyUserAuthToken`. Silent — no second sign-in.
+> - **Library host:** `https://www.fab.com` (not `fab.com` — that host redirects and strips the auth
+>   header, giving a headless 404). `GET /e/accounts/{id}/ue/library?count=N`, paged via `cursors.next`.
+> - **Download negotiation:** `POST https://www.fab.com/e/artifacts/{artifactId}/manifest` with body
+>   `{"namespace":<assetNamespace>,"itemId":<assetId>,"platform":"Windows"}` → `downloadInfo[]` with
+>   signed `distributionPoints[].manifestUrl` (3 CDNs) + `distributionPointBaseUrls[]`.
+> - **Import (Route R):** reuse the engine Fab plugin's `FAB_API` `FFabDownloadRequest` (BuildPatch,
+>   non-destructive into the project) for the download; reimplement the post-install step in VibeUE
+>   (BuildPatch does **not** populate `DownloadedFiles`, so we diff the set of `.uasset`/`.umap` files
+>   under the project Content dir around the download, then `ScanFilesSynchronous` the new ones).
 
 ---
 
@@ -200,22 +215,27 @@ unverified piece, and the reason Phase 1 (which doesn't need it) validates the p
 
 ---
 
-## 5. Import flow (per asset)
+## 5. Import flow (per asset) — as built (Route R)
 
-1. `GetAsset(AssetId)` → pick the `projectVersions[]` entry whose `engineVersions[]` includes the current
-   engine (or the caller's `EngineVersion`); take its `artifactId` and `distributionMethod`.
-2. `FFabManifestClient`: `POST /e/artifacts/{artifactId}/manifest` (Bearer) → for BuildPatch assets, a
-   `manifestURL,baseURL` pair; for HTTP assets (glTF/FBX/Quixel), a signed file URL.
-3. Choose `EFabDownloadType`: `BuildPatchRequest` (UE **pack**, has no `.uplugin`), `BuildPatchInstallRequest`
-   (UE **plugin**, has `.uplugin`), or `HTTP` (glTF/FBX/Quixel zip).
-4. Build `FFabAssetMetadata` (`AssetId`, `AssetName`, `AssetType`, `ListingType`, `AssetNamespace`,
-   `DistributionPointBaseUrls`, `IsQuixel`) + `FFabDownloadRequest(...)`; enqueue on the engine downloader.
-5. On completion, the matching `IFabWorkflow` runs (engine code): packs unpack into `/Game/...` then
-   `ScanForAssets` + plugin-dependency check; glTF/FBX/Quixel import via Interchange into `/Game/Fab/<name>`.
-6. Record in `UFabLocalAssets`; `ImportStatus` returns the created asset path(s).
-
-**Compatibility guard:** if no `projectVersions` entry matches the engine, return a structured error
-(`ENGINE_VERSION_MISMATCH`) listing available versions rather than importing a mismatched build.
+1. `ImportAsset(AssetId)` resolves the `projectVersions[]` entry for the target engine → its `artifactId`
+   (`FFabLibraryAsset::ArtifactIdForEngine`). Compatibility guard first: no matching version →
+   `ENGINE_VERSION_MISMATCH` listing the available versions.
+2. `FVibeFabManifest::Fetch` → `POST /e/artifacts/{artifactId}/manifest` with
+   `{namespace, itemId=assetId, platform:"Windows"}` → `FFabDownloadInfo` (signed manifest URL +
+   `distributionPointBaseUrls`). Non-BuildPatch (`type != "manifest"`) formats → `DOWNLOAD_INFO_FAILED`
+   (glTF/FBX/Quixel not handled yet).
+3. `FVibeFabImport::Start` snapshots the set of `.uasset`/`.umap` files under the project Content dir,
+   then constructs `FFabDownloadRequest(assetId, "manifestUrl,baseUrl1,baseUrl2,…", location, type)` —
+   `BuildPatchRequest` + ProjectDir for packs, `BuildPatchInstallRequest` + ProjectPluginsDir for plugins —
+   binds the progress/complete delegates, and `ExecuteRequest()` (async). `ImportAsset` returns
+   `status:"downloading"` immediately.
+4. BuildPatch downloads + installs non-destructively on the editor's background ticks. `ImportStatus`
+   reports `percent`/bytes from the progress delegate.
+5. On completion, `FinishImport` re-walks the Content dir, diffs against the pre-snapshot to find the
+   installed files (BuildPatch does **not** report them), converts them to `/Game/…` packages, and
+   `ScanFilesSynchronous` makes them visible. `ImportStatus` then returns `status:"imported"` with
+   `asset_paths[]` + `install_root`.
+6. Re-importing an already-imported asset is idempotent (`already_imported` / no new files).
 
 ---
 

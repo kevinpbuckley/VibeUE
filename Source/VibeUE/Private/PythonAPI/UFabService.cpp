@@ -3,6 +3,8 @@
 #include "PythonAPI/UFabService.h"
 #include "Fab/FabAuthBridge.h"
 #include "Fab/FabLibraryClient.h"
+#include "Fab/FabManifestClient.h"
+#include "Fab/FabImportDriver.h"
 #include "Fab/FabEndpoints.h"
 
 #include "Json.h"
@@ -352,11 +354,87 @@ FString UFabService::ImportAsset(const FString& AssetId, const FString& EngineVe
 		FString Out; TSharedRef<TJsonWriter<>> W = TJsonWriterFactory<>::Create(&Out); FJsonSerializer::Serialize(Obj.ToSharedRef(), W); return Out;
 	}
 
-	return ErrJson(TEXT("IMPORT_NOT_AVAILABLE"),
-		TEXT("Discovery is live; import is Phase 2. The engine Fab plugin's download machinery is reusable, but its built-in import workflows are private and the signed-download negotiation is not exposed in engine C++ — the import path is finalized after Phase 1 is validated and the reuse approach (small engine patch vs. reimplement) is chosen. See docs/design/fab-service-spec.md."));
+	// Idempotent: if this asset already imported this session, report it rather than re-downloading.
+	if (TSharedPtr<FFabImportProgress> Prev = FVibeFabImport::Get(AssetId))
+	{
+		if (Prev->Phase == FFabImportProgress::EPhase::Done)
+		{
+			TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+			Obj->SetStringField(TEXT("asset_id"), AssetId);
+			Obj->SetStringField(TEXT("status"), TEXT("already_imported"));
+			Obj->SetStringField(TEXT("install_root"), Prev->InstallRoot);
+			return OkJson(Obj);
+		}
+	}
+
+	// Resolve the artifact version, then the signed BuildPatch download for it.
+	const FString ArtifactId = A->ArtifactIdForEngine(EngineVer);
+	if (ArtifactId.IsEmpty())
+	{
+		return ErrJson(TEXT("NO_ARTIFACT"), TEXT("No downloadable artifact was found for this asset/engine."));
+	}
+	const FString Token = FVibeFabAuth::GetAccessToken();
+	FFabDownloadInfo Info;
+	int32 HttpCode = 0;
+	FString MErr;
+	if (!FVibeFabManifest::Fetch(BaseUrl(), ArtifactId, A->AssetNamespace, A->AssetId, TEXT("Windows"),
+	                             Token, 30.0, Info, HttpCode, MErr))
+	{
+		return ErrJson(TEXT("DOWNLOAD_INFO_FAILED"), MErr);
+	}
+
+	const bool bIsPlugin = A->DistributionMethod.ToLower().Contains(TEXT("plugin"));
+	FString SErr;
+	if (!FVibeFabImport::Start(AssetId, A->Title, bIsPlugin, Info, SErr))
+	{
+		return ErrJson(TEXT("IMPORT_START_FAILED"), SErr);
+	}
+
+	TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+	Obj->SetStringField(TEXT("asset_id"), AssetId);
+	Obj->SetStringField(TEXT("title"), A->Title);
+	Obj->SetStringField(TEXT("status"), TEXT("downloading"));
+	Obj->SetStringField(TEXT("download_type"), bIsPlugin ? TEXT("buildpatch-plugin") : TEXT("buildpatch-pack"));
+	Obj->SetStringField(TEXT("build_version"), Info.BuildVersion);
+	Obj->SetStringField(TEXT("message"), TEXT("Download started — poll import_status(asset_id) until it reports imported or failed."));
+	return OkJson(Obj);
 }
 
 FString UFabService::ImportStatus(const FString& AssetId)
 {
-	return ErrJson(TEXT("IMPORT_NOT_AVAILABLE"), TEXT("No import is in progress — import (Phase 2) is not yet enabled. See ImportAsset."));
+	TSharedPtr<FFabImportProgress> P = FVibeFabImport::Get(AssetId);
+	if (!P)
+	{
+		return ErrJson(TEXT("NO_IMPORT"), TEXT("No import has been started for this asset this session. Call import_asset first."));
+	}
+
+	TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+	Obj->SetStringField(TEXT("asset_id"), AssetId);
+	Obj->SetStringField(TEXT("title"), P->AssetName);
+	Obj->SetNumberField(TEXT("percent"), P->Percent);
+	Obj->SetNumberField(TEXT("completed_bytes"), (double)P->CompletedBytes);
+	Obj->SetNumberField(TEXT("total_bytes"), (double)P->TotalBytes);
+	Obj->SetBoolField(TEXT("cached"), P->bCached);
+
+	switch (P->Phase)
+	{
+	case FFabImportProgress::EPhase::Done:
+	{
+		Obj->SetStringField(TEXT("status"), TEXT("imported"));
+		Obj->SetStringField(TEXT("install_root"), P->InstallRoot);
+		TArray<TSharedPtr<FJsonValue>> Paths;
+		for (const FString& Pkg : P->AssetPaths) { Paths.Add(MakeShared<FJsonValueString>(Pkg)); }
+		Obj->SetArrayField(TEXT("asset_paths"), Paths);
+		Obj->SetNumberField(TEXT("asset_count"), P->AssetPaths.Num());
+		break;
+	}
+	case FFabImportProgress::EPhase::Failed:
+		Obj->SetStringField(TEXT("status"), TEXT("failed"));
+		Obj->SetStringField(TEXT("error"), P->Error);
+		break;
+	default:
+		Obj->SetStringField(TEXT("status"), TEXT("downloading"));
+		break;
+	}
+	return OkJson(Obj);
 }

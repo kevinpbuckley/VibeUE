@@ -53,8 +53,16 @@ import). It reuses the Epic login the editor/launcher already holds — normally
    `distributionMethod`, images) when you need to choose a version or confirm compatibility.
 4. **`import_asset(asset_id, ...)`** — download + import. **Async**: returns immediately with
    `status: "downloading"`. Poll **`import_status(asset_id)`** until it reports `imported` (with the
-   created `/Game/...` asset paths) or `failed`.
-5. **Verify** with `unreal.EditorAssetLibrary.does_asset_exist(path)` before claiming success.
+   created `/Game/...` asset paths + `install_root`) or `failed`. Packs can be large (hundreds of MB to
+   several GB), so the download runs on background ticks — poll periodically, don't block on one call.
+5. **Verify** with `unreal.EditorAssetLibrary.does_asset_exist(path)` (or `does_directory_exist(install_root)`)
+   before claiming success.
+
+**Supported import types:** UE **packs** and **plugins** (BuildPatch — the `unreal-engine` /
+`ASSET_PACK` / `COMPLETE_PROJECT` / `ENGINE_PLUGIN` assets), installed non-destructively into the
+project. **Not yet supported:** glTF/FBX 3D models and Quixel/Megascans (they use a different download
+format) — `import_asset` returns `DOWNLOAD_INFO_FAILED` with a clear message for those. Discovery
+(`list_library`/`get_asset`) covers **all** owned assets regardless.
 
 ## Return shape
 

@@ -38,6 +38,9 @@ struct FFabLibraryAsset
 
 	/** Best-effort asset type used to route import (derived from source/distributionMethod/listingType). */
 	FString DeriveAssetType() const;
+
+	/** The artifactId of the projectVersion supporting EngineVersion (or the first, or empty). */
+	FString ArtifactIdForEngine(const FString& EngineVersion) const;
 };
 
 /**

@@ -76,6 +76,24 @@ FString FFabLibraryAsset::DeriveAssetType() const
 	return TEXT("model");
 }
 
+FString FFabLibraryAsset::ArtifactIdForEngine(const FString& EngineVersion) const
+{
+	if (!EngineVersion.IsEmpty())
+	{
+		for (const FFabProjectVersion& PV : ProjectVersions)
+		{
+			for (const FString& EV : PV.EngineVersions)
+			{
+				if ((EV == EngineVersion || EV.EndsWith(EngineVersion)) && !PV.ArtifactId.IsEmpty())
+				{
+					return PV.ArtifactId;
+				}
+			}
+		}
+	}
+	return ProjectVersions.Num() > 0 ? ProjectVersions[0].ArtifactId : FString();
+}
+
 // ---------------------------------------------------------------------------
 // Synchronous, bounded HTTP GET (uses a shared state so a timed-out request's
 // completion lambda never touches freed stack).
