@@ -15,9 +15,11 @@
 
 namespace VibeUE::Fab
 {
-	// Base URL for the Prod environment — matches UFabSettings::GetUrlFromEnvironment()
-	// (Engine/Plugins/Fab/Source/Fab/Private/FabSettings.cpp): EFabEnvironment::Prod.
-	inline const TCHAR* ProdBaseUrl() { return TEXT("https://fab.com"); }
+	// Base URL for the Prod environment. NOTE: the engine Fab plugin uses "https://fab.com", but that
+	// host 301-redirects to www.fab.com and the redirect strips the Authorization header, so a headless
+	// GET 404s. We hit www.fab.com directly — verified live: fab.com/e/.../ue/library → 404,
+	// www.fab.com/e/.../ue/library?count=N → 200 with the owned-library JSON.
+	inline const TCHAR* ProdBaseUrl() { return TEXT("https://www.fab.com"); }
 
 	// Owned-library feed. Format: {base}/e/accounts/{EpicAccountId}/ue/library?count={N}[&cursor="{next}"]
 	// (verbatim from FabMyFolderIntegration.cpp:69-71). Paged via the response's cursors.next.
