@@ -72,6 +72,14 @@
 		{
 			"Name": "ModelContextProtocol",
 			"Enabled": true
+		},
+		{
+			"Name": "Fab",
+			"Enabled": true
+		},
+		{
+			"Name": "EOSShared",
+			"Enabled": true
 		}
 	]
 }
