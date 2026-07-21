@@ -1,5 +1,25 @@
 # Fab Library Import Tests
 
+## Public free catalog — no authentication or account mutation
+
+Search the public free catalog with `seller_filter="Quixel Megascans"`, `format_filter="gltf"`, and a
+small limit. (Expected: success=true; every result has price=0, an id/title/seller, and glTF in formats;
+`library_changed=false`. No Epic login is required.)
+
+Repeat using the returned `next_cursor`. (Expected: a different result page or a clean empty page; the
+cursor is opaque and must not be modified.)
+
+Call `import_free_asset` for a result with `accept_eula=false`. (Expected: success=false,
+error_code=EULA_ACCEPTANCE_REQUIRED, an EULA URL, and `library_changed=false`. It must perform no
+download and no account operation.)
+
+Do not run an actual free download unless the user has explicitly reviewed and accepted the Fab EULA.
+If they do, use a small listing, pass `accept_eula=true`, poll `import_status(listing_id)`, and verify
+the returned assets under `/Game/Fab/Free`. Confirm that no add-to-library or entitlement claim was
+attempted.
+
+---
+
 Tests for discovering the signed-in Epic account's OWNED Fab library and importing assets into the
 project (FabService). Run sequentially. Every FabService method returns a JSON string — parse it and
 assert on fields; print the evidence behind each pass/fail.

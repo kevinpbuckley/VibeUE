@@ -114,6 +114,7 @@ public class VibeUE : ModuleRules
 				"EOSSDK",                 // FabService (#517): Epic Online Services SDK — headers + WITH_EOS_SDK=1 for Fab auth token
 				"EOSShared",              // FabService (#517): IEOSSDKManager (create/enumerate + auto-tick EOS platforms)
 				"Fab",                    // FabService (#517): reuse the engine Fab plugin's FAB_API downloader (FFabDownloadRequest / queue)
+				"FileUtilities",          // FabService: safely extract public free-asset ZIP downloads
 			}
 		);
 
@@ -144,4 +145,4 @@ public class VibeUE : ModuleRules
 			}
 		);
 	}
-} 
+}

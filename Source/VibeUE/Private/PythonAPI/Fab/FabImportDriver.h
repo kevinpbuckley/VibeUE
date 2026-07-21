@@ -9,7 +9,7 @@ struct FFabDownloadInfo;
 /** Live state of one asset's import, polled by FabService::ImportStatus. */
 struct FFabImportProgress
 {
-	enum class EPhase : uint8 { Downloading, Done, Failed };
+	enum class EPhase : uint8 { Downloading, Importing, Done, Failed };
 
 	EPhase Phase = EPhase::Downloading;
 	float Percent = 0.0f;
@@ -20,6 +20,7 @@ struct FFabImportProgress
 	FString AssetName;
 	TArray<FString> AssetPaths;    // /Game/... packages created by the import
 	FString InstallRoot;           // /Game/<top folder> if derivable
+	FString DestinationPath;       // Direct-file imports: requested /Game destination
 
 	// BuildPatch doesn't report installed files, so we diff the set of asset files under the install
 	// root around the download to discover what landed (robust to pre-existing/empty folders).
@@ -36,8 +37,8 @@ struct FFabImportProgress
  * Route R (reimplement-in-VibeUE) import driver: reuses the engine Fab plugin's FAB_API BuildPatch
  * download machinery (FFabDownloadRequest), then reimplements the post-download step (asset-registry
  * scan + /Game path reporting) instead of the engine's Private import workflows. Async — Start() kicks
- * the download and returns; poll via Get(). Supports BuildPatch pack/plugin assets (the "manifest"
- * download type); glTF/FBX/Quixel (direct-HTTP/custom-import formats) are not handled yet.
+ * the download and returns; poll via Get(). Supports BuildPatch pack/plugin assets plus public free
+ * glTF/GLB ZIP downloads (including Quixel/Megascans) through automated Interchange import.
  */
 class FVibeFabImport
 {
@@ -48,6 +49,10 @@ public:
 	 */
 	static bool Start(const FString& AssetId, const FString& AssetName, bool bIsPlugin,
 	                  const FFabDownloadInfo& Info, FString& OutError);
+
+	/** Begin a direct HTTP download followed by automated glTF/GLB import into DestinationPath. */
+	static bool StartDirect(const FString& AssetId, const FString& AssetName, const FString& DownloadUrl,
+	                        const FString& DestinationPath, FString& OutError);
 
 	/** Current progress for AssetId, or null if no import has been started this session. */
 	static TSharedPtr<FFabImportProgress> Get(const FString& AssetId);

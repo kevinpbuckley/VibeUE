@@ -1,9 +1,21 @@
 # FabService — Design Spec
 
+> **2026-07 update — public free imports implemented.** `SearchFreeCatalog` searches Fab's anonymous
+> `/i/listings` catalog with `is_free=1`; `ImportFreeAsset` requires explicit per-call EULA acceptance,
+> re-fetches the chosen listing and requires an exact zero-price license, obtains an anonymous signed
+> download, safely extracts its ZIP, and imports glTF/GLB through Unreal Interchange under
+> `/Game/Fab/Free/<Title>`. This path does **not** call `add-to-library`, claim Quixel entitlements,
+> purchase anything, or alter the user's account library. It uses an unofficial web contract and does
+> not yet reproduce Epic's private Megascans-specific material pipeline.
+> Fab's `is_free=1` includes listings whose only zero-price tier is "UEFN - Reference only"; catalog
+> results therefore also parse the Personal tier's encoded minor-unit price and exclude those offers.
+> Interchange imports are scheduled from the core editor ticker, not an `AsyncTask` game-thread task,
+> because synchronous Interchange task pumping otherwise trips TaskGraph's recursion guard.
+
 **Issue:** [kevinpbuckley/VibeUE#517](https://github.com/kevinpbuckley/VibeUE/issues/517) — "Add ability to import already owned FAB assets. No purchase functionality."
 
-**Status:** Phase 1 (discovery) + Phase 2 (import of BuildPatch pack/plugin assets) implemented & validated
-live. glTF/FBX/Quixel import is future work.
+**Status:** Owned discovery + BuildPatch pack/plugin import, plus public zero-price catalog search and
+direct glTF/GLB import (including eligible Quixel/Megascans listings), implemented and strictly compiled.
 **Target engine:** UE 5.8 (Fab plugin `0.0.13`, ships with source in `Engine/Plugins/Fab/`)
 **Owning module:** `VibeUE` (Editor)
 
@@ -37,8 +49,10 @@ no store UI, no purchasing, and no new sign-in when the editor is already logged
 - Report import results with verifiable evidence (asset paths created).
 
 **Out of scope (explicit)**
-- **No purchasing, no "add free listing to library" claim flows, no price/checkout.** #517 is import-only.
-- No browsing the *whole* Fab catalog (only what the account owns). Catalog search is a possible later phase.
+- **No purchasing, no "add free listing to library" claim flows, no price/checkout.** Public free import
+  is direct and leaves the account library unchanged.
+- Public catalog browsing is restricted to results reporting an exact zero effective price; price and
+  selected-license eligibility are checked again before download.
 - No re-distribution of raw asset files outside the user's own project (License red line — see §8).
 
 **Success criteria**

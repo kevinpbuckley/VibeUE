@@ -5,6 +5,7 @@
 #include "Fab/FabLibraryClient.h"
 #include "Fab/FabManifestClient.h"
 #include "Fab/FabImportDriver.h"
+#include "Fab/FabCatalogClient.h"
 #include "Fab/FabEndpoints.h"
 
 #include "Json.h"
@@ -56,6 +57,26 @@ static FString BaseUrl()
 	// Prod is the engine Fab plugin's default environment. (Environment overrides live in the Fab
 	// plugin's private settings; if we ever need them, expose GetUrlFromEnvironment via a small patch.)
 	return VibeUE::Fab::ProdBaseUrl();
+}
+
+static FString SafeAssetFolder(const FString& Title, const FString& ListingId)
+{
+	FString Safe = Title;
+	for (int32 Index = 0; Index < Safe.Len(); ++Index)
+	{
+		if (!FChar::IsAlnum(Safe[Index]) && Safe[Index] != TEXT('_'))
+		{
+			Safe[Index] = TEXT('_');
+		}
+	}
+	while (Safe.Contains(TEXT("__")))
+	{
+		Safe.ReplaceInline(TEXT("__"), TEXT("_"));
+	}
+	Safe = Safe.Left(64);
+	while (Safe.RemoveFromStart(TEXT("_"))) {}
+	while (Safe.RemoveFromEnd(TEXT("_"))) {}
+	return Safe.IsEmpty() ? TEXT("FabAsset_") + ListingId.Left(8) : Safe;
 }
 
 // Ensure logged in, returning a ready-to-return NOT_AUTHENTICATED error JSON in OutErr if not.
@@ -320,6 +341,53 @@ FString UFabService::GetAsset(const FString& AssetId)
 // rather than pretending to import. See docs/design/fab-service-spec.md §2/§4.1.
 // ---------------------------------------------------------------------------
 
+FString UFabService::SearchFreeCatalog(const FString& Query, const FString& SellerFilter,
+	                                    const FString& FormatFilter, int32 Limit, const FString& Cursor)
+{
+	TArray<FFabCatalogListing> Listings;
+	FString NextCursor;
+	FString Error;
+	int32 HttpCode = 0;
+	if (!FVibeFabCatalog::SearchFree(BaseUrl(), Query, SellerFilter, FormatFilter, Limit, Cursor,
+	                                 30.0, Listings, NextCursor, HttpCode, Error))
+	{
+		return ErrJson(TEXT("CATALOG_FETCH_FAILED"), Error);
+	}
+
+	TArray<TSharedPtr<FJsonValue>> Results;
+	for (const FFabCatalogListing& Listing : Listings)
+	{
+		TSharedPtr<FJsonObject> Item = MakeShared<FJsonObject>();
+		Item->SetStringField(TEXT("id"), Listing.ListingId);
+		Item->SetStringField(TEXT("title"), Listing.Title);
+		Item->SetStringField(TEXT("seller"), Listing.Seller);
+		Item->SetStringField(TEXT("listing_type"), Listing.ListingType);
+		Item->SetNumberField(TEXT("price"), Listing.EffectiveStartingPrice);
+		Item->SetStringField(TEXT("license_slug"), TEXT("personal"));
+		Item->SetBoolField(TEXT("mature"), Listing.bMature);
+		Item->SetStringField(TEXT("listing_url"), BaseUrl() + TEXT("/listings/") + Listing.ListingId);
+		if (!Listing.ThumbnailUrl.IsEmpty())
+		{
+			Item->SetStringField(TEXT("thumbnail_url"), Listing.ThumbnailUrl);
+		}
+		TArray<TSharedPtr<FJsonValue>> Formats;
+		for (const FString& SourceFormat : Listing.Formats)
+		{
+			Formats.Add(MakeShared<FJsonValueString>(SourceFormat));
+		}
+		Item->SetArrayField(TEXT("formats"), Formats);
+		Results.Add(MakeShared<FJsonValueObject>(Item));
+	}
+
+	TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+	Obj->SetArrayField(TEXT("results"), Results);
+	Obj->SetNumberField(TEXT("returned"), Results.Num());
+	Obj->SetStringField(TEXT("next_cursor"), NextCursor);
+	Obj->SetBoolField(TEXT("eula_acceptance_required_for_import"), true);
+	Obj->SetBoolField(TEXT("library_changed"), false);
+	return OkJson(Obj);
+}
+
 FString UFabService::ImportAsset(const FString& AssetId, const FString& EngineVersion, const FString& Quality, const FString& Format)
 {
 	if (AssetId.IsEmpty())
@@ -400,6 +468,65 @@ FString UFabService::ImportAsset(const FString& AssetId, const FString& EngineVe
 	return OkJson(Obj);
 }
 
+FString UFabService::ImportFreeAsset(const FString& ListingId, const FString& Quality, const FString& Format,
+	                                  const FString& LicenseSlug, bool AcceptEula)
+{
+	if (ListingId.IsEmpty())
+	{
+		return ErrJson(TEXT("BAD_ARGUMENT"), TEXT("ListingId is required."));
+	}
+	if (!AcceptEula)
+	{
+		TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetBoolField(TEXT("success"), false);
+		Obj->SetStringField(TEXT("error_code"), TEXT("EULA_ACCEPTANCE_REQUIRED"));
+		Obj->SetStringField(TEXT("error"), TEXT("Set AcceptEula=true only after reviewing and accepting the Fab EULA for this import."));
+		Obj->SetStringField(TEXT("eula_url"), TEXT("https://www.fab.com/eula"));
+		Obj->SetBoolField(TEXT("library_changed"), false);
+		FString Out;
+		TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Out);
+		FJsonSerializer::Serialize(Obj.ToSharedRef(), Writer);
+		return Out;
+	}
+
+	if (TSharedPtr<FFabImportProgress> Previous = FVibeFabImport::Get(ListingId))
+	{
+		if (Previous->Phase != FFabImportProgress::EPhase::Failed)
+		{
+			return ImportStatus(ListingId);
+		}
+	}
+
+	FFabFreeDownload Download;
+	FString Error;
+	int32 HttpCode = 0;
+	if (!FVibeFabCatalog::ResolveFreeDownload(BaseUrl(), ListingId, LicenseSlug, Quality, Format,
+	                                           TEXT("Windows"), 30.0, Download, HttpCode, Error))
+	{
+		return ErrJson(TEXT("FREE_ASSET_RESOLUTION_FAILED"), Error);
+	}
+	const FString Destination = TEXT("/Game/Fab/Free/") + SafeAssetFolder(Download.Title, ListingId);
+	if (!FVibeFabImport::StartDirect(ListingId, Download.Title, Download.DownloadUrl, Destination, Error))
+	{
+		return ErrJson(TEXT("IMPORT_START_FAILED"), Error);
+	}
+
+	TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+	Obj->SetStringField(TEXT("asset_id"), ListingId);
+	Obj->SetStringField(TEXT("title"), Download.Title);
+	Obj->SetStringField(TEXT("seller"), Download.Seller);
+	Obj->SetStringField(TEXT("status"), TEXT("downloading"));
+	Obj->SetStringField(TEXT("format"), Download.Format);
+	Obj->SetStringField(TEXT("quality"), Download.Quality);
+	Obj->SetStringField(TEXT("file_name"), Download.FileName);
+	Obj->SetNumberField(TEXT("file_size"), static_cast<double>(Download.FileSize));
+	Obj->SetStringField(TEXT("install_root"), Destination);
+	Obj->SetBoolField(TEXT("direct_free_download"), true);
+	Obj->SetBoolField(TEXT("library_changed"), false);
+	Obj->SetStringField(TEXT("message"), TEXT("Download started - poll import_status(listing_id) until it reports imported or failed."));
+	return OkJson(Obj);
+}
+
 FString UFabService::ImportStatus(const FString& AssetId)
 {
 	TSharedPtr<FFabImportProgress> P = FVibeFabImport::Get(AssetId);
@@ -431,6 +558,9 @@ FString UFabService::ImportStatus(const FString& AssetId)
 	case FFabImportProgress::EPhase::Failed:
 		Obj->SetStringField(TEXT("status"), TEXT("failed"));
 		Obj->SetStringField(TEXT("error"), P->Error);
+		break;
+	case FFabImportProgress::EPhase::Importing:
+		Obj->SetStringField(TEXT("status"), TEXT("importing"));
 		break;
 	default:
 		Obj->SetStringField(TEXT("status"), TEXT("downloading"));

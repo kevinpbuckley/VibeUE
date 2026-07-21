@@ -1,7 +1,7 @@
 ---
 name: fab
-display_name: Fab Library Import
-description: Discover the signed-in Epic account's OWNED Fab library (free + already-purchased) and import chosen assets into the project — no purchasing (FabService). Use when the user asks "what Fab assets do I own", to find/list/search their Fab (or old UE Marketplace) library, to check Fab compatibility with this engine, or to import/download an owned Fab asset (pack, plugin, Megascans/Quixel, glTF/FBX model, material) into the project. Not for buying assets or browsing the whole Fab store — this only sees what the account already owns.
+display_name: Fab Asset Import
+description: Search Fab's public free catalog (including Quixel Megascans) and directly import eligible assets without adding them to the account library, or discover/import the signed-in Epic account's owned Fab library. Use for free Fab/Quixel searches, owned-library questions, compatibility checks, and Fab imports. No purchasing or entitlement claiming.
 vibeue_classes:
   - FabService
 unreal_classes:
@@ -10,81 +10,68 @@ keywords:
   - fab
   - fab.com
   - marketplace
-  - unreal marketplace
-  - my library
-  - owned assets
+  - free assets
   - quixel
   - megascans
-  - bridge
-  - epic account
+  - owned assets
   - import asset
   - download asset
-  - asset pack
-  - entitlements
-  - free assets
-  - purchased assets
   - engine version compatibility
 ---
 
-# Fab library import
+# Fab asset import
 
-Discover and import assets the signed-in **Epic account already owns** on [Fab](https://fab.com)
-(free + previously purchased, including migrated UE Marketplace items) into the current project.
-**There is no purchase capability — this only lists and imports what the account owns.**
+`FabService` supports two deliberately separate paths:
 
-`FabService` is a thin orchestration layer over Unreal 5.8's built-in **Fab plugin** (auth, download,
-import). It reuses the Epic login the editor/launcher already holds — normally **no separate sign-in**.
+- **Public free catalog:** search exact zero-price listings and directly import eligible glTF/GLB
+  downloads. This does not sign in, purchase, claim an entitlement, or add the listing to My Library.
+- **Owned library:** use the editor/launcher Epic session to list and import assets already owned by the
+  account, including migrated Unreal Marketplace items.
 
-## When to use / not use
+## Public free flow (Quixel/Megascans and other sellers)
 
-- Use for: "what Fab assets do I own?", "list/search my Fab library", "is this compatible with 5.8?",
-  "import that Megascans rock / that pack / that plugin I own".
-- Do **not** use for: buying assets, browsing the full Fab catalog, or claiming free listings you don't
-  yet own — none of that is supported (issue #517 is import-only).
+1. Call `search_free_catalog(query="", seller_filter="Quixel Megascans", format_filter="gltf")`.
+   Results are compact and include `id`, `title`, `seller`, `price`, formats, thumbnail, and an opaque
+   `next_cursor`. Results require an exact-zero **Personal** tier; UEFN-reference-only offers are
+   excluded. No authentication is required.
+2. Show the chosen result and the Fab EULA to the user. **Never set `accept_eula=true` on the user's
+   behalf.** It must represent their explicit acceptance.
+3. Call `import_free_asset(listing_id, quality="High", format="gltf", license_slug="personal",
+   accept_eula=true)`. The service re-fetches the listing and requires the selected license price to
+   still be exactly zero before it requests a signed download.
+4. Poll `import_status(listing_id)` until `imported` or `failed`, then verify a returned asset path with
+   `unreal.EditorAssetLibrary.does_asset_exist(path)`.
 
-## The flow (always this order)
+Direct free imports land under `/Game/Fab/Free/<Title>`. The original archive is cached under the
+project's `Saved/Fab/Free` directory; no raw-file export API is exposed. ZIP paths are validated before
+extraction. The first version supports Fab glTF/GLB ZIPs through automated Unreal Interchange import.
+That is suitable for Quixel 3D assets, but it does not reproduce every private Megascans material setup
+or support every Fab product format yet.
 
-1. **`auth_status()` FIRST.** Confirms an Epic session is available and the library is reachable. If it
-   reports not-authenticated, tell the user to sign into Fab once (open the Fab window / Epic Games
-   Launcher) — do not retry blindly.
-2. **`list_library(...)`** — enumerate owned assets (cached in-process; pass `refresh=true` to re-fetch).
-   Filter locally by `name_filter`, `type_filter`, `engine_version` (empty = current engine).
-3. **`get_asset(asset_id)`** — full record for one asset (all `projectVersions`, `engineVersions`,
-   `distributionMethod`, images) when you need to choose a version or confirm compatibility.
-4. **`import_asset(asset_id, ...)`** — download + import. **Async**: returns immediately with
-   `status: "downloading"`. Poll **`import_status(asset_id)`** until it reports `imported` (with the
-   created `/Game/...` asset paths + `install_root`) or `failed`. Packs can be large (hundreds of MB to
-   several GB), so the download runs on background ticks — poll periodically, don't block on one call.
-5. **Verify** with `unreal.EditorAssetLibrary.does_asset_exist(path)` (or `does_directory_exist(install_root)`)
-   before claiming success.
+## Owned-library flow
 
-**Supported import types:** UE **packs** and **plugins** (BuildPatch — the `unreal-engine` /
-`ASSET_PACK` / `COMPLETE_PROJECT` / `ENGINE_PLUGIN` assets), installed non-destructively into the
-project. **Not yet supported:** glTF/FBX 3D models and Quixel/Megascans (they use a different download
-format) — `import_asset` returns `DOWNLOAD_INFO_FAILED` with a clear message for those. Discovery
-(`list_library`/`get_asset`) covers **all** owned assets regardless.
+1. Call `auth_status()` first. If it is not authenticated, tell the user to open the Fab window or
+   launch the editor from the Epic Games Launcher.
+2. Call `list_library(...)`; use `refresh=true` only when the account library may have changed.
+3. Call `get_asset(asset_id)` to inspect versions and compatibility.
+4. Call `import_asset(asset_id, ...)`, then poll `import_status(asset_id)`.
+5. Verify the returned `/Game/...` paths before reporting success.
 
-## Return shape
+Owned BuildPatch packs and plugins are supported. Sparse or non-BuildPatch owned assets may still be
+discoverable without being importable through `import_asset`; use the public-free path only when the
+listing is currently free and provides a supported source format.
 
-Every method returns a JSON string with `success: true|false`. Errors carry `error_code` + `error`
-(e.g. `NOT_AUTHENTICATED`, `ENGINE_VERSION_MISMATCH`, `ASSET_NOT_OWNED`, `DOWNLOAD_FAILED`). `list_library`
-returns a **compact** projection (id, title, type, source, `compatible` flag, `distributionMethod`,
-thumbnail url); call `get_asset` for the full record — never dump the raw library feed.
+## Rules
 
-## Idempotency & rules
+- Never purchase, claim, call add-to-library, or accept a license on the user's behalf.
+- Never treat a search filter as proof of price. `import_free_asset` performs the authoritative
+  zero-price check immediately before download.
+- Never expose signed download URLs or offer to save distributable raw asset files elsewhere.
+- Imports are asynchronous and idempotent within the editor session; poll with a finite interval.
+- These Fab web endpoints are unofficial and may change. Surface their errors rather than retrying the
+  same request blindly.
 
-- `import_asset` is idempotent — it skips assets already imported (checks the Fab install registry and
-  `EditorAssetLibrary`). Re-importing reports the existing path rather than duplicating.
-- Respect engine compatibility: if `get_asset` shows no `projectVersions` entry for this engine,
-  `import_asset` returns `ENGINE_VERSION_MISMATCH` listing the versions that *are* available — surface
-  those, don't force a mismatched build.
-- **Never** expose or offer to save the raw downloaded asset files outside the project. The Fab license
-  permits use embedded in your project; redistributing raw asset files is the red line.
-
-## Discover exact signatures
-
-`discover_python_class('unreal.FabService')` for the current method list and defaults. Methods:
-`auth_status`, `list_library`, `get_asset`, `import_asset`, `import_status`.
-
-> This uses Epic's private, unofficial Fab API with the user's own account. It's how the built-in Fab
-> plugin works too; it is unsupported and can change. Act only on the user's own library.
+Every method returns a JSON string with `success: true|false`. Errors include `error_code` and `error`.
+Discover exact signatures with `discover_python_class('unreal.FabService')`. Current methods:
+`auth_status`, `list_library`, `get_asset`, `search_free_catalog`, `import_asset`, `import_free_asset`,
+and `import_status`.

@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "GenericPlatform/GenericPlatformHttp.h"
 
 // ---------------------------------------------------------------------------
 // Fab REST endpoints — UNOFFICIAL, reverse-engineered from the UE 5.8 Fab plugin
@@ -40,6 +41,36 @@ namespace VibeUE::Fab
 	inline FString ArtifactManifestUrl(const FString& BaseUrl, const FString& ArtifactId)
 	{
 		return FString::Printf(TEXT("%s/e/artifacts/%s/manifest"), *BaseUrl, *ArtifactId);
+	}
+
+	// Public catalog endpoints used by the Fab UE web frontend. Free catalog downloads are available
+	// anonymously, but callers must still explicitly accept the applicable EULA before importing.
+	inline FString CatalogSearchUrl(const FString& BaseUrl, const FString& Query,
+	                                const FString& Seller, const FString& Cursor)
+	{
+		FString Url = FString::Printf(TEXT("%s/i/listings/search?is_free=1"), *BaseUrl);
+		if (!Query.IsEmpty()) Url += TEXT("&q=") + FGenericPlatformHttp::UrlEncode(Query);
+		if (!Seller.IsEmpty()) Url += TEXT("&seller=") + FGenericPlatformHttp::UrlEncode(Seller);
+		if (!Cursor.IsEmpty()) Url += TEXT("&cursor=") + FGenericPlatformHttp::UrlEncode(Cursor);
+		return Url;
+	}
+
+	inline FString CatalogListingUrl(const FString& BaseUrl, const FString& ListingId)
+	{
+		return FString::Printf(TEXT("%s/i/listings/%s"), *BaseUrl, *ListingId);
+	}
+
+	inline FString CatalogFormatsUrl(const FString& BaseUrl, const FString& ListingId)
+	{
+		return FString::Printf(TEXT("%s/i/listings/%s/asset-formats"), *BaseUrl, *ListingId);
+	}
+
+	inline FString CatalogDownloadInfoUrl(const FString& BaseUrl, const FString& ListingId,
+	                                     const FString& Format, const FString& FileUid,
+	                                     const FString& Platform)
+	{
+		return FString::Printf(TEXT("%s/i/listings/%s/asset-formats/%s/files/%s/download-info?platform=%s"),
+			*BaseUrl, *ListingId, *Format, *FileUid, *FGenericPlatformHttp::UrlEncode(Platform));
 	}
 
 	// The cooked credentials asset the engine Fab plugin ships (UEosConstants UDataAsset). We read

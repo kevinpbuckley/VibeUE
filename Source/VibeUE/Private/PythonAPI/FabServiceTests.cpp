@@ -2,6 +2,9 @@
 
 #include "Misc/AutomationTest.h"
 #include "Fab/FabLibraryClient.h"
+#include "Fab/FabEndpoints.h"
+#include "PythonAPI/UFabService.h"
+#include "Json.h"
 
 #if WITH_AUTOMATION_TESTS
 
@@ -87,6 +90,43 @@ bool FVibeFabAllEngineVersionsTest::RunTest(const FString&)
 	TestTrue(TEXT("has 5.6"), All.Contains(TEXT("5.6")));
 	TestTrue(TEXT("has 5.7"), All.Contains(TEXT("5.7")));
 	TestTrue(TEXT("has 5.8"), All.Contains(TEXT("5.8")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeFabFreeCatalogEndpointsTest, "VibeUE.Fab.FreeCatalog.Endpoints",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FVibeFabFreeCatalogEndpointsTest::RunTest(const FString&)
+{
+	const FString Search = VibeUE::Fab::CatalogSearchUrl(TEXT("https://www.fab.com"),
+		TEXT("forest rock"), TEXT("Quixel Megascans"), TEXT("next+page"));
+	TestTrue(TEXT("search is constrained to free"), Search.Contains(TEXT("is_free=1")));
+	TestTrue(TEXT("query is URL encoded"), Search.Contains(TEXT("q=forest%20rock")));
+	TestTrue(TEXT("seller is URL encoded"), Search.Contains(TEXT("seller=Quixel%20Megascans")));
+	TestTrue(TEXT("cursor is URL encoded"), Search.Contains(TEXT("cursor=next%2Bpage")));
+
+	const FString Download = VibeUE::Fab::CatalogDownloadInfoUrl(TEXT("https://www.fab.com"),
+		TEXT("listing-id"), TEXT("gltf"), TEXT("file-id"), TEXT("Windows"));
+	TestEqual(TEXT("download-info endpoint"), Download,
+		TEXT("https://www.fab.com/i/listings/listing-id/asset-formats/gltf/files/file-id/download-info?platform=Windows"));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeFabFreeImportEulaGuardTest, "VibeUE.Fab.FreeCatalog.EulaGuard",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FVibeFabFreeImportEulaGuardTest::RunTest(const FString&)
+{
+	const FString Response = UFabService::ImportFreeAsset(TEXT("test-listing"), TEXT("High"),
+		TEXT("gltf"), TEXT("personal"), false);
+	TSharedPtr<FJsonObject> Root;
+	const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Response);
+	TestTrue(TEXT("guard returns JSON"), FJsonSerializer::Deserialize(Reader, Root) && Root.IsValid());
+	if (Root.IsValid())
+	{
+		TestFalse(TEXT("import is refused without acceptance"), Root->GetBoolField(TEXT("success")));
+		TestEqual(TEXT("guard error code"), Root->GetStringField(TEXT("error_code")),
+			TEXT("EULA_ACCEPTANCE_REQUIRED"));
+		TestFalse(TEXT("library remains unchanged"), Root->GetBoolField(TEXT("library_changed")));
+	}
 	return true;
 }
 
