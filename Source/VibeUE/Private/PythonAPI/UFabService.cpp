@@ -200,7 +200,11 @@ FString UFabService::ListLibrary(const FString& NameFilter, const FString& TypeF
 		return LibErr;
 	}
 
-	const FString EngineVer = EngineVersion.IsEmpty() ? CurrentEngineVersion() : EngineVersion;
+	// "all"/"any" disables the engine-version filter; anything else (or empty = current engine) excludes
+	// assets that don't support that version.
+	const bool bAnyEngine = EngineVersion.Equals(TEXT("all"), ESearchCase::IgnoreCase)
+		|| EngineVersion.Equals(TEXT("any"), ESearchCase::IgnoreCase);
+	const FString EngineVer = (EngineVersion.IsEmpty() || bAnyEngine) ? CurrentEngineVersion() : EngineVersion;
 	const FString NameLower = NameFilter.ToLower();
 	const FString TypeLower = TypeFilter.ToLower();
 
@@ -222,6 +226,10 @@ FString UFabService::ListLibrary(const FString& NameFilter, const FString& TypeF
 				continue;
 			}
 		}
+		if (!bAnyEngine && !A.SupportsEngine(EngineVer))
+		{
+			continue;
+		}
 		Filtered.Add(&A);
 	}
 
@@ -236,9 +244,10 @@ FString UFabService::ListLibrary(const FString& NameFilter, const FString& TypeF
 	{
 		Results.Add(MakeShared<FJsonValueObject>(CompactAsset(*Filtered[i], EngineVer)));
 	}
-	for (const FFabLibraryAsset* A : Filtered)
+	// total_compatible counts the WHOLE owned library against EngineVer, independent of the filters.
+	for (const FFabLibraryAsset& A : GLibraryCache)
 	{
-		if (A->SupportsEngine(EngineVer))
+		if (A.SupportsEngine(EngineVer))
 		{
 			++CompatibleCount;
 		}
