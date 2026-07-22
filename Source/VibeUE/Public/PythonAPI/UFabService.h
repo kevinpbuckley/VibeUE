@@ -41,7 +41,8 @@ public:
 	 * Refresh=true to re-fetch. Filters are applied locally.
 	 * @param NameFilter    Case-insensitive substring match on the title. Empty = all.
 	 * @param TypeFilter    Match on derived type / distribution method (e.g. "pack","plugin","quixel","model"). Empty = all.
-	 * @param EngineVersion Only assets supporting this engine (e.g. "5.8"). Empty = the current engine.
+	 * @param EngineVersion Only assets supporting this engine (e.g. "5.8"). Empty = the current engine;
+	 *                      "all" (or "any") = no engine filter, results carry a `compatible` flag instead.
 	 * @param Limit         Max items to return. @param Offset Items to skip (paging). @param Refresh Re-fetch the library.
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Fab")
