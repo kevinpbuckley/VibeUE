@@ -1542,7 +1542,8 @@ FWidgetAddComponentResult UWidgetService::AddComponent(
 	const FString& ComponentType,
 	const FString& ComponentName,
 	const FString& ParentName,
-	bool bIsVariable)
+	bool bIsVariable,
+	int32 ChildIndex)
 {
 	FWidgetAddComponentResult Result;
 	
@@ -1622,7 +1623,8 @@ FWidgetAddComponentResult UWidgetService::AddComponent(
 	// Add to parent or set as root
 	if (ParentPanel)
 	{
-		UPanelSlot* Slot = ParentPanel->AddChild(NewWidget);
+		const bool bInsertAtIndex = ChildIndex >= 0 && ChildIndex <= ParentPanel->GetChildrenCount();
+		UPanelSlot* Slot = bInsertAtIndex ? ParentPanel->InsertChildAt(ChildIndex, NewWidget) : ParentPanel->AddChild(NewWidget);
 		if (!Slot)
 		{
 			Result.ErrorMessage = TEXT("Failed to add widget to parent panel");
@@ -1665,6 +1667,41 @@ FWidgetAddComponentResult UWidgetService::AddComponent(
 	Result.bIsVariable = bIsVariable;
 
 	return Result;
+}
+
+bool UWidgetService::ReorderComponent(
+	const FString& WidgetPath,
+	const FString& ComponentName,
+	int32 NewIndex)
+{
+	UWidgetBlueprint* WidgetBP = LoadWidgetBlueprint(WidgetPath);
+	if (!WidgetBP || !WidgetBP->WidgetTree)
+	{
+		return false;
+	}
+
+	UWidget* Widget = FindWidgetByName(WidgetBP, ComponentName);
+	if (!Widget)
+	{
+		return false;
+	}
+
+	UPanelWidget* ParentPanel = Widget->GetParent();
+	if (!ParentPanel)
+	{
+		return false;
+	}
+
+	if (NewIndex < 0 || NewIndex >= ParentPanel->GetChildrenCount())
+	{
+		return false;
+	}
+
+	WidgetBP->Modify();
+	ParentPanel->ShiftChild(NewIndex, Widget);
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBP);
+
+	return true;
 }
 
 FWidgetRemoveComponentResult UWidgetService::RemoveComponent(
