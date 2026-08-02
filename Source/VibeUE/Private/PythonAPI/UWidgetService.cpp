@@ -1603,14 +1603,27 @@ FWidgetAddComponentResult UWidgetService::AddComponent(
 		ParentPanel = Cast<UPanelWidget>(WidgetBP->WidgetTree->RootWidget);
 	}
 
-	// Validate ChildIndex up front rather than silently falling back to append: -1 means append,
-	// [0, GetChildrenCount()] means insert at that position, anything else is an explicit error
-	if (ParentPanel && ChildIndex != -1 && (ChildIndex < 0 || ChildIndex > ParentPanel->GetChildrenCount()))
+	// Validate ChildIndex up front rather than silently falling back to append or to setting the root: -1 means
+	// append, [0, GetChildrenCount()] means insert at that position, anything else is an explicit error - this
+	// must fire even when ParentPanel is null (e.g. no root widget exists yet), since a non-default ChildIndex
+	// has nothing to insert into there and would otherwise silently be ignored by the set-as-root fallback below
+	if (ChildIndex != -1)
 	{
-		Result.ErrorMessage = FString::Printf(
-			TEXT("ChildIndex %d is out of range for parent '%s' (valid range: -1 to append, or 0-%d to insert)"),
-			ChildIndex, *ParentPanel->GetName(), ParentPanel->GetChildrenCount());
-		return Result;
+		if (!ParentPanel)
+		{
+			Result.ErrorMessage = FString::Printf(
+				TEXT("ChildIndex %d was specified, but there is no panel parent to insert into (ChildIndex requires an existing panel parent)"),
+				ChildIndex);
+			return Result;
+		}
+
+		if (ChildIndex < 0 || ChildIndex > ParentPanel->GetChildrenCount())
+		{
+			Result.ErrorMessage = FString::Printf(
+				TEXT("ChildIndex %d is out of range for parent '%s' (valid range: -1 to append, or 0-%d to insert)"),
+				ChildIndex, *ParentPanel->GetName(), ParentPanel->GetChildrenCount());
+			return Result;
+		}
 	}
 
 	// Create the new widget
