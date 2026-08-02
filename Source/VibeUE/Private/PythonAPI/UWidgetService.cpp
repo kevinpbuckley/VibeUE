@@ -1603,6 +1603,16 @@ FWidgetAddComponentResult UWidgetService::AddComponent(
 		ParentPanel = Cast<UPanelWidget>(WidgetBP->WidgetTree->RootWidget);
 	}
 
+	// Validate ChildIndex up front rather than silently falling back to append: -1 means append,
+	// [0, GetChildrenCount()] means insert at that position, anything else is an explicit error
+	if (ParentPanel && ChildIndex != -1 && (ChildIndex < 0 || ChildIndex > ParentPanel->GetChildrenCount()))
+	{
+		Result.ErrorMessage = FString::Printf(
+			TEXT("ChildIndex %d is out of range for parent '%s' (valid range: -1 to append, or 0-%d to insert)"),
+			ChildIndex, *ParentPanel->GetName(), ParentPanel->GetChildrenCount());
+		return Result;
+	}
+
 	// Create the new widget
 	UWidget* NewWidget = WidgetBP->WidgetTree->ConstructWidget<UWidget>(WidgetClass, FName(*ComponentName));
 	if (!NewWidget)
@@ -1620,11 +1630,10 @@ FWidgetAddComponentResult UWidgetService::AddComponent(
 		WidgetBP->WidgetVariableNameToGuidMap.Add(WidgetFName, FGuid::NewGuid());
 	}
 
-	// Add to parent or set as root
+	// Add to parent or set as root - ChildIndex was already validated above, so it's either -1 (append) or a valid index
 	if (ParentPanel)
 	{
-		const bool bInsertAtIndex = ChildIndex >= 0 && ChildIndex <= ParentPanel->GetChildrenCount();
-		UPanelSlot* Slot = bInsertAtIndex ? ParentPanel->InsertChildAt(ChildIndex, NewWidget) : ParentPanel->AddChild(NewWidget);
+		UPanelSlot* Slot = (ChildIndex >= 0) ? ParentPanel->InsertChildAt(ChildIndex, NewWidget) : ParentPanel->AddChild(NewWidget);
 		if (!Slot)
 		{
 			Result.ErrorMessage = TEXT("Failed to add widget to parent panel");

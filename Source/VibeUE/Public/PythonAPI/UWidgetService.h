@@ -586,7 +586,9 @@ public:
 	 * @param ComponentName - Name for the new component
 	 * @param ParentName - Name of parent panel (empty for root)
 	 * @param bIsVariable - Whether to expose as a variable
-	 * @param ChildIndex - Position among the parent's children to insert at (0-based). -1 (default) appends at the end
+	 * @param ChildIndex - Position among the parent's children to insert at (0-based). -1 (default) appends at
+	 *        the end. Any other value must be within [0, parent's current child count] or the call fails with
+	 *        an error - it does not silently fall back to append
 	 * @return Result with success status and details
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets")
