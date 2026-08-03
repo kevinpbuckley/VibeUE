@@ -7,6 +7,15 @@ VibeUE is an **extension on Unreal Engine's native MCP endpoint** (`http://local
 There is no separate VibeUE server, no API key, and no in-editor chat — VibeUE simply registers
 extra Python services (`unreal.<Service>`) and skill packs on top of the engine's own toolsets.
 
+## Wait for VibeUE readiness after launch
+
+When `BuildAndLaunchGame.ps1` starts the Editor on Windows, treat its `Editor-PID=<pid>` output as
+the process identity. Check once, then watch the filesystem for
+`<ProjectDir>/Saved/VibeUE/Signals/editor-<pid>-true.json` before using MCP. Wait at most 180 seconds,
+do not poll MCP while waiting, and fail if that Editor process exits or the timeout expires. Ignore
+signal files for other or dead PIDs. The signal only means `RegisterToolsets()` reached its end;
+Python, World, and level readiness remain separate checks.
+
 Skill packs (this file and its siblings) are loaded through the engine's `AgentSkillToolset`.
 Each skill carries exact API patterns and gotchas; **load the relevant skill before writing any
 code** in a domain, or you will guess wrong property names and spiral into discovery loops.

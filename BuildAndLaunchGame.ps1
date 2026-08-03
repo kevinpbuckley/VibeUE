@@ -266,7 +266,8 @@ if (Test-Path $agentConversationsPath) {
 # Launch Unreal Editor
 Write-Host "Launching Unreal Editor..." -ForegroundColor Yellow
 
-Start-Process -FilePath $editorExe -ArgumentList $projectPath
+$editorProcess = Start-Process -FilePath $editorExe -ArgumentList $projectPath -PassThru
+Write-Output "Editor-PID=$($editorProcess.Id)"
 
 Write-Host "=== Launch Complete ===" -ForegroundColor Green
 Write-Host "Unreal Editor is starting with $projectName" -ForegroundColor Green
