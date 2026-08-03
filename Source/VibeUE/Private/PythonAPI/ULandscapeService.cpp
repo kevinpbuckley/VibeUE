@@ -4405,30 +4405,51 @@ namespace LandscapeServiceV3
 		TArray<uint16> HeightData;
 		HeightData.SetNumUninitialized(SzX * SzY);
 
+		// Read current height data (merged view across all edit layers)
 		{
 			FLandscapeEditDataInterface Edit(LInfo);
 			Edit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
+		} // ~FLandscapeEditDataInterface: release read lock
 
-			for (int32 Y = 0; Y < SzY; Y++)
+		for (int32 Y = 0; Y < SzY; Y++)
+		{
+			for (int32 X = 0; X < SzX; X++)
 			{
-				for (int32 X = 0; X < SzX; X++)
-				{
-					float VertX = static_cast<float>(MinX + X);
-					float VertY = static_cast<float>(MinY + Y);
-					float Dist  = FMath::Sqrt(FMath::Square(VertX - LocalCX) + FMath::Square(VertY - LocalCY));
+				float VertX = static_cast<float>(MinX + X);
+				float VertY = static_cast<float>(MinY + Y);
+				float Dist  = FMath::Sqrt(FMath::Square(VertX - LocalCX) + FMath::Square(VertY - LocalCY));
 
-					if (Dist >= LocalR) continue;
+				if (Dist >= LocalR) continue;
 
-					int32 Idx = Y * SzX + X;
-					float WorldZ = RawToWorldZ(HeightData[Idx], LocXY.Z, ScaleV.Z);
-					float Delta  = DeltaFn(Dist * ScaleV.X, WorldZ); // pass world-unit dist
+				int32 Idx = Y * SzX + X;
+				float WorldZ = RawToWorldZ(HeightData[Idx], LocXY.Z, ScaleV.Z);
+				float Delta  = DeltaFn(Dist * ScaleV.X, WorldZ); // pass world-unit dist
 
-					HeightData[Idx] = WorldZToRaw(WorldZ + Delta, LocXY.Z, ScaleV.Z);
-				}
+				HeightData[Idx] = WorldZToRaw(WorldZ + Delta, LocXY.Z, ScaleV.Z);
 			}
-
-			Edit.SetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0, true);
 		}
+
+		// Write using edit-layer-aware path (matches SculptAtLocation/SetHeightInRegion/etc.) —
+		// writing via FLandscapeEditDataInterface::SetHeightData bypasses edit layers entirely,
+		// so a subsequent layer-content update (UpdateLandscapeAfterHeightEdit) recomputes the
+		// merged heightmap from the real per-layer data and silently discards this edit.
+		const FGuid EditLayerGuid = ResolveEditLayerGuid(Landscape);
+		{
+			FScopedSetLandscapeEditingLayer EditLayerScope(
+				Landscape,
+				EditLayerGuid,
+				[Landscape]()
+				{
+					if (Landscape)
+					{
+						Landscape->RequestLayersContentUpdate(ELandscapeLayerUpdateMode::Update_Heightmap_All);
+					}
+				});
+
+			FHeightmapAccessor<false> HeightmapAccessor(LInfo);
+			HeightmapAccessor.SetData(MinX, MinY, MaxX, MaxY, HeightData.GetData());
+			HeightmapAccessor.Flush();
+		} // ~FHeightmapAccessor: flushes and releases heightmap texture write lock
 
 		return true;
 	}
