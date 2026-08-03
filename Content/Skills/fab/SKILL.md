@@ -72,6 +72,9 @@ listing is currently free and provides a supported source format.
   same request blindly.
 
 Every method returns a JSON string with `success: true|false`. Errors include `error_code` and `error`.
+If every method returns `error_code: "UNSUPPORTED"`, the engine install VibeUE was built against lacks
+the engine Fab plugin (`Engine/Plugins/Fab`) and FabService was compiled out (issue #525) — the rest of
+VibeUE is unaffected. Report this to the user; do not retry.
 Discover exact signatures with `discover_python_class('unreal.FabService')`. Current methods:
 `auth_status`, `list_library`, `get_asset`, `search_free_catalog`, `import_asset`, `import_free_asset`,
 and `import_status`.

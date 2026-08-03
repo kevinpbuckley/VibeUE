@@ -1,5 +1,8 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
+// Compiled out when the engine install lacks the Fab plugin (issue #525) — see VibeUE.Build.cs.
+#if WITH_VIBEUE_FAB
+
 #include "FabManifestClient.h"
 #include "FabEndpoints.h"
 
@@ -152,3 +155,5 @@ bool FVibeFabManifest::Fetch(const FString& BaseUrl, const FString& ArtifactId, 
 
 	return true;
 }
+
+#endif // WITH_VIBEUE_FAB

@@ -1,5 +1,8 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
+// Compiled out when the engine install lacks the Fab plugin (issue #525) — see VibeUE.Build.cs.
+#if WITH_VIBEUE_FAB
+
 #include "FabAuthBridge.h"
 #include "FabEndpoints.h"
 
@@ -361,3 +364,5 @@ FString FVibeFabAuth::GetLastError()
 {
 	return GLastError;
 }
+
+#endif // WITH_VIBEUE_FAB

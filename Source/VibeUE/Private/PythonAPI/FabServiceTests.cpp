@@ -6,7 +6,9 @@
 #include "PythonAPI/UFabService.h"
 #include "Json.h"
 
-#if WITH_AUTOMATION_TESTS
+// WITH_VIBEUE_FAB: the client implementations these tests link against are compiled out when the
+// engine install lacks the Fab plugin (issue #525) — see VibeUE.Build.cs.
+#if WITH_AUTOMATION_TESTS && WITH_VIBEUE_FAB
 
 // Pure discovery logic (engine-version compat, type routing, version rollup) is factored onto
 // FFabLibraryAsset so it can be verified headlessly, with no editor/auth/network. Test path prefix
@@ -130,4 +132,4 @@ bool FVibeFabFreeImportEulaGuardTest::RunTest(const FString&)
 	return true;
 }
 
-#endif // WITH_AUTOMATION_TESTS
+#endif // WITH_AUTOMATION_TESTS && WITH_VIBEUE_FAB
