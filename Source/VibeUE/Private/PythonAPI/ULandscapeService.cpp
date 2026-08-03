@@ -114,6 +114,36 @@ static FGuid ResolveEditLayerGuid(ALandscape* Landscape)
 	return LayerGuid;
 }
 
+/**
+ * Write a rectangle of uint16 heights through the edit-layer system (issue #524).
+ * FLandscapeEditDataInterface::SetHeightData bypasses edit layers: the heights reach the merged
+ * runtime heightmap but the per-layer data keeps its old values, so the next layer-content
+ * resolve (triggered by any layer-aware edit such as sculpt_at_location/flatten_at_location)
+ * rebuilds the heightmap from layer data and silently reverts the edit in unpredictable,
+ * component-sized chunks far from the later edit's brush. Every height writer must use this
+ * helper (or an equivalent FScopedSetLandscapeEditingLayer + FHeightmapAccessor block).
+ * Any FLandscapeEditDataInterface used to read the source heights must be destroyed first.
+ */
+static void WriteHeightsToEditLayer(ALandscape* Landscape, ULandscapeInfo* LandscapeInfo,
+	int32 MinX, int32 MinY, int32 MaxX, int32 MaxY, const uint16* HeightData)
+{
+	const FGuid EditLayerGuid = ResolveEditLayerGuid(Landscape);
+	FScopedSetLandscapeEditingLayer EditLayerScope(
+		Landscape,
+		EditLayerGuid,
+		[Landscape]()
+		{
+			if (Landscape)
+			{
+				Landscape->RequestLayersContentUpdate(ELandscapeLayerUpdateMode::Update_Heightmap_All);
+			}
+		});
+
+	FHeightmapAccessor<false> HeightmapAccessor(LandscapeInfo);
+	HeightmapAccessor.SetData(MinX, MinY, MaxX, MaxY, HeightData);
+	HeightmapAccessor.Flush();
+} // ~FHeightmapAccessor: flushes and releases heightmap texture write lock
+
 void ULandscapeService::UpdateLandscapeAfterHeightEdit(ALandscapeProxy* Landscape)
 {
 	if (!Landscape)
@@ -2063,9 +2093,8 @@ FLandscapeNoiseResult ULandscapeService::ApplyNoise(
 	TArray<uint16> HeightData;
 	HeightData.SetNumUninitialized(SizeX * SizeY);
 
-	// Scope the edit interface so its destructor flushes and releases the
-	// heightmap texture write lock before UpdateLandscapeAfterHeightEdit
-	// triggers UpdateMaterialInstances / texture compression.
+	// Read current height data (merged view across all edit layers); the write goes through
+	// WriteHeightsToEditLayer once the read interface has released its locks.
 	{
 		FLandscapeEditDataInterface LandscapeEdit(LandscapeInfo);
 		LandscapeEdit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
@@ -2111,8 +2140,9 @@ FLandscapeNoiseResult ULandscapeService::ApplyNoise(
 		}
 	}
 
-		LandscapeEdit.SetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0, true);
-	} // ~FLandscapeEditDataInterface: flushes and releases heightmap texture write lock
+	} // ~FLandscapeEditDataInterface: release read lock
+
+	WriteHeightsToEditLayer(Landscape, LandscapeInfo, MinX, MinY, MaxX, MaxY, HeightData.GetData());
 
 	UpdateLandscapeAfterHeightEdit(Landscape);
 
@@ -4553,8 +4583,9 @@ FMeshProjectionResult ULandscapeService::ProjectMeshToLandscape(
 			}
 		}
 
-		Edit.SetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0, true);
 	}
+
+	WriteHeightsToEditLayer(Landscape, LInfo, MinX, MinY, MaxX, MaxY, HeightData.GetData());
 
 	UpdateLandscapeAfterHeightEdit(Landscape);
 
@@ -5182,8 +5213,9 @@ bool ULandscapeService::CreateRidge(
 			}
 		}
 
-		Edit.SetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0, true);
 	}
+
+	WriteHeightsToEditLayer(Landscape, LInfo, MinX, MinY, MaxX, MaxY, HeightData.GetData());
 
 	UpdateLandscapeAfterHeightEdit(Landscape);
 	return true;
@@ -5316,8 +5348,9 @@ bool ULandscapeService::ApplyErosion(
 			HeightData = MoveTemp(Temp);
 		}
 
-		Edit.SetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0, true);
 	}
+
+	WriteHeightsToEditLayer(Landscape, LInfo, MinX, MinY, MaxX, MaxY, HeightData.GetData());
 
 	UpdateLandscapeAfterHeightEdit(Landscape);
 	UE_LOG(LogTemp, Log, TEXT("ULandscapeService::ApplyErosion: %d passes applied at (%.0f,%.0f) r=%.0f"), Iterations/100, CenterX, CenterY, Radius);
@@ -5456,8 +5489,9 @@ bool ULandscapeService::CreateTerraces(
 			}
 		}
 
-		Edit.SetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0, true);
 	}
+
+	WriteHeightsToEditLayer(Landscape, LInfo, MinX, MinY, MaxX, MaxY, HeightData.GetData());
 
 	UpdateLandscapeAfterHeightEdit(Landscape);
 	return true;
@@ -5500,11 +5534,13 @@ bool ULandscapeService::BlendTerrainFeatures(
 
 	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "BlendTerrainFeatures", "Blend Terrain"));
 
+	TArray<uint16> Smoothed;
+
 	{
 		FLandscapeEditDataInterface Edit(LInfo);
 		Edit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
 
-		TArray<uint16> Smoothed = HeightData;
+		Smoothed = HeightData;
 
 		// 3x3 box average
 		for (int32 Y = 1; Y < SzY - 1; Y++)
@@ -5531,8 +5567,9 @@ bool ULandscapeService::BlendTerrainFeatures(
 			}
 		}
 
-		Edit.SetHeightData(MinX, MinY, MaxX, MaxY, Smoothed.GetData(), 0, true);
 	}
+
+	WriteHeightsToEditLayer(Landscape, LInfo, MinX, MinY, MaxX, MaxY, Smoothed.GetData());
 
 	UpdateLandscapeAfterHeightEdit(Landscape);
 	return true;
