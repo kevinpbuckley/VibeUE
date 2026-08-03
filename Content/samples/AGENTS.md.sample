@@ -189,6 +189,17 @@ When asked to rebuild / relaunch / test, use the project script — not manual `
 - On Linux or macOS: `./Plugins/VibeUE/BuildAndLaunchGame.sh --engine /path/to/UE5`.
   Use `--strict-rebuild`, `--clean`, or `--skip-build` for the corresponding operations.
 
+**Readiness gate (required after launch, both platforms):**
+- Parse `Editor-PID=<pid>` from the launch script's output.
+- Check once, then watch `<ProjectDir>/Saved/VibeUE/Signals/editor-<pid>-true.json` using filesystem events.
+- Wait at most 180 seconds; do not poll MCP. Fail if that Editor process exits or the timeout expires.
+- Ignore signal files for other or dead PIDs. The signal only means `RegisterToolsets()` reached its end;
+  Python, World, and level readiness remain separate checks.
+- The file is JSON (`signal`, `pid`, `createdUtc`, `sessionStartUtc`, `pluginVersion`) and is written
+  atomically, so it is complete as soon as it appears. PIDs get recycled: the launch scripts clear a
+  stale same-PID signal on start, but if you launch the Editor yourself, check that `sessionStartUtc`
+  is later than your launch time before trusting it.
+
 ---
 
 ## 9. Critical rules (evergreen)

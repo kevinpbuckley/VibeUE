@@ -1542,7 +1542,8 @@ FWidgetAddComponentResult UWidgetService::AddComponent(
 	const FString& ComponentType,
 	const FString& ComponentName,
 	const FString& ParentName,
-	bool bIsVariable)
+	bool bIsVariable,
+	int32 ChildIndex)
 {
 	FWidgetAddComponentResult Result;
 	
@@ -1602,6 +1603,29 @@ FWidgetAddComponentResult UWidgetService::AddComponent(
 		ParentPanel = Cast<UPanelWidget>(WidgetBP->WidgetTree->RootWidget);
 	}
 
+	// Validate ChildIndex up front rather than silently falling back to append or to setting the root: -1 means
+	// append, [0, GetChildrenCount()] means insert at that position, anything else is an explicit error - this
+	// must fire even when ParentPanel is null (e.g. no root widget exists yet), since a non-default ChildIndex
+	// has nothing to insert into there and would otherwise silently be ignored by the set-as-root fallback below
+	if (ChildIndex != -1)
+	{
+		if (!ParentPanel)
+		{
+			Result.ErrorMessage = FString::Printf(
+				TEXT("ChildIndex %d was specified, but there is no panel parent to insert into (ChildIndex requires an existing panel parent)"),
+				ChildIndex);
+			return Result;
+		}
+
+		if (ChildIndex < 0 || ChildIndex > ParentPanel->GetChildrenCount())
+		{
+			Result.ErrorMessage = FString::Printf(
+				TEXT("ChildIndex %d is out of range for parent '%s' (valid range: -1 to append, or 0-%d to insert)"),
+				ChildIndex, *ParentPanel->GetName(), ParentPanel->GetChildrenCount());
+			return Result;
+		}
+	}
+
 	// Create the new widget
 	UWidget* NewWidget = WidgetBP->WidgetTree->ConstructWidget<UWidget>(WidgetClass, FName(*ComponentName));
 	if (!NewWidget)
@@ -1619,10 +1643,10 @@ FWidgetAddComponentResult UWidgetService::AddComponent(
 		WidgetBP->WidgetVariableNameToGuidMap.Add(WidgetFName, FGuid::NewGuid());
 	}
 
-	// Add to parent or set as root
+	// Add to parent or set as root - ChildIndex was already validated above, so it's either -1 (append) or a valid index
 	if (ParentPanel)
 	{
-		UPanelSlot* Slot = ParentPanel->AddChild(NewWidget);
+		UPanelSlot* Slot = (ChildIndex >= 0) ? ParentPanel->InsertChildAt(ChildIndex, NewWidget) : ParentPanel->AddChild(NewWidget);
 		if (!Slot)
 		{
 			Result.ErrorMessage = TEXT("Failed to add widget to parent panel");
@@ -1665,6 +1689,50 @@ FWidgetAddComponentResult UWidgetService::AddComponent(
 	Result.bIsVariable = bIsVariable;
 
 	return Result;
+}
+
+bool UWidgetService::ReorderComponent(
+	const FString& WidgetPath,
+	const FString& ComponentName,
+	int32 NewIndex)
+{
+	UWidgetBlueprint* WidgetBP = LoadWidgetBlueprint(WidgetPath);
+	if (!WidgetBP || !WidgetBP->WidgetTree)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::ReorderComponent: Widget Blueprint '%s' not found"), *WidgetPath);
+		return false;
+	}
+
+	UWidget* Widget = FindWidgetByName(WidgetBP, ComponentName);
+	if (!Widget)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::ReorderComponent: Widget '%s' not found"), *ComponentName);
+		return false;
+	}
+
+	UPanelWidget* ParentPanel = Widget->GetParent();
+	if (!ParentPanel)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::ReorderComponent: '%s' has no panel parent (the root widget cannot be reordered)"), *ComponentName);
+		return false;
+	}
+
+	if (NewIndex < 0 || NewIndex >= ParentPanel->GetChildrenCount())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::ReorderComponent: NewIndex %d is out of range for parent '%s' (valid range: 0-%d)"),
+			NewIndex, *ParentPanel->GetName(), ParentPanel->GetChildrenCount() - 1);
+		return false;
+	}
+
+	WidgetBP->Modify();
+	// ShiftChild rewrites ParentPanel->Slots directly, so the panel is the object whose state changes.
+	ParentPanel->Modify();
+	ParentPanel->ShiftChild(NewIndex, Widget);
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBP);
+
+	UE_LOG(LogTemp, Log, TEXT("UWidgetService::ReorderComponent: Moved '%s' to index %d under '%s'"),
+		*ComponentName, NewIndex, *ParentPanel->GetName());
+	return true;
 }
 
 FWidgetRemoveComponentResult UWidgetService::RemoveComponent(

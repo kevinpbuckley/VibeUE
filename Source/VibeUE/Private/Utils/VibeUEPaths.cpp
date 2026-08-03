@@ -124,6 +124,22 @@ FString FVibeUEPaths::GetConfigDir()
 	return PluginDir / TEXT("Config");
 }
 
+FString FVibeUEPaths::GetSignalsDir()
+{
+	// Use Project/Saved/VibeUE/Signals
+	FString SignalsDir = FPaths::ProjectSavedDir() / TEXT("VibeUE") / TEXT("Signals");
+
+	// Ensure directory exists
+	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+	if (!PlatformFile.DirectoryExists(*SignalsDir) && !PlatformFile.CreateDirectoryTree(*SignalsDir))
+	{
+		UE_LOG(LogVibeUEPaths, Error, TEXT("Could not create VibeUE signals directory: %s"), *SignalsDir);
+		return FString();
+	}
+
+	return SignalsDir;
+}
+
 FString FVibeUEPaths::GetPluginVersionName()
 {
 	IPluginManager& PluginManager = IPluginManager::Get();

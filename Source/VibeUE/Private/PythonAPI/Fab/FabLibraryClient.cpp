@@ -1,5 +1,8 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
+// Compiled out when the engine install lacks the Fab plugin (issue #525) — see VibeUE.Build.cs.
+#if WITH_VIBEUE_FAB
+
 #include "FabLibraryClient.h"
 #include "FabEndpoints.h"
 
@@ -320,3 +323,5 @@ bool FVibeFabLibrary::Fetch(const FString& BaseUrl, const FString& EpicAccountId
 
 	return true;
 }
+
+#endif // WITH_VIBEUE_FAB

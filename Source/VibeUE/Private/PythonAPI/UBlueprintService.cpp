@@ -725,6 +725,23 @@ TArray<FBlueprintComponentInfo> UBlueprintService::ListComponents(const FString&
 	USCS_Node* ActualRootNode = FindActualSceneRootNode(SCS);
 
 	const TArray<USCS_Node*>& AllNodes = SCS->GetAllNodes();
+
+	// Same-SCS attachment lives only in the parents' ChildNodes arrays (see AttachSameScsChild);
+	// ParentComponentOrVariableName names inherited/native parents only. Map each node to its
+	// same-SCS tree parent so AttachParent reports both kinds of attachment.
+	TMap<USCS_Node*, USCS_Node*> SameScsParent;
+	for (USCS_Node* Node : AllNodes)
+	{
+		if (!Node)
+		{
+			continue;
+		}
+		for (USCS_Node* ChildNode : Node->GetChildNodes())
+		{
+			SameScsParent.Add(ChildNode, Node);
+		}
+	}
+
 	for (USCS_Node* Node : AllNodes)
 	{
 		if (!Node)
@@ -744,6 +761,10 @@ TArray<FBlueprintComponentInfo> UBlueprintService::ListComponents(const FString&
 		if (Node->ParentComponentOrVariableName != NAME_None)
 		{
 			CompInfo.AttachParent = Node->ParentComponentOrVariableName.ToString();
+		}
+		else if (USCS_Node* const* TreeParent = SameScsParent.Find(Node))
+		{
+			CompInfo.AttachParent = (*TreeParent)->GetVariableName().ToString();
 		}
 
 		CompInfo.bIsRootComponent = (Node == ActualRootNode);
@@ -1000,6 +1021,26 @@ bool UBlueprintService::GetComponentInfo(const FString& ComponentType, FComponen
 	return true;
 }
 
+/**
+ * Attach Child under Parent within the SAME SimpleConstructionScript.
+ * ParentComponentOrVariableName (+ ParentComponentOwnerClassName / bIsParentComponentNative)
+ * is reserved for attachment to INHERITED (parent-class or native) components. When it names
+ * the node's own-SCS parent, the Blueprint compiles and behaves normally, but the engine's
+ * hierarchy fixup (FSceneHierarchyMapper::FixupParentage) fires the "possible cyclic linkage"
+ * ensure on package load — which BuildCookRun counts as an error after every package has
+ * already cooked (issues #371, #523). Same-SCS attachment is expressed by the parent's
+ * ChildNodes array alone; USCS_Node::SetParent must only be used for genuinely inherited
+ * parents. Clearing the fields here also heals nodes corrupted by earlier writes.
+ */
+static void AttachSameScsChild(USCS_Node* Parent, USCS_Node* Child)
+{
+	Parent->AddChildNode(Child);
+	Child->Modify();
+	Child->ParentComponentOrVariableName = NAME_None;
+	Child->ParentComponentOwnerClassName = NAME_None;
+	Child->bIsParentComponentNative = false;
+}
+
 bool UBlueprintService::AddComponent(
 	const FString& BlueprintPath,
 	const FString& ComponentType,
@@ -1079,10 +1120,9 @@ bool UBlueprintService::AddComponent(
 		
 		if (ParentNode)
 		{
-			ParentNode->AddChildNode(NewNode);
-			// CRITICAL: Call SetParent to properly set ParentComponentOrVariableName
-			// AddChildNode only manages the ChildNodes array, it does NOT set the parent reference
-			NewNode->SetParent(ParentNode);
+			// ParentNode comes from this Blueprint's own SCS (the lookup above), so this must
+			// NOT go through SetParent — see AttachSameScsChild (issue #523).
+			AttachSameScsChild(ParentNode, NewNode);
 		}
 		else
 		{
@@ -1182,7 +1222,7 @@ bool UBlueprintService::RemoveComponent(
 			NodeToRemove->RemoveChildNode(Child);
 			if (ParentNode)
 			{
-				ParentNode->AddChildNode(Child);
+				AttachSameScsChild(ParentNode, Child);
 			}
 			else
 			{
@@ -1549,18 +1589,10 @@ bool UBlueprintService::SetRootComponent(
 	NewRootNode->ParentComponentOwnerClassName = NAME_None;
 	NewRootNode->bIsParentComponentNative = false;
 
-	// Attach a node as a same-SCS child of the new root. ParentComponentOrVariableName
-	// is reserved for attachment to INHERITED (parent-class/native) components — the
-	// engine's hierarchy fixup fires the "possible cyclic linkage" ensure on load/cook
-	// when it names the node's own SCS parent (issue #371). Same-SCS attachment is the
-	// ChildNodes array alone, with the inherited-parent linkage cleared.
+	// Attach a node as a same-SCS child of the new root (issue #371) — see AttachSameScsChild.
 	auto AttachUnderNewRoot = [NewRootNode](USCS_Node* Child)
 	{
-		NewRootNode->AddChildNode(Child);
-		Child->Modify();
-		Child->ParentComponentOrVariableName = NAME_None;
-		Child->ParentComponentOwnerClassName = NAME_None;
-		Child->bIsParentComponentNative = false;
+		AttachSameScsChild(NewRootNode, Child);
 	};
 
 	// If there was a current root, we need to handle it
@@ -1830,12 +1862,9 @@ bool UBlueprintService::ReparentComponent(
 		SCS->RemoveNode(NodeToReparent);
 	}
 	
-	// Add to new parent
-	NewParent->AddChildNode(NodeToReparent);
-	
-	// CRITICAL: Call SetParent to properly set ParentComponentOrVariableName
-	// AddChildNode only manages the ChildNodes array, it does NOT set the parent reference
-	NodeToReparent->SetParent(NewParent);
+	// Add to new parent. NewParent comes from this Blueprint's own SCS (the lookup above),
+	// so this must NOT go through SetParent — see AttachSameScsChild (issue #523).
+	AttachSameScsChild(NewParent, NodeToReparent);
 	
 	// Mark blueprint as modified
 	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);

@@ -6,6 +6,7 @@
 #include "Editor.h"
 #include "Core/ToolRegistry.h"
 #include "HAL/IConsoleManager.h"
+#include "HAL/PlatformProcess.h"
 #include "HAL/PlatformFileManager.h"
 #include "HAL/FileManager.h"
 #include "Tools/PythonTools.h"
@@ -17,6 +18,7 @@
 #include "UObject/UObjectHash.h"
 #include "UObject/UObjectIterator.h"
 #include "Utils/VibeUEPaths.h"
+#include "Utils/VibeUEReadinessSignal.h"
 #include "Misc/Paths.h"
 #include "Misc/FileHelper.h"
 
@@ -363,6 +365,10 @@ static void GatherVibeUEToolsetClasses(TArray<UClass*>& OutClasses)
 
 void FModule::RegisterToolsets()
 {
+	// A reused process ID must not inherit a stale signal from an unclean Editor exit. This runs late
+	// in startup, so BuildAndLaunchGame also clears the file right after launch — see the script.
+	FVibeUEReadinessSignal::Remove();
+
 	// Service layer -> Epic's ToolsetRegistry (AICallable tools).
 	if (UToolsetRegistry::IsAvailable())
 	{
@@ -391,6 +397,9 @@ void FModule::RegisterToolsets()
 	{
 		OnRefreshToolsHandle = MCPModule->OnRefreshTools().AddRaw(this, &FModule::HandleMCPRefreshTools);
 	}
+
+	// Reaching the end of RegisterToolsets is the complete readiness contract.
+	FVibeUEReadinessSignal::Publish();
 }
 
 void FModule::HandleMCPRefreshTools()
@@ -427,6 +436,8 @@ void FModule::UnregisterToolsets()
 
 void FModule::ShutdownModule()
 {
+	FVibeUEReadinessSignal::Remove();
+
 	if (!bServicesInitialized)
 	{
 		UE_LOG(LogTemp, Display, TEXT("VibeUE Module has shut down"));
@@ -449,6 +460,7 @@ void FModule::ShutdownModule()
 void FModule::OnPreExit()
 {
 	UE_LOG(LogTemp, Display, TEXT("VibeUE OnPreExit - cleaning up Python services"));
+	FVibeUEReadinessSignal::Remove();
 	
 	// Release all C++ Python service instances
 	// This is safe because we're just clearing our own pointers

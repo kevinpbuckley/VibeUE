@@ -1,6 +1,30 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UFabService.h"
+
+#if !WITH_VIBEUE_FAB
+
+// This engine install has no Fab plugin (Engine/Plugins/Fab), so VibeUE.Build.cs compiled FabService
+// out (issue #525). The UCLASS stays registered so the Python/toolset surface is stable; every method
+// reports the feature as unavailable instead.
+static FString FabUnavailableJson()
+{
+	return TEXT("{\"success\":false,\"error_code\":\"UNSUPPORTED\",")
+	       TEXT("\"error\":\"FabService is unavailable: this engine install does not include the Fab plugin ")
+	       TEXT("(Engine/Plugins/Fab), so VibeUE was compiled without Fab support. ")
+	       TEXT("Use an engine install that ships the Fab plugin and rebuild VibeUE to enable it.\"}");
+}
+
+FString UFabService::AuthStatus(float) { return FabUnavailableJson(); }
+FString UFabService::ListLibrary(const FString&, const FString&, const FString&, int32, int32, bool) { return FabUnavailableJson(); }
+FString UFabService::GetAsset(const FString&) { return FabUnavailableJson(); }
+FString UFabService::SearchFreeCatalog(const FString&, const FString&, const FString&, int32, const FString&) { return FabUnavailableJson(); }
+FString UFabService::ImportAsset(const FString&, const FString&, const FString&, const FString&) { return FabUnavailableJson(); }
+FString UFabService::ImportFreeAsset(const FString&, const FString&, const FString&, const FString&, bool) { return FabUnavailableJson(); }
+FString UFabService::ImportStatus(const FString&) { return FabUnavailableJson(); }
+
+#else // WITH_VIBEUE_FAB
+
 #include "Fab/FabAuthBridge.h"
 #include "Fab/FabLibraryClient.h"
 #include "Fab/FabManifestClient.h"
@@ -200,7 +224,11 @@ FString UFabService::ListLibrary(const FString& NameFilter, const FString& TypeF
 		return LibErr;
 	}
 
-	const FString EngineVer = EngineVersion.IsEmpty() ? CurrentEngineVersion() : EngineVersion;
+	// "all"/"any" disables the engine-version filter; anything else (or empty = current engine) excludes
+	// assets that don't support that version.
+	const bool bAnyEngine = EngineVersion.Equals(TEXT("all"), ESearchCase::IgnoreCase)
+		|| EngineVersion.Equals(TEXT("any"), ESearchCase::IgnoreCase);
+	const FString EngineVer = (EngineVersion.IsEmpty() || bAnyEngine) ? CurrentEngineVersion() : EngineVersion;
 	const FString NameLower = NameFilter.ToLower();
 	const FString TypeLower = TypeFilter.ToLower();
 
@@ -222,6 +250,10 @@ FString UFabService::ListLibrary(const FString& NameFilter, const FString& TypeF
 				continue;
 			}
 		}
+		if (!bAnyEngine && !A.SupportsEngine(EngineVer))
+		{
+			continue;
+		}
 		Filtered.Add(&A);
 	}
 
@@ -236,9 +268,10 @@ FString UFabService::ListLibrary(const FString& NameFilter, const FString& TypeF
 	{
 		Results.Add(MakeShared<FJsonValueObject>(CompactAsset(*Filtered[i], EngineVer)));
 	}
-	for (const FFabLibraryAsset* A : Filtered)
+	// total_compatible counts the WHOLE owned library against EngineVer, independent of the filters.
+	for (const FFabLibraryAsset& A : GLibraryCache)
 	{
-		if (A->SupportsEngine(EngineVer))
+		if (A.SupportsEngine(EngineVer))
 		{
 			++CompatibleCount;
 		}
@@ -568,3 +601,5 @@ FString UFabService::ImportStatus(const FString& AssetId)
 	}
 	return OkJson(Obj);
 }
+
+#endif // WITH_VIBEUE_FAB

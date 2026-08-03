@@ -130,4 +130,13 @@ if [[ "$skip_build" == false ]]; then
     "$build_script" "${project_name}Editor" "$platform" "$mode" "$project_path" -waitmutex
 fi
 
-exec "$editor_bin" "$project_path"
+"$editor_bin" "$project_path" &
+editor_pid=$!
+
+# Same stale-signal guard as BuildAndLaunchGame.ps1: a crashed Editor can leave a readiness signal
+# named for a PID the OS later reuses, and RegisterToolsets() only clears it late in startup.
+rm -f -- "$project_root/Saved/VibeUE/Signals/editor-$editor_pid-"*.json* 2>/dev/null || true
+
+echo "Editor-PID=$editor_pid"
+
+wait "$editor_pid"
