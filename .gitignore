@@ -6,6 +6,7 @@ vibe_ue.log
 *.log
 
 # AI-related files
+.codebase-memory/
 .cursorrules
 .cursorignore
 /.cursor/
