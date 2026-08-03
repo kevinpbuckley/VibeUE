@@ -56,6 +56,14 @@ public:
 	static FString GetScreenshotsDir();
 
 	/**
+	 * Get the VibeUE Signals directory under Project/Saved (agent readiness signals).
+	 * Creates the directory if it doesn't exist.
+	 *
+	 * @return Absolute path to Project/Saved/VibeUE/Signals, or empty string if it could not be created
+	 */
+	static FString GetSignalsDir();
+
+	/**
 	 * Get the VibeUE plugin version name (e.g. "3.0").
 	 * Reads from the plugin descriptor via IPluginManager.
 	 *

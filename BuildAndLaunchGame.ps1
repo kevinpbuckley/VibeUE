@@ -267,6 +267,20 @@ if (Test-Path $agentConversationsPath) {
 Write-Host "Launching Unreal Editor..." -ForegroundColor Yellow
 
 $editorProcess = Start-Process -FilePath $editorExe -ArgumentList $projectPath -PassThru
+
+# Windows recycles process IDs, so an Editor that crashed without running OnPreExit can leave a signal
+# file whose name matches the PID we just got. VibeUE also clears it in RegisterToolsets(), but that runs
+# late in startup - an agent watching from now would see the stale file first and call MCP too early.
+# The Editor takes tens of seconds to reach RegisterToolsets(), so deleting here cannot race its write.
+$signalsDir = Join-Path $projectRoot "Saved\VibeUE\Signals"
+if (Test-Path $signalsDir) {
+    Get-ChildItem -Path $signalsDir -Filter "editor-$($editorProcess.Id)-*.json*" -File -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
+            Write-Host "Cleared stale readiness signal: $($_.Name)" -ForegroundColor Gray
+        }
+}
+
 Write-Output "Editor-PID=$($editorProcess.Id)"
 
 Write-Host "=== Launch Complete ===" -ForegroundColor Green

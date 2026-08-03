@@ -18,53 +18,11 @@
 #include "UObject/UObjectHash.h"
 #include "UObject/UObjectIterator.h"
 #include "Utils/VibeUEPaths.h"
+#include "Utils/VibeUEReadinessSignal.h"
 #include "Misc/Paths.h"
 #include "Misc/FileHelper.h"
 
 #define LOCTEXT_NAMESPACE "FModule"
-
-namespace
-{
-	FString GetToolsetsRegisteredSignalPath()
-	{
-		return FPaths::Combine(
-			FPaths::ProjectSavedDir(),
-			TEXT("VibeUE"),
-			TEXT("Signals"),
-			FString::Printf(TEXT("editor-%u-true.json"), FPlatformProcess::GetCurrentProcessId()));
-	}
-
-	void RemoveToolsetsRegisteredSignal()
-	{
-		IFileManager::Get().Delete(
-			*GetToolsetsRegisteredSignalPath(),
-			/*RequireExists=*/false,
-			/*EvenReadOnly=*/true,
-			/*Quiet=*/true);
-	}
-
-	void PublishToolsetsRegisteredSignal()
-	{
-		const FString SignalDirectory = FPaths::Combine(
-			FPaths::ProjectSavedDir(), TEXT("VibeUE"), TEXT("Signals"));
-		IFileManager& FileManager = IFileManager::Get();
-		if (!FileManager.DirectoryExists(*SignalDirectory)
-			&& !FileManager.MakeDirectory(*SignalDirectory, /*Tree=*/true))
-		{
-			UE_LOG(LogTemp, Error, TEXT("VibeUE: failed to create signal directory: %s"), *SignalDirectory);
-			return;
-		}
-
-		const FString SignalPath = GetToolsetsRegisteredSignalPath();
-		if (!FFileHelper::SaveStringToFile(FString(), *SignalPath))
-		{
-			UE_LOG(LogTemp, Error, TEXT("VibeUE: failed to create toolsets-registered signal: %s"), *SignalPath);
-			return;
-		}
-
-		UE_LOG(LogTemp, Display, TEXT("VibeUE: toolsets-registered signal created: %s"), *SignalPath);
-	}
-}
 
 // Console command to list all registered tools
 static void ListVibeUETools()
@@ -407,8 +365,9 @@ static void GatherVibeUEToolsetClasses(TArray<UClass*>& OutClasses)
 
 void FModule::RegisterToolsets()
 {
-	// A reused process ID must not inherit a stale signal from an unclean Editor exit.
-	RemoveToolsetsRegisteredSignal();
+	// A reused process ID must not inherit a stale signal from an unclean Editor exit. This runs late
+	// in startup, so BuildAndLaunchGame also clears the file right after launch — see the script.
+	FVibeUEReadinessSignal::Remove();
 
 	// Service layer -> Epic's ToolsetRegistry (AICallable tools).
 	if (UToolsetRegistry::IsAvailable())
@@ -440,7 +399,7 @@ void FModule::RegisterToolsets()
 	}
 
 	// Reaching the end of RegisterToolsets is the complete readiness contract.
-	PublishToolsetsRegisteredSignal();
+	FVibeUEReadinessSignal::Publish();
 }
 
 void FModule::HandleMCPRefreshTools()
@@ -477,7 +436,7 @@ void FModule::UnregisterToolsets()
 
 void FModule::ShutdownModule()
 {
-	RemoveToolsetsRegisteredSignal();
+	FVibeUEReadinessSignal::Remove();
 
 	if (!bServicesInitialized)
 	{
@@ -501,7 +460,7 @@ void FModule::ShutdownModule()
 void FModule::OnPreExit()
 {
 	UE_LOG(LogTemp, Display, TEXT("VibeUE OnPreExit - cleaning up Python services"));
-	RemoveToolsetsRegisteredSignal();
+	FVibeUEReadinessSignal::Remove();
 	
 	// Release all C++ Python service instances
 	// This is safe because we're just clearing our own pointers
