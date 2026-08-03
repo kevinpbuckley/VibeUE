@@ -58,9 +58,13 @@ Do **not** call `BlueprintEditorLibrary.get_blueprint_class()`, `unreal.create_w
 ### 🚨 Hierarchy: set the root first, parents before children
 
 ```python
-unreal.WidgetService.add_component(path, "CanvasPanel", "RootCanvas", "", True)   # root: set_as_root=True
+unreal.WidgetService.add_component(path, "CanvasPanel", "RootCanvas", "", True)   # empty parent -> becomes root
 unreal.WidgetService.add_component(path, "Button", "PlayButton", "RootCanvas", False)
 ```
+
+That 5th argument is `is_variable`, **not** `set_as_root` — a widget becomes the root because its parent
+name is empty, not because of that flag. A 6th argument, `child_index`, inserts at a position instead of
+appending; `reorder_component` moves an existing widget within its parent. See `reference.md` ▸ Child order.
 
 > ⚠️ **Widget names are unique per-blueprint, NOT per-parent.** UMG enforces one name across the
 > whole Widget Blueprint, so you can't add an `ItemLabel`/`ItemButton` under each of `Item1`,

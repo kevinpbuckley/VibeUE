@@ -1699,30 +1699,39 @@ bool UWidgetService::ReorderComponent(
 	UWidgetBlueprint* WidgetBP = LoadWidgetBlueprint(WidgetPath);
 	if (!WidgetBP || !WidgetBP->WidgetTree)
 	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::ReorderComponent: Widget Blueprint '%s' not found"), *WidgetPath);
 		return false;
 	}
 
 	UWidget* Widget = FindWidgetByName(WidgetBP, ComponentName);
 	if (!Widget)
 	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::ReorderComponent: Widget '%s' not found"), *ComponentName);
 		return false;
 	}
 
 	UPanelWidget* ParentPanel = Widget->GetParent();
 	if (!ParentPanel)
 	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::ReorderComponent: '%s' has no panel parent (the root widget cannot be reordered)"), *ComponentName);
 		return false;
 	}
 
 	if (NewIndex < 0 || NewIndex >= ParentPanel->GetChildrenCount())
 	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::ReorderComponent: NewIndex %d is out of range for parent '%s' (valid range: 0-%d)"),
+			NewIndex, *ParentPanel->GetName(), ParentPanel->GetChildrenCount() - 1);
 		return false;
 	}
 
 	WidgetBP->Modify();
+	// ShiftChild rewrites ParentPanel->Slots directly, so the panel is the object whose state changes.
+	ParentPanel->Modify();
 	ParentPanel->ShiftChild(NewIndex, Widget);
 	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBP);
 
+	UE_LOG(LogTemp, Log, TEXT("UWidgetService::ReorderComponent: Moved '%s' to index %d under '%s'"),
+		*ComponentName, NewIndex, *ParentPanel->GetName());
 	return true;
 }
 

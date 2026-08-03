@@ -147,6 +147,28 @@ Returned by `spawn_widget_in_pie(widget_path, z_order=0)`. Pass the **whole hand
 `add_component()` returns **WidgetAddComponentResult**: `success`, `component_name`, `component_type`,
 `parent_name`, `is_variable`, `error_message`.
 
+## Child order
+
+Panels keep their children in an ordered list, and that order is what a VerticalBox, HorizontalBox or
+Overlay actually lays out. Two ways to control it:
+
+- `add_component(..., child_index=N)` — insert the new widget at position `N` instead of appending.
+  `child_index` defaults to `-1` (append). Valid values are `0` to the parent's current child count;
+  anything else **fails with an error rather than silently appending**, so check `success`.
+- `reorder_component(widget_path, name, new_index)` — move a widget that already exists to another
+  position **under its current parent**. Valid range is `0` to `child_count - 1`. Returns `False` (with
+  the reason in the log) for an unknown widget, a widget with no panel parent (i.e. the root), or an
+  out-of-range index. To move a widget to a *different* parent, use `reparent_widget` instead.
+
+```python
+# Insert a banner above everything already in the list
+unreal.WidgetService.add_component(path, "TextBlock", "Banner", "ButtonList", False, 0)
+# ...or move an existing widget to the front
+unreal.WidgetService.reorder_component(path, "PlayButton", 0)
+```
+
+`child_index` is positional argument 6 — `is_variable` comes before it, so pass both when inserting.
+
 `get_available_events()` returns **WidgetEventInfo** list: `event_name`, `event_type`, `description`.
 
 ## Common properties
@@ -164,10 +186,11 @@ Returned by `spawn_widget_in_pie(widget_path, z_order=0)`. Pass the **whole hand
 
 | Action | Signature notes |
 |--------|-----------------|
-| `add_component` | `(widget_path, type, name, parent, set_as_root)` → WidgetAddComponentResult |
+| `add_component` | `(widget_path, type, name, parent, is_variable, child_index)` → WidgetAddComponentResult |
 | `remove_component` | Remove a widget (and optionally its children) |
 | `rename_widget` | `(widget_path, old_name, new_name)` |
 | `reparent_widget` | `(widget_path, widget_name, new_parent_name)` — move a widget to a new parent panel |
+| `reorder_component` | `(widget_path, component_name, new_index)` → bool — move a widget within its **current** parent |
 | `bind_event` | `(widget_path, widget_name, event_name, function_name)` |
 | `get_hierarchy` / `list_components` | All widgets as `WidgetInfo` list |
 | `get_widget_snapshot` | Full hierarchy + slot + properties as `WidgetComponentSnapshot` list |
