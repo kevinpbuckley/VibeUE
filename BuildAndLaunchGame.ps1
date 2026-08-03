@@ -12,7 +12,13 @@ param(
     # strict. Incremental builds, however, only recompile changed files — so a stale
     # object file can hide a freshly-deprecated engine API. -StrictRebuild wipes the
     # plugin's Binaries/Intermediate so ALL plugin files are recompiled and rechecked.
-    [switch]$StrictRebuild
+    [switch]$StrictRebuild,
+    # Block until the launched editor writes its readiness signal
+    # (Saved/VibeUE/Signals/editor-<pid>-true.json, written once VibeUE's toolsets are
+    # registered), so agents can chain the next MCP call without watching the file
+    # themselves. Exit codes: 0 ready, 2 timed out, 3 editor exited before ready.
+    [switch]$WaitForReady,
+    [int]$ReadyTimeoutSec = 120
 )
 
 # ============================================================================
@@ -266,7 +272,11 @@ if (Test-Path $agentConversationsPath) {
 # Launch Unreal Editor
 Write-Host "Launching Unreal Editor..." -ForegroundColor Yellow
 
-$editorProcess = Start-Process -FilePath $editorExe -ArgumentList $projectPath -PassThru
+# The project path MUST be quoted: -ArgumentList passes the string to the child process
+# verbatim, so a path with a space (e.g. Documents\Unreal Projects, Unreal's default
+# location) arrives as two invalid arguments and the editor silently opens the last
+# project or the Project Browser instead (issue #532).
+$editorProcess = Start-Process -FilePath $editorExe -ArgumentList "`"$projectPath`"" -PassThru
 
 # Windows recycles process IDs, so an Editor that crashed without running OnPreExit can leave a signal
 # file whose name matches the PID we just got. VibeUE also clears it in RegisterToolsets(), but that runs
@@ -282,6 +292,25 @@ if (Test-Path $signalsDir) {
 }
 
 Write-Output "Editor-PID=$($editorProcess.Id)"
+
+if ($WaitForReady) {
+    $readySignal = Join-Path $signalsDir "editor-$($editorProcess.Id)-true.json"
+    Write-Host "Waiting for editor readiness signal (timeout: ${ReadyTimeoutSec}s)..." -ForegroundColor Yellow
+    $waited = 0
+    while (-not (Test-Path $readySignal)) {
+        if ($editorProcess.HasExited) {
+            Write-Host "Editor process exited (code $($editorProcess.ExitCode)) before signaling ready." -ForegroundColor Red
+            exit 3
+        }
+        if ($waited -ge $ReadyTimeoutSec) {
+            Write-Host "Editor did not signal ready within ${ReadyTimeoutSec}s (it may still be loading)." -ForegroundColor Red
+            exit 2
+        }
+        Start-Sleep 1
+        $waited++
+    }
+    Write-Host "Editor is ready (signaled after ${waited}s)." -ForegroundColor Green
+}
 
 Write-Host "=== Launch Complete ===" -ForegroundColor Green
 Write-Host "Unreal Editor is starting with $projectName" -ForegroundColor Green
