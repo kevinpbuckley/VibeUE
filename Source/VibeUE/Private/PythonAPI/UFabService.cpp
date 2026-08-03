@@ -1,6 +1,30 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UFabService.h"
+
+#if !WITH_VIBEUE_FAB
+
+// This engine install has no Fab plugin (Engine/Plugins/Fab), so VibeUE.Build.cs compiled FabService
+// out (issue #525). The UCLASS stays registered so the Python/toolset surface is stable; every method
+// reports the feature as unavailable instead.
+static FString FabUnavailableJson()
+{
+	return TEXT("{\"success\":false,\"error_code\":\"UNSUPPORTED\",")
+	       TEXT("\"error\":\"FabService is unavailable: this engine install does not include the Fab plugin ")
+	       TEXT("(Engine/Plugins/Fab), so VibeUE was compiled without Fab support. ")
+	       TEXT("Use an engine install that ships the Fab plugin and rebuild VibeUE to enable it.\"}");
+}
+
+FString UFabService::AuthStatus(float) { return FabUnavailableJson(); }
+FString UFabService::ListLibrary(const FString&, const FString&, const FString&, int32, int32, bool) { return FabUnavailableJson(); }
+FString UFabService::GetAsset(const FString&) { return FabUnavailableJson(); }
+FString UFabService::SearchFreeCatalog(const FString&, const FString&, const FString&, int32, const FString&) { return FabUnavailableJson(); }
+FString UFabService::ImportAsset(const FString&, const FString&, const FString&, const FString&) { return FabUnavailableJson(); }
+FString UFabService::ImportFreeAsset(const FString&, const FString&, const FString&, const FString&, bool) { return FabUnavailableJson(); }
+FString UFabService::ImportStatus(const FString&) { return FabUnavailableJson(); }
+
+#else // WITH_VIBEUE_FAB
+
 #include "Fab/FabAuthBridge.h"
 #include "Fab/FabLibraryClient.h"
 #include "Fab/FabManifestClient.h"
@@ -577,3 +601,5 @@ FString UFabService::ImportStatus(const FString& AssetId)
 	}
 	return OkJson(Obj);
 }
+
+#endif // WITH_VIBEUE_FAB

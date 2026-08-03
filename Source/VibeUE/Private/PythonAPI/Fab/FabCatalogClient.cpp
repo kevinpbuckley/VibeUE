@@ -1,5 +1,8 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
+// Compiled out when the engine install lacks the Fab plugin (issue #525) — see VibeUE.Build.cs.
+#if WITH_VIBEUE_FAB
+
 #include "FabCatalogClient.h"
 #include "FabEndpoints.h"
 
@@ -442,3 +445,5 @@ bool FVibeFabCatalog::ResolveFreeDownload(const FString& BaseUrl, const FString&
 	}
 	return true;
 }
+
+#endif // WITH_VIBEUE_FAB

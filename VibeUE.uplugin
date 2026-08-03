@@ -75,11 +75,13 @@
 		},
 		{
 			"Name": "Fab",
-			"Enabled": true
+			"Enabled": true,
+			"Optional": true
 		},
 		{
 			"Name": "EOSShared",
-			"Enabled": true
+			"Enabled": true,
+			"Optional": true
 		}
 	]
 }
