@@ -223,8 +223,8 @@ struct FLandscapeLayerInfoCreateResult
  * - create_layer_weight_node: Create a LandscapeLayerWeight expression
  *
  * Height/Slope-Driven Blending:
- * - create_height_mask: Build a world-height → 0-1 mask node network (no weight maps)
- * - create_slope_mask: Build a slope-angle → 0-1 mask node network (no weight maps)
+ * - create_height_mask_node: Build a world-height → 0-1 mask node network (no weight maps)
+ * - create_slope_mask_node: Build a slope-angle → 0-1 mask node network (no weight maps)
  * - setup_height_slope_blend: Wire height/slope masks into a blend node (full auto-blend setup)
  *
  * Existence:
@@ -564,7 +564,7 @@ public:
 
 	/**
 	 * Create a height-based mask node network in the material graph.
-	 * Maps to action="create_height_mask"
+	 * Maps to action="create_height_mask_node"
 	 *
 	 * Builds: AbsoluteWorldPosition → ComponentMask(B/Z) → SmoothStep
 	 * Output: 0 below MinHeight, smooth S-curve transition, 1 above MaxHeight.
@@ -581,7 +581,7 @@ public:
 	 * @return Expression ID of the SmoothStep output node, or empty string on failure
 	 *
 	 * Example:
-	 *   mask_id = svc.create_height_mask("/Game/M_Terrain", 5000.0, 8000.0)
+	 *   mask_id = svc.create_height_mask_node("/Game/M_Terrain", 5000.0, 8000.0)
 	 *   svc.connect_to_layer_input("/Game/M_Terrain", mask_id, "", blend_id, "Snow", "Alpha")
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|LandscapeMaterial")
@@ -594,7 +594,7 @@ public:
 
 	/**
 	 * Create a slope-based mask node network in the material graph.
-	 * Maps to action="create_slope_mask"
+	 * Maps to action="create_slope_mask_node"
 	 *
 	 * Builds: VertexNormalWS → ComponentMask(B/Z) → OneMinus → SmoothStep
 	 * Output: 0 for flat terrain (below MinSlopeDegrees), 1 for steep/cliff terrain

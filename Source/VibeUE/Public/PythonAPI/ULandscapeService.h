@@ -632,7 +632,7 @@ struct FLineTraceHit
  *
  * Mesh Projection (v3):
  * - project_mesh_to_landscape: Conform landscape to a mesh actor's surface
- * - project_meshes_to_landscape: Batch project multiple mesh actors
+ * - project_multiple_meshes_to_landscape: Batch project multiple mesh actors
  * - sample_mesh_heights: Sample world-Z hits from a mesh actor's surface
  *
  * Terrain Analysis (v3):
@@ -1679,7 +1679,7 @@ public:
 
 	/**
 	 * Project multiple mesh actors onto the landscape in one batch call.
-	 * Maps to action="project_meshes_to_landscape"
+	 * Maps to action="project_multiple_meshes_to_landscape"
 	 *
 	 * @param LandscapeNameOrLabel - Name or label of the landscape
 	 * @param MeshActorLabels      - Labels of static mesh actors to project

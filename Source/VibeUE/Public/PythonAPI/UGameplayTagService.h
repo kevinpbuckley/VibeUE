@@ -44,8 +44,8 @@ struct FVibeGameplayTagInfo
 };
 
 /**
- * Result of a gameplay tag operation (add, remove, rename).
- * Python access: result = unreal.GameplayTagService.add_tag("Cube.StartChasing")
+ * Result of a bulk gameplay tag add operation.
+ * Python access: result = unreal.GameplayTagService.add_tags(["Cube.StartChasing"])
  *
  * Properties:
  * - success (bool): Whether the operation succeeded
@@ -68,31 +68,15 @@ struct FGameplayTagResult
 };
 
 /**
- * Gameplay Tag Service - Python API for managing Unreal Engine Gameplay Tags.
+ * Gameplay Tag Service - Python API for querying and bulk-adding Gameplay Tags.
  *
- * Provides full CRUD operations for gameplay tags including:
- * - Listing and filtering tags
- * - Adding new tags (to INI config + runtime registration)
- * - Removing tags
- * - Renaming tags
- * - Querying tag hierarchy (children, parents)
+ * This service provides:
+ * - Bulk-adding new tags (to INI config + runtime registration)
+ * - Querying tag information and direct children
  * - Checking tag existence
  *
  * Python Usage:
  *   import unreal
- *
- *   # List all tags
- *   tags = unreal.GameplayTagService.list_tags()
- *   for t in tags:
- *       print(f"{t.tag_name} ({t.source})")
- *
- *   # List tags matching a prefix
- *   cube_tags = unreal.GameplayTagService.list_tags("Cube")
- *
- *   # Add a single tag
- *   result = unreal.GameplayTagService.add_tag("Cube.StartChasing", "Event to start chasing")
- *   if result.success:
- *       print("Tag added!")
  *
  *   # Add multiple tags at once
  *   result = unreal.GameplayTagService.add_tags(["Cube.StartChasing", "Cube.StopChasing"], "Chase events")

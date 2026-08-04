@@ -205,13 +205,13 @@ struct FMaterialSummary
  * MaterialTools / MaterialInstanceTools:
  *
  * Lifecycle:
- * - save: Save material to disk
- * - compile: Compile/rebuild material shaders
+ * - save_material: Save material to disk
+ * - compile_material: Compile/rebuild material shaders
  * - refresh_editor: Refresh open Material Editor
- * - open: Open material in editor
+ * - open_in_editor: Open material in editor
  *
  * Information:
- * - get_info: Get comprehensive material information
+ * - get_material_info: Get comprehensive material information
  * - summarize: Get AI-friendly material summary
  * - list_parameters: List all material parameters
  * - get_property_info: Get detailed property metadata
@@ -240,7 +240,7 @@ public:
 
 	/**
 	 * Save a material to disk.
-	 * Maps to action="save"
+	 * Maps to action="save_material"
 	 *
 	 * @param MaterialPath - Full path to the material
 	 * @return True if successful
@@ -250,7 +250,7 @@ public:
 
 	/**
 	 * Compile/rebuild a material's shaders.
-	 * Maps to action="compile"
+	 * Maps to action="compile_material"
 	 *
 	 * @param MaterialPath - Full path to the material
 	 * @return True if successful
@@ -270,7 +270,7 @@ public:
 
 	/**
 	 * Open a material in the Material Editor.
-	 * Maps to action="open"
+	 * Maps to action="open_in_editor"
 	 *
 	 * @param MaterialPath - Full path to the material or instance
 	 * @return True if successful
@@ -284,7 +284,7 @@ public:
 
 	/**
 	 * Get comprehensive material information.
-	 * Maps to action="get_info"
+	 * Maps to action="get_material_info"
 	 *
 	 * @param MaterialPath - Full path to the material
 	 * @param OutInfo - Structure containing all material details

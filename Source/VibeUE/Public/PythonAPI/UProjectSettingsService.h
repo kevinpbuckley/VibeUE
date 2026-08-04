@@ -8,7 +8,7 @@
 
 /**
  * Result of a project settings operation.
- * Python access: result = unreal.ProjectSettingsService.set_setting(category, key, value)
+ * Python access: result = unreal.ProjectSettingsService.set_ini_value(section, key, value, config_file)
  *
  * Properties:
  * - success (bool): Whether the operation succeeded
@@ -90,28 +90,11 @@ struct FSettingsClassInfo
  * Python Usage:
  *   import unreal
  *
- *   # List all categories
- *   categories = unreal.ProjectSettingsService.list_categories()
- *   for cat in categories:
- *       print(f"{cat.category_id}: {cat.display_name} ({cat.setting_count} settings)")
- *
- *   # Get all settings in a category
- *   settings = unreal.ProjectSettingsService.list_settings("general")
- *   for s in settings:
- *       print(f"  {s.key} = {s.value}")
- *
- *   # Get a specific setting
- *   value = unreal.ProjectSettingsService.get_setting("general", "ProjectName")
- *   print(f"Project name: {value}")
- *
- *   # Set a setting
- *   result = unreal.ProjectSettingsService.set_setting("general", "ProjectName", "My Game")
- *   if result.success:
- *       print("Setting updated!")
- *
  *   # Direct INI access
  *   value = unreal.ProjectSettingsService.get_ini_value(
  *       "/Script/Engine.Engine", "GameEngine", "DefaultEngine.ini")
+ *   result = unreal.ProjectSettingsService.set_ini_value(
+ *       "/Script/EngineSettings.GeneralProjectSettings", "ProjectName", "My Game", "DefaultGame.ini")
  *
  *   # Discover all settings classes
  *   classes = unreal.ProjectSettingsService.discover_settings_classes()

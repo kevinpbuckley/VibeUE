@@ -511,9 +511,8 @@ struct FAnimationPreviewState
  * Python Usage:
  *   import unreal
  *
- *   # Search for an animation and get the FULL asset path
- *   results = unreal.AssetDiscoveryService.search_assets("Run", "AnimSequence")
- *   anim_path = str(results[0].package_name)  # Use package_name, NOT package_path!
+ *   # Use the FULL asset path, including the asset name
+ *   anim_path = "/Game/Characters/Mannequin/Animations/Run/AS_Run_Forward"
  *
  *   # List all animations for a skeleton
  *   anims = unreal.AnimSequenceService.find_animations_for_skeleton("/Game/SK_Mannequin")
