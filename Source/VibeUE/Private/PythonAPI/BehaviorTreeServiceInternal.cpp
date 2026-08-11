@@ -187,6 +187,28 @@ namespace VibeBT
 			}
 			return nullptr;
 		}
+
+		/**
+		 * Whether UpdateAsset() would find a node to rebuild the runtime tree from — i.e. whether
+		 * the root node's output pin leads to a BT graph node.
+		 *
+		 * Deliberately mirrors UBehaviorTreeGraph::UpdateAsset() statement for statement, including
+		 * the Cast (a link to a non-BT node leaves Node null there too), so this can never disagree
+		 * with the engine about whether the commit is about to discard the tree:
+		 *
+		 *   if (RootNode && RootNode->Pins.Num() > 0 && RootNode->Pins[0]->LinkedTo.Num() > 0)
+		 *       Node = Cast<UBehaviorTreeGraphNode>(RootNode->Pins[0]->LinkedTo[0]->GetOwningNode());
+		 *   CreateBTFromGraph(Node);
+		 */
+		bool GraphRootFeedsANode(const UBehaviorTreeGraphNode_Root* Root)
+		{
+			if (!Root || Root->Pins.Num() == 0 || !Root->Pins[0] || Root->Pins[0]->LinkedTo.Num() == 0)
+			{
+				return false;
+			}
+			const UEdGraphPin* LinkedPin = Root->Pins[0]->LinkedTo[0];
+			return LinkedPin && Cast<UBehaviorTreeGraphNode>(LinkedPin->GetOwningNode()) != nullptr;
+		}
 	}
 
 	FString EnsureGraph(UBehaviorTree* Tree)
@@ -368,6 +390,33 @@ namespace VibeBT
 			return TEXT("Behavior Tree graph has no root node");
 		}
 
+		// Refuse to trade a populated runtime tree for an empty graph.
+		//
+		// UpdateAsset() -> CreateBTFromGraph() opens by discarding the runtime tree outright
+		// ("//discard old tree": RootNode = nullptr, RootDecorators/RootDecoratorOps emptied) and
+		// rebuilds it from the graph — and it only has something to rebuild from when the root
+		// node's output pin leads somewhere (see GraphRootFeedsANode). Committing a graph whose
+		// root feeds nothing over an asset whose node tree is intact therefore replaces that tree
+		// with an empty one, on disk, with no undo.
+		//
+		// That combination — populated runtime tree, graph root feeding nothing — is precisely a
+		// graph-less or sparse-graph asset whose reconstruction either never ran or produced
+		// nothing. EnsureGraph triggers that reconstruction (OnCreated -> SpawnMissingNodes, which
+		// walks RootNode/Children/Decorators/Services and links the pins), so on a healthy asset
+		// the graph is already repopulated by the time anything reaches here and this never fires.
+		// When it does fire, the reconstruction failed and the right answer is to stop, not to
+		// save the result.
+		if (Tree->RootNode && !GraphRootFeedsANode(Root))
+		{
+			return FString::Printf(
+				TEXT("Refusing to commit %s: its editor graph's root node leads to nothing while the "
+					 "asset still has a populated runtime node tree. Saving would discard that tree "
+					 "(UBehaviorTreeGraph::CreateBTFromGraph rebuilds it from the graph, and an empty "
+					 "graph rebuilds an empty tree). The asset on disk is unchanged; reload it and "
+					 "check that its graph was reconstructed before writing to it."),
+				*Tree->GetPathName());
+		}
+
 		// Never UBehaviorTreeGraph::AutoArrange(): it dereferences RootNode->DEPRECATED_NodeWidget
 		// (BehaviorTreeGraph.cpp:1302), the Slate widget, which is only ever set while a Behavior
 		// Tree editor tab is open — it crashes the editor outright when called headlessly.
@@ -376,7 +425,24 @@ namespace VibeBT
 		// OnSave() is SpawnMissingNodesForParallel() + UpdateAsset(): exactly what the BT editor runs
 		// on save, and what regenerates UBehaviorTree::RootNode from the graph. A bare UpdateAsset()
 		// would skip the parallel-task fix-up.
+		const bool bHadRuntimeTree = Tree->RootNode != nullptr;
 		Graph->OnSave();
+
+		// Second line of defence, bracketing the rebuild rather than predicting it. The check above
+		// models UpdateAsset's own root-selection test exactly, but it cannot model everything that
+		// happens after: CreateBTFromGraph assigns Cast<UBTCompositeNode>(RootEdNode->NodeInstance),
+		// which is still null when the root leads to a node carrying no instance, or one that is not
+		// a composite. This is the last point at which the file can still be protected — the
+		// in-memory tree is already gone, so the only safe thing left is to not persist it.
+		if (bHadRuntimeTree && !Tree->RootNode)
+		{
+			return FString::Printf(
+				TEXT("Refusing to save %s: rebuilding the runtime tree from the graph produced no root "
+					 "node, which would have replaced a populated tree with an empty one. Nothing was "
+					 "written — the asset on disk is unchanged — but this in-memory copy is now stale "
+					 "and must be reloaded before it is used again."),
+				*Tree->GetPathName());
+		}
 
 		UPackage* Package = Tree->GetOutermost();
 		if (!Package)

@@ -10,6 +10,7 @@
 #include "BehaviorTreeServiceInternal.h"
 #include "BehaviorTree/BehaviorTree.h"
 #include "AISystem.h"
+#include "BehaviorTree/BTCompositeNode.h"
 #include "BehaviorTree/BTTaskNode.h"
 #include "BehaviorTree/BehaviorTreeTypes.h"
 #include "BehaviorTree/BlackboardData.h"
@@ -760,6 +761,102 @@ bool FVibeBTRepairKeyBindingTest::RunTest(const FString&)
 		[](const UEdGraphNode* Node){ return Node && Node->IsA<UBehaviorTreeGraphNode_Root>(); }));
 
 	Graph->UnlockUpdates();
+	return true;
+}
+
+// UBehaviorTreeGraph::CreateBTFromGraph opens by discarding the runtime tree outright and rebuilds
+// it from the graph, and UpdateAsset only hands it something to rebuild from when the graph root's
+// output pin leads somewhere. Committing an empty or sparse graph over an asset whose node tree is
+// intact therefore destroys that tree on disk with no undo — the hazard that motivated the guard,
+// on an asset (BT_Villager) whose graph is suspected missing while its runtime tree is populated.
+//
+// Both directions are asserted: the guard must fire on that shape, and must NOT fire on an
+// ordinary healthy commit, or it would silently block every write in Tasks 6-10.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBTCommitDiscardGuardTest,
+	"VibeUE.BehaviorTree.Asset.CommitDiscardGuard", kBTTestFlags)
+bool FVibeBTCommitDiscardGuardTest::RunTest(const FString&)
+{
+	const FString BTPath = FString(kBTTestDir) / TEXT("BT_DiscardGuardTest");
+	FScopedFixtureReset ResetBT(BTPath);
+
+	TestEqual(TEXT("tree created"),
+		UBehaviorTreeService::CreateBehaviorTree(BTPath, FString()), FString());
+	UBehaviorTree* Tree = LoadObject<UBehaviorTree>(nullptr, *BTPath);
+	if (!TestNotNull(TEXT("tree loaded"), Tree))
+	{
+		return false;
+	}
+	UBehaviorTreeGraph* Graph = Cast<UBehaviorTreeGraph>(Tree->BTGraph);
+	if (!TestNotNull(TEXT("graph present"), Graph))
+	{
+		return false;
+	}
+	UBehaviorTreeGraphNode_Root* Root = nullptr;
+	for (UEdGraphNode* Node : Graph->Nodes)
+	{
+		if (UBehaviorTreeGraphNode_Root* Candidate = Cast<UBehaviorTreeGraphNode_Root>(Node))
+		{
+			Root = Candidate;
+			break;
+		}
+	}
+	if (!TestNotNull(TEXT("root node present"), Root))
+	{
+		return false;
+	}
+
+	// Give the tree a real runtime node tree, built by the real path: a composite wired under the
+	// root, then a normal commit, which is what runs CreateBTFromGraph and populates RootNode.
+	UBehaviorTreeGraphNode_Composite* Composite =
+		NewObject<UBehaviorTreeGraphNode_Composite>(Graph, NAME_None, RF_Transactional);
+	Composite->CreateNewGuid();
+	Composite->AllocateDefaultPins();
+	UBTComposite_Sequence* Sequence = NewObject<UBTComposite_Sequence>(Tree, NAME_None, RF_Transactional);
+	Composite->NodeInstance = Sequence;
+	Graph->AddNode(Composite, false, false);
+
+	UEdGraphPin* RootOut = Root->Pins.Num() > 0 ? Root->Pins[0] : nullptr;
+	UEdGraphPin* CompositeIn = Composite->GetInputPin();
+	if (!TestNotNull(TEXT("root output pin"), RootOut) ||
+		!TestNotNull(TEXT("composite input pin"), CompositeIn))
+	{
+		return false;
+	}
+	RootOut->MakeLinkTo(CompositeIn);
+
+	// Direction 1: an ordinary healthy commit is not blocked.
+	TestEqual(TEXT("a healthy commit is not blocked by the guard"),
+		UBehaviorTreeService::CompileAndSave(BTPath), FString());
+	TestEqual(TEXT("the commit built the runtime tree"), ToRawPtr(Tree->RootNode),
+		static_cast<UBTCompositeNode*>(Sequence));
+
+	// Direction 2: the graph now says "nothing under the root" while the asset still has a tree.
+	RootOut->BreakAllPinLinks();
+	TestEqual(TEXT("the graph root now feeds nothing"), RootOut->LinkedTo.Num(), 0);
+	TestNotNull(TEXT("the runtime tree is still populated going in"), ToRawPtr(Tree->RootNode));
+
+	const FString DiscardError = UBehaviorTreeService::CompileAndSave(BTPath);
+	TestTrue(TEXT("the commit is refused"), !DiscardError.IsEmpty());
+	TestTrue(TEXT("the refusal names the asset"), DiscardError.Contains(TEXT("BT_DiscardGuardTest")));
+	TestTrue(TEXT("the refusal says what it is protecting"),
+		DiscardError.Contains(TEXT("discard")) || DiscardError.Contains(TEXT("runtime")));
+	// The point of the guard: the tree survived.
+	TestEqual(TEXT("the runtime tree was NOT discarded"), ToRawPtr(Tree->RootNode),
+		static_cast<UBTCompositeNode*>(Sequence));
+
+	// Every mutating entry point commits through CommitGraph, so all of them are covered.
+	const FString BlackboardError = UBehaviorTreeService::SetBlackboardAsset(BTPath, FString());
+	TestTrue(TEXT("SetBlackboardAsset is refused the same way"), !BlackboardError.IsEmpty());
+	TestEqual(TEXT("and the runtime tree still survived"), ToRawPtr(Tree->RootNode),
+		static_cast<UBTCompositeNode*>(Sequence));
+
+	// The guard is a condition, not a latch: restoring the link restores the write.
+	RootOut->MakeLinkTo(CompositeIn);
+	TestEqual(TEXT("relinking the graph unblocks the commit"),
+		UBehaviorTreeService::CompileAndSave(BTPath), FString());
+	TestEqual(TEXT("the runtime tree is intact after the successful commit"), ToRawPtr(Tree->RootNode),
+		static_cast<UBTCompositeNode*>(Sequence));
+
 	return true;
 }
 
