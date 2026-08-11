@@ -19,6 +19,10 @@
 #include "BehaviorTree/Decorators/BTDecorator_BlackboardBase.h"
 #include "BehaviorTree/Tasks/BTTask_MoveTo.h"
 #include "BehaviorTree/Tasks/BTTask_RunBehavior.h"
+#include "BehaviorTree/Tasks/BTTask_RunEQSQuery.h"
+#include "BehaviorTree/Tasks/BTTask_Wait.h"
+#include "BehaviorTree/ValueOrBBKey.h"
+#include "EnvironmentQuery/EnvQueryTypes.h"
 #include "BehaviorTreeGraphNode_Decorator.h"
 #include "BehaviorTreeGraphNode_Task.h"
 #include "BehaviorTreeGraph.h"
@@ -2551,6 +2555,272 @@ bool FVibeBTNodePropertiesTest::RunTest(const FString&)
 		{
 			TestEqual(TEXT("and reports it in the same encoding GetNodePropertyValue does"),
 				DumpValue, UBehaviorTreeService::GetNodePropertyValue(BTPath, WaitA, TEXT("WaitTime")));
+		}
+	}
+
+	return true;
+}
+
+// ValidateTree: a read-only diagnostic sweep. Four hazards from earlier tasks, specifically:
+//
+//  1. UBTNode::PreSave (BTNode.cpp:231-254) validates only TOP-LEVEL struct properties on the node
+//     class. A selector nested one struct deeper gets no engine validation at all. Covered by the
+//     nested-selector case below, using UBTTask_RunEQSQuery::EQSRequest (an
+//     FEQSParametrizedQueryExecutionRequest) -> QueryConfig (TArray<FAIDynamicParam>) ->
+//     FAIDynamicParam::BBKey (a plain FBlackboardKeySelector two levels down) — all native AIModule
+//     types, nothing project-specific.
+//  2. FValueOrBBKey_* (BTTask_Wait::WaitTime in 5.8) carries the identical silent-reset hazard as
+//     FBlackboardKeySelector. Covered by the WaitTime case below.
+//  3. SimpleParallel's two output pins. Not independently re-tested here — ValidateTree's
+//     composite/child walk goes through VibeBT::GetChildNodes exactly like every other read path in
+//     this service, and that is already covered by Structure.SimpleParallel.
+//  4. Injected nodes must never be reported. Covered by the injected-node case below, which gives an
+//     injected decorator an unresolved key that WOULD be reported if the injected-node skip were
+//     missing, and asserts it is not.
+//
+// Evidence discipline: every "reports X" assertion below is discriminating, not a tautology — proved
+// by temporarily short-circuiting ValidateTree's node walk to always return an empty array and
+// re-running this test, which turned every one of those assertions Result={Fail} while the healthy-
+// tree assertion still trivially passed. See task-9-report.md for the exact log lines. Reverted
+// before committing.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBTValidateTest,
+	"VibeUE.BehaviorTree.Validate.Diagnostics", kBTTestFlags)
+bool FVibeBTValidateTest::RunTest(const FString&)
+{
+	const FString BBPath = FString(kBTTestDir) / TEXT("BB_ValidateTest");
+	const FString BTPath = FString(kBTTestDir) / TEXT("BT_ValidateTest");
+	FScopedFixtureReset ResetBB(BBPath);
+	FScopedFixtureReset ResetBT(BTPath);
+
+	// --- The blackboard, and a healthy baseline tree. -----------------------------------------------
+	TestTrue(TEXT("blackboard created"), UBlackboardService::CreateBlackboard(BBPath, FString()));
+	TestEqual(TEXT("Flag (Bool) key added"),
+		UBlackboardService::AddBlackboardKey(BBPath, TEXT("Flag"), TEXT("Bool"), false), FString());
+
+	TestEqual(TEXT("tree created"),
+		UBehaviorTreeService::CreateBehaviorTree(BTPath, BBPath), FString());
+	const FString Seq = UBehaviorTreeService::AddNode(BTPath, TEXT("Root"), TEXT("BTComposite_Sequence"), -1);
+	const FString WaitA = UBehaviorTreeService::AddNode(BTPath, Seq, TEXT("BTTask_Wait"), -1);
+	const FString Dec = UBehaviorTreeService::AddDecorator(BTPath, Seq, TEXT("BTDecorator_Blackboard"), -1);
+	if (!TestFalse(TEXT("sequence added"), Seq.StartsWith(TEXT("ERROR")))
+		|| !TestFalse(TEXT("wait added"), WaitA.StartsWith(TEXT("ERROR")))
+		|| !TestFalse(TEXT("decorator added"), Dec.StartsWith(TEXT("ERROR"))))
+	{
+		AddError(FString::Printf(TEXT("fixture build failed: %s | %s | %s"), *Seq, *WaitA, *Dec));
+		return false;
+	}
+	TestTrue(TEXT("decorator bound to a real key"),
+		UBehaviorTreeService::SetNodeBlackboardKey(BTPath, Dec, TEXT("BlackboardKey"), TEXT("Flag")).bSuccess);
+	TestEqual(TEXT("baseline commits"), UBehaviorTreeService::CompileAndSave(BTPath), FString());
+
+	TestEqual(TEXT("a healthy tree validates clean"),
+		UBehaviorTreeService::ValidateTree(BTPath).Num(), 0);
+
+	// --- Defect: a composite with no children. --------------------------------------------------------
+	const FString EmptySel = UBehaviorTreeService::AddNode(BTPath, Seq, TEXT("BTComposite_Selector"), -1);
+	if (TestFalse(TEXT("empty selector added"), EmptySel.StartsWith(TEXT("ERROR"))))
+	{
+		TestEqual(TEXT("commits with a childless composite present"),
+			UBehaviorTreeService::CompileAndSave(BTPath), FString());
+		const TArray<FString> ChildlessDiag = UBehaviorTreeService::ValidateTree(BTPath);
+		TestTrue(TEXT("reports the childless composite"), ChildlessDiag.ContainsByPredicate(
+			[&EmptySel](const FString& Line)
+			{ return Line.StartsWith(EmptySel) && Line.Contains(TEXT("composite has no children")); }));
+	}
+
+	// --- Defect: a node whose NodeInstance class failed to load. --------------------------------------
+	{
+		UBehaviorTree* Tree = LoadObject<UBehaviorTree>(nullptr, *BTPath);
+		UBehaviorTreeGraph* Graph = Tree ? Cast<UBehaviorTreeGraph>(Tree->BTGraph) : nullptr;
+		UBehaviorTreeGraphNode* WaitNode = Graph ? VibeBT::ResolveNodePath(Graph, WaitA) : nullptr;
+		if (TestNotNull(TEXT("wait node resolved for corruption"), WaitNode) && Tree)
+		{
+			WaitNode->NodeInstance = nullptr; // Simulates a class that failed to resolve on load.
+			// GetNodePath is recomputed AFTER the corruption, not taken from WaitA: nulling
+			// NodeInstance changes the graph node's own title too
+			// (UBehaviorTreeGraphNode_Task::GetNodeTitle falls back to a "Class ... not found"
+			// message once NodeInstance is null), which changes what path segment names it.
+			const FString CorruptedPath = VibeBT::GetNodePath(WaitNode);
+			const TArray<FString> NullInstanceDiag = UBehaviorTreeService::ValidateTree(BTPath);
+			TestTrue(TEXT("reports the failed-to-load node"), NullInstanceDiag.ContainsByPredicate(
+				[&CorruptedPath](const FString& Line)
+				{ return Line.StartsWith(CorruptedPath) && Line.Contains(TEXT("failed to load")); }));
+
+			// Restore it before any further commit: nothing below should have to route around a
+			// broken WaitA, and CompileAndSave must not be exercised against a null instance here —
+			// that shape is Task 6/9's concern, not this test's.
+			WaitNode->NodeInstance = NewObject<UBTTask_Wait>(Tree, NAME_None, RF_Transactional);
+		}
+	}
+
+	// --- Defect: an unresolved (top-level) blackboard key selector. -----------------------------------
+	if (FBlackboardKeySelector* Selector = VibeBTFindLiveSelector(BTPath, Dec, TEXT("BlackboardKey")))
+	{
+		Selector->SelectedKeyName = TEXT("NoSuchKeyAtAll");
+		const TArray<FString> SelectorDiag = UBehaviorTreeService::ValidateTree(BTPath);
+		TestTrue(TEXT("reports the unresolved selector"), SelectorDiag.ContainsByPredicate(
+			[&Dec](const FString& Line)
+			{ return Line.StartsWith(Dec) && Line.Contains(TEXT("NoSuchKeyAtAll")); }));
+		// Restored immediately: a later CompileAndSave in this test would otherwise hit
+		// UBTNode::PreSave's own top-level reset of this exact selector and log a warning.
+		Selector->SelectedKeyName = TEXT("Flag");
+	}
+
+	// --- Hazard #1: the SAME kind of defect, but nested two structs deep. -----------------------------
+	const FString EqsTask = UBehaviorTreeService::AddNode(BTPath, Seq, TEXT("BTTask_RunEQSQuery"), -1);
+	if (TestFalse(TEXT("EQS task added"), EqsTask.StartsWith(TEXT("ERROR"))))
+	{
+		UBehaviorTree* Tree = LoadObject<UBehaviorTree>(nullptr, *BTPath);
+		UBehaviorTreeGraph* Graph = Tree ? Cast<UBehaviorTreeGraph>(Tree->BTGraph) : nullptr;
+		UBehaviorTreeGraphNode* EqsNode = Graph ? VibeBT::ResolveNodePath(Graph, EqsTask) : nullptr;
+		UObject* EqsInstance = EqsNode ? ToRawPtr(EqsNode->NodeInstance) : nullptr;
+		FStructProperty* ReqProp = EqsInstance
+			? CastField<FStructProperty>(EqsInstance->GetClass()->FindPropertyByName(TEXT("EQSRequest")))
+			: nullptr;
+		FEQSParametrizedQueryExecutionRequest* Req = ReqProp
+			? ReqProp->ContainerPtrToValuePtr<FEQSParametrizedQueryExecutionRequest>(EqsInstance)
+			: nullptr;
+		if (TestNotNull(TEXT("EQSRequest reflected"), Req))
+		{
+			FAIDynamicParam Param;
+			Param.ParamName = TEXT("TestParam");
+			Param.BBKey.SelectedKeyName = TEXT("NoSuchNestedKey");
+			Req->QueryConfig.Add(Param);
+
+			const TArray<FString> NestedDiag = UBehaviorTreeService::ValidateTree(BTPath);
+			TestTrue(TEXT("reports the nested unresolved selector, two structs deep"),
+				NestedDiag.ContainsByPredicate([&EqsTask](const FString& Line)
+				{
+					return Line.StartsWith(EqsTask) && Line.Contains(TEXT("NoSuchNestedKey"))
+						&& Line.Contains(TEXT("QueryConfig"));
+				}));
+		}
+	}
+
+	// --- Hazard #2: FValueOrBBKey_Float, an ordinary-looking numeric property that is also
+	//     blackboard-bindable and carries the same silent-reset hazard as a key selector. -------------
+	if (UObject* WaitInstance = VibeBTFindLiveInstance(BTPath, WaitA))
+	{
+		FStructProperty* WaitTimeProp = CastField<FStructProperty>(
+			WaitInstance->GetClass()->FindPropertyByName(TEXT("WaitTime")));
+		FValueOrBBKey_Float* WaitTimeKey = WaitTimeProp
+			? WaitTimeProp->ContainerPtrToValuePtr<FValueOrBBKey_Float>(WaitInstance)
+			: nullptr;
+		if (TestNotNull(TEXT("WaitTime reflected as FValueOrBBKey_Float"), WaitTimeKey))
+		{
+			WaitTimeKey->SetKey(TEXT("NoSuchValueKey"));
+			const TArray<FString> ValueKeyDiag = UBehaviorTreeService::ValidateTree(BTPath);
+			TestTrue(TEXT("reports the unresolved FValueOrBBKey_Float binding"),
+				ValueKeyDiag.ContainsByPredicate([&WaitA](const FString& Line)
+					{ return Line.StartsWith(WaitA) && Line.Contains(TEXT("NoSuchValueKey")); }));
+			WaitTimeKey->SetKey(NAME_None);
+		}
+	}
+
+	// --- Defect: a node disconnected from the root. ----------------------------------------------------
+	{
+		UBehaviorTree* Tree = LoadObject<UBehaviorTree>(nullptr, *BTPath);
+		UBehaviorTreeGraph* Graph = Tree ? Cast<UBehaviorTreeGraph>(Tree->BTGraph) : nullptr;
+		if (TestNotNull(TEXT("graph loaded for orphan case"), Graph) && Tree)
+		{
+			UBehaviorTreeGraphNode_Composite* Orphan =
+				NewObject<UBehaviorTreeGraphNode_Composite>(Graph, NAME_None, RF_Transactional);
+			Orphan->CreateNewGuid();
+			Orphan->AllocateDefaultPins();
+			Orphan->NodeInstance = NewObject<UBTComposite_Sequence>(Tree, NAME_None, RF_Transactional);
+			Graph->AddNode(Orphan, false, false);
+			// Deliberately never linked to anything.
+
+			const TArray<FString> OrphanDiag = UBehaviorTreeService::ValidateTree(BTPath);
+			const FString OrphanTitle = Orphan->GetNodeTitle(ENodeTitleType::ListView).ToString();
+			TestTrue(TEXT("reports the orphaned node"), OrphanDiag.ContainsByPredicate(
+				[&OrphanTitle](const FString& Line)
+				{ return Line.Contains(OrphanTitle) && Line.Contains(TEXT("orphaned")); }));
+
+			Graph->RemoveNode(Orphan);
+		}
+	}
+
+	// --- Defect: decorators attached to the graph's Root node, which never run. -----------------------
+	{
+		UBehaviorTree* Tree = LoadObject<UBehaviorTree>(nullptr, *BTPath);
+		UBehaviorTreeGraph* Graph = Tree ? Cast<UBehaviorTreeGraph>(Tree->BTGraph) : nullptr;
+		UBehaviorTreeGraphNode_Root* RootNode = Graph ? VibeBT::FindRootGraphNode(Graph) : nullptr;
+		if (TestNotNull(TEXT("root resolved for decorator-on-root case"), RootNode) && Tree)
+		{
+			UBehaviorTreeGraphNode_Decorator* DecOnRoot =
+				NewObject<UBehaviorTreeGraphNode_Decorator>(Graph, NAME_None, RF_Transactional);
+			DecOnRoot->CreateNewGuid();
+			DecOnRoot->NodeInstance = NewObject<UBTDecorator_Blackboard>(Tree, NAME_None, RF_Transactional);
+			RootNode->Decorators.Add(DecOnRoot);
+
+			const TArray<FString> RootDecoratorDiag = UBehaviorTreeService::ValidateTree(BTPath);
+			TestTrue(TEXT("reports the decorator on Root"), RootDecoratorDiag.ContainsByPredicate(
+				[](const FString& Line)
+				{ return Line.StartsWith(TEXT("Root")) && Line.Contains(TEXT("decorator")); }));
+
+			RootNode->Decorators.Reset();
+		}
+	}
+
+	// --- Hazard #4: an injected node must never be reported, even carrying something that would trip
+	//     a check on an ordinary node. Reuses the RunBehavior injection pattern from
+	//     SubNodes.Injected: a subtree whose top-composite decorator is bound to a key name that does
+	//     not exist anywhere (the subtree has no blackboard at all), injected onto a RunBehavior task
+	//     in a separate main tree. ---------------------------------------------------------------------
+	{
+		const FString InjSubPath = FString(kBTTestDir) / TEXT("BT_ValidateInjectedSub");
+		const FString InjMainPath = FString(kBTTestDir) / TEXT("BT_ValidateInjectedMain");
+		FScopedFixtureReset ResetInjSub(InjSubPath);
+		FScopedFixtureReset ResetInjMain(InjMainPath);
+
+		TestEqual(TEXT("injected-case subtree created"),
+			UBehaviorTreeService::CreateBehaviorTree(InjSubPath, FString()), FString());
+		const FString InjSubSel = UBehaviorTreeService::AddNode(
+			InjSubPath, TEXT("Root"), TEXT("BTComposite_Selector"), -1);
+		const FString InjSubDec = UBehaviorTreeService::AddDecorator(
+			InjSubPath, InjSubSel, TEXT("BTDecorator_Blackboard"), -1);
+		TestFalse(TEXT("injected-case subtree selector added"), InjSubSel.StartsWith(TEXT("ERROR")));
+		TestFalse(TEXT("injected-case subtree decorator added"), InjSubDec.StartsWith(TEXT("ERROR")));
+
+		if (FBlackboardKeySelector* SubSelector =
+			VibeBTFindLiveSelector(InjSubPath, InjSubDec, TEXT("BlackboardKey")))
+		{
+			SubSelector->SelectedKeyName = TEXT("UnresolvedInjectedKey");
+		}
+
+		UBehaviorTree* SubTree = LoadObject<UBehaviorTree>(nullptr, *InjSubPath);
+		TestEqual(TEXT("the decorator became a root-level decorator of the subtree"),
+			SubTree ? SubTree->RootDecorators.Num() : -1, 1);
+
+		TestEqual(TEXT("injected-case main tree created"),
+			UBehaviorTreeService::CreateBehaviorTree(InjMainPath, FString()), FString());
+		const FString InjMainSel = UBehaviorTreeService::AddNode(
+			InjMainPath, TEXT("Root"), TEXT("BTComposite_Selector"), -1);
+		const FString InjRunSub = UBehaviorTreeService::AddNode(
+			InjMainPath, InjMainSel, TEXT("BTTask_RunBehavior"), -1);
+		TestFalse(TEXT("injected-case RunBehavior task added"), InjRunSub.StartsWith(TEXT("ERROR")));
+
+		UBehaviorTree* MainTree = LoadObject<UBehaviorTree>(nullptr, *InjMainPath);
+		UBehaviorTreeGraph* MainGraph = MainTree ? Cast<UBehaviorTreeGraph>(MainTree->BTGraph) : nullptr;
+		UBehaviorTreeGraphNode* RunNode =
+			MainGraph ? VibeBT::ResolveNodePath(MainGraph, InjRunSub) : nullptr;
+		if (TestNotNull(TEXT("the RunBehavior graph node resolves"), RunNode) && SubTree)
+		{
+			FObjectProperty* AssetProperty = CastField<FObjectProperty>(
+				UBTTask_RunBehavior::StaticClass()->FindPropertyByName(TEXT("BehaviorAsset")));
+			if (TestNotNull(TEXT("BehaviorAsset property reached"), AssetProperty))
+			{
+				AssetProperty->SetObjectPropertyValue(
+					AssetProperty->ContainerPtrToValuePtr<void>(ToRawPtr(RunNode->NodeInstance)), SubTree);
+				TestTrue(TEXT("the subtree's root decorator was injected"),
+					MainGraph->UpdateInjectedNodes());
+
+				const TArray<FString> InjectedDiag = UBehaviorTreeService::ValidateTree(InjMainPath);
+				TestFalse(TEXT("the injected node's unresolved key is NOT reported"),
+					InjectedDiag.ContainsByPredicate([](const FString& Line)
+						{ return Line.Contains(TEXT("UnresolvedInjectedKey")); }));
+			}
 		}
 	}
 

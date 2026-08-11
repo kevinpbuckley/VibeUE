@@ -9,6 +9,8 @@
 #include "BehaviorTree/BTService.h"
 #include "BehaviorTree/BTTaskNode.h"
 #include "BehaviorTree/BehaviorTreeTypes.h"
+#include "BehaviorTree/BlackboardData.h"
+#include "BehaviorTree/ValueOrBBKey.h"
 #include "BehaviorTreeGraph.h"
 #include "BehaviorTreeGraphNode.h"
 #include "BehaviorTreeGraphNode_CompositeDecorator.h"
@@ -17,6 +19,7 @@
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
+#include "Templates/Function.h"
 #include "UObject/UnrealType.h"
 
 TArray<FBTNodeClassInfo> UBehaviorTreeService::GetAvailableNodeTypes(const FString& Category)
@@ -439,4 +442,313 @@ FString UBehaviorTreeService::GetNodePropertyValue(const FString& AssetPath, con
 	FString Value;
 	VibeBT::ExportPropertyValue(Property, Instance, Value);
 	return Value;
+}
+
+namespace VibeBTRead
+{
+	/** Node's path if reachable from Root, or a stand-in identity for one that is not — an orphan,
+	 *  by definition, has no path VibeBT::GetNodePath's grammar can produce. */
+	FString NodeLabel(const UBehaviorTreeGraphNode* Node)
+	{
+		const FString Path = VibeBT::GetNodePath(Node);
+		if (!Path.IsEmpty())
+		{
+			return Path;
+		}
+		return FString::Printf(TEXT("<unreachable:%s#%s>"),
+			*Node->GetNodeTitle(ENodeTitleType::ListView).ToString(), *Node->NodeGuid.ToString());
+	}
+
+	// Depth cap, not a visited-struct-type guard: no struct reachable from a BT node's own properties
+	// contains itself, so an infinite loop is not a real risk here the way a node/pin cycle is
+	// elsewhere in this service — but a cap is cheap insurance against a pathological or hand-edited
+	// struct layout, in the same spirit as NodeToJson's Visited set (report a malformed graph as
+	// finite rather than hang the caller).
+	constexpr int32 kMaxBindableRecursionDepth = 8;
+
+	void WalkBlackboardBindables(const UStruct* StructType, const void* ContainerPtr,
+		const FString& PathPrefix, int32 Depth,
+		const TFunctionRef<void(const FString&, const FBlackboardKeySelector&)>& OnSelector,
+		const TFunctionRef<void(const FString&, const FValueOrBlackboardKeyBase&)>& OnValueKey);
+
+	/**
+	 * Struct is itself a blackboard-bindable type: report it directly. Otherwise it is some other
+	 * struct (e.g. FEQSParametrizedQueryExecutionRequest) that might carry one of its own — recurse
+	 * into its members rather than assume a struct property is inert.
+	 */
+	void VisitBindableStruct(const UScriptStruct* Struct, const void* ValuePtr, const FString& Label,
+		int32 Depth,
+		const TFunctionRef<void(const FString&, const FBlackboardKeySelector&)>& OnSelector,
+		const TFunctionRef<void(const FString&, const FValueOrBlackboardKeyBase&)>& OnValueKey)
+	{
+		if (!Struct || !ValuePtr)
+		{
+			return;
+		}
+		if (Struct == FBlackboardKeySelector::StaticStruct())
+		{
+			OnSelector(Label, *static_cast<const FBlackboardKeySelector*>(ValuePtr));
+			return;
+		}
+		if (Struct->IsChildOf(FValueOrBlackboardKeyBase::StaticStruct()))
+		{
+			OnValueKey(Label, *static_cast<const FValueOrBlackboardKeyBase*>(ValuePtr));
+			return;
+		}
+		WalkBlackboardBindables(Struct, ValuePtr, Label, Depth + 1, OnSelector, OnValueKey);
+	}
+
+	/**
+	 * Every FBlackboardKeySelector and FValueOrBlackboardKeyBase reachable from ContainerPtr (an
+	 * instance of StructType), at any nesting depth — struct properties, and struct elements of
+	 * array properties — not just StructType's own top-level fields.
+	 *
+	 * This is deliberately more thorough than UBTNode::PreSave (BTNode.cpp:231-254), which only ever
+	 * iterates TFieldIterator<FStructProperty> over the node class itself: a selector or
+	 * value-or-key binding sitting inside another struct (UBTTask_RunEQSQuery::EQSRequest is an
+	 * FEQSParametrizedQueryExecutionRequest whose QueryConfig is a TArray<FAIDynamicParam>, and
+	 * FAIDynamicParam::BBKey is exactly such a selector) is invisible to the engine's own save-time
+	 * check, so a mistyped key there is never reset and never logged — this is the only place it is
+	 * ever looked at.
+	 *
+	 * Only struct-valued properties are walked; object-reference properties are not followed, so this
+	 * never reaches into another UObject's (or another asset's) memory.
+	 */
+	void WalkBlackboardBindables(const UStruct* StructType, const void* ContainerPtr,
+		const FString& PathPrefix, int32 Depth,
+		const TFunctionRef<void(const FString&, const FBlackboardKeySelector&)>& OnSelector,
+		const TFunctionRef<void(const FString&, const FValueOrBlackboardKeyBase&)>& OnValueKey)
+	{
+		if (!StructType || !ContainerPtr || Depth > kMaxBindableRecursionDepth)
+		{
+			return;
+		}
+
+		for (TFieldIterator<FProperty> It(StructType); It; ++It)
+		{
+			const FProperty* Property = *It;
+			const FString Label = PathPrefix.IsEmpty()
+				? Property->GetName()
+				: PathPrefix + TEXT(".") + Property->GetName();
+
+			if (const FStructProperty* StructProp = CastField<FStructProperty>(Property))
+			{
+				const void* ValuePtr = StructProp->ContainerPtrToValuePtr<uint8>(ContainerPtr);
+				VisitBindableStruct(StructProp->Struct, ValuePtr, Label, Depth, OnSelector, OnValueKey);
+			}
+			else if (const FArrayProperty* ArrayProp = CastField<FArrayProperty>(Property))
+			{
+				if (const FStructProperty* InnerStruct = CastField<FStructProperty>(ArrayProp->Inner))
+				{
+					const void* ArrayPtr = ArrayProp->ContainerPtrToValuePtr<uint8>(ContainerPtr);
+					FScriptArrayHelper Helper(ArrayProp, ArrayPtr);
+					for (int32 Index = 0; Index < Helper.Num(); ++Index)
+					{
+						VisitBindableStruct(InnerStruct->Struct, Helper.GetRawPtr(Index),
+							FString::Printf(TEXT("%s[%d]"), *Label, Index), Depth, OnSelector, OnValueKey);
+					}
+				}
+			}
+		}
+	}
+
+	/**
+	 * True when KeyName cannot resolve against Blackboard — either there is no blackboard to resolve
+	 * against, or it has no key by that name. Read-only: this is exactly the ID
+	 * FBlackboardKeySelector::ResolveSelectedKey would assign (BlackboardAsset.GetKeyID(KeyName)) in
+	 * the branch that runs whenever a name has actually been set, computed as a read against the
+	 * current board rather than by mutating the live property's cached ID.
+	 */
+	bool KeyIsUnresolved(const UBlackboardData* Blackboard, FName KeyName)
+	{
+		return !Blackboard || Blackboard->GetKeyID(KeyName) == FBlackboard::InvalidKey;
+	}
+
+	/**
+	 * The two checks that apply to any node CARRYING an instance — a tree node (composite/task) or a
+	 * sub-node (decorator/service) alike: failed-to-load, and the blackboard-bindable walk. Shared
+	 * rather than duplicated, because decorators and services are BT node instances in their own
+	 * right (UBTDecorator_Blackboard::BlackboardKey is exactly the kind of top-level selector this
+	 * function exists to catch) and live outside Graph->Nodes — the walk in ValidateTree that finds
+	 * composites and tasks never reaches them on its own.
+	 *
+	 * bIsRoot excludes the graph's Root node from the failed-to-load check: its NodeInstance is null
+	 * by design, not a load failure. No sub-node is ever the Root, so callers checking a decorator or
+	 * service always pass false.
+	 */
+	void CheckNodeInstance(const UBehaviorTreeGraphNode* Node, bool bIsRoot, const FString& Label,
+		const UBlackboardData* Blackboard, TArray<FString>& Diagnostics)
+	{
+		if (!bIsRoot && Node->HasErrors())
+		{
+			Diagnostics.Add(Node->ErrorMessage.IsEmpty()
+				? FString::Printf(TEXT("%s: node instance failed to load (class unresolved)"), *Label)
+				: FString::Printf(TEXT("%s: node instance failed to load: %s"), *Label, *Node->ErrorMessage));
+		}
+
+		UObject* Instance = ToRawPtr(Node->NodeInstance);
+		if (!Instance)
+		{
+			return;
+		}
+
+		auto OnSelector = [&Diagnostics, &Label, Blackboard, Instance](
+			const FString& PropLabel, const FBlackboardKeySelector& Selector)
+		{
+			if (Selector.SelectedKeyName.IsNone())
+			{
+				return; // Intentionally unbound — not a mistyped binding.
+			}
+			if (KeyIsUnresolved(Blackboard, Selector.SelectedKeyName))
+			{
+				Diagnostics.Add(FString::Printf(
+					TEXT("%s: %s.%s is bound to blackboard key '%s', which %s"),
+					*Label, *Instance->GetClass()->GetName(), *PropLabel,
+					*Selector.SelectedKeyName.ToString(),
+					Blackboard ? TEXT("does not exist on the tree's blackboard")
+							   : TEXT("cannot resolve: the tree has no blackboard assigned")));
+			}
+		};
+		auto OnValueKey = [&Diagnostics, &Label, Blackboard, Instance](
+			const FString& PropLabel, const FValueOrBlackboardKeyBase& ValueKey)
+		{
+			if (ValueKey.GetKey().IsNone())
+			{
+				return;
+			}
+			if (KeyIsUnresolved(Blackboard, ValueKey.GetKey()))
+			{
+				Diagnostics.Add(FString::Printf(
+					TEXT("%s: %s.%s is bound to blackboard key '%s', which %s"),
+					*Label, *Instance->GetClass()->GetName(), *PropLabel,
+					*ValueKey.GetKey().ToString(),
+					Blackboard ? TEXT("does not exist on the tree's blackboard")
+							   : TEXT("cannot resolve: the tree has no blackboard assigned")));
+			}
+		};
+		WalkBlackboardBindables(Instance->GetClass(), Instance, FString(), 0, OnSelector, OnValueKey);
+	}
+}
+
+TArray<FString> UBehaviorTreeService::ValidateTree(const FString& AssetPath)
+{
+	using namespace VibeBTRead;
+
+	TArray<FString> Diagnostics;
+
+	if (AssetPath.IsEmpty())
+	{
+		Diagnostics.Add(TEXT("ERROR: AssetPath is empty"));
+		return Diagnostics;
+	}
+
+	// Read-only load, exactly GetTree's path: LOAD_NoWarn | LOAD_Quiet, and no EnsureGraph — creating
+	// the editor graph here would make running a diagnostic a write to the asset. Nothing below calls
+	// Modify(), MarkPackageDirty() or CommitGraph either.
+	UBehaviorTree* Tree =
+		LoadObject<UBehaviorTree>(nullptr, *AssetPath, nullptr, LOAD_NoWarn | LOAD_Quiet);
+	if (!Tree)
+	{
+		Diagnostics.Add(FString::Printf(TEXT("ERROR: Behavior Tree not found: %s"), *AssetPath));
+		return Diagnostics;
+	}
+
+	UBehaviorTreeGraph* Graph = Cast<UBehaviorTreeGraph>(Tree->BTGraph);
+	if (!Graph)
+	{
+		Diagnostics.Add(FString::Printf(
+			TEXT("ERROR: %s has no editor graph. It has never been opened in the Behavior Tree "
+				 "editor, and validating is not allowed to create one."),
+			*AssetPath));
+		return Diagnostics;
+	}
+
+	UBehaviorTreeGraphNode_Root* Root = VibeBT::FindRootGraphNode(Graph);
+	if (!Root)
+	{
+		Diagnostics.Add(
+			FString::Printf(TEXT("ERROR: %s has no root node in its editor graph"), *AssetPath));
+		return Diagnostics;
+	}
+
+	const UBlackboardData* Blackboard = ToRawPtr(Tree->BlackboardAsset);
+
+	for (UEdGraphNode* EdNode : Graph->Nodes)
+	{
+		UBehaviorTreeGraphNode* Node = Cast<UBehaviorTreeGraphNode>(EdNode);
+		if (!Node)
+		{
+			continue;
+		}
+
+		const bool bIsRoot = Node->IsA<UBehaviorTreeGraphNode_Root>();
+		const FString Label = NodeLabel(Node);
+
+		// Orphans: checked for every node, injected or not. An injected node is always linked in by
+		// construction (it was copied from a linked subtree node), so this can never misfire on one.
+		if (!bIsRoot && VibeBT::GetNodePath(Node).IsEmpty())
+		{
+			Diagnostics.Add(FString::Printf(TEXT("%s: orphaned, unreachable from Root"), *Label));
+		}
+
+		if (!Node->bInjectedNode)
+		{
+			// Failed-to-load class, and blackboard bindings at any nesting depth — see
+			// CheckNodeInstance. A read-only copy of another asset's node, resolved against that
+			// asset's own blackboard, is skipped: none of this applies to it (see header comment).
+			CheckNodeInstance(Node, bIsRoot, Label, Blackboard, Diagnostics);
+
+			UObject* Instance = ToRawPtr(Node->NodeInstance);
+
+			// Composite with no children. Scoped to composites: a leaf task legitimately has none,
+			// and GetChildNodes already spans both of a SimpleParallel's output pins.
+			if (Cast<UBTCompositeNode>(Instance) && VibeBT::GetChildNodes(Node).IsEmpty())
+			{
+				Diagnostics.Add(FString::Printf(TEXT("%s: composite has no children"), *Label));
+			}
+
+			// Decorators/services on a node that cannot carry them into the runtime tree.
+			const int32 SubNodeCount = Node->Decorators.Num() + Node->Services.Num();
+			if (SubNodeCount > 0)
+			{
+				if (bIsRoot)
+				{
+					Diagnostics.Add(FString::Printf(
+						TEXT("%s: carries %d decorator(s)/service(s) on the graph Root, which never "
+							 "run (CreateBTFromGraph reads root-level decorators off the top "
+							 "composite, never off the Root graph node)"),
+						*Label, SubNodeCount));
+				}
+				else if (Instance && !Cast<UBTCompositeNode>(Instance) && !Cast<UBTTaskNode>(Instance))
+				{
+					Diagnostics.Add(FString::Printf(
+						TEXT("%s: carries %d decorator(s)/service(s) but its instance (%s) is "
+							 "neither a composite nor a task"),
+						*Label, SubNodeCount, *Instance->GetClass()->GetName()));
+				}
+			}
+		}
+
+		// Decorators and services: BT node instances in their own right, living outside Graph->Nodes
+		// (AIGraphNode.cpp, UAIGraphNode::AddSubNode), so the loop above never reaches them on its
+		// own. Each sub-node's OWN bInjectedNode is what gates it here — an injected decorator can
+		// sit on a perfectly ordinary, non-injected owner (a RunBehavior task), so the owner's flag
+		// checked above says nothing about whether ITS sub-nodes are injected.
+		for (const TObjectPtr<UBehaviorTreeGraphNode>& SubNode : Node->Decorators)
+		{
+			if (UBehaviorTreeGraphNode* Raw = ToRawPtr(SubNode); Raw && !Raw->bInjectedNode)
+			{
+				CheckNodeInstance(Raw, /*bIsRoot*/ false, NodeLabel(Raw), Blackboard, Diagnostics);
+			}
+		}
+		for (const TObjectPtr<UBehaviorTreeGraphNode>& SubNode : Node->Services)
+		{
+			if (UBehaviorTreeGraphNode* Raw = ToRawPtr(SubNode); Raw && !Raw->bInjectedNode)
+			{
+				CheckNodeInstance(Raw, /*bIsRoot*/ false, NodeLabel(Raw), Blackboard, Diagnostics);
+			}
+		}
+	}
+
+	return Diagnostics;
 }

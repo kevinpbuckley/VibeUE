@@ -474,4 +474,54 @@ public:
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
 	static FBTPropertySetResult SetNodeBlackboardKey(const FString& AssetPath,
 		const FString& NodePath, const FString& PropertyName, const FString& KeyName);
+
+	// =================================================================
+	// Validation
+	// =================================================================
+
+	/**
+	 * Read-only diagnostic sweep over the editor graph. Never mutates or commits — no EnsureGraph, no
+	 * OpenWriteGuard, nothing written back — so it is safe to run on an asset nobody has decided to
+	 * edit yet.
+	 *
+	 * An empty array means nothing was found. A single "ERROR: ..." element means validation itself
+	 * could not run (missing asset, no editor graph, no root node) — never confused with "found no
+	 * problems", because it is exactly one element and starts with "ERROR: ". Otherwise every element
+	 * is one finding, each line beginning with the offending node's path (VibeBT::GetNodePath); an
+	 * orphan has none by definition, so it is named "<unreachable:Title#Guid>" instead.
+	 *
+	 * Walks every node in the graph (Graph->Nodes) and reports:
+	 *  - orphaned nodes: unreachable from the root. A hand-edited or corrupted graph can produce
+	 *    these; GetTree and path resolution silently ignore them, so nothing else surfaces them;
+	 *  - composites with no children. Scoped to UBTCompositeNode instances — a leaf task legitimately
+	 *    has none. Reachability and children are both read through VibeBT::GetChildNodes, which spans
+	 *    both of a SimpleParallel node's output pins ([0] "Task", [1] "Out"); a walk over "the" output
+	 *    pin would silently miss the second branch;
+	 *  - a node whose instance failed to load: UAIGraphNode::HasErrors() (NodeInstance == nullptr, or
+	 *    a non-empty ErrorMessage from an unresolved ClassData), the same check the graph editor uses
+	 *    to colour a node red. The graph's Root is excluded — its NodeInstance is null by design, not
+	 *    a load failure;
+	 *  - every FBlackboardKeySelector AND every FValueOrBlackboardKeyBase (BTTask_Wait::WaitTime and
+	 *    RandomDeviation are FValueOrBBKey_Float in 5.8, not FBlackboardKeySelector — both families
+	 *    are walked) bound to a key name absent from the tree's blackboard, or bound at all when the
+	 *    tree has no blackboard. Walked on tree nodes AND on their decorators and services — a
+	 *    decorator/service is a real BT node instance in its own right (UBTDecorator_Blackboard's own
+	 *    BlackboardKey is exactly this), and lives outside Graph->Nodes, so it needs its own pass.
+	 *    Walked at EVERY nesting depth a node's own value-type properties reach — struct members and
+	 *    struct array elements, not just the node class's own top-level properties — because
+	 *    UBTNode::PreSave (BTNode.cpp:231-254) only ever inspects the top level, so a selector or
+	 *    value-or-key binding buried one struct deeper (e.g.
+	 *    UBTTask_RunEQSQuery::EQSRequest.QueryConfig[n].BBKey) gets no engine validation at all, and a
+	 *    mistyped key there is silently wiped on save with nothing logged. A binding left at its
+	 *    default "None" is not reported: that is an intentionally empty selector, not a mistyped one;
+	 *  - decorators or services attached to a node that cannot carry them into the runtime tree: the
+	 *    graph's Root node, and any node whose instance is neither a composite nor a task.
+	 *
+	 * A node injected from a subtree (bInjectedNode) is skipped by every check above except the
+	 * orphan sweep, which it can never fail — an injected node is always linked in by construction.
+	 * It is a read-only copy of another asset's node, resolved against that asset's own blackboard;
+	 * reporting it here would flag things this asset cannot fix and that are not actually broken.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
+	static TArray<FString> ValidateTree(const FString& AssetPath);
 };
