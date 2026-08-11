@@ -29,6 +29,33 @@ struct FBTNodeClassInfo
 	bool bIsBlueprint = false;
 };
 
+/** Summary of a Behavior Tree asset. */
+USTRUCT(BlueprintType)
+struct FBTAssetInfo
+{
+	GENERATED_BODY()
+
+	/** Package path of the tree's blackboard, empty if none is assigned. */
+	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
+	FString BlackboardPath;
+
+	/** Number of nodes in the editor graph, including decorators and services. */
+	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
+	int32 NodeCount = 0;
+
+	/** False if BTGraph is null — the asset has never been opened or created by this service. */
+	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
+	bool bHasGraph = false;
+
+	/** Whether the graph contains a root node. */
+	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
+	bool bHasRootNode = false;
+
+	/** Populated when the asset could not be read. */
+	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
+	FString Error;
+};
+
 /**
  * Read and author Behavior Tree assets.
  *
@@ -57,4 +84,27 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
 	static TArray<FBTNodeClassInfo> GetAvailableNodeTypes(const FString& Category);
+
+	// =================================================================
+	// Asset lifecycle
+	// =================================================================
+
+	/**
+	 * Create a Behavior Tree asset, its editor graph and its root node.
+	 * BlackboardAssetPath may be empty. Returns an empty string on success, else the error.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
+	static FString CreateBehaviorTree(const FString& AssetPath, const FString& BlackboardAssetPath);
+
+	/** Summary of a Behavior Tree asset. Returns false if the asset could not be loaded. */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
+	static bool GetBehaviorTreeInfo(const FString& AssetPath, FBTAssetInfo& OutInfo);
+
+	/** Point the tree at a blackboard asset. */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
+	static FString SetBlackboardAsset(const FString& AssetPath, const FString& BlackboardAssetPath);
+
+	/** Re-run layout, regenerate the runtime tree from the graph, and save. */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
+	static FString CompileAndSave(const FString& AssetPath);
 };

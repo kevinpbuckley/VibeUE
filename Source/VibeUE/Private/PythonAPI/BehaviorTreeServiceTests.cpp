@@ -6,15 +6,26 @@
 
 #include "PythonAPI/UBehaviorTreeService.h"
 #include "PythonAPI/UBlackboardService.h"
+#include "AIServiceTestFixture.h"
 #include "BehaviorTreeServiceInternal.h"
 #include "BehaviorTree/BehaviorTree.h"
 #include "BehaviorTree/BTTaskNode.h"
+#include "BehaviorTree/BlackboardData.h"
 #include "BehaviorTree/Tasks/BTTask_MoveTo.h"
 #include "BehaviorTreeGraph.h"
 #include "BehaviorTreeGraphNode_Composite.h"
+#include "BehaviorTreeGraphNode_Root.h"
+#include "Editor.h"
+#include "Framework/Docking/TabManager.h"
+#include "HAL/FileManager.h"
+#include "Subsystems/AssetEditorSubsystem.h"
 
 static const EAutomationTestFlags kBTTestFlags =
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter;
+
+static const TCHAR* kBTTestDir = TEXT("/Game/Developers/VibeUEBTTests");
+
+using VibeAITest::FScopedFixtureReset;
 
 // The project ships 11 BT assets under /Game; listing must find at least the two
 // canonical ones. This also proves the AIModule/BehaviorTreeEditor link is live.
@@ -305,5 +316,265 @@ bool FVibeBTResolveBlueprintColdTest::RunTest(const FString&)
 // bug in the test, not a signal about ResolveNodeClass. Recorded here rather than fabricating
 // a passing assertion; the MatchCount > 1 branch in ResolveNodeClass is currently unexercised
 // by an automated test.
+
+// UBehaviorTreeFactory leaves BTGraph null — the editor creates it lazily on open. If the
+// service does not create it, every later write has nothing to write to.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBTCreateTest,
+	"VibeUE.BehaviorTree.Asset.Create", kBTTestFlags)
+bool FVibeBTCreateTest::RunTest(const FString&)
+{
+	const FString BBPath = FString(kBTTestDir) / TEXT("BB_CreateTest");
+	const FString BTPath = FString(kBTTestDir) / TEXT("BT_CreateTest");
+	const FString BarePath = FString(kBTTestDir) / TEXT("BT_BareTest");
+	// Never successfully created — but reset anyway, so that if a regression ever does create it,
+	// the next run still starts clean instead of inheriting the wreckage.
+	const FString MissingBBPath = FString(kBTTestDir) / TEXT("BT_MissingBBTest");
+	FScopedFixtureReset ResetBB(BBPath);
+	FScopedFixtureReset ResetBT(BTPath);
+	FScopedFixtureReset ResetBare(BarePath);
+	FScopedFixtureReset ResetMissingBB(MissingBBPath);
+
+	TestTrue(TEXT("blackboard created"), UBlackboardService::CreateBlackboard(BBPath, FString()));
+	TestEqual(TEXT("tree created"),
+		UBehaviorTreeService::CreateBehaviorTree(BTPath, BBPath), FString());
+
+	FBTAssetInfo Info;
+	TestTrue(TEXT("info readable"), UBehaviorTreeService::GetBehaviorTreeInfo(BTPath, Info));
+	TestTrue(TEXT("graph exists"),   Info.bHasGraph);
+	TestTrue(TEXT("root exists"),    Info.bHasRootNode);
+	TestTrue(TEXT("blackboard set"), Info.BlackboardPath.Contains(TEXT("BB_CreateTest")));
+	// A fresh tree is exactly the root node and nothing else.
+	TestEqual(TEXT("one node on create"), Info.NodeCount, 1);
+
+	// The only proof a save happened is the file: an in-memory re-read returns the same
+	// in-process object whether or not anything reached disk, and Content/Developers is
+	// gitignored so `git status` cannot show it either.
+	const FString BTFile = VibeAITest::FixtureFilename(BTPath);
+	TestTrue(TEXT("tree .uasset exists on disk"), IFileManager::Get().FileExists(*BTFile));
+	const int64 BTFileSize = IFileManager::Get().FileSize(*BTFile);
+	TestTrue(TEXT("tree .uasset is not empty"), BTFileSize > 0);
+	AddInfo(FString::Printf(TEXT("on-disk: %s (%lld bytes, modified %s)"), *BTFile, BTFileSize,
+		*IFileManager::Get().GetTimeStamp(*BTFile).ToString()));
+
+	// Creating over an existing asset is an error, not a silent overwrite.
+	TestTrue(TEXT("duplicate create rejected"),
+		!UBehaviorTreeService::CreateBehaviorTree(BTPath, BBPath).IsEmpty());
+
+	// ...but only while it really is there. This covers the in-process half of that: an asset
+	// created and then deleted out of band during this run can be created again.
+	//
+	// It does NOT reproduce the cross-process half, which is where this actually broke: a .uasset
+	// present when the process STARTED and deleted afterwards still reads as existing through
+	// FPackageName::DoesPackageExist, whose package-path index is built at startup and never
+	// invalidated by a direct file deletion. That is the state every rerun of this suite begins in
+	// (the fixture reset deletes files exactly that way), and it is why CreateBehaviorTree asks
+	// the filesystem instead. Reproducing it needs two processes, so it is verified by running the
+	// suite against fixtures left behind by a separate run — see task-5-report.md.
+	VibeAITest::ResetFixtureAsset(BTPath);
+	TestEqual(TEXT("create succeeds again once the asset is deleted"),
+		UBehaviorTreeService::CreateBehaviorTree(BTPath, BBPath), FString());
+
+	// A tree with no blackboard is legitimate. Note that BB_CreateTest is loaded in this process
+	// by now, which is exactly the condition under which UBehaviorTreeGraphNode_Root's
+	// PostPlacedNewNode would otherwise assign it to this tree behind our back.
+	TestEqual(TEXT("bare tree created"),
+		UBehaviorTreeService::CreateBehaviorTree(BarePath, FString()), FString());
+	FBTAssetInfo BareInfo;
+	TestTrue(TEXT("bare info readable"), UBehaviorTreeService::GetBehaviorTreeInfo(BarePath, BareInfo));
+	TestTrue(TEXT("bare graph exists"), BareInfo.bHasGraph);
+	TestEqual(TEXT("bare has no blackboard"), BareInfo.BlackboardPath, FString());
+
+	const FString BareFile = VibeAITest::FixtureFilename(BarePath);
+	TestTrue(TEXT("bare tree .uasset exists on disk"), IFileManager::Get().FileExists(*BareFile));
+	AddInfo(FString::Printf(TEXT("on-disk: %s (%lld bytes, modified %s)"), *BareFile,
+		IFileManager::Get().FileSize(*BareFile),
+		*IFileManager::Get().GetTimeStamp(*BareFile).ToString()));
+
+	// Bad input is reported, not half-applied.
+	TestTrue(TEXT("empty path rejected"),
+		!UBehaviorTreeService::CreateBehaviorTree(FString(), FString()).IsEmpty());
+	TestTrue(TEXT("non-package path rejected"),
+		!UBehaviorTreeService::CreateBehaviorTree(TEXT("NotAPath"), FString()).IsEmpty());
+	TestTrue(TEXT("missing blackboard rejected"),
+		!UBehaviorTreeService::CreateBehaviorTree(MissingBBPath, TEXT("/Game/NoSuchBlackboard")).IsEmpty());
+	TestFalse(TEXT("a rejected create leaves no asset behind"),
+		IFileManager::Get().FileExists(*VibeAITest::FixtureFilename(MissingBBPath)));
+
+	return true;
+}
+
+namespace
+{
+	/**
+	 * Minimal IAssetEditorInstance, registered through UAssetEditorSubsystem::NotifyAssetOpened,
+	 * so the open-editor guard is exercised by a real subsystem query rather than asserted about.
+	 * Opening a genuine FBehaviorTreeEditor is not possible under -nullrhi (it needs Slate), but
+	 * the guard reads FindEditorsForAsset, and that reads the OpenedAssets map this fills — the
+	 * same map every real toolkit registers itself in.
+	 *
+	 * IncludeAssetInRestoreOpenAssetsPrompt returns false so registering does not rewrite the
+	 * editor's "reopen these assets" config on a test machine.
+	 */
+	class FVibeFakeAssetEditor : public IAssetEditorInstance
+	{
+	public:
+		virtual FName GetEditorName() const override { return FName(TEXT("VibeUEFakeBTEditor")); }
+		virtual void FocusWindow(UObject* /*ObjectToFocusOn*/ = nullptr) override {}
+		virtual bool CloseWindow(EAssetEditorCloseReason /*InCloseReason*/) override { return true; }
+		virtual bool IncludeAssetInRestoreOpenAssetsPrompt(UObject* /*Asset*/) const override { return false; }
+		virtual bool IsPrimaryEditor() const override { return true; }
+		virtual void InvokeTab(const FTabId& /*TabId*/) override {}
+		virtual TSharedPtr<FTabManager> GetAssociatedTabManager() override { return nullptr; }
+		virtual double GetLastActivationTime() override { return 0.0; }
+		virtual void RemoveEditingAsset(UObject* /*Asset*/) override {}
+	};
+}
+
+// The two write guards, and the fact that a commit actually reaches disk. Both guards protect
+// against a write that reports success and changes nothing durable: an open editor overwrites it
+// on its next save, and bLockUpdates makes UpdateAsset() a silent no-op so the runtime tree is
+// never regenerated from the graph.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBTWriteGuardTest,
+	"VibeUE.BehaviorTree.Asset.WriteGuards", kBTTestFlags)
+bool FVibeBTWriteGuardTest::RunTest(const FString&)
+{
+	const FString BBPath = FString(kBTTestDir) / TEXT("BB_GuardTest");
+	const FString BTPath = FString(kBTTestDir) / TEXT("BT_GuardTest");
+	const FString BarePath = FString(kBTTestDir) / TEXT("BT_GuardBareTest");
+	FScopedFixtureReset ResetBB(BBPath);
+	FScopedFixtureReset ResetBT(BTPath);
+	FScopedFixtureReset ResetBare(BarePath);
+
+	TestTrue(TEXT("blackboard created"), UBlackboardService::CreateBlackboard(BBPath, FString()));
+	TestEqual(TEXT("tree created"),
+		UBehaviorTreeService::CreateBehaviorTree(BTPath, BBPath), FString());
+	TestEqual(TEXT("bare tree created"),
+		UBehaviorTreeService::CreateBehaviorTree(BarePath, FString()), FString());
+
+	UBehaviorTree* Tree = nullptr;
+	UBehaviorTreeGraph* Graph = nullptr;
+	TestEqual(TEXT("write guard opens a healthy tree"),
+		VibeBT::OpenWriteGuard(BTPath, Tree, Graph), FString());
+	if (!TestNotNull(TEXT("guard returned the tree"), Tree) ||
+		!TestNotNull(TEXT("guard returned the graph"), Graph))
+	{
+		return false;
+	}
+
+	// --- Guard 1: a Behavior Tree editor is open on the asset. ---------------------------------
+	UAssetEditorSubsystem* AssetEditorSubsystem =
+		GEditor ? GEditor->GetEditorSubsystem<UAssetEditorSubsystem>() : nullptr;
+	if (TestNotNull(TEXT("asset editor subsystem available"), AssetEditorSubsystem))
+	{
+		FVibeFakeAssetEditor FakeEditor;
+		AssetEditorSubsystem->NotifyAssetOpened(Tree, &FakeEditor);
+
+		UBehaviorTree* BlockedTree = Tree;
+		UBehaviorTreeGraph* BlockedGraph = Graph;
+		const FString OpenEditorError = VibeBT::OpenWriteGuard(BTPath, BlockedTree, BlockedGraph);
+		TestTrue(TEXT("guard refuses while an editor is open"), !OpenEditorError.IsEmpty());
+		TestTrue(TEXT("the refusal names the open editor"), OpenEditorError.Contains(TEXT("editor is open")));
+		TestNull(TEXT("a refused guard hands back no tree"), BlockedTree);
+		TestNull(TEXT("a refused guard hands back no graph"), BlockedGraph);
+		TestTrue(TEXT("CompileAndSave refuses too"),
+			!UBehaviorTreeService::CompileAndSave(BTPath).IsEmpty());
+
+		AssetEditorSubsystem->NotifyAssetClosed(Tree, &FakeEditor);
+		TestEqual(TEXT("closing the editor unblocks the write"),
+			UBehaviorTreeService::CompileAndSave(BTPath), FString());
+	}
+
+	// --- Guard 2: bLockUpdates. UpdateAsset() early-returns under it, so a commit would save a
+	//     stale runtime tree and still report success. ------------------------------------------
+	Graph->LockUpdates();
+	const FString LockedError = UBehaviorTreeService::CompileAndSave(BTPath);
+	TestTrue(TEXT("a locked graph refuses the write"), !LockedError.IsEmpty());
+	TestTrue(TEXT("the refusal names the lock"), LockedError.Contains(TEXT("bLockUpdates")));
+	Graph->UnlockUpdates();
+	TestEqual(TEXT("unlocking restores the write"),
+		UBehaviorTreeService::CompileAndSave(BTPath), FString());
+
+	// --- The commit reaches disk. ---------------------------------------------------------------
+	// Removing the file first makes this unambiguous: the package is already clean at this point
+	// (it was just saved), so if CommitGraph relied on SavePackages' bOnlyDirty behaviour the file
+	// would simply never come back.
+	const FString BTFile = VibeAITest::FixtureFilename(BTPath);
+	IFileManager::Get().Delete(*BTFile, /*RequireExists*/ false, /*EvenReadOnly*/ true);
+	TestFalse(TEXT("tree .uasset removed from disk"), IFileManager::Get().FileExists(*BTFile));
+	TestEqual(TEXT("CompileAndSave on a clean package"),
+		UBehaviorTreeService::CompileAndSave(BTPath), FString());
+	TestTrue(TEXT("the commit wrote the .uasset back"), IFileManager::Get().FileExists(*BTFile));
+	TestTrue(TEXT("the rewritten .uasset is not empty"), IFileManager::Get().FileSize(*BTFile) > 0);
+	AddInfo(FString::Printf(TEXT("rewritten on-disk: %s (%lld bytes, modified %s)"), *BTFile,
+		IFileManager::Get().FileSize(*BTFile),
+		*IFileManager::Get().GetTimeStamp(*BTFile).ToString()));
+
+	// --- SetBlackboardAsset, including clearing it. ---------------------------------------------
+	TestEqual(TEXT("blackboard assigned"),
+		UBehaviorTreeService::SetBlackboardAsset(BarePath, BBPath), FString());
+	FBTAssetInfo BareInfo;
+	TestTrue(TEXT("bare info readable"), UBehaviorTreeService::GetBehaviorTreeInfo(BarePath, BareInfo));
+	TestTrue(TEXT("blackboard shows on the tree"), BareInfo.BlackboardPath.Contains(TEXT("BB_GuardTest")));
+
+	TestTrue(TEXT("an unknown blackboard is rejected"),
+		!UBehaviorTreeService::SetBlackboardAsset(BarePath, TEXT("/Game/NoSuchBlackboard")).IsEmpty());
+	TestTrue(TEXT("bare info still readable"), UBehaviorTreeService::GetBehaviorTreeInfo(BarePath, BareInfo));
+	TestTrue(TEXT("a rejected assignment changed nothing"),
+		BareInfo.BlackboardPath.Contains(TEXT("BB_GuardTest")));
+
+	TestEqual(TEXT("blackboard cleared"),
+		UBehaviorTreeService::SetBlackboardAsset(BarePath, FString()), FString());
+	TestTrue(TEXT("bare info readable after clear"),
+		UBehaviorTreeService::GetBehaviorTreeInfo(BarePath, BareInfo));
+	TestEqual(TEXT("cleared blackboard is reported as none"), BareInfo.BlackboardPath, FString());
+
+	// --- EnsureGraph is idempotent, and repairs a graph whose root went missing without
+	//     inventing a blackboard for it on the way. -----------------------------------------------
+	UBehaviorTree* BareTree = LoadObject<UBehaviorTree>(nullptr, *BarePath);
+	if (!TestNotNull(TEXT("bare tree loaded"), BareTree))
+	{
+		return false;
+	}
+	TestEqual(TEXT("EnsureGraph is a no-op on a healthy tree"), VibeBT::EnsureGraph(BareTree), FString());
+	TestTrue(TEXT("info readable after EnsureGraph"),
+		UBehaviorTreeService::GetBehaviorTreeInfo(BarePath, BareInfo));
+	TestEqual(TEXT("EnsureGraph added no nodes"), BareInfo.NodeCount, 1);
+
+	UBehaviorTreeGraph* BareGraph = Cast<UBehaviorTreeGraph>(BareTree->BTGraph);
+	if (!TestNotNull(TEXT("bare graph present"), BareGraph))
+	{
+		return false;
+	}
+	for (int32 Index = BareGraph->Nodes.Num() - 1; Index >= 0; --Index)
+	{
+		if (Cast<UBehaviorTreeGraphNode_Root>(BareGraph->Nodes[Index]))
+		{
+			BareGraph->RemoveNode(BareGraph->Nodes[Index]);
+		}
+	}
+	TestTrue(TEXT("root removed"), UBehaviorTreeService::GetBehaviorTreeInfo(BarePath, BareInfo));
+	TestFalse(TEXT("no root before repair"), BareInfo.bHasRootNode);
+
+	TestEqual(TEXT("EnsureGraph repairs a missing root"), VibeBT::EnsureGraph(BareTree), FString());
+	TestTrue(TEXT("info readable after repair"),
+		UBehaviorTreeService::GetBehaviorTreeInfo(BarePath, BareInfo));
+	TestTrue(TEXT("root restored"), BareInfo.bHasRootNode);
+	// The spawned root's PostPlacedNewNode picks up whatever blackboard is loaded (BB_GuardTest
+	// certainly is, by now) and pushes it onto the asset. It must not survive.
+	TestEqual(TEXT("repair did not invent a blackboard"), BareInfo.BlackboardPath, FString());
+
+	// --- Missing assets are reported, never silently treated as empty. --------------------------
+	const FString MissingPath = FString(kBTTestDir) / TEXT("BT_NoSuchTree");
+	FBTAssetInfo MissingInfo;
+	TestFalse(TEXT("info on a missing tree fails"),
+		UBehaviorTreeService::GetBehaviorTreeInfo(MissingPath, MissingInfo));
+	TestTrue(TEXT("the failure is explained"), !MissingInfo.Error.IsEmpty());
+	TestTrue(TEXT("CompileAndSave on a missing tree fails"),
+		!UBehaviorTreeService::CompileAndSave(MissingPath).IsEmpty());
+	TestTrue(TEXT("SetBlackboardAsset on a missing tree fails"),
+		!UBehaviorTreeService::SetBlackboardAsset(MissingPath, BBPath).IsEmpty());
+
+	return true;
+}
 
 #endif // WITH_AUTOMATION_TESTS

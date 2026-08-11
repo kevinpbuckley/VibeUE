@@ -3,8 +3,18 @@
 #include "BehaviorTreeServiceInternal.h"
 
 #include "AIGraphTypes.h"
+#include "BehaviorTree/BehaviorTree.h"
+#include "BehaviorTree/BlackboardData.h"
+#include "BehaviorTreeGraph.h"
 #include "BehaviorTreeGraphNode.h"
+#include "BehaviorTreeGraphNode_Root.h"
 #include "EdGraph/EdGraphPin.h"
+#include "EdGraph/EdGraphSchema.h"
+#include "Editor.h"
+#include "FileHelpers.h"
+#include "Kismet2/BlueprintEditorUtils.h"
+#include "Subsystems/AssetEditorSubsystem.h"
+#include "UObject/Package.h"
 #include "UObject/UObjectGlobals.h"
 
 namespace VibeBT
@@ -153,6 +163,217 @@ namespace VibeBT
 			Order[Index]->NodePosX = Positions[Index].X;
 			Order[Index]->NodePosY = Positions[Index].Y;
 		}
+	}
+
+	namespace
+	{
+		/**
+		 * The graph's root node, or nullptr. A linear sweep of Nodes is the whole search: BT
+		 * sub-nodes (decorators, services) live in UAIGraphNode::SubNodes and are never added to
+		 * UEdGraph::Nodes (AIGraphNode.cpp, UAIGraphNode::AddSubNode).
+		 */
+		UBehaviorTreeGraphNode_Root* FindRootGraphNode(UBehaviorTreeGraph* Graph)
+		{
+			if (!Graph)
+			{
+				return nullptr;
+			}
+			for (UEdGraphNode* Node : Graph->Nodes)
+			{
+				if (UBehaviorTreeGraphNode_Root* Root = Cast<UBehaviorTreeGraphNode_Root>(Node))
+				{
+					return Root;
+				}
+			}
+			return nullptr;
+		}
+	}
+
+	FString EnsureGraph(UBehaviorTree* Tree)
+	{
+		if (!Tree)
+		{
+			return TEXT("EnsureGraph: null Behavior Tree");
+		}
+
+		if (!Tree->BTGraph)
+		{
+			// UBehaviorTreeFactory does not create the graph; FBehaviorTreeEditor does, lazily, when
+			// the asset is first opened (BehaviorTreeEditor.cpp:345-352). Replicate that here so an
+			// asset created headlessly is immediately writable.
+			const TSubclassOf<UEdGraphSchema> SchemaClass = GetDefault<UBehaviorTreeGraph>()->Schema;
+			if (!SchemaClass)
+			{
+				return TEXT("UBehaviorTreeGraph has no default schema class");
+			}
+
+			Tree->Modify();
+			Tree->BTGraph = FBlueprintEditorUtils::CreateNewGraph(
+				Tree, TEXT("Behavior Tree"), UBehaviorTreeGraph::StaticClass(), SchemaClass);
+			if (!Tree->BTGraph)
+			{
+				return TEXT("failed to create BTGraph");
+			}
+		}
+
+		UBehaviorTreeGraph* Graph = Cast<UBehaviorTreeGraph>(Tree->BTGraph);
+		if (!Graph)
+		{
+			return FString::Printf(TEXT("BTGraph is a %s, not a UBehaviorTreeGraph"),
+				*Tree->BTGraph->GetClass()->GetName());
+		}
+
+		if (!FindRootGraphNode(Graph))
+		{
+			const UEdGraphSchema* Schema = Graph->GetSchema();
+			if (!Schema)
+			{
+				return TEXT("Behavior Tree graph has no schema");
+			}
+
+			// Spawning the root must not change which blackboard the tree points at.
+			// UBehaviorTreeGraphNode_Root::PostPlacedNewNode() — which FGraphNodeCreator::Finalize()
+			// always runs — assigns the AI config's DefaultBlackboard or, failing that, whichever
+			// UBlackboardData happens to be loaded first in this process, and pushes it onto the
+			// owning asset. In the editor that is a convenience for a human who is about to pick one;
+			// here it would silently bind a tree to an unrelated blackboard (and, for a tree that
+			// deliberately has none, invent one), so the pre-existing value is restored below.
+			UBlackboardData* const OriginalBlackboard = Tree->BlackboardAsset;
+
+			// CreateDefaultNodesForGraph is what actually spawns the UBehaviorTreeGraphNode_Root
+			// (EdGraphSchema_BehaviorTree.cpp:77). OnCreated() -> SpawnMissingNodes() does NOT: it
+			// looks for an already-present root and rebuilds graph nodes underneath it from the
+			// *runtime* tree, so on a factory-fresh asset it finds nothing and creates nothing. The
+			// editor runs both, in this order (BehaviorTreeEditor.cpp:349-358).
+			Graph->Modify();
+			Schema->CreateDefaultNodesForGraph(*Graph);
+			Graph->OnCreated();
+
+			UBehaviorTreeGraphNode_Root* Root = FindRootGraphNode(Graph);
+			if (!Root)
+			{
+				return TEXT("Behavior Tree graph root node was not created");
+			}
+
+			Root->BlackboardAsset = OriginalBlackboard;
+			Tree->BlackboardAsset = OriginalBlackboard;
+		}
+
+		return FString();
+	}
+
+	FString OpenWriteGuard(const FString& AssetPath, UBehaviorTree*& OutTree,
+		UBehaviorTreeGraph*& OutGraph)
+	{
+		OutTree = nullptr;
+		OutGraph = nullptr;
+
+		if (AssetPath.IsEmpty())
+		{
+			return TEXT("AssetPath is empty");
+		}
+
+		// LOAD_NoWarn | LOAD_Quiet: "not found" is a value this function returns to its caller, not
+		// an incident worth engine warnings in the log.
+		UBehaviorTree* Tree =
+			LoadObject<UBehaviorTree>(nullptr, *AssetPath, nullptr, LOAD_NoWarn | LOAD_Quiet);
+		if (!Tree)
+		{
+			return FString::Printf(TEXT("Behavior Tree not found: %s"), *AssetPath);
+		}
+
+		// Checked before EnsureGraph, so a refused write leaves the asset exactly as it was.
+		if (GEditor)
+		{
+			if (UAssetEditorSubsystem* AssetEditorSubsystem =
+				GEditor->GetEditorSubsystem<UAssetEditorSubsystem>())
+			{
+				if (AssetEditorSubsystem->FindEditorsForAsset(Tree).Num() > 0)
+				{
+					return FString::Printf(
+						TEXT("A Behavior Tree editor is open on %s; close it and retry. The open editor "
+							 "holds its own copy of the graph, would not show this change, and would "
+							 "overwrite it on the next save from the editor."),
+						*AssetPath);
+				}
+			}
+		}
+
+		const FString GraphError = EnsureGraph(Tree);
+		if (!GraphError.IsEmpty())
+		{
+			return GraphError;
+		}
+
+		UBehaviorTreeGraph* Graph = Cast<UBehaviorTreeGraph>(Tree->BTGraph);
+		if (!Graph)
+		{
+			return FString::Printf(TEXT("%s has no Behavior Tree graph"), *AssetPath);
+		}
+
+		if (Graph->IsLocked())
+		{
+			return FString::Printf(
+				TEXT("Graph updates are locked on %s (bLockUpdates). UBehaviorTreeGraph::UpdateAsset() "
+					 "early-returns while it is set, so the write would be saved with a stale runtime "
+					 "tree and still report success."),
+				*AssetPath);
+		}
+
+		OutTree = Tree;
+		OutGraph = Graph;
+		return FString();
+	}
+
+	FString CommitGraph(UBehaviorTree* Tree, UBehaviorTreeGraph* Graph)
+	{
+		if (!Tree || !Graph)
+		{
+			return TEXT("CommitGraph: null Behavior Tree or graph");
+		}
+
+		// Re-asserted rather than assumed: OpenWriteGuard checked this, but anything the caller did
+		// in between could have locked the graph, and a locked UpdateAsset() below does nothing at
+		// all — silently, so an entire batch would be saved with a stale runtime tree.
+		if (Graph->IsLocked())
+		{
+			return TEXT("Graph updates are locked (bLockUpdates); UBehaviorTreeGraph::UpdateAsset() "
+						"would silently do nothing");
+		}
+
+		UBehaviorTreeGraphNode_Root* Root = FindRootGraphNode(Graph);
+		if (!Root)
+		{
+			return TEXT("Behavior Tree graph has no root node");
+		}
+
+		// Never UBehaviorTreeGraph::AutoArrange(): it dereferences RootNode->DEPRECATED_NodeWidget
+		// (BehaviorTreeGraph.cpp:1302), the Slate widget, which is only ever set while a Behavior
+		// Tree editor tab is open — it crashes the editor outright when called headlessly.
+		ArrangeGraph(Root);
+
+		// OnSave() is SpawnMissingNodesForParallel() + UpdateAsset(): exactly what the BT editor runs
+		// on save, and what regenerates UBehaviorTree::RootNode from the graph. A bare UpdateAsset()
+		// would skip the parallel-task fix-up.
+		Graph->OnSave();
+
+		UPackage* Package = Tree->GetOutermost();
+		if (!Package)
+		{
+			return TEXT("Behavior Tree has no package");
+		}
+
+		// SavePackages(..., bOnlyDirty = true) silently skips a clean package, and neither OnSave()
+		// nor a node-position-only change necessarily dirties one — hence both the explicit
+		// Modify/MarkPackageDirty and bOnlyDirty = false.
+		Tree->Modify();
+		Tree->MarkPackageDirty();
+		if (!UEditorLoadingAndSavingUtils::SavePackages({ Package }, /*bOnlyDirty*/ false))
+		{
+			return FString::Printf(TEXT("Failed to save package %s"), *Package->GetName());
+		}
+
+		return FString();
 	}
 
 	namespace
