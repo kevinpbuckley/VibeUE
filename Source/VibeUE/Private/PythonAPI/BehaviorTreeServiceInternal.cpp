@@ -238,7 +238,7 @@ namespace VibeBT
 			// owning asset. In the editor that is a convenience for a human who is about to pick one;
 			// here it would silently bind a tree to an unrelated blackboard (and, for a tree that
 			// deliberately has none, invent one), so the pre-existing value is restored below.
-			UBlackboardData* const OriginalBlackboard = Tree->BlackboardAsset;
+			UBlackboardData* const OriginalBlackboard = ToRawPtr(Tree->BlackboardAsset);
 
 			// CreateDefaultNodesForGraph is what actually spawns the UBehaviorTreeGraphNode_Root
 			// (EdGraphSchema_BehaviorTree.cpp:77). OnCreated() -> SpawnMissingNodes() does NOT: it
@@ -255,8 +255,20 @@ namespace VibeBT
 				return TEXT("Behavior Tree graph root node was not created");
 			}
 
+			// Restored through the engine's own path rather than by writing the two pointers back.
+			// The hijack above was not just an assignment: PostPlacedNewNode calls UpdateBlackboard(),
+			// which runs UBehaviorTreeGraph::UpdateBlackboardChange() and re-runs InitializeFromAsset
+			// on every node instance, decorator and service in the graph — re-resolving their cached
+			// blackboard key IDs against the wrong board (BehaviorTreeGraph.cpp:50-95, and
+			// FBlackboardKeySelector::ResolveSelectedKey). Assigning the pointers back would leave
+			// those instances resolved against a board the asset no longer references.
+			//
+			// UpdateBlackboard() early-outs when the asset already points at this board, so this is
+			// free when nothing was hijacked; otherwise it reassigns AND re-resolves. It is correct
+			// for a null OriginalBlackboard too: InitializeFromAsset invalidates the resolved keys,
+			// which is exactly right for a tree with no board.
 			Root->BlackboardAsset = OriginalBlackboard;
-			Tree->BlackboardAsset = OriginalBlackboard;
+			Root->UpdateBlackboard();
 		}
 
 		return FString();
@@ -282,7 +294,11 @@ namespace VibeBT
 			return FString::Printf(TEXT("Behavior Tree not found: %s"), *AssetPath);
 		}
 
-		// Checked before EnsureGraph, so a refused write leaves the asset exactly as it was.
+		// Both refusals are checked before EnsureGraph, so a refused write leaves the asset exactly
+		// as it was. That is not cosmetic for the lock check: EnsureGraph on a graph that has lost
+		// its root spawns one, Modify()s the graph and churns the blackboard binding of every node
+		// instance in it (see the restore in EnsureGraph) — all of it on an asset we are about to
+		// refuse to write.
 		if (GEditor)
 		{
 			if (UAssetEditorSubsystem* AssetEditorSubsystem =
@@ -299,6 +315,20 @@ namespace VibeBT
 			}
 		}
 
+		// Only an existing graph can be locked: EnsureGraph's freshly created one has bLockUpdates
+		// clear by construction, and nothing between here and the return can set it.
+		if (const UBehaviorTreeGraph* ExistingGraph = Cast<UBehaviorTreeGraph>(Tree->BTGraph))
+		{
+			if (ExistingGraph->IsLocked())
+			{
+				return FString::Printf(
+					TEXT("Graph updates are locked on %s (bLockUpdates). UBehaviorTreeGraph::UpdateAsset() "
+						 "early-returns while it is set, so the write would be saved with a stale runtime "
+						 "tree and still report success."),
+					*AssetPath);
+			}
+		}
+
 		const FString GraphError = EnsureGraph(Tree);
 		if (!GraphError.IsEmpty())
 		{
@@ -309,15 +339,6 @@ namespace VibeBT
 		if (!Graph)
 		{
 			return FString::Printf(TEXT("%s has no Behavior Tree graph"), *AssetPath);
-		}
-
-		if (Graph->IsLocked())
-		{
-			return FString::Printf(
-				TEXT("Graph updates are locked on %s (bLockUpdates). UBehaviorTreeGraph::UpdateAsset() "
-					 "early-returns while it is set, so the write would be saved with a stale runtime "
-					 "tree and still report success."),
-				*AssetPath);
 		}
 
 		OutTree = Tree;

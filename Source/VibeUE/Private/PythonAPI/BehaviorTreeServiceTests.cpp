@@ -9,9 +9,15 @@
 #include "AIServiceTestFixture.h"
 #include "BehaviorTreeServiceInternal.h"
 #include "BehaviorTree/BehaviorTree.h"
+#include "AISystem.h"
 #include "BehaviorTree/BTTaskNode.h"
+#include "BehaviorTree/BehaviorTreeTypes.h"
 #include "BehaviorTree/BlackboardData.h"
+#include "BehaviorTree/Composites/BTComposite_Sequence.h"
+#include "BehaviorTree/Decorators/BTDecorator_Blackboard.h"
+#include "BehaviorTree/Decorators/BTDecorator_BlackboardBase.h"
 #include "BehaviorTree/Tasks/BTTask_MoveTo.h"
+#include "BehaviorTreeGraphNode_Decorator.h"
 #include "BehaviorTreeGraph.h"
 #include "BehaviorTreeGraphNode_Composite.h"
 #include "BehaviorTreeGraphNode_Root.h"
@@ -574,6 +580,186 @@ bool FVibeBTWriteGuardTest::RunTest(const FString&)
 	TestTrue(TEXT("SetBlackboardAsset on a missing tree fails"),
 		!UBehaviorTreeService::SetBlackboardAsset(MissingPath, BBPath).IsEmpty());
 
+	return true;
+}
+
+namespace
+{
+	/** Forces UAISystem's DefaultBlackboard for the scope, so the root-node spawn's blackboard
+	 *  hijack picks a known board instead of "whichever one loaded first in this process". */
+	struct FScopedDefaultBlackboard
+	{
+		TSoftObjectPtr<UBlackboardData> Previous;
+		explicit FScopedDefaultBlackboard(UBlackboardData* Board)
+		{
+			UAISystem* Config = GetMutableDefault<UAISystem>();
+			Previous = Config->DefaultBlackboard;
+			Config->DefaultBlackboard = Board;
+		}
+		~FScopedDefaultBlackboard()
+		{
+			GetMutableDefault<UAISystem>()->DefaultBlackboard = Previous;
+		}
+	};
+
+	/** The BlackboardKey selector of a decorator instance. Protected on UBTDecorator_BlackboardBase,
+	 *  so reached through reflection — the same access path the Blackboard service's own sweep uses. */
+	FBlackboardKeySelector* GetKeySelector(UBTDecorator_Blackboard* Decorator)
+	{
+		FStructProperty* KeyProp = CastField<FStructProperty>(
+			UBTDecorator_BlackboardBase::StaticClass()->FindPropertyByName(TEXT("BlackboardKey")));
+		return KeyProp ? KeyProp->ContainerPtrToValuePtr<FBlackboardKeySelector>(Decorator) : nullptr;
+	}
+}
+
+// Regression test for the Important review finding on EnsureGraph's blackboard restore.
+//
+// Spawning the root node does not merely assign a blackboard: PostPlacedNewNode calls
+// UpdateBlackboard(), which runs UpdateBlackboardChange() and re-runs InitializeFromAsset on every
+// node instance in the graph, re-resolving each blackboard key selector's cached key ID against
+// the hijacking board (BehaviorTreeGraph.cpp:50-95). Writing the two pointers back afterwards
+// restores what GetBehaviorTreeInfo reports while leaving the node instances bound elsewhere.
+//
+// Only observable when EnsureGraph repairs a POPULATED graph and the caller then bails without
+// committing — CommitGraph's UpdateAsset() ends in UpdateBlackboardChange() and washes it out.
+//
+// Both boards carry "Alpha", at different key IDs, so the assertion is an ID comparison rather
+// than a valid/invalid one: that keeps the failure mode "bound to the wrong board" rather than
+// "unresolved", and avoids a spurious engine warning about a key that cannot be found.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBTRepairKeyBindingTest,
+	"VibeUE.BehaviorTree.Asset.RepairKeyBinding", kBTTestFlags)
+bool FVibeBTRepairKeyBindingTest::RunTest(const FString&)
+{
+	const FString BoardAPath = FString(kBTTestDir) / TEXT("BB_RepairA");
+	const FString BoardBPath = FString(kBTTestDir) / TEXT("BB_RepairB");
+	const FString BTPath = FString(kBTTestDir) / TEXT("BT_RepairTest");
+	FScopedFixtureReset ResetA(BoardAPath);
+	FScopedFixtureReset ResetB(BoardBPath);
+	FScopedFixtureReset ResetBT(BTPath);
+
+	// Board A: [SelfActor, Alpha]. Board B: [SelfActor, Beta, Alpha] — same key name, different ID.
+	TestTrue(TEXT("board A created"), UBlackboardService::CreateBlackboard(BoardAPath, FString()));
+	TestEqual(TEXT("A.Alpha added"),
+		UBlackboardService::AddBlackboardKey(BoardAPath, TEXT("Alpha"), TEXT("Bool"), false), FString());
+	TestTrue(TEXT("board B created"), UBlackboardService::CreateBlackboard(BoardBPath, FString()));
+	TestEqual(TEXT("B.Beta added"),
+		UBlackboardService::AddBlackboardKey(BoardBPath, TEXT("Beta"), TEXT("Bool"), false), FString());
+	TestEqual(TEXT("B.Alpha added"),
+		UBlackboardService::AddBlackboardKey(BoardBPath, TEXT("Alpha"), TEXT("Bool"), false), FString());
+
+	UBlackboardData* BoardA = LoadObject<UBlackboardData>(nullptr, *BoardAPath);
+	UBlackboardData* BoardB = LoadObject<UBlackboardData>(nullptr, *BoardBPath);
+	if (!TestNotNull(TEXT("board A loaded"), BoardA) || !TestNotNull(TEXT("board B loaded"), BoardB))
+	{
+		return false;
+	}
+
+	const FBlackboard::FKey AlphaOnA = BoardA->GetKeyID(TEXT("Alpha"));
+	const FBlackboard::FKey AlphaOnB = BoardB->GetKeyID(TEXT("Alpha"));
+	// Without this the test would still pass while proving nothing.
+	TestTrue(TEXT("Alpha resolves on both boards"),
+		AlphaOnA != FBlackboard::InvalidKey && AlphaOnB != FBlackboard::InvalidKey);
+	TestTrue(TEXT("Alpha has a different key ID on each board, so the two are distinguishable"),
+		AlphaOnA != AlphaOnB);
+
+	TestEqual(TEXT("tree created"),
+		UBehaviorTreeService::CreateBehaviorTree(BTPath, BoardAPath), FString());
+	UBehaviorTree* Tree = LoadObject<UBehaviorTree>(nullptr, *BTPath);
+	if (!TestNotNull(TEXT("tree loaded"), Tree))
+	{
+		return false;
+	}
+	UBehaviorTreeGraph* Graph = Cast<UBehaviorTreeGraph>(Tree->BTGraph);
+	if (!TestNotNull(TEXT("graph present"), Graph))
+	{
+		return false;
+	}
+
+	// Populate the graph: a composite carrying one Blackboard decorator bound to "Alpha". This is
+	// what UpdateBlackboardChange walks (Graph->Nodes, then each node's Decorators/Services).
+	UBehaviorTreeGraphNode_Composite* Composite =
+		NewObject<UBehaviorTreeGraphNode_Composite>(Graph, NAME_None, RF_Transactional);
+	Composite->CreateNewGuid();
+	Composite->AllocateDefaultPins();
+	Composite->NodeInstance = NewObject<UBTComposite_Sequence>(Tree, NAME_None, RF_Transactional);
+	Graph->AddNode(Composite, false, false);
+
+	UBehaviorTreeGraphNode_Decorator* DecoratorNode =
+		NewObject<UBehaviorTreeGraphNode_Decorator>(Graph, NAME_None, RF_Transactional);
+	DecoratorNode->CreateNewGuid();
+	UBTDecorator_Blackboard* DecoratorInstance =
+		NewObject<UBTDecorator_Blackboard>(Tree, NAME_None, RF_Transactional);
+	DecoratorNode->NodeInstance = DecoratorInstance;
+	Composite->Decorators.Add(DecoratorNode);
+
+	FBlackboardKeySelector* Selector = GetKeySelector(DecoratorInstance);
+	if (!TestNotNull(TEXT("BlackboardKey selector reached"), Selector))
+	{
+		return false;
+	}
+	Selector->SelectedKeyName = TEXT("Alpha");
+
+	// Baseline: resolved against the tree's real board.
+	Graph->UpdateBlackboardChange();
+	TestEqual(TEXT("decorator starts bound to board A's Alpha"),
+		Selector->GetSelectedKeyID(), AlphaOnA);
+
+	{
+		// Make the hijack deterministic: PostPlacedNewNode prefers the AI config's DefaultBlackboard
+		// when it is already loaded, and only falls back to iterating loaded boards otherwise.
+		FScopedDefaultBlackboard ForceDefault(BoardB);
+		TestTrue(TEXT("the forced default board is resident, so the root spawn will pick it"),
+			GetDefault<UAISystem>()->DefaultBlackboard.IsValid());
+
+		for (int32 Index = Graph->Nodes.Num() - 1; Index >= 0; --Index)
+		{
+			if (Cast<UBehaviorTreeGraphNode_Root>(Graph->Nodes[Index]))
+			{
+				Graph->RemoveNode(Graph->Nodes[Index]);
+			}
+		}
+
+		// The bail-without-committing path: EnsureGraph alone, no CommitGraph to wash it out.
+		TestEqual(TEXT("EnsureGraph repairs the missing root"), VibeBT::EnsureGraph(Tree), FString());
+
+		// FBlackboard::FKey's TestEqual overload reports only "The two values are not equal", so
+		// the values are logged here — otherwise a failure gives nothing to diagnose from.
+		AddInfo(FString::Printf(
+			TEXT("after repair: tree board=%s, decorator key id=%d (A.Alpha=%d, B.Alpha=%d)"),
+			*GetNameSafe(ToRawPtr(Tree->BlackboardAsset)),
+			(int32)Selector->GetSelectedKeyID(), (int32)AlphaOnA, (int32)AlphaOnB));
+		TestTrue(TEXT("root restored"), Graph->Nodes.ContainsByPredicate(
+			[](const UEdGraphNode* Node){ return Node && Node->IsA<UBehaviorTreeGraphNode_Root>(); }));
+
+		// The pointer half of the restore.
+		TestEqual(TEXT("the tree still points at board A"), ToRawPtr(Tree->BlackboardAsset), BoardA);
+
+		// The half a pointer write cannot do: the decorator instance was re-resolved against board B
+		// during the spawn, and must have been re-resolved back.
+		TestEqual(TEXT("the decorator is still bound to board A's Alpha, not board B's"),
+			Selector->GetSelectedKeyID(), AlphaOnA);
+	}
+
+	// The lock refusal must be side-effect-free too: a locked graph missing its root is refused
+	// WITHOUT spawning one (which would Modify the graph and churn every node's key bindings).
+	for (int32 Index = Graph->Nodes.Num() - 1; Index >= 0; --Index)
+	{
+		if (Cast<UBehaviorTreeGraphNode_Root>(Graph->Nodes[Index]))
+		{
+			Graph->RemoveNode(Graph->Nodes[Index]);
+		}
+	}
+	Graph->LockUpdates();
+
+	UBehaviorTree* GuardTree = nullptr;
+	UBehaviorTreeGraph* GuardGraph = nullptr;
+	const FString LockedError = VibeBT::OpenWriteGuard(BTPath, GuardTree, GuardGraph);
+	TestTrue(TEXT("a locked graph is refused"), !LockedError.IsEmpty());
+	TestTrue(TEXT("the refusal names the lock"), LockedError.Contains(TEXT("bLockUpdates")));
+	TestFalse(TEXT("the refused write did not spawn a root node"), Graph->Nodes.ContainsByPredicate(
+		[](const UEdGraphNode* Node){ return Node && Node->IsA<UBehaviorTreeGraphNode_Root>(); }));
+
+	Graph->UnlockUpdates();
 	return true;
 }
 
