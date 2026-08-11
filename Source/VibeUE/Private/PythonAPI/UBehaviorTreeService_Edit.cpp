@@ -104,9 +104,28 @@
  *     transient package, i.e. the decorator this call just added is destroyed by the commit that was
  *     supposed to save it.
  *
- * Sub-nodes are NOT added to UEdGraph::Nodes: they are reached through their owner, and the engine
- * never puts them there (BTGraphHelpers::SpawnMissingDecoratorNodes, BehaviorTreeGraph.cpp:775-810).
- * FindRootGraphNode, CountGraphNodes and ArrangeGraph all depend on that being true.
+ * Sub-nodes are NOT added to UEdGraph::Nodes. That is not a stylistic match with the engine
+ * (BTGraphHelpers::SpawnMissingDecoratorNodes, BehaviorTreeGraph.cpp:775-810) — it is mandatory,
+ * because UpdateAsset's own first pass would break a sub-node that was in there:
+ *
+ *     for (int32 Index = 0; Index < Nodes.Num(); ++Index)   // BehaviorTreeGraph.cpp:111-146
+ *     {
+ *         ...
+ *         Node->ParentNode = NULL;                          // :136 — unconditionally, per entry
+ *         for (...) Node->Services[iAux]->ParentNode = Node;
+ *         for (...) Node->Decorators[iAux]->ParentNode = Node;
+ *     }
+ *
+ * A sub-node listed in Nodes gets its own ParentNode nulled when its own iteration comes round, and
+ * only the owner's Decorators/Services loop puts it back — so whether it survives depends entirely
+ * on whether the owner happens to sit later in Nodes. When it does not, GetNodePath returns "" (no
+ * owner to build an "@decorator[n]" segment from) and RemoveSubNode misreports the node as "not a
+ * decorator or service". Order-dependent, silent, and only on some assets.
+ *
+ * CountGraphNodes would also double-count (it adds Nodes.Num() and then walks SubNodes). By
+ * contrast FindRootGraphNode and ArrangeGraph would NOT break: the former casts each entry to
+ * UBehaviorTreeGraphNode_Root, which a decorator never matches, and the latter walks down from the
+ * root through pins, which never reach a pinless sub-node.
  */
 
 // Named, not anonymous: this module builds with unity/jumbo enabled, where two anonymous namespaces
@@ -1051,6 +1070,18 @@ FString UBehaviorTreeService::SetNodeName(const FString& AssetPath, const FStrin
 	{
 		return FString::Printf(
 			TEXT("Node names cannot contain '/': it is the path separator, so '%s' would leave the node "
+				 "un-addressable."),
+			*NewName);
+	}
+	if (NewName.StartsWith(TEXT("@")))
+	{
+		// ResolveNodePath dispatches on the leading '@' before it ever compares names: a segment
+		// starting with one is looked up in Decorators/Services by index, matches neither
+		// "@decorator" nor "@service", and returns nullptr. A node named "@foo" therefore has a path
+		// that GetNodePath will happily emit and nothing can resolve.
+		return FString::Printf(
+			TEXT("Node names cannot start with '@': the path grammar reserves that prefix for "
+				 "sub-node slots (@decorator[n], @service[n]), so '%s' would leave the node "
 				 "un-addressable."),
 			*NewName);
 	}

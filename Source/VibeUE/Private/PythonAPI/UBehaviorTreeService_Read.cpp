@@ -185,10 +185,17 @@ namespace VibeBTRead
 
 		Visited.Add(Node);
 
+		// The Visited test is on all three arms, not just "children". These two arms recurse — the
+		// serialiser they replaced did not — so without it a node listed among its own Decorators, or
+		// two nodes each carrying the other, recurse until the stack overflows and take the process
+		// with them. Nothing this service writes can produce that shape (AttachSubNode always creates
+		// a fresh node), but this function's contract is to report a malformed graph as a finite tree
+		// rather than hang the caller, and a hand-edited or corrupted asset is exactly what it is for.
 		TArray<TSharedPtr<FJsonValue>> Decorators;
 		for (const TObjectPtr<UBehaviorTreeGraphNode>& Decorator : Node->Decorators)
 		{
-			if (const UBehaviorTreeGraphNode* Raw = ToRawPtr(Decorator))
+			const UBehaviorTreeGraphNode* Raw = ToRawPtr(Decorator);
+			if (Raw && !Visited.Contains(Raw))
 			{
 				Decorators.Add(MakeShared<FJsonValueObject>(NodeToJson(Raw, Visited)));
 			}
@@ -198,7 +205,8 @@ namespace VibeBTRead
 		TArray<TSharedPtr<FJsonValue>> Services;
 		for (const TObjectPtr<UBehaviorTreeGraphNode>& Service : Node->Services)
 		{
-			if (const UBehaviorTreeGraphNode* Raw = ToRawPtr(Service))
+			const UBehaviorTreeGraphNode* Raw = ToRawPtr(Service);
+			if (Raw && !Visited.Contains(Raw))
 			{
 				Services.Add(MakeShared<FJsonValueObject>(NodeToJson(Raw, Visited)));
 			}

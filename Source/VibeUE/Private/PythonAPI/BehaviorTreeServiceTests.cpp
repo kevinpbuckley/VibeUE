@@ -1763,6 +1763,11 @@ bool FVibeBTSubNodesTest::RunTest(const FString&)
 	TestTrue(TEXT("a name ending in a numeric index is refused"),
 		UBehaviorTreeService::SetNodeName(BTPath, Renamed, TEXT("Guard[2]"))
 			.Contains(TEXT("sibling index")));
+	// ResolveNodePath dispatches on a leading '@' before comparing names, so "@foo" resolves to
+	// nothing at all — the same un-addressable node the other two guards exist to prevent.
+	TestTrue(TEXT("a name starting with '@' is refused"),
+		UBehaviorTreeService::SetNodeName(BTPath, Renamed, TEXT("@foo"))
+			.Contains(TEXT("reserves that prefix")));
 	{
 		const TSharedPtr<FJsonObject> RenamedObject = NodeObject(Renamed);
 		TestTrue(TEXT("the refused renames left the name alone"), RenamedObject.IsValid());
@@ -1932,6 +1937,98 @@ bool FVibeBTInjectedSubNodesTest::RunTest(const FString&)
 		TestEqual(TEXT("exactly one decorator reached the runtime tree"),
 			MainTree->RootNode->Children[0].Decorators.Num(), 1);
 	}
+
+	return true;
+}
+
+// Task 7 made GetTree's decorator and service arms recursive (one serialiser for every node object,
+// so a sub-node carries the same fields as a tree node). The serialiser they replaced never
+// recursed, so those two arms arrived without the Visited test the "children" arm has always had —
+// and GetTree's contract is that a malformed graph is reported as a finite tree "instead of hanging
+// the caller".
+//
+// Unreachable through this service's own writes: AttachSubNode always creates a fresh graph node, so
+// no sequence of AddDecorator/AddService/RemoveSubNode calls can build a sub-node cycle. It is
+// reachable by a hand-edited or corrupted asset, and Task 9's ValidateTree and Task 10's BuildTree
+// both walk this path. Built here by direct object manipulation for the same reason
+// Layout.BackEdgeCycle and Layout.DuplicateLink are: no API can produce the shape.
+//
+// Without the guard this test does not report a failure — it recurses until the stack overflows and
+// takes the automation host down with it. That is the measured behaviour; see task-7-report.md.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBTCyclicSubNodeTest,
+	"VibeUE.BehaviorTree.SubNodes.CyclicSubNode", kBTTestFlags)
+bool FVibeBTCyclicSubNodeTest::RunTest(const FString&)
+{
+	const FString BTPath = FString(kBTTestDir) / TEXT("BT_CyclicSubNodeTest");
+	FScopedFixtureReset ResetBT(BTPath);
+
+	TestEqual(TEXT("fixture tree created"),
+		UBehaviorTreeService::CreateBehaviorTree(BTPath, FString()), FString());
+	const FString Sel = UBehaviorTreeService::AddNode(
+		BTPath, TEXT("Root"), TEXT("BTComposite_Selector"), -1);
+	TestFalse(TEXT("selector added"), Sel.StartsWith(TEXT("ERROR")));
+
+	UBehaviorTree* Tree = LoadObject<UBehaviorTree>(nullptr, *BTPath);
+	if (!TestNotNull(TEXT("tree loaded"), Tree))
+	{
+		return false;
+	}
+	UBehaviorTreeGraph* Graph = Cast<UBehaviorTreeGraph>(Tree->BTGraph);
+	if (!TestNotNull(TEXT("graph present"), Graph))
+	{
+		return false;
+	}
+	UBehaviorTreeGraphNode* Selector = VibeBT::ResolveNodePath(Graph, Sel);
+	if (!TestNotNull(TEXT("the selector resolves"), Selector))
+	{
+		return false;
+	}
+
+	// The corruption: the node carries ITSELF as a decorator. Deliberately not committed while it is
+	// in place — UpdateAsset would set Selector->ParentNode to Selector and change what path the node
+	// reports, which is a different (and equally malformed) shape from the one under test here.
+	Selector->Decorators.Add(Selector);
+	TestEqual(TEXT("the node now lists itself as a decorator"), Selector->Decorators.Num(), 1);
+
+	// The assertion is that this RETURNS. Reaching the next line at all is the result.
+	const FString Json = UBehaviorTreeService::GetTree(BTPath);
+	TestFalse(TEXT("GetTree returned instead of recursing forever"), Json.IsEmpty());
+
+	const TSharedPtr<FJsonObject> Parsed = ParseTree(Json);
+	if (TestTrue(TEXT("and returned parseable JSON"), Parsed.IsValid()))
+	{
+		const TSharedPtr<FJsonObject> SelObject = FindNodeByPath(Parsed, Sel);
+		if (TestTrue(TEXT("the node is in the dump"), SelObject.IsValid()))
+		{
+			// Truncated at the revisit, exactly as the children arm truncates a back edge, rather
+			// than emitted as an infinitely nested object.
+			TestEqual(TEXT("the self-referencing decorator slot is dropped, not recursed into"),
+				SelObject->GetArrayField(TEXT("decorators")).Num(), 0);
+		}
+	}
+
+	// A mutual cycle too: the guard must hold for A->B->A, not just for a self-reference.
+	const FString Seq = UBehaviorTreeService::AddNode(
+		BTPath, Sel, TEXT("BTComposite_Sequence"), -1);
+	TestFalse(TEXT("sequence added"), Seq.StartsWith(TEXT("ERROR")));
+	UBehaviorTreeGraphNode* Sequence = VibeBT::ResolveNodePath(Graph, Seq);
+	if (TestNotNull(TEXT("the sequence resolves"), Sequence))
+	{
+		Selector->Decorators.Reset();
+		Selector->Decorators.Add(Sequence);
+		Sequence->Decorators.Add(Selector);
+
+		const FString MutualJson = UBehaviorTreeService::GetTree(BTPath);
+		TestFalse(TEXT("GetTree survives a mutual sub-node cycle"), MutualJson.IsEmpty());
+		TestTrue(TEXT("and that result parses too"), ParseTree(MutualJson).IsValid());
+
+		Sequence->Decorators.Reset();
+	}
+
+	// Undo the corruption so the commit below, and the fixture reset, see a sane graph.
+	Selector->Decorators.Reset();
+	TestEqual(TEXT("the tree still commits once the cycle is removed"),
+		UBehaviorTreeService::CompileAndSave(BTPath), FString());
 
 	return true;
 }

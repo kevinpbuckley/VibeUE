@@ -319,8 +319,9 @@ public:
 	 *
 	 * The name IS the path segment: after this call the node's old path no longer resolves, and
 	 * neither does any path through it. Re-read GetTree (or hold the node's "guid") across a
-	 * rename. For that reason a name containing "/" — or ending in a numeric "[n]", which the path
-	 * grammar reads as a sibling index — is refused rather than written and left un-addressable.
+	 * rename. For that reason three name shapes are refused rather than written and left
+	 * un-addressable: one containing "/" (the path separator), one ending in a numeric "[n]" (read
+	 * as a sibling index), and one starting with "@" (reserved for sub-node slots).
 	 *
 	 * Refused on the Root node, which has no instance to name, and on injected nodes.
 	 */
