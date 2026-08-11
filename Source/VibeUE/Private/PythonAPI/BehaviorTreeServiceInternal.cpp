@@ -666,6 +666,46 @@ namespace VibeBT
 		return nullptr;
 	}
 
+	UBehaviorTreeGraphNode* GetSubNodeOwner(const UBehaviorTreeGraphNode* Node)
+	{
+		if (!Node)
+		{
+			return nullptr;
+		}
+
+		// UAIGraphNode::ParentNode is UPROPERTY(transient) (AIGraphNode.h:31-32). It is NOT
+		// serialised, and the only thing that repopulates it is UBehaviorTreeGraph::UpdateAsset()'s
+		// "parent chain" block (BehaviorTreeGraph.cpp:137-147) — which runs when the Behavior Tree
+		// editor opens the asset, or when this service commits it. So on any asset freshly loaded
+		// from disk it is null on EVERY decorator and service, and reading it alone reports no owner
+		// for a sub-node that plainly has one. Observed on production assets: every one of the 32
+		// sub-nodes of BT_Combat_HermitCrab and all 21 of BT_Enemy's.
+		if (UBehaviorTreeGraphNode* Direct = Cast<UBehaviorTreeGraphNode>(ToRawPtr(Node->ParentNode)))
+		{
+			return Direct;
+		}
+
+		// Fallback: the ownership is also recorded in the owner's own Decorators/Services arrays,
+		// which ARE serialised. Scanning for it costs one pass over the graph's tree nodes and is
+		// the same relation, read from the durable side.
+		const UEdGraph* Graph = Node->GetGraph();
+		if (!Graph)
+		{
+			return nullptr;
+		}
+		UBehaviorTreeGraphNode* const Self = const_cast<UBehaviorTreeGraphNode*>(Node);
+		for (UEdGraphNode* Candidate : Graph->Nodes)
+		{
+			UBehaviorTreeGraphNode* Owner = Cast<UBehaviorTreeGraphNode>(Candidate);
+			if (Owner && Owner != Self
+				&& (Owner->Decorators.Contains(Self) || Owner->Services.Contains(Self)))
+			{
+				return Owner;
+			}
+		}
+		return nullptr;
+	}
+
 	namespace
 	{
 		/** The name a path segment matches on. */
@@ -753,8 +793,7 @@ namespace VibeBT
 		// services have no pins at all — so it contributes one "@kind[n]" segment and then hands
 		// over to the ordinary pin walk from its owner upwards.
 		const UBehaviorTreeGraphNode* Current = Node;
-		if (const UBehaviorTreeGraphNode* Owner =
-			Cast<UBehaviorTreeGraphNode>(ToRawPtr(Node->ParentNode)))
+		if (const UBehaviorTreeGraphNode* Owner = GetSubNodeOwner(Node))
 		{
 			UBehaviorTreeGraphNode* const Self = const_cast<UBehaviorTreeGraphNode*>(Node);
 			const int32 DecoratorIdx = Owner->Decorators.IndexOfByKey(Self);

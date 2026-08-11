@@ -3441,4 +3441,115 @@ bool FVibeBTBuildRoundTripTest::RunTest(const FString&)
 	return true;
 }
 
+// A sub-node stays addressable when UAIGraphNode::ParentNode is null.
+//
+// That pointer is UPROPERTY(transient) (AIGraphNode.h:31-32), so it is NOT saved, and the only thing
+// that repopulates it is UBehaviorTreeGraph::UpdateAsset()'s "parent chain" block
+// (BehaviorTreeGraph.cpp:137-147) — which runs when the Behavior Tree editor opens an asset, or when
+// this service commits one. On an asset loaded from disk and merely READ, it is therefore null on
+// every decorator and every service.
+//
+// This is not hypothetical: it is what the project's own assets do. Reading
+// /Game/Core/Controllers/AI/BT_Combat_HermitCrab through GetTree reported an empty "path" for all 32
+// of its sub-nodes, and BT_Enemy for all 21 of its — addresses no caller could use, and the ones
+// BuildTree quotes in its per-node results. RemoveSubNode was worse than useless on them: it read
+// the same null pointer and answered "is not a decorator or service — it is a node in the tree".
+//
+// Nulling the pointer here reproduces the post-load state exactly, and is the only way to reach it
+// from a test: a fixture built through this service has just been committed, so UpdateAsset has by
+// construction set every one of these pointers.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBTSubNodeOwnerWithoutParentPointerTest,
+	"VibeUE.BehaviorTree.SubNodes.OwnerSurvivesTransientParent", kBTTestFlags)
+bool FVibeBTSubNodeOwnerWithoutParentPointerTest::RunTest(const FString&)
+{
+	const FString BTPath = FString(kBTTestDir) / TEXT("BT_TransientParentTest");
+	FScopedFixtureReset ResetBT(BTPath);
+
+	TestEqual(TEXT("fixture tree created"),
+		UBehaviorTreeService::CreateBehaviorTree(BTPath, FString()), FString());
+	const FString Sel = UBehaviorTreeService::AddNode(
+		BTPath, TEXT("Root"), TEXT("BTComposite_Selector"), -1);
+	const FString Seq = UBehaviorTreeService::AddNode(BTPath, Sel, TEXT("BTComposite_Sequence"), -1);
+	const FString Dec = UBehaviorTreeService::AddDecorator(
+		BTPath, Seq, TEXT("BTDecorator_ForceSuccess"), -1);
+	const FString Svc = UBehaviorTreeService::AddService(
+		BTPath, Sel, TEXT("BTService_DefaultFocus"), -1);
+	TestEqual(TEXT("the decorator is an @decorator slot on the sequence"),
+		Dec, Seq + TEXT("/@decorator[0]"));
+	TestEqual(TEXT("the service is an @service slot on the selector"),
+		Svc, Sel + TEXT("/@service[0]"));
+
+	// --- Reproduce the post-load state: transient back pointers gone, serialised arrays intact. ----
+	UBehaviorTree* Tree = LoadObject<UBehaviorTree>(nullptr, *BTPath);
+	if (!TestNotNull(TEXT("fixture loads"), Tree))
+	{
+		return false;
+	}
+	UBehaviorTreeGraph* Graph = Cast<UBehaviorTreeGraph>(Tree->BTGraph);
+	if (!TestNotNull(TEXT("fixture has a graph"), Graph))
+	{
+		return false;
+	}
+	int32 Cleared = 0;
+	for (UEdGraphNode* Node : Graph->Nodes)
+	{
+		if (UBehaviorTreeGraphNode* BTNode = Cast<UBehaviorTreeGraphNode>(Node))
+		{
+			for (const TObjectPtr<UBehaviorTreeGraphNode>& Sub : BTNode->Decorators)
+			{
+				if (Sub) { Sub->ParentNode = nullptr; ++Cleared; }
+			}
+			for (const TObjectPtr<UBehaviorTreeGraphNode>& Sub : BTNode->Services)
+			{
+				if (Sub) { Sub->ParentNode = nullptr; ++Cleared; }
+			}
+		}
+	}
+	TestEqual(TEXT("both sub-nodes now have the null ParentNode a load would give them"), Cleared, 2);
+
+	// --- GetTree still issues usable addresses. ---------------------------------------------------
+	const TSharedPtr<FJsonObject> Dump = ParseTree(UBehaviorTreeService::GetTree(BTPath));
+	const TSharedPtr<FJsonObject> SeqObject = FindNodeByPath(Dump, Seq);
+	const TSharedPtr<FJsonObject> SelObject = FindNodeByPath(Dump, Sel);
+	if (TestTrue(TEXT("the owners are still in the dump"),
+		SeqObject.IsValid() && SelObject.IsValid()))
+	{
+		const TArray<TSharedPtr<FJsonValue>>& Decorators = SeqObject->GetArrayField(TEXT("decorators"));
+		const TArray<TSharedPtr<FJsonValue>>& Services = SelObject->GetArrayField(TEXT("services"));
+		if (TestEqual(TEXT("the decorator is still reported"), Decorators.Num(), 1)
+			&& TestEqual(TEXT("the service is still reported"), Services.Num(), 1))
+		{
+			TestEqual(TEXT("the decorator's path is its slot, not empty"),
+				Decorators[0]->AsObject()->GetStringField(TEXT("path")), Dec);
+			TestEqual(TEXT("the service's path is its slot, not empty"),
+				Services[0]->AsObject()->GetStringField(TEXT("path")), Svc);
+		}
+	}
+
+	// --- And the address round-trips back to the same node. ---------------------------------------
+	FBTNodeInfo DecInfo;
+	if (TestTrue(TEXT("the decorator path still resolves"),
+		UBehaviorTreeService::GetNodeInfo(BTPath, Dec, DecInfo)))
+	{
+		TestEqual(TEXT("...to the decorator"), DecInfo.ClassName,
+			FString(TEXT("BTDecorator_ForceSuccess")));
+		TestEqual(TEXT("...reporting the path it was addressed by"), DecInfo.Path, Dec);
+	}
+
+	// --- RemoveSubNode reads the same relation, so it must not deny the sub-node exists. -----------
+	// Asserted through the service rather than by inspecting the graph: this is the call that
+	// answered "it is a node in the tree" on every production decorator.
+	TestEqual(TEXT("RemoveSubNode detaches it instead of misreporting it"),
+		UBehaviorTreeService::RemoveSubNode(BTPath, Dec), FString());
+	const TSharedPtr<FJsonObject> AfterSeq =
+		FindNodeByPath(ParseTree(UBehaviorTreeService::GetTree(BTPath)), Seq);
+	if (TestTrue(TEXT("the owner survives the removal"), AfterSeq.IsValid()))
+	{
+		TestEqual(TEXT("...carrying no decorator any more"),
+			AfterSeq->GetArrayField(TEXT("decorators")).Num(), 0);
+	}
+
+	return true;
+}
+
 #endif // WITH_AUTOMATION_TESTS

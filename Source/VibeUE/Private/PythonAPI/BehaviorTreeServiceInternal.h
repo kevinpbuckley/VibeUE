@@ -75,6 +75,17 @@ namespace VibeBT
 	UBehaviorTreeGraphNode* GetParentNode(const UBehaviorTreeGraphNode* Node);
 
 	/**
+	 * The tree node that carries Node as a decorator or a service, or nullptr when Node is not a
+	 * sub-node.
+	 *
+	 * Does NOT simply read UAIGraphNode::ParentNode: that is UPROPERTY(transient), so it is null on
+	 * every sub-node of every asset freshly loaded from disk until something runs
+	 * UBehaviorTreeGraph::UpdateAsset(). The owner's own Decorators/Services arrays are serialised
+	 * and carry the same relation, so they are the fallback.
+	 */
+	UBehaviorTreeGraphNode* GetSubNodeOwner(const UBehaviorTreeGraphNode* Node);
+
+	/**
 	 * The path that ResolveNodePath will resolve back to Node, e.g.
 	 * "Root/Selector[0]/Sequence[1]/Wait[0]". Empty when Node is not reachable from the graph root.
 	 *

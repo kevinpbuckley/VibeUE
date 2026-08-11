@@ -567,7 +567,10 @@ namespace VibeBTEdit
 	FString ResolveSubNodeSlot(UBehaviorTreeGraphNode* SubNode, const FString& SubNodePath,
 		UBehaviorTreeGraphNode*& OutOwner, ESubNodeKind& OutKind, int32& OutIndex)
 	{
-		OutOwner = Cast<UBehaviorTreeGraphNode>(ToRawPtr(SubNode->ParentNode));
+		// VibeBT::GetSubNodeOwner, not SubNode->ParentNode: that pointer is UPROPERTY(transient) and
+		// is null on every sub-node of a freshly loaded asset, which would make this report a real
+		// production decorator as "a node in the tree".
+		OutOwner = VibeBT::GetSubNodeOwner(SubNode);
 		if (!OutOwner)
 		{
 			return FString::Printf(
