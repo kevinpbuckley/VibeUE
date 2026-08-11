@@ -83,12 +83,14 @@ namespace
 	}
 
 	/**
-	 * Every key inherited from Board's parent chain, walked manually rather than through
-	 * UBlackboardData::ParentKeys / UpdateParentKeys(): that engine path re-runs
-	 * UpdatePersistentKeys(), which — for a parent-less board — silently re-adds the AISystem
-	 * "SelfActor" key (bAddBlackboardSelfKey, on by default) on every call. This service creates
-	 * boards with exactly the keys callers ask for, so that side effect must never run here.
-	 * Child keys shadow a same-named parent key, matching UBlackboardData::GetKey/InternalGetKeyID.
+	 * Every key inherited from Board's parent chain, walked manually rather than through the
+	 * cached UBlackboardData::ParentKeys. ParentKeys is only refreshed by UpdateParentKeys()
+	 * (called once, at creation, by CreateBlackboard) or by the engine's own PostLoad/
+	 * PostEditChangeProperty; re-calling UpdateParentKeys() here on every read would also re-run
+	 * UpdatePersistentKeys(), which is idempotent once the board matches engine expectations but
+	 * is unnecessary work this service doesn't need to repeat on every query. Walking Keys
+	 * directly is always correct regardless of cache freshness. Child keys shadow a same-named
+	 * parent key, matching UBlackboardData::GetKey/InternalGetKeyID.
 	 */
 	void CollectInheritedKeys(const UBlackboardData* Board, TArray<FBlackboardEntry>& OutInherited)
 	{
@@ -131,9 +133,26 @@ namespace
 		return Node ? Node->GetName() : FString(TEXT("<node>"));
 	}
 
+	/** If StructType/StructPtr is exactly FBlackboardKeySelector, record it when it matches KeyName. */
+	void CheckSelectorMatch(const UStruct* StructType, const void* StructPtr, const FName& KeyName,
+		const FString& BTPath, const FString& NodePath, const FString& QualifiedName,
+		TArray<FString>& OutReferences)
+	{
+		if (StructType != FBlackboardKeySelector::StaticStruct())
+		{
+			return;
+		}
+		const FBlackboardKeySelector* Selector = static_cast<const FBlackboardKeySelector*>(StructPtr);
+		if (Selector->SelectedKeyName == KeyName)
+		{
+			OutReferences.Add(FString::Printf(TEXT("%s:%s.%s"), *BTPath, *NodePath, *QualifiedName));
+		}
+	}
+
 	/**
-	 * Recursively find every FBlackboardKeySelector property on Object (including ones nested in
-	 * other struct properties) whose SelectedKeyName matches KeyName.
+	 * Recursively find every FBlackboardKeySelector property on Object — including ones nested in
+	 * other struct properties, and ones inside a TArray<FBlackboardKeySelector> (or an array of a
+	 * struct that itself nests one) — whose SelectedKeyName matches KeyName.
 	 */
 	void FindKeySelectorReferencesInStruct(const UStruct* StructType, const void* StructPtr,
 		const FName& KeyName, const FString& BTPath, const FString& NodePath, const FString& PropertyPrefix,
@@ -148,29 +167,50 @@ namespace
 		for (TFieldIterator<FProperty> It(StructType); It; ++It)
 		{
 			FProperty* Property = *It;
-			FStructProperty* StructProp = CastField<FStructProperty>(Property);
-			if (!StructProp)
-			{
-				continue;
-			}
-
-			const void* ValuePtr = StructProp->ContainerPtrToValuePtr<void>(StructPtr);
 			const FString QualifiedName = PropertyPrefix.IsEmpty()
 				? Property->GetName()
 				: PropertyPrefix + TEXT(".") + Property->GetName();
 
-			if (StructProp->Struct == FBlackboardKeySelector::StaticStruct())
+			if (FStructProperty* StructProp = CastField<FStructProperty>(Property))
 			{
-				const FBlackboardKeySelector* Selector = static_cast<const FBlackboardKeySelector*>(ValuePtr);
-				if (Selector->SelectedKeyName == KeyName)
+				const void* ValuePtr = StructProp->ContainerPtrToValuePtr<void>(StructPtr);
+				if (StructProp->Struct == FBlackboardKeySelector::StaticStruct())
 				{
-					OutReferences.Add(FString::Printf(TEXT("%s:%s.%s"), *BTPath, *NodePath, *QualifiedName));
+					CheckSelectorMatch(StructProp->Struct, ValuePtr, KeyName, BTPath, NodePath, QualifiedName,
+						OutReferences);
+				}
+				else
+				{
+					FindKeySelectorReferencesInStruct(StructProp->Struct, ValuePtr, KeyName, BTPath, NodePath,
+						QualifiedName, OutReferences, Depth + 1);
 				}
 			}
-			else
+			else if (FArrayProperty* ArrayProp = CastField<FArrayProperty>(Property))
 			{
-				FindKeySelectorReferencesInStruct(StructProp->Struct, ValuePtr, KeyName, BTPath, NodePath,
-					QualifiedName, OutReferences, Depth + 1);
+				FStructProperty* InnerStructProp = CastField<FStructProperty>(ArrayProp->Inner);
+				if (!InnerStructProp)
+				{
+					continue;
+				}
+
+				const void* ArrayValuePtr = ArrayProp->ContainerPtrToValuePtr<void>(StructPtr);
+				FScriptArrayHelper ArrayHelper(ArrayProp, ArrayValuePtr);
+				for (int32 ElementIndex = 0; ElementIndex < ArrayHelper.Num(); ++ElementIndex)
+				{
+					const void* ElementPtr = ArrayHelper.GetRawPtr(ElementIndex);
+					const FString ElementName = FString::Printf(TEXT("%s[%d]"), *QualifiedName, ElementIndex);
+
+					if (InnerStructProp->Struct == FBlackboardKeySelector::StaticStruct())
+					{
+						CheckSelectorMatch(InnerStructProp->Struct, ElementPtr, KeyName, BTPath, NodePath,
+							ElementName, OutReferences);
+					}
+					else
+					{
+						FindKeySelectorReferencesInStruct(InnerStructProp->Struct, ElementPtr, KeyName, BTPath,
+							NodePath, ElementName, OutReferences, Depth + 1);
+					}
+				}
 			}
 		}
 	}
@@ -186,7 +226,13 @@ namespace
 			FString(), OutReferences);
 	}
 
-	/** Walk a BT subtree (composite + its children, decorators, and services) for selector references. */
+	/**
+	 * Walk a BT subtree — composite + its children, decorators, services and tasks — for
+	 * selector references. Reads Children directly (rather than GetChildNode(), which only
+	 * exposes the child node and drops FBTCompositeChild::Decorators) because decorators are
+	 * where a Blackboard-based selector most commonly lives: UBTDecorator_BlackboardBase's
+	 * BlackboardKey is the base for every Blackboard-driven condition.
+	 */
 	void CollectBTNodeSelectorRefs(UBTCompositeNode* Composite, const FName& KeyName, const FString& BTPath,
 		TArray<FString>& OutReferences)
 	{
@@ -201,19 +247,21 @@ namespace
 			FindKeySelectorReferences(Service, KeyName, BTPath, OutReferences);
 		}
 
-		const int32 NumChildren = Composite->GetChildrenNum();
-		for (int32 Index = 0; Index < NumChildren; ++Index)
+		for (const FBTCompositeChild& Child : Composite->Children)
 		{
-			UBTNode* ChildNode = Composite->GetChildNode(Index);
-
-			if (UBTCompositeNode* ChildComposite = Cast<UBTCompositeNode>(ChildNode))
+			for (const UBTDecorator* Decorator : Child.Decorators)
 			{
-				CollectBTNodeSelectorRefs(ChildComposite, KeyName, BTPath, OutReferences);
+				FindKeySelectorReferences(Decorator, KeyName, BTPath, OutReferences);
 			}
-			else if (UBTTaskNode* ChildTask = Cast<UBTTaskNode>(ChildNode))
+
+			if (Child.ChildComposite)
 			{
-				FindKeySelectorReferences(ChildTask, KeyName, BTPath, OutReferences);
-				for (const UBTService* Service : ChildTask->Services)
+				CollectBTNodeSelectorRefs(Child.ChildComposite, KeyName, BTPath, OutReferences);
+			}
+			else if (Child.ChildTask)
+			{
+				FindKeySelectorReferences(Child.ChildTask, KeyName, BTPath, OutReferences);
+				for (const UBTService* Service : Child.ChildTask->Services)
 				{
 					FindKeySelectorReferences(Service, KeyName, BTPath, OutReferences);
 				}
@@ -273,11 +321,14 @@ bool UBlackboardService::CreateBlackboard(const FString& AssetPath, const FStrin
 		NewBoard->Parent = ParentBoard;
 	}
 
-	// A freshly constructed UBlackboardData auto-injects a "SelfActor" key (AISystem's
-	// bAddBlackboardSelfKey, true by default in this project) via PostInitProperties. The
-	// service creates a deterministic, empty board instead — callers add exactly the keys
-	// they ask for, nothing more.
-	NewBoard->Keys.Reset();
+	// Run the same fix-up the engine runs after any Parent change (editor property change,
+	// or PostLoad): recomputes FirstKeyID against the parent chain — required so this board's
+	// key IDs don't collide with the parent's — and, for a parent-less board, leaves in place
+	// the "SelfActor" key that PostInitProperties already injected (AISystem's
+	// bAddBlackboardSelfKey, on by default, not overridden in this project). A hand-authored
+	// Blackboard always carries that key; a service-created one must match, or a BT node bound
+	// to "SelfActor" silently fails to resolve against it.
+	NewBoard->UpdateParentKeys();
 
 	FAssetRegistryModule::AssetCreated(NewBoard);
 
@@ -460,17 +511,21 @@ FString UBlackboardService::RemoveBlackboardKey(const FString& AssetPath, const 
 TArray<FString> UBlackboardService::RenameBlackboardKey(const FString& AssetPath, const FString& OldName,
 	const FString& NewName)
 {
-	TArray<FString> AffectedReferences;
-
+	// A rejected rename and a successful-but-unreferenced rename both have "nothing to report",
+	// which would otherwise both come back as an empty array. To keep the two distinguishable
+	// without changing the return type, a rejection returns a single sentinel entry prefixed
+	// "ERROR: " — a shape a real "<btPath>:<node>.<property>" reference can never take, since a
+	// BT package path always starts with "/Game/...". A genuine, unreferenced success still
+	// returns a plain empty array.
 	if (OldName.IsEmpty() || NewName.IsEmpty() || OldName == NewName)
 	{
-		return AffectedReferences;
+		return { TEXT("ERROR: OldName and NewName must both be set and different") };
 	}
 
 	UBlackboardData* Board = LoadBlackboard(AssetPath);
 	if (!Board)
 	{
-		return AffectedReferences;
+		return { FString::Printf(TEXT("ERROR: Blackboard not found: %s"), *AssetPath) };
 	}
 
 	const FName OldKeyName(*OldName);
@@ -480,17 +535,29 @@ TArray<FString> UBlackboardService::RenameBlackboardKey(const FString& AssetPath
 	if (!Entry)
 	{
 		// Missing entirely, or only present on the parent chain — nothing this asset owns to rename.
-		return AffectedReferences;
+		if (IsInheritedName(Board, OldKeyName))
+		{
+			return { FString::Printf(TEXT("ERROR: Key is inherited from the parent Blackboard: %s"), *OldName) };
+		}
+		return { FString::Printf(TEXT("ERROR: Key not found: %s"), *OldName) };
 	}
 
 	if (FindOwnEntry(Board, NewKeyName) || IsInheritedName(Board, NewKeyName))
 	{
 		// New name collides with an existing key — refuse rather than silently merging two keys.
-		return AffectedReferences;
+		return { FString::Printf(TEXT("ERROR: Key already exists: %s"), *NewName) };
 	}
 
 	Entry->EntryName = NewKeyName;
-	SaveBlackboard(Board);
+	if (!SaveBlackboard(Board))
+	{
+		// Roll back the in-memory rename so it doesn't diverge from what's actually on disk,
+		// and don't run the BT sweep against a rename that never took effect.
+		Entry->EntryName = OldKeyName;
+		return { TEXT("ERROR: Failed to save Blackboard asset") };
+	}
+
+	TArray<FString> AffectedReferences;
 
 	// Sweep every BT that reads this blackboard — directly, or via a child blackboard that
 	// still inherits the renamed key — for key selectors still pointing at the old name.

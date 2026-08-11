@@ -77,6 +77,11 @@ public:
 	/**
 	 * Rename a key. Returns the list of BT nodes whose key selectors referenced the old name —
 	 * key selectors resolve by name, so those bindings break and must be re-pointed.
+	 *
+	 * A rejected rename (missing/inherited OldName, name collision, or save failure) returns a
+	 * single entry prefixed "ERROR: ", distinguishable from a real reference (always formatted
+	 * "<btPath>:<node>.<property>", where btPath always starts with "/Game/"). A successful
+	 * rename that nothing referenced returns a plain empty array.
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blackboard")
 	static TArray<FString> RenameBlackboardKey(const FString& AssetPath, const FString& OldName,
