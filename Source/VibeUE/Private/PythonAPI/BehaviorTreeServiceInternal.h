@@ -6,6 +6,11 @@
 
 class UBehaviorTreeGraphNode;
 
+// Real type is Editor/AIGraph's AIGraphTypes.h (global scope, not namespaced). Forward-declared
+// here at global scope so the elaborated-type-specifier below resolves to it rather than
+// injecting a distinct, incomplete VibeBT::FGraphNodeClassHelper.
+struct FGraphNodeClassHelper;
+
 /**
  * Shared internals for UBehaviorTreeService. Private to the module.
  */
@@ -45,4 +50,18 @@ namespace VibeBT
 
 	/** Shared asset-registry sweep used by both AI services. */
 	TArray<FString> ListAssetsOfClass(const UClass* Class, const FString& DirectoryPath);
+
+	/**
+	 * Resolve a BT node class by short name ("BTTask_MoveTo"), generated-class name
+	 * ("BTT_ChaseTarget_C") or full object path, and verify it derives from RequiredBase.
+	 * Returns nullptr if unresolved or of the wrong base.
+	 */
+	UClass* ResolveNodeClass(const FString& ClassName, UClass* RequiredBase);
+
+	/**
+	 * Cached FGraphNodeClassHelper for one base class, primed so Blueprint-derived classes
+	 * are reported. Priming is FGraphNodeClassHelper::AddObservedBlueprintClasses(Base)
+	 * followed by UpdateAvailableBlueprintClasses(); without it only native classes appear.
+	 */
+	TSharedPtr<struct FGraphNodeClassHelper> GetClassHelper(UClass* BaseClass);
 }

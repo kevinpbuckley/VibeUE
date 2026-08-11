@@ -2,8 +2,10 @@
 
 #include "BehaviorTreeServiceInternal.h"
 
+#include "AIGraphTypes.h"
 #include "BehaviorTreeGraphNode.h"
 #include "EdGraph/EdGraphPin.h"
+#include "UObject/UObjectGlobals.h"
 
 namespace VibeBT
 {
@@ -151,5 +153,62 @@ namespace VibeBT
 			Order[Index]->NodePosX = Positions[Index].X;
 			Order[Index]->NodePosY = Positions[Index].Y;
 		}
+	}
+
+	namespace
+	{
+		/** One FGraphNodeClassHelper per base class. GatherClasses/GetClass() are expensive
+		 *  (the latter loads the class), so a single primed helper is reused for the module's
+		 *  lifetime rather than rebuilt on every discovery call. */
+		TMap<UClass*, TSharedPtr<FGraphNodeClassHelper>> GClassHelperCache;
+	}
+
+	UClass* ResolveNodeClass(const FString& ClassName, UClass* RequiredBase)
+	{
+		if (ClassName.IsEmpty() || !RequiredBase)
+		{
+			return nullptr;
+		}
+
+		// Full object path, e.g. "/Script/AIModule.BTTask_MoveTo" or "/Game/AI/BTT_Foo.BTT_Foo_C".
+		UClass* Found = FindObject<UClass>(nullptr, *ClassName);
+
+		// Short native name, e.g. "BTTask_MoveTo".
+		if (!Found)
+		{
+			Found = FindFirstObject<UClass>(*ClassName);
+		}
+
+		// Blueprint-generated class name, e.g. "BTT_ChaseTarget" -> "BTT_ChaseTarget_C".
+		if (!Found && !ClassName.EndsWith(TEXT("_C")))
+		{
+			Found = FindFirstObject<UClass>(*(ClassName + TEXT("_C")));
+		}
+
+		return (Found && Found->IsChildOf(RequiredBase)) ? Found : nullptr;
+	}
+
+	TSharedPtr<FGraphNodeClassHelper> GetClassHelper(UClass* BaseClass)
+	{
+		if (!BaseClass)
+		{
+			return nullptr;
+		}
+
+		if (const TSharedPtr<FGraphNodeClassHelper>* Existing = GClassHelperCache.Find(BaseClass))
+		{
+			return *Existing;
+		}
+
+		TSharedPtr<FGraphNodeClassHelper> Helper = MakeShared<FGraphNodeClassHelper>(BaseClass);
+
+		// Without this priming step, GatherClasses() only ever reports native classes:
+		// Blueprint-derived BT nodes (most of this project's tasks/decorators/services) are
+		// silently invisible.
+		FGraphNodeClassHelper::AddObservedBlueprintClasses(BaseClass);
+		Helper->UpdateAvailableBlueprintClasses();
+
+		GClassHelperCache.Add(BaseClass, Helper);
+		return Helper;
 	}
 }

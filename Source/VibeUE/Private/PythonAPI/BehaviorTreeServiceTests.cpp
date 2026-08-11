@@ -177,4 +177,39 @@ bool FVibeBTDuplicateLinkTest::RunTest(const FString&)
 	return true;
 }
 
+// FGraphNodeClassHelper reports Blueprint-derived node classes only after priming; without it
+// this test sees native classes only, which would hide most of this project's BT nodes.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBTNodeTypesTest,
+	"VibeUE.BehaviorTree.Classes.Discovery", kBTTestFlags)
+bool FVibeBTNodeTypesTest::RunTest(const FString&)
+{
+	const TArray<FBTNodeClassInfo> Composites =
+		UBehaviorTreeService::GetAvailableNodeTypes(TEXT("Composite"));
+	TestTrue(TEXT("has Selector"), Composites.ContainsByPredicate(
+		[](const FBTNodeClassInfo& C){ return C.ClassName == TEXT("BTComposite_Selector"); }));
+	TestTrue(TEXT("has Sequence"), Composites.ContainsByPredicate(
+		[](const FBTNodeClassInfo& C){ return C.ClassName == TEXT("BTComposite_Sequence"); }));
+
+	const TArray<FBTNodeClassInfo> Tasks =
+		UBehaviorTreeService::GetAvailableNodeTypes(TEXT("Task"));
+	TestTrue(TEXT("has MoveTo"), Tasks.ContainsByPredicate(
+		[](const FBTNodeClassInfo& C){ return C.ClassName == TEXT("BTTask_MoveTo"); }));
+	TestTrue(TEXT("reports Blueprint tasks too"), Tasks.ContainsByPredicate(
+		[](const FBTNodeClassInfo& C){ return C.bIsBlueprint; }));
+
+	const TArray<FBTNodeClassInfo> Decorators =
+		UBehaviorTreeService::GetAvailableNodeTypes(TEXT("Decorator"));
+	TestTrue(TEXT("has Blackboard decorator"), Decorators.ContainsByPredicate(
+		[](const FBTNodeClassInfo& C){ return C.ClassName == TEXT("BTDecorator_Blackboard"); }));
+
+	const TArray<FBTNodeClassInfo> Services =
+		UBehaviorTreeService::GetAvailableNodeTypes(TEXT("Service"));
+	TestTrue(TEXT("has services"), Services.Num() > 0);
+
+	// An unknown category is an error, not an empty list that reads as "none exist".
+	TestEqual(TEXT("bad category empty"),
+		UBehaviorTreeService::GetAvailableNodeTypes(TEXT("Nonsense")).Num(), 0);
+	return true;
+}
+
 #endif // WITH_AUTOMATION_TESTS
