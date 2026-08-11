@@ -15,19 +15,107 @@
 #include "BehaviorTree/Decorators/BTDecorator_BlackboardBase.h"
 #include "BehaviorTree/Tasks/BTTask_Wait.h"
 #include "FileHelpers.h"
+#include "HAL/FileManager.h"
+#include "Misc/Guid.h"
+#include "Misc/PackageName.h"
 #include "UObject/Package.h"
 #include "UObject/UnrealType.h"
+#include "UObject/UObjectHash.h"
 
 static const EAutomationTestFlags kBBTestFlags =
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter;
 
 static const TCHAR* kBBTestDir = TEXT("/Game/Developers/VibeUEBTTests");
 
+namespace
+{
+	/**
+	 * Forcibly remove any trace of AssetPath: the in-memory UObject/UPackage (possible if this
+	 * process already ran the suite once without restarting the editor) AND the .uasset file on
+	 * disk (left by a *previous process's* run — Content/Developers is gitignored, so nothing
+	 * else ever cleans it up). Without this, a second run collides with the first run's leftover
+	 * state and fails for reasons unrelated to whatever is actually being tested.
+	 *
+	 * Deliberately does not go through UEditorAssetLibrary::DeleteAsset: it has a documented
+	 * history in this project of reporting success without actually deleting
+	 * (docs/gotchas.md § VibeUE). Deletes the file directly instead, and the only thing trusted
+	 * as proof is asking the filesystem again afterwards — not this function's own return value,
+	 * not an in-memory/asset-registry re-query.
+	 */
+	void ResetFixtureAsset(const FString& AssetPath)
+	{
+		// 1) Purge a same-process leftover: detach any existing object(s) from the package name
+		//    (renaming into the transient package under a unique name so nothing can collide),
+		//    strip the flags keeping them alive, then force a GC pass so the name is free to
+		//    reuse and nothing stale is reachable by a later LoadObject/FindObject in this run.
+		if (UPackage* ExistingPackage = FindPackage(nullptr, *AssetPath))
+		{
+			TArray<UObject*> ObjectsInPackage;
+			GetObjectsWithPackage(ExistingPackage, ObjectsInPackage, EGetObjectsFlags::IncludeNestedObjects);
+			for (UObject* Obj : ObjectsInPackage)
+			{
+				if (!Obj)
+				{
+					continue;
+				}
+				Obj->ClearFlags(RF_Standalone | RF_Public);
+				const FString ScratchName = FString::Printf(TEXT("STALE_%s_%s"),
+					*Obj->GetName(), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+				Obj->Rename(*ScratchName, GetTransientPackage(),
+					REN_DontCreateRedirectors | REN_NonTransactional | REN_AllowPackageLinkerMismatch);
+				Obj->MarkAsGarbage();
+			}
+			ExistingPackage->ClearFlags(RF_Standalone | RF_Public);
+			ExistingPackage->MarkAsGarbage();
+			CollectGarbage(RF_NoFlags);
+		}
+
+		// 2) Delete the .uasset file left by a previous process's run, if any.
+		FString Filename;
+		if (FPackageName::TryConvertLongPackageNameToFilename(
+			AssetPath, Filename, FPackageName::GetAssetPackageExtension()))
+		{
+			if (IFileManager::Get().FileExists(*Filename))
+			{
+				IFileManager::Get().Delete(*Filename, /*RequireExists*/ false, /*EvenReadOnly*/ true);
+			}
+		}
+
+		// 3) Verify against the filesystem — the only acceptable proof — not an API return value.
+		if (!Filename.IsEmpty())
+		{
+			ensureAlwaysMsgf(!IFileManager::Get().FileExists(*Filename),
+				TEXT("ResetFixtureAsset: %s still exists on disk after delete"), *Filename);
+		}
+	}
+
+	/**
+	 * Resets AssetPath's fixture on construction, so the test starts from a genuinely clean
+	 * slate regardless of what a previous run (same process or a prior process) left behind, and
+	 * again on destruction, so a normal, non-crashing run leaves nothing behind for the next one.
+	 * Entry-reset is what actually matters for robustness: it runs even when the *previous* test
+	 * that used this path crashed partway through and never reached its own exit-reset.
+	 */
+	struct FScopedFixtureReset
+	{
+		FString AssetPath;
+		explicit FScopedFixtureReset(FString InAssetPath) : AssetPath(MoveTemp(InAssetPath))
+		{
+			ResetFixtureAsset(AssetPath);
+		}
+		~FScopedFixtureReset()
+		{
+			ResetFixtureAsset(AssetPath);
+		}
+	};
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBBKeyCrudTest,
 	"VibeUE.Blackboard.Keys.Crud", kBBTestFlags)
 bool FVibeBBKeyCrudTest::RunTest(const FString&)
 {
 	const FString Path = FString(kBBTestDir) / TEXT("BB_VibeTest");
+	FScopedFixtureReset ResetFixture(Path);
 
 	TestTrue(TEXT("created"), UBlackboardService::CreateBlackboard(Path, FString()));
 
@@ -113,6 +201,13 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBBKeyRenameTest,
 bool FVibeBBKeyRenameTest::RunTest(const FString&)
 {
 	const FString BBPath = FString(kBBTestDir) / TEXT("BB_VibeRenameTest");
+	const FString BTPath = FString(kBBTestDir) / TEXT("BT_VibeRenameTest");
+	// BT_VibeRenameTest is never saved to disk (see the comment below), but it IS registered
+	// with the asset registry and left resident in memory — a same-process rerun would collide
+	// with it just as surely as BBPath collides with a previous process's saved .uasset.
+	FScopedFixtureReset ResetBB(BBPath);
+	FScopedFixtureReset ResetBT(BTPath);
+
 	TestTrue(TEXT("blackboard created"), UBlackboardService::CreateBlackboard(BBPath, FString()));
 	TestEqual(TEXT("add Target key"),
 		UBlackboardService::AddBlackboardKey(BBPath, TEXT("Target"), TEXT("Object"), false), FString());
@@ -124,7 +219,6 @@ bool FVibeBBKeyRenameTest::RunTest(const FString&)
 	}
 
 	// Sequence root -> one task, gated by a Blackboard decorator bound to "Target".
-	const FString BTPath = FString(kBBTestDir) / TEXT("BT_VibeRenameTest");
 	UPackage* BTPackage = CreatePackage(*BTPath);
 	if (!TestNotNull(TEXT("BT package created"), BTPackage))
 	{
@@ -222,6 +316,8 @@ bool FVibeBBParentedKeyIdsTest::RunTest(const FString&)
 {
 	const FString ParentPath = FString(kBBTestDir) / TEXT("BB_VibeParentTest");
 	const FString ChildPath = FString(kBBTestDir) / TEXT("BB_VibeChildTest");
+	FScopedFixtureReset ResetParent(ParentPath);
+	FScopedFixtureReset ResetChild(ChildPath);
 
 	TestTrue(TEXT("parent created"), UBlackboardService::CreateBlackboard(ParentPath, FString()));
 	TestEqual(TEXT("add parent key"),
