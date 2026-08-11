@@ -209,6 +209,14 @@ public:
 	 *
 	 * Note that the returned path is positional: adding or removing a same-named sibling later
 	 * changes what it resolves to.
+	 *
+	 * SimpleParallel is the exception, and the numbering is the same one GetTree reports:
+	 * child 0 is the main task (only a task class is accepted) and child 1 is the background
+	 * branch (any composite or task). There are exactly two, and a third is rejected. ChildIndex
+	 * < 0 takes the first free slot and never displaces anything; an explicit 0 or 1 replaces
+	 * whatever is in that slot, removing it and its subtree. Replacing is the only way to author a
+	 * background branch, because the engine refills an empty background slot with a Wait task on
+	 * every save, so it is never free for a second call to fill.
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
 	static FString AddNode(const FString& AssetPath, const FString& ParentNodePath,
@@ -222,7 +230,9 @@ public:
 	 * invisible weight.
 	 *
 	 * Refuses on the root node, and on the root's only child — removing that would leave the tree
-	 * with no runtime root at all, which CommitGraph exists to refuse.
+	 * with no runtime root at all, which CommitGraph exists to refuse. Also refuses a
+	 * SimpleParallel's background branch, which the engine regenerates as a Wait task on save;
+	 * replace it with AddNode(<parallel>, <class>, 1) instead.
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
 	static FString RemoveNode(const FString& AssetPath, const FString& NodePath);
@@ -232,6 +242,9 @@ public:
 	 * NewChildIndex < 0 appends. Returns an empty string on success, else the error.
 	 *
 	 * Refuses to move the root, and to move a node under itself or one of its own descendants.
+	 * NewChildIndex means the same thing it does for AddNode, including SimpleParallel's two fixed
+	 * slots — but MoveNode never displaces anything, so an occupied slot is an error rather than a
+	 * replace.
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
 	static FString MoveNode(const FString& AssetPath, const FString& NodePath,

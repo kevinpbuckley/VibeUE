@@ -1165,14 +1165,28 @@ bool FVibeBTStructureTest::RunTest(const FString&)
 	TestTrue(TEXT("unknown class rejected"),
 		UBehaviorTreeService::AddNode(BTPath, Sel, TEXT("BTTask_Nonexistent"), -1).StartsWith(TEXT("ERROR")));
 
-	// The root's pin takes one composite and nothing else. Both refusals matter: a second child
-	// there would be silently dropped by UpdateAsset, and a task there crashes the editor inside
-	// OnSave() (CreateBTFromGraph null-derefs the non-composite root).
+	// The root has exactly one child slot and it is taken, so nothing more goes under it whatever
+	// the class — a second child there would be silently dropped by UpdateAsset. Both assertions
+	// check the message, because "it errored" would also hold if AddNode had rejected the class, the
+	// path, or the whole call for an unrelated reason.
+	//
+	// Note this is the occupied-slot refusal, not the schema's. The root's pin is
+	// PinCategory_SingleComposite and a task linked there crashes OnSave() outright
+	// (CreateBTFromGraph hands a null BTAsset->RootNode to CreateChildren, which opens with
+	// RootNode->Children.Reset() behind a guard that only tests the *ed-graph* node,
+	// BehaviorTreeGraph.cpp:915-936 and 511-518) — but reaching that needs the root slot free, i.e.
+	// a tree with no runtime root, where a regression would take the automation host down rather
+	// than report. That schema refusal is exercised safely by Structure.SimpleParallel instead,
+	// which asks for a composite in a SingleTask slot.
 	TestTrue(TEXT("no task directly under the root"),
-		UBehaviorTreeService::AddNode(BTPath, TEXT("Root"), TEXT("BTTask_Wait"), -1).StartsWith(TEXT("ERROR")));
+		UBehaviorTreeService::AddNode(BTPath, TEXT("Root"), TEXT("BTTask_Wait"), -1)
+			.Contains(TEXT("no free child slot")));
 	TestTrue(TEXT("no second child under the root"),
 		UBehaviorTreeService::AddNode(BTPath, TEXT("Root"), TEXT("BTComposite_Sequence"), -1)
-			.StartsWith(TEXT("ERROR")));
+			.Contains(TEXT("no free child slot")));
+	TestTrue(TEXT("the root's one slot is not replaceable by index"),
+		UBehaviorTreeService::AddNode(BTPath, TEXT("Root"), TEXT("BTComposite_Sequence"), 0)
+			.Contains(TEXT("not replaceable through AddNode")));
 
 	// A refused add must not leave a stray node behind in the graph.
 	TestEqual(TEXT("refused adds changed nothing"), NodeCount(), 5);
@@ -1245,10 +1259,33 @@ bool FVibeBTStructureTest::RunTest(const FString&)
 	TestEqual(TEXT("moved node last"), Order.IsValidIndex(2) ? Order[2] : FString(), GuidFirst);
 
 	// A move must not be able to detach a subtree from the root.
+	//
+	// The message, not merely "an error". With MoveNode's descendant guard deleted this call still
+	// fails, from the schema rather than from the guard: MoveNode unlinks Sel from the root and then
+	// asks CanCreateConnection(SeqA's output, Sel's input), whose FNodeVisitorCycleChecker walks
+	// *up* from SeqA — SeqA's input pin is still linked to Sel's output pin, unlinking Sel from the
+	// root did not touch that — reaches the node it was asked about and answers DISALLOW,
+	// "Can't create a graph cycle" (EdGraphSchema_BehaviorTree.cpp:279-336). MoveNode then restores
+	// the old link exactly. So the guard's entire contribution is the diagnosis and the absence of
+	// that unlink/relink window, and only the message can tell the two apart.
 	TestTrue(TEXT("no reparenting under a descendant"),
-		!UBehaviorTreeService::MoveNode(BTPath, Sel, SeqA, -1).IsEmpty());
+		UBehaviorTreeService::MoveNode(BTPath, Sel, SeqA, -1)
+			.Contains(TEXT("one of its own descendants")));
+
+	// True down either path above, and asserted anyway: a restore that is not exact is the shape the
+	// SimpleParallel bug was made of, and this is where it would show.
+	TestEqual(TEXT("the refused move changed nothing"), NodeCount(), 6);
+	Order = SelectorChildGuids();
+	TestEqual(TEXT("the refused move left the tree reachable"), Order.Num(), 3);
+	TestEqual(TEXT("the refused move left child order alone"),
+		Order.IsValidIndex(0) ? Order[0] : FString(), GuidA);
+
+	// Likewise this one has to look at the message: with the explicit root check deleted, the root
+	// has no input pin, so the "has no parent" branch errors anyway and a bare non-empty assertion
+	// would stay green.
 	TestTrue(TEXT("the root cannot be moved"),
-		!UBehaviorTreeService::MoveNode(BTPath, TEXT("Root"), Sel, -1).IsEmpty());
+		UBehaviorTreeService::MoveNode(BTPath, TEXT("Root"), Sel, -1)
+			.Contains(TEXT("root node cannot be moved")));
 
 	// GetNodeInfo agrees with the dump.
 	FBTNodeInfo SelInfo;
@@ -1279,9 +1316,11 @@ bool FVibeBTStructureTest::RunTest(const FString&)
 		!UBehaviorTreeService::RemoveNode(BTPath, Task).IsEmpty());
 	TestEqual(TEXT("the removed node is really gone"), NodeCount(), 5);
 
-	// The root can never be removed.
+	// The root can never be removed. Message-based for the same reason as the move above: without
+	// the explicit check the root simply has no parent, so it would error regardless.
 	TestTrue(TEXT("root not removable"),
-		!UBehaviorTreeService::RemoveNode(BTPath, TEXT("Root")).IsEmpty());
+		UBehaviorTreeService::RemoveNode(BTPath, TEXT("Root"))
+			.Contains(TEXT("root node cannot be removed")));
 
 	// Nor can the tree be emptied through RemoveNode: the root takes exactly one child, so removing
 	// it would leave no runtime tree at all. Refused before anything is mutated.
@@ -1302,6 +1341,148 @@ bool FVibeBTStructureTest::RunTest(const FString&)
 	// And the asset that has been through all of that is still a valid, committable tree.
 	TestEqual(TEXT("the tree still commits"),
 		UBehaviorTreeService::CompileAndSave(BTPath), FString());
+
+	return true;
+}
+
+/** Every node in the runtime tree, so the same object appearing twice can be detected. */
+static void CollectRuntimeNodes(UBTCompositeNode* Composite, TArray<UBTNode*>& Out, int32 Depth = 0)
+{
+	// Depth cap rather than a visited set: a duplicated child is the thing being looked for, so
+	// deduplicating the walk would hide it. Depth is what keeps a malformed tree finite.
+	if (!Composite || Depth > 32)
+	{
+		return;
+	}
+	Out.Add(Composite);
+	for (const FBTCompositeChild& Child : Composite->Children)
+	{
+		if (UBTTaskNode* Task = ToRawPtr(Child.ChildTask))
+		{
+			Out.Add(Task);
+		}
+		CollectRuntimeNodes(ToRawPtr(Child.ChildComposite), Out, Depth + 1);
+	}
+}
+
+// SimpleParallel is the only BT graph node with two output pins — [0] "Task"
+// (PinCategory_SingleTask) and [1] "Out" (PinCategory_SingleNode), BehaviorTreeGraphNode_SimpleParallel.cpp:24-30.
+// Everything that reaches for "the" output pin quietly means the main-task pin on one of these,
+// which is how a background child gets unlinked from a pin it was never on.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBTSimpleParallelTest,
+	"VibeUE.BehaviorTree.Structure.SimpleParallel", kBTTestFlags)
+bool FVibeBTSimpleParallelTest::RunTest(const FString&)
+{
+	const FString BTPath = FString(kBTTestDir) / TEXT("BT_ParallelTest");
+	FScopedFixtureReset ResetBT(BTPath);
+
+	TestEqual(TEXT("fixture tree created"),
+		UBehaviorTreeService::CreateBehaviorTree(BTPath, FString()), FString());
+
+	const FString Sel = UBehaviorTreeService::AddNode(
+		BTPath, TEXT("Root"), TEXT("BTComposite_Selector"), -1);
+	const FString Par = UBehaviorTreeService::AddNode(
+		BTPath, Sel, TEXT("BTComposite_SimpleParallel"), -1);
+	const FString Seq = UBehaviorTreeService::AddNode(BTPath, Sel, TEXT("BTComposite_Sequence"), -1);
+	TestFalse(TEXT("parallel added"), Par.StartsWith(TEXT("ERROR")));
+	TestFalse(TEXT("sibling sequence added"), Seq.StartsWith(TEXT("ERROR")));
+
+	// Class names of the parallel's children, in the order GetTree reports them, joined so a
+	// mismatch prints both sequences rather than just a count.
+	auto ParallelChildren = [&]() -> FString
+	{
+		TArray<FString> Names;
+		const TSharedPtr<FJsonObject> Tree = ParseTree(UBehaviorTreeService::GetTree(BTPath));
+		if (!Tree.IsValid() || Tree->GetArrayField(TEXT("children")).Num() != 1)
+		{
+			return TEXT("<unreadable>");
+		}
+
+		const TSharedPtr<FJsonObject> Selector = Tree->GetArrayField(TEXT("children"))[0]->AsObject();
+		for (const TSharedPtr<FJsonValue>& Kid : Selector->GetArrayField(TEXT("children")))
+		{
+			const TSharedPtr<FJsonObject> KidObject = Kid->AsObject();
+			if (KidObject->GetStringField(TEXT("class")) != TEXT("BTComposite_SimpleParallel"))
+			{
+				continue;
+			}
+			for (const TSharedPtr<FJsonValue>& GrandKid : KidObject->GetArrayField(TEXT("children")))
+			{
+				Names.Add(GrandKid->AsObject()->GetStringField(TEXT("class")));
+			}
+		}
+		return FString::Join(Names, TEXT(","));
+	};
+
+	// The engine fills an empty background slot with a Wait on every save
+	// (SpawnMissingNodesForParallel), so a freshly created parallel already has exactly one child.
+	TestEqual(TEXT("the engine supplied a background branch"), ParallelChildren(),
+		FString(TEXT("BTTask_Wait")));
+
+	// Slot 0 is the main task. It must land BEFORE the background branch, because that is the order
+	// GetTree reports and the order CreateChildren writes into UBTCompositeNode::Children.
+	TestFalse(TEXT("main task added"),
+		UBehaviorTreeService::AddNode(BTPath, Par, TEXT("BTTask_MoveTo"), 0).StartsWith(TEXT("ERROR")));
+	TestEqual(TEXT("main task comes first"), ParallelChildren(),
+		FString(TEXT("BTTask_MoveTo,BTTask_Wait")));
+
+	FBTNodeInfo ParInfo;
+	TestTrue(TEXT("parallel readable"), UBehaviorTreeService::GetNodeInfo(BTPath, Par, ParInfo));
+	TestEqual(TEXT("GetNodeInfo agrees on the child count"), ParInfo.ChildCount, 2);
+
+	// Exactly two slots, and both are full.
+	TestTrue(TEXT("no third child"),
+		UBehaviorTreeService::AddNode(BTPath, Par, TEXT("BTTask_Wait"), -1).StartsWith(TEXT("ERROR")));
+	TestTrue(TEXT("child index 2 is out of range"),
+		UBehaviorTreeService::AddNode(BTPath, Par, TEXT("BTTask_Wait"), 2).StartsWith(TEXT("ERROR")));
+
+	// Slot 0 takes tasks only, and a refused replace must not destroy the occupant.
+	TestTrue(TEXT("no composite in the main task slot"),
+		UBehaviorTreeService::AddNode(BTPath, Par, TEXT("BTComposite_Sequence"), 0)
+			.StartsWith(TEXT("ERROR")));
+	TestEqual(TEXT("the refused replace left the main task alone"), ParallelChildren(),
+		FString(TEXT("BTTask_MoveTo,BTTask_Wait")));
+
+	// Replacing slot 1 is the only way to author a background branch.
+	const FString Background = UBehaviorTreeService::AddNode(
+		BTPath, Par, TEXT("BTComposite_Sequence"), 1);
+	TestFalse(TEXT("background branch authored"), Background.StartsWith(TEXT("ERROR")));
+	TestEqual(TEXT("background branch replaced the Wait"), ParallelChildren(),
+		FString(TEXT("BTTask_MoveTo,BTComposite_Sequence")));
+
+	// The background branch is regenerated by the engine, so removing it would be a lie.
+	TestTrue(TEXT("the background branch is not removable"),
+		UBehaviorTreeService::RemoveNode(BTPath, Background).Contains(TEXT("background branch")));
+
+	// THE REGRESSION. Moving a background child off pin 1 has to unlink it from pin 1 — the pin it
+	// is actually on — not from pin 0. Reading the pin off the parent's pin list instead makes the
+	// unlink a no-op, the schema then refuses (the child still has a parent), and the restore
+	// fabricates a link on pin 0 that never existed: the node ends up reachable from both pins.
+	TestEqual(TEXT("background branch moved out"),
+		UBehaviorTreeService::MoveNode(BTPath, Background, Seq, -1), FString());
+
+	// Pin 1 is empty again, so the engine refills it. The parallel is whole and the moved subtree
+	// is somewhere else entirely.
+	TestEqual(TEXT("the background slot was refilled"), ParallelChildren(),
+		FString(TEXT("BTTask_MoveTo,BTTask_Wait")));
+	FBTNodeInfo SeqInfo;
+	TestTrue(TEXT("sibling readable"), UBehaviorTreeService::GetNodeInfo(BTPath, Seq, SeqInfo));
+	TestEqual(TEXT("the moved node landed on the sibling"), SeqInfo.ChildCount, 1);
+
+	// One more successful commit, which is what would write a two-parent graph to disk, and then
+	// the runtime tree itself: no UBTNode may appear twice in UBTCompositeNode::Children.
+	TestFalse(TEXT("a later add still works"),
+		UBehaviorTreeService::AddNode(BTPath, Seq, TEXT("BTTask_Wait"), -1).StartsWith(TEXT("ERROR")));
+
+	UBehaviorTree* Tree = LoadObject<UBehaviorTree>(nullptr, *BTPath);
+	if (TestNotNull(TEXT("tree loaded"), Tree))
+	{
+		TArray<UBTNode*> RuntimeNodes;
+		CollectRuntimeNodes(ToRawPtr(Tree->RootNode), RuntimeNodes);
+		TestTrue(TEXT("the runtime tree is populated"), RuntimeNodes.Num() > 4);
+		TestEqual(TEXT("no node appears twice in the runtime tree"),
+			TSet<UBTNode*>(RuntimeNodes).Num(), RuntimeNodes.Num());
+	}
 
 	return true;
 }

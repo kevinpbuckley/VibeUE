@@ -68,38 +68,6 @@
 // in the same blob collide on identical helper names (docs/gotchas.md).
 namespace VibeBTEdit
 {
-	/** The node's child-carrying pin, or nullptr — task and decorator nodes have none. */
-	UEdGraphPin* FindOutputPin(UBehaviorTreeGraphNode* Node)
-	{
-		if (Node)
-		{
-			for (UEdGraphPin* Pin : Node->Pins)
-			{
-				if (Pin && Pin->Direction == EGPD_Output)
-				{
-					return Pin;
-				}
-			}
-		}
-		return nullptr;
-	}
-
-	/** The node's parent-facing pin, or nullptr — the root node has none. */
-	UEdGraphPin* FindInputPin(UBehaviorTreeGraphNode* Node)
-	{
-		if (Node)
-		{
-			for (UEdGraphPin* Pin : Node->Pins)
-			{
-				if (Pin && Pin->Direction == EGPD_Input)
-				{
-					return Pin;
-				}
-			}
-		}
-		return nullptr;
-	}
-
 	/** Name to put in an error message for a node whose class the caller would recognise. */
 	FString DescribeNode(const UBehaviorTreeGraphNode* Node)
 	{
@@ -110,6 +78,133 @@ namespace VibeBTEdit
 		return Node->NodeInstance
 			? Node->NodeInstance->GetClass()->GetName()
 			: Node->GetNodeTitle(ENodeTitleType::ListView).ToString();
+	}
+
+	/**
+	 * Every pin this node can hang children on, in Pins order.
+	 *
+	 * Deliberately a list, not a pin. Most BT graph nodes have one output pin, but
+	 * UBehaviorTreeGraphNode_SimpleParallel has two — [0] "Task" (PinCategory_SingleTask, the main
+	 * task) and [1] "Out" (PinCategory_SingleNode, the background branch)
+	 * (BehaviorTreeGraphNode_SimpleParallel.cpp:24-30). Anything that reaches for "the" output pin
+	 * silently means "the main task pin" on a parallel, which is how a break of a background link
+	 * becomes a no-op and a restore becomes a fabricated second parent link.
+	 *
+	 * Pins order is also child order everywhere else in this service: VibeBT::GetChildNodes walks it,
+	 * and so does BTGraphHelpers::CreateChildren when it builds UBTCompositeNode::Children
+	 * (BehaviorTreeGraph.cpp:540-560). So slot index == the index GetTree reports == the runtime
+	 * child index.
+	 */
+	TArray<UEdGraphPin*> ChildSlotPins(const UBehaviorTreeGraphNode* Node)
+	{
+		TArray<UEdGraphPin*> Slots;
+		if (Node)
+		{
+			for (UEdGraphPin* Pin : Node->Pins)
+			{
+				if (Pin && Pin->Direction == EGPD_Output)
+				{
+					Slots.Add(Pin);
+				}
+			}
+		}
+		return Slots;
+	}
+
+	/**
+	 * Whether this pin holds an ordered list of children rather than exactly one.
+	 *
+	 * Compared against the literal rather than UBehaviorTreeEditorTypes::PinCategory_MultipleNodes:
+	 * those statics are declared without an export macro, so referencing one from another module
+	 * compiles and then fails to link. The literal is the value the engine constructs
+	 * (BehaviorTreeEditorTypes.cpp:9-12) and the one serialised into every Behavior Tree asset, so
+	 * it is as stable as the symbol would have been.
+	 */
+	bool IsMultiChildPin(const UEdGraphPin* Pin)
+	{
+		static const FName MultipleNodesCategory(TEXT("MultipleNodes"));
+		return Pin && Pin->PinType.PinCategory == MultipleNodesCategory;
+	}
+
+	/**
+	 * The parent output pin ChildIn is actually linked through — read off the link itself rather
+	 * than guessed from the parent's pin list. A BT node has exactly one parent, so LinkedTo[0] is
+	 * the whole answer, and it is right on a SimpleParallel background child where picking the
+	 * first output pin is not.
+	 */
+	UEdGraphPin* LinkingParentPin(const UEdGraphPin* ChildIn)
+	{
+		return (ChildIn && ChildIn->LinkedTo.Num() > 0) ? ChildIn->LinkedTo[0] : nullptr;
+	}
+
+	/** Where a child is going: which pin, and where within that pin's link order. */
+	struct FChildSlot
+	{
+		UEdGraphPin* Pin = nullptr;
+
+		/** Position within Pin->LinkedTo; < 0 appends. Always 0 for a single-child pin. */
+		int32 InsertPosition = -1;
+
+		/** True when ChildIndex selected the pin itself, i.e. the parent has fixed child slots. */
+		bool bFixedSlots = false;
+	};
+
+	/**
+	 * Work out which pin a ChildIndex refers to on this parent, and where in it.
+	 *
+	 * Two shapes, and the difference is the pin category rather than the node class:
+	 *
+	 *  - An ordinary composite has one PinCategory_MultipleNodes pin holding an ordered list, so
+	 *    ChildIndex is a position within it and < 0 appends.
+	 *  - A parent whose pins each take exactly one child — the root (SingleComposite) and
+	 *    SimpleParallel (SingleTask + SingleNode) — has fixed slots, so ChildIndex picks the pin and
+	 *    < 0 means "the first free one". This is the same numbering GetTree reports, because both
+	 *    walk Pins in order.
+	 */
+	FString ResolveChildSlot(UBehaviorTreeGraphNode* Parent, int32 ChildIndex, FChildSlot& Out)
+	{
+		const TArray<UEdGraphPin*> Slots = ChildSlotPins(Parent);
+		if (Slots.Num() == 0)
+		{
+			return FString::Printf(TEXT("%s cannot have children"), *DescribeNode(Parent));
+		}
+
+		if (Slots.Num() == 1 && IsMultiChildPin(Slots[0]))
+		{
+			Out.Pin = Slots[0];
+			Out.InsertPosition = ChildIndex;
+			Out.bFixedSlots = false;
+			return FString();
+		}
+
+		Out.bFixedSlots = true;
+		Out.InsertPosition = 0;
+
+		if (ChildIndex >= Slots.Num())
+		{
+			return FString::Printf(
+				TEXT("%s has %d child slot(s), so child index %d is out of range"),
+				*DescribeNode(Parent), Slots.Num(), ChildIndex);
+		}
+		if (ChildIndex >= 0)
+		{
+			Out.Pin = Slots[ChildIndex];
+			return FString();
+		}
+
+		for (UEdGraphPin* Slot : Slots)
+		{
+			if (Slot->LinkedTo.Num() == 0)
+			{
+				Out.Pin = Slot;
+				return FString();
+			}
+		}
+
+		return FString::Printf(
+			TEXT("%s has no free child slot (all %d in use). Its children occupy fixed slots rather "
+				 "than an open list, so pass an explicit child index to name the one you mean."),
+			*DescribeNode(Parent), Slots.Num());
 	}
 
 	/**
@@ -144,6 +239,32 @@ namespace VibeBTEdit
 		}
 	}
 
+	/**
+	 * Unlink and delete Node and everything under it, pin-level throughout.
+	 *
+	 * Pin->BreakAllPinLinks(bNotifyNodes = false) and RemoveNode(bBreakAllLinks = false) are the
+	 * non-notifying halves of the engine's own removal; see the file header for why the notifying
+	 * ones must not be used here.
+	 */
+	void DetachAndRemoveSubtree(UBehaviorTreeGraph* Graph, UBehaviorTreeGraphNode* Node)
+	{
+		TArray<UBehaviorTreeGraphNode*> Doomed;
+		CollectSubtree(Node, Doomed);
+
+		for (UBehaviorTreeGraphNode* Dying : Doomed)
+		{
+			Dying->Modify();
+			for (UEdGraphPin* Pin : Dying->Pins)
+			{
+				if (Pin)
+				{
+					Pin->BreakAllPinLinks(/*bNotifyNodes*/ false);
+				}
+			}
+			Graph->RemoveNode(Dying, /*bBreakAllLinks*/ false);
+		}
+	}
+
 	/** Whether Candidate is Ancestor or sits somewhere below it. */
 	bool IsSelfOrDescendant(UBehaviorTreeGraphNode* Candidate, UBehaviorTreeGraphNode* Ancestor)
 	{
@@ -169,8 +290,17 @@ namespace VibeBTEdit
 	 * The BREAK_OTHERS_* responses are refused too, not applied: they mean "this pin is exclusive
 	 * and something else is already on it", i.e. adding a second child under the root. Honouring
 	 * them would silently unlink the existing tree.
+	 *
+	 * bAllowOccupied is the one exception, and it is narrow: BREAK_OTHERS_A means precisely "pin A
+	 * is single-link and already has something on it", which is the deliberate replace of a
+	 * SimpleParallel slot. It cannot mask a type error — CanCreateConnection tests the
+	 * SingleComposite / SingleTask categories first and returns DISALLOW for those
+	 * (EdGraphSchema_BehaviorTree.cpp:260-268), long before it reaches the exclusivity branches
+	 * (:339-372). Callers passing true must still remove the displaced node themselves, and only
+	 * after this has said yes.
 	 */
-	FString CheckLink(const UBehaviorTreeGraph* Graph, UEdGraphPin* ParentOut, UEdGraphPin* ChildIn)
+	FString CheckLink(const UBehaviorTreeGraph* Graph, UEdGraphPin* ParentOut, UEdGraphPin* ChildIn,
+		bool bAllowOccupied)
 	{
 		const UEdGraphSchema* Schema = Graph ? Graph->GetSchema() : nullptr;
 		if (!Schema)
@@ -179,7 +309,8 @@ namespace VibeBTEdit
 		}
 
 		const FPinConnectionResponse Response = Schema->CanCreateConnection(ParentOut, ChildIn);
-		if (Response.Response == CONNECT_RESPONSE_MAKE)
+		if (Response.Response == CONNECT_RESPONSE_MAKE
+			|| (bAllowOccupied && Response.Response == CONNECT_RESPONSE_BREAK_OTHERS_A))
 		{
 			return FString();
 		}
@@ -238,10 +369,32 @@ FString UBehaviorTreeService::AddNode(const FString& AssetPath, const FString& P
 	}
 
 	// Checked before anything is created, so a rejected add leaves no stray node behind.
-	UEdGraphPin* ParentOut = FindOutputPin(Parent);
-	if (!ParentOut)
+	FChildSlot Slot;
+	const FString SlotError = ResolveChildSlot(Parent, ChildIndex, Slot);
+	if (!SlotError.IsEmpty())
 	{
-		return FString::Printf(TEXT("ERROR: %s cannot have children"), *DescribeNode(Parent));
+		return FString::Printf(TEXT("ERROR: %s"), *SlotError);
+	}
+
+	// A fixed slot that is already taken. On a SimpleParallel an explicit index means "put it
+	// here", i.e. replace what is there — the only way to author a background branch at all, since
+	// UBehaviorTreeGraph::SpawnMissingNodesForParallel refills an empty background pin with a
+	// BTTask_Wait on every single save (BehaviorTreeGraph.cpp:1015-1074), so it is never free for a
+	// later call to fill. Everywhere else — in practice the root — an occupied slot is refused:
+	// replacing the tree's top composite is not something an AddNode should do by implication.
+	UBehaviorTreeGraphNode* Displaced = nullptr;
+	if (Slot.bFixedSlots && Slot.Pin->LinkedTo.Num() > 0)
+	{
+		UBehaviorTreeGraphNode* Occupant =
+			Cast<UBehaviorTreeGraphNode>(Slot.Pin->LinkedTo[0]->GetOwningNode());
+		if (!Parent->IsA<UBehaviorTreeGraphNode_SimpleParallel>())
+		{
+			return FString::Printf(
+				TEXT("ERROR: child slot %d of %s is already taken by %s, and this node's slots are "
+					 "not replaceable through AddNode"),
+				ChildIndex, *DescribeNode(Parent), *DescribeNode(Occupant));
+		}
+		Displaced = Occupant;
 	}
 
 	UClass* NodeClass = VibeBT::ResolveNodeClass(NodeClassName, UBTNode::StaticClass());
@@ -274,7 +427,7 @@ FString UBehaviorTreeService::AddNode(const FString& AssetPath, const FString& P
 
 	// From here on, any failure has to take the node back out. bBreakAllLinks = false throughout:
 	// it is unlinked anyway, and the true path would fire UpdateAsset (see the file header).
-	UEdGraphPin* NewIn = FindInputPin(NewNode);
+	UEdGraphPin* NewIn = NewNode->GetInputPin();
 	if (!NewIn)
 	{
 		Graph->RemoveNode(NewNode, /*bBreakAllLinks*/ false);
@@ -292,7 +445,9 @@ FString UBehaviorTreeService::AddNode(const FString& AssetPath, const FString& P
 			*NodeClass->GetName());
 	}
 
-	const FString LinkError = CheckLink(Graph, ParentOut, NewIn);
+	// Asked while the displaced node is still linked, and answered before it is removed: a type
+	// violation still comes back DISALLOW here, so a refused replace destroys nothing.
+	const FString LinkError = CheckLink(Graph, Slot.Pin, NewIn, /*bAllowOccupied*/ Displaced != nullptr);
 	if (!LinkError.IsEmpty())
 	{
 		Graph->RemoveNode(NewNode, /*bBreakAllLinks*/ false);
@@ -300,8 +455,12 @@ FString UBehaviorTreeService::AddNode(const FString& AssetPath, const FString& P
 	}
 
 	Parent->Modify();
-	ParentOut->MakeLinkTo(NewIn);
-	PlaceLinkAt(ParentOut, NewIn, ChildIndex);
+	if (Displaced)
+	{
+		DetachAndRemoveSubtree(Graph, Displaced);
+	}
+	Slot.Pin->MakeLinkTo(NewIn);
+	PlaceLinkAt(Slot.Pin, NewIn, Slot.InsertPosition);
 
 	const FString CommitError = VibeBT::CommitGraph(Tree, Graph);
 	if (!CommitError.IsEmpty())
@@ -337,11 +496,28 @@ FString UBehaviorTreeService::RemoveNode(const FString& AssetPath, const FString
 					"is expressed relative to it.");
 	}
 
-	UBehaviorTreeGraphNode* Parent = VibeBT::GetParentNode(Node);
+	// Read off the link, not guessed from the parent's pin list — see LinkingParentPin.
+	UEdGraphPin* NodeIn = Node->GetInputPin();
+	UEdGraphPin* ParentPin = LinkingParentPin(NodeIn);
+	UBehaviorTreeGraphNode* Parent =
+		ParentPin ? Cast<UBehaviorTreeGraphNode>(ParentPin->GetOwningNode()) : nullptr;
 	if (!Parent)
 	{
 		return FString::Printf(
 			TEXT("'%s' has no parent, so it is not part of the tree and cannot be removed from it"),
+			*NodePath);
+	}
+
+	if (Parent->IsA<UBehaviorTreeGraphNode_SimpleParallel>() && ParentPin == Parent->GetOutputPin(1))
+	{
+		// A parallel's background slot is never empty for long: SpawnMissingNodesForParallel runs
+		// inside the very OnSave() this removal would commit through and links a fresh BTTask_Wait
+		// onto an empty background pin (BehaviorTreeGraph.cpp:1015-1074). Removing it would report
+		// success and leave a different node in its place, which is worse than refusing.
+		return FString::Printf(
+			TEXT("'%s' is the background branch of a SimpleParallel, which the engine regenerates as "
+				 "a Wait task whenever the asset is saved, so it cannot be removed — only replaced. "
+				 "Use AddNode(<parallel path>, <class>, 1)."),
 			*NodePath);
 	}
 
@@ -361,23 +537,9 @@ FString UBehaviorTreeService::RemoveNode(const FString& AssetPath, const FString
 	// The whole subtree, not just the one node. A child left dangling would be unreachable from
 	// "Root", so no path could name it again — it would simply become invisible weight in the saved
 	// asset, still counted by GetBehaviorTreeInfo and still loaded with it.
-	TArray<UBehaviorTreeGraphNode*> Doomed;
-	CollectSubtree(Node, Doomed);
-
 	Graph->Modify();
 	Parent->Modify();
-	for (UBehaviorTreeGraphNode* Dying : Doomed)
-	{
-		Dying->Modify();
-		for (UEdGraphPin* Pin : Dying->Pins)
-		{
-			if (Pin)
-			{
-				Pin->BreakAllPinLinks(/*bNotifyNodes*/ false);
-			}
-		}
-		Graph->RemoveNode(Dying, /*bBreakAllLinks*/ false);
-	}
+	DetachAndRemoveSubtree(Graph, Node);
 
 	return VibeBT::CommitGraph(Tree, Graph);
 }
@@ -425,15 +587,22 @@ FString UBehaviorTreeService::MoveNode(const FString& AssetPath, const FString& 
 			*NodePath, *NewParentPath);
 	}
 
-	UEdGraphPin* NewParentOut = FindOutputPin(NewParent);
-	if (!NewParentOut)
+	FChildSlot Slot;
+	const FString SlotError = ResolveChildSlot(NewParent, NewChildIndex, Slot);
+	if (!SlotError.IsEmpty())
 	{
-		return FString::Printf(TEXT("%s cannot have children"), *DescribeNode(NewParent));
+		return SlotError;
 	}
 
-	UEdGraphPin* NodeIn = FindInputPin(Node);
-	UBehaviorTreeGraphNode* OldParent = VibeBT::GetParentNode(Node);
-	if (!NodeIn || !OldParent)
+	// Both the pin and the parent come off the link itself. Deriving the pin from the parent's pin
+	// list instead is wrong on a SimpleParallel background child, where it names the main-task pin:
+	// the unlink below would then be a silent no-op and the restore would fabricate a second parent
+	// link, leaving the node reachable from two pins and duplicated in UBTCompositeNode::Children.
+	UEdGraphPin* NodeIn = Node->GetInputPin();
+	UEdGraphPin* OldParentPin = LinkingParentPin(NodeIn);
+	UBehaviorTreeGraphNode* OldParent =
+		OldParentPin ? Cast<UBehaviorTreeGraphNode>(OldParentPin->GetOwningNode()) : nullptr;
+	if (!NodeIn || !OldParentPin || !OldParent)
 	{
 		return FString::Printf(
 			TEXT("'%s' has no parent, so it is not part of the tree and cannot be moved within it"),
@@ -444,39 +613,54 @@ FString UBehaviorTreeService::MoveNode(const FString& AssetPath, const FString& 
 	Node->Modify();
 	NewParent->Modify();
 
-	if (OldParent == NewParent)
+	if (OldParentPin == Slot.Pin)
 	{
-		// A reorder under the same parent. Deliberately done without unlinking anything: there is
-		// no intermediate state to get wrong, and the link the schema would be asked about already
-		// exists (it would answer BREAK_OTHERS, not MAKE).
-		PlaceLinkAt(NewParentOut, NodeIn, NewChildIndex);
+		// A reorder within the same pin. Deliberately done without unlinking anything: there is no
+		// intermediate state to get wrong, and the link the schema would be asked about already
+		// exists (it would answer BREAK_OTHERS, not MAKE). Compared by pin rather than by parent so
+		// that moving between a SimpleParallel's two pins takes the relink path below, as it must.
+		PlaceLinkAt(Slot.Pin, NodeIn, Slot.InsertPosition);
 	}
 	else
 	{
-		UEdGraphPin* OldParentOut = FindOutputPin(OldParent);
-		if (!OldParentOut)
+		if (Slot.bFixedSlots && Slot.Pin->LinkedTo.Num() > 0)
 		{
-			return FString::Printf(TEXT("'%s' is not linked through its parent's output pin"), *NodePath);
+			return FString::Printf(
+				TEXT("Cannot move '%s' into child slot %d of '%s': that slot is already taken by %s. "
+					 "MoveNode never displaces a node."),
+				*NodePath, NewChildIndex, *NewParentPath,
+				*DescribeNode(Cast<UBehaviorTreeGraphNode>(Slot.Pin->LinkedTo[0]->GetOwningNode())));
 		}
-		const int32 OldIndex = OldParentOut->LinkedTo.IndexOfByKey(NodeIn);
+
+		const int32 OldIndex = OldParentPin->LinkedTo.IndexOfByKey(NodeIn);
+		if (OldIndex == INDEX_NONE)
+		{
+			// Unreachable while OldParentPin comes from LinkedTo[0], and checked anyway: the whole
+			// bug this guards against was a break that quietly did nothing followed by a "restore"
+			// that invented a link. Never relink on the strength of an index we do not have.
+			return FString::Printf(
+				TEXT("'%s' is not present in its parent's link order; refusing to move it rather than "
+					 "risk relinking it somewhere it never was"),
+				*NodePath);
+		}
 
 		// Unlinked first, because CanCreateConnection answers BREAK_OTHERS_* — not MAKE — for a
 		// child that still has a parent, and this code refuses anything but MAKE. The window is
 		// safe: no notification fires (see the file header), so nothing regenerates the runtime
 		// tree while the node is detached, and a refusal below puts it back exactly where it was.
 		OldParent->Modify();
-		OldParentOut->BreakLinkTo(NodeIn);
+		OldParentPin->BreakLinkTo(NodeIn);
 
-		const FString LinkError = CheckLink(Graph, NewParentOut, NodeIn);
+		const FString LinkError = CheckLink(Graph, Slot.Pin, NodeIn, /*bAllowOccupied*/ false);
 		if (!LinkError.IsEmpty())
 		{
-			OldParentOut->MakeLinkTo(NodeIn);
-			PlaceLinkAt(OldParentOut, NodeIn, OldIndex);
+			OldParentPin->MakeLinkTo(NodeIn);
+			PlaceLinkAt(OldParentPin, NodeIn, OldIndex);
 			return LinkError;
 		}
 
-		NewParentOut->MakeLinkTo(NodeIn);
-		PlaceLinkAt(NewParentOut, NodeIn, NewChildIndex);
+		Slot.Pin->MakeLinkTo(NodeIn);
+		PlaceLinkAt(Slot.Pin, NodeIn, Slot.InsertPosition);
 	}
 
 	return VibeBT::CommitGraph(Tree, Graph);
