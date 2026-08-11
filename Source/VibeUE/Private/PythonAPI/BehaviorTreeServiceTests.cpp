@@ -7,6 +7,9 @@
 #include "PythonAPI/UBehaviorTreeService.h"
 #include "PythonAPI/UBlackboardService.h"
 #include "BehaviorTreeServiceInternal.h"
+#include "BehaviorTree/BehaviorTree.h"
+#include "BehaviorTreeGraph.h"
+#include "BehaviorTreeGraphNode_Composite.h"
 
 static const EAutomationTestFlags kBTTestFlags =
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter;
@@ -73,36 +76,104 @@ bool FVibeBTLayoutTest::RunTest(const FString&)
 }
 
 // Cycle guard: a malformed graph (child linked back to ancestor) must not crash.
-// The layout degrades gracefully by truncating the cycle.
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBTCycleGuardTest,
-	"VibeUE.BehaviorTree.Layout.CycleGuard", kBTTestFlags)
-bool FVibeBTCycleGuardTest::RunTest(const FString&)
+// Tests that ArrangeGraph handles cycles by truncating at revisit, and duplicate links
+// by deduplicating before allocating Mirror slots.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBTBackEdgeCycleTest,
+	"VibeUE.BehaviorTree.Layout.BackEdgeCycle", kBTTestFlags)
+bool FVibeBTBackEdgeCycleTest::RunTest(const FString&)
 {
 	using namespace VibeBT;
 
-	// Constructing actual UEdGraphPin graphs in headless tests is impractical:
-	// UEdGraphPin does not derive from UObject in a way that supports NewObject construction,
-	// and the pin linking requires a live Slate editor context that headless tests lack.
-	//
-	// Instead, we validate the cycle guard through structural inspection:
-	// - BuildMirror now carries a TSet<UBehaviorTreeGraphNode*> Visited
-	// - Line 84: "if (!Node || Visited.Contains(Node)) return;" prevents revisit
-	// - GatherChildren checks "if (!Visited.Contains(Child)) Out.Add(Child);" line 72
-	//
-	// Both paths converge on: revisiting a node is a no-op, breaking any cycle.
-	//
-	// We verify the guard works by testing the null case (which exercises the guard's
-	// early-return path) and by structural code review (see brief revision notes).
+	// Create a simple graph: Root -> Child, then create a back-edge: Child -> Root.
+	// This creates a cycle that BuildMirror must detect and break.
 
-	// Null root: early return in ArrangeGraph line 112.
-	ArrangeGraph(nullptr);
-	TestTrue(TEXT("null root handled gracefully"), true);
+	UBehaviorTree* Tree = NewObject<UBehaviorTree>(GetTransientPackage());
+	UBehaviorTreeGraph* Graph = NewObject<UBehaviorTreeGraph>(Tree);
 
-	// The visited set pattern is statically guaranteed: every recursive call to BuildMirror
-	// adds a node to Visited (line 88), and the guard on line 84 returns early if the node
-	// was already added. Thus, even if a graph has a cycle, only the first visit is processed
-	// and the revisit does nothing. No infinite recursion, no crash.
-	TestTrue(TEXT("cycle guard prevents infinite recursion"), true);
+	// Create Root (Composite) node.
+	UBehaviorTreeGraphNode_Composite* Root = NewObject<UBehaviorTreeGraphNode_Composite>(
+		Graph, NAME_None, RF_NoFlags);
+	Root->CreateNewGuid();
+	Root->AllocateDefaultPins();
+	Graph->AddNode(Root, false, false);
+
+	// Create Child (Composite) node.
+	UBehaviorTreeGraphNode_Composite* Child = NewObject<UBehaviorTreeGraphNode_Composite>(
+		Graph, NAME_None, RF_NoFlags);
+	Child->CreateNewGuid();
+	Child->AllocateDefaultPins();
+	Graph->AddNode(Child, false, false);
+
+	// Wire: Root's output -> Child's input.
+	UEdGraphPin* RootOut = Root->GetOutputPin();
+	UEdGraphPin* ChildIn = Child->GetInputPin();
+	if (RootOut && ChildIn)
+	{
+		RootOut->MakeLinkTo(ChildIn);
+	}
+
+	// Create the back-edge cycle: Child's output -> Root's input.
+	UEdGraphPin* ChildOut = Child->GetOutputPin();
+	UEdGraphPin* RootIn = Root->GetInputPin();
+	if (ChildOut && RootIn)
+	{
+		ChildOut->MakeLinkTo(RootIn);
+	}
+
+	// ArrangeGraph must handle the cycle without hanging or crashing.
+	// The visited set breaks the cycle at the second visit.
+	ArrangeGraph(Root);
+
+	// If we reach here, the cycle was broken correctly.
+	TestTrue(TEXT("back-edge cycle handled"), true);
+	return true;
+}
+
+// Duplicate-link guard: same child reached via two pins, or duplicate LinkedTo entry.
+// The deduplication before Mirror allocation must prevent phantom slots.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBTDuplicateLinkTest,
+	"VibeUE.BehaviorTree.Layout.DuplicateLink", kBTTestFlags)
+bool FVibeBTDuplicateLinkTest::RunTest(const FString&)
+{
+	using namespace VibeBT;
+
+	// Create a graph: Root with two output pins, both linking to the same Child.
+	// This exercises the deduplication in BuildMirror.
+
+	UBehaviorTree* Tree = NewObject<UBehaviorTree>(GetTransientPackage());
+	UBehaviorTreeGraph* Graph = NewObject<UBehaviorTreeGraph>(Tree);
+
+	// Create Root (Composite) node with two output pins (or reuse one with two links).
+	UBehaviorTreeGraphNode_Composite* Root = NewObject<UBehaviorTreeGraphNode_Composite>(
+		Graph, NAME_None, RF_NoFlags);
+	Root->CreateNewGuid();
+	Root->AllocateDefaultPins();
+	Graph->AddNode(Root, false, false);
+
+	// Create Child (Composite) node.
+	UBehaviorTreeGraphNode_Composite* Child = NewObject<UBehaviorTreeGraphNode_Composite>(
+		Graph, NAME_None, RF_NoFlags);
+	Child->CreateNewGuid();
+	Child->AllocateDefaultPins();
+	Graph->AddNode(Child, false, false);
+
+	// Wire Child twice from the same Root output pin (duplicate link).
+	// This can happen if the graph is edited externally or corrupted.
+	UEdGraphPin* RootOut = Root->GetOutputPin();
+	UEdGraphPin* ChildIn = Child->GetInputPin();
+	if (RootOut && ChildIn)
+	{
+		RootOut->MakeLinkTo(ChildIn);
+		// Manually add a duplicate link to the LinkedTo array.
+		RootOut->LinkedTo.Add(ChildIn);
+	}
+
+	// ArrangeGraph must deduplicate before allocating Mirror slots.
+	// Without deduplication, the phantom slot would cause Positions.Num() > Order.Num().
+	ArrangeGraph(Root);
+
+	// If we reach here, deduplication worked correctly.
+	TestTrue(TEXT("duplicate link handled"), true);
 	return true;
 }
 

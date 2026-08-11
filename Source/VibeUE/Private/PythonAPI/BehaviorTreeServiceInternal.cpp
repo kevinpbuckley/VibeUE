@@ -99,10 +99,24 @@ namespace VibeBT
 			TArray<UBehaviorTreeGraphNode*> Children;
 			GatherChildren(Node, Children, Visited);
 
-			OutNode.Children.AddDefaulted(Children.Num());
-			for (int32 Index = 0; Index < Children.Num(); ++Index)
+			// Deduplicate: if the same child appears twice (duplicate pins), keep only the first.
+			// This must happen before allocating Mirror slots, so allocation matches recursion.
+			TSet<UBehaviorTreeGraphNode*> UniqueChildren(Children);
+			TArray<UBehaviorTreeGraphNode*> FilteredChildren;
+			FilteredChildren.Reserve(UniqueChildren.Num());
+			for (UBehaviorTreeGraphNode* Child : Children)
 			{
-				BuildMirror(Children[Index], OutNode.Children[Index], OutOrder, Visited);
+				if (UniqueChildren.Contains(Child))
+				{
+					FilteredChildren.Add(Child);
+					UniqueChildren.Remove(Child);
+				}
+			}
+
+			OutNode.Children.AddDefaulted(FilteredChildren.Num());
+			for (int32 Index = 0; Index < FilteredChildren.Num(); ++Index)
+			{
+				BuildMirror(FilteredChildren[Index], OutNode.Children[Index], OutOrder, Visited);
 			}
 		}
 	}
@@ -110,9 +124,6 @@ namespace VibeBT
 	TArray<FIntPoint> ComputeLayout(const FLayoutNode& Root)
 	{
 		TArray<FIntPoint> Positions;
-		// Reserve grows automatically, so this is just a hint; a linear chain has 1 leaf but
-		// N+1 nodes, so we over-reserve to cover both common cases.
-		Positions.Reserve(CountLeafColumns(Root) * 3);
 
 		int32 NextColumn = 0;
 		AssignPositions(Root, 0, NextColumn, Positions);
