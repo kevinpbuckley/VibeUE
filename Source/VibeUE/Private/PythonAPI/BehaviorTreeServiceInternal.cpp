@@ -47,14 +47,15 @@ namespace VibeBT
 			}
 
 			const int32 LastColumn = NextColumn - 1;
-			// Centre over the span, doubling first so an even span still lands on an integer
-			// that preserves strict ordering between siblings.
+			// Centre over the span: (a + b) * 300 is always even, so dividing by 2 always
+			// lands on an integer, which is necessary to preserve strict sibling ordering.
 			Out[SelfIndex].X = (FirstColumn + LastColumn) * NodeSpacingX / 2;
 			Out[SelfIndex].Y = Depth * NodeSpacingY;
 		}
 
-		/** Children of a BT graph node, in current output-pin link order. */
-		void GatherChildren(UBehaviorTreeGraphNode* Node, TArray<UBehaviorTreeGraphNode*>& Out)
+		/** Children of a BT graph node, in current output-pin link order. Skips already-visited nodes to prevent cycles. */
+		void GatherChildren(UBehaviorTreeGraphNode* Node, TArray<UBehaviorTreeGraphNode*>& Out,
+			const TSet<UBehaviorTreeGraphNode*>& Visited)
 		{
 			Out.Reset();
 			if (!Node)
@@ -72,7 +73,10 @@ namespace VibeBT
 							if (UBehaviorTreeGraphNode* Child =
 								Cast<UBehaviorTreeGraphNode>(Linked->GetOwningNode()))
 							{
-								Out.Add(Child);
+								if (!Visited.Contains(Child))
+								{
+									Out.Add(Child);
+								}
 							}
 						}
 					}
@@ -82,17 +86,23 @@ namespace VibeBT
 
 		/** Build the structure mirror and, in the same pre-order, the node list to write back. */
 		void BuildMirror(UBehaviorTreeGraphNode* Node, FLayoutNode& OutNode,
-			TArray<UBehaviorTreeGraphNode*>& OutOrder)
+			TArray<UBehaviorTreeGraphNode*>& OutOrder, TSet<UBehaviorTreeGraphNode*>& Visited)
 		{
+			if (!Node || Visited.Contains(Node))
+			{
+				return;
+			}
+
+			Visited.Add(Node);
 			OutOrder.Add(Node);
 
 			TArray<UBehaviorTreeGraphNode*> Children;
-			GatherChildren(Node, Children);
+			GatherChildren(Node, Children, Visited);
 
 			OutNode.Children.AddDefaulted(Children.Num());
 			for (int32 Index = 0; Index < Children.Num(); ++Index)
 			{
-				BuildMirror(Children[Index], OutNode.Children[Index], OutOrder);
+				BuildMirror(Children[Index], OutNode.Children[Index], OutOrder, Visited);
 			}
 		}
 	}
@@ -100,7 +110,9 @@ namespace VibeBT
 	TArray<FIntPoint> ComputeLayout(const FLayoutNode& Root)
 	{
 		TArray<FIntPoint> Positions;
-		Positions.Reserve(CountLeafColumns(Root) * 2);
+		// Reserve grows automatically, so this is just a hint; a linear chain has 1 leaf but
+		// N+1 nodes, so we over-reserve to cover both common cases.
+		Positions.Reserve(CountLeafColumns(Root) * 3);
 
 		int32 NextColumn = 0;
 		AssignPositions(Root, 0, NextColumn, Positions);
@@ -116,7 +128,8 @@ namespace VibeBT
 
 		FLayoutNode Mirror;
 		TArray<UBehaviorTreeGraphNode*> Order;
-		BuildMirror(RootNode, Mirror, Order);
+		TSet<UBehaviorTreeGraphNode*> Visited;
+		BuildMirror(RootNode, Mirror, Order, Visited);
 
 		const TArray<FIntPoint> Positions = ComputeLayout(Mirror);
 		check(Positions.Num() == Order.Num());
