@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 
+class FProperty;
 class UBehaviorTree;
 class UBehaviorTreeGraph;
 class UBehaviorTreeGraphNode;
@@ -140,4 +141,52 @@ namespace VibeBT
 	 * followed by UpdateAvailableBlueprintClasses(); without it only native classes appear.
 	 */
 	TSharedPtr<struct FGraphNodeClassHelper> GetClassHelper(UClass* BaseClass);
+
+	/**
+	 * Whether this service treats Property as one of the node's *properties* — the single
+	 * definition shared by GetTree's "properties" map, GetNodePropertyNames, GetNodePropertyValue,
+	 * SetNodePropertyValue and SetNodeBlackboardKey.
+	 *
+	 * It is "what a human could change in the details panel": CPF_Edit, minus EditConst, Transient
+	 * and Deprecated. Everything else is either structure this service already describes another way
+	 * (a composite's Children array, a node's ParentNode back pointer), or derived state that
+	 * CommitGraph's UpdateAsset regenerates from the graph anyway (ExecutionIndex, MemoryOffset,
+	 * TreeDepth) — writing one of those reads back correct and is gone by the next commit, which is
+	 * precisely the failure mode this service exists to refuse.
+	 */
+	bool IsAuthorableProperty(const FProperty* Property);
+
+	/**
+	 * Export Property's current value on Instance against NO defaults, which is as close to a full
+	 * literal as UE's text export gets. Measured behaviour, in this engine version:
+	 *
+	 *  - Passing a default container (the CDO, say) makes FProperty::ExportText_InContainer emit
+	 *    nothing at all for any property that matches it. A node whose WaitTime happens to equal its
+	 *    class default would then be reported as "" or "()" — not a value, and not something
+	 *    SetNodePropertyValue could write back. Passing null is what keeps a value a value.
+	 *  - Passing the *instance itself* as the default container — the shape that is easiest to write
+	 *    by accident, since the container argument is already in hand — is the same bug at full
+	 *    strength: every member equals itself, so a struct exports as "()" and reads back as
+	 *    "unchanged".
+	 *  - What null defaults does NOT buy is a complete struct literal. UScriptStruct::ExportText
+	 *    substitutes a default-CONSTRUCTED struct when it is handed no defaults, so struct members
+	 *    still at their zero value are omitted whatever is passed here (Class.cpp:3560-3600). That
+	 *    is the engine's own copy/paste encoding, and it means a value read from one node and
+	 *    written to another merges rather than copies: the omitted members keep the target's
+	 *    values. Round-tripping a value onto the node it came from is exact; carrying one across
+	 *    nodes is not, and no port flag available here changes that (PPF_ExternalEditor would, but
+	 *    it also switches member names to authored names, which Blueprint-defined structs do not
+	 *    import back).
+	 *  - An empty array exports as an empty string rather than "()" — FArrayProperty emits the
+	 *    opening parenthesis with its first element and nothing at all when there are none
+	 *    (PropertyArray.cpp:1063-1116).
+	 */
+	void ExportPropertyValue(const FProperty* Property, const UObject* Instance, FString& OutValue);
+
+	/**
+	 * The authorable property named PropertyName on Instance, or nullptr with OutError explaining
+	 * whether the name is unknown or merely not authorable — two different mistakes.
+	 */
+	FProperty* FindAuthorableProperty(const UObject* Instance, const FString& PropertyName,
+		FString& OutError);
 }

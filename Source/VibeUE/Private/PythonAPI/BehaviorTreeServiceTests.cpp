@@ -1897,7 +1897,7 @@ bool FVibeBTInjectedSubNodesTest::RunTest(const FString&)
 		UBehaviorTreeService::GetNodeInfo(MainPath, Injected, InjectedInfo));
 	TestTrue(TEXT("and reported as injected"), InjectedInfo.bInjected);
 
-	// The three refusals.
+	// The refusals.
 	TestTrue(TEXT("RemoveSubNode refuses an injected decorator"),
 		UBehaviorTreeService::RemoveSubNode(MainPath, Injected)
 			.Contains(TEXT("injected from a subtree")));
@@ -1907,6 +1907,32 @@ bool FVibeBTInjectedSubNodesTest::RunTest(const FString&)
 	TestTrue(TEXT("AddDecorator refuses to attach to an injected node"),
 		UBehaviorTreeService::AddDecorator(MainPath, Injected, TEXT("BTDecorator_ForceSuccess"), -1)
 			.Contains(TEXT("injected from a subtree")));
+
+	// The property writers (Task 8). Unlike the structural mutators these have no natural barrier —
+	// they resolve a path and write — so the guard is explicit, and this is what proves it is there.
+	// The value is a real one for the property (ForceSuccess carries NodeName like every BT node), so
+	// a missing guard would genuinely write it rather than failing for an unrelated reason.
+	{
+		const FString BeforeName =
+			UBehaviorTreeService::GetNodePropertyValue(MainPath, Injected, TEXT("NodeName"));
+		TestFalse(TEXT("the injected node's NodeName is readable"), BeforeName.StartsWith(TEXT("ERROR")));
+
+		const FBTPropertySetResult NameWrite =
+			UBehaviorTreeService::SetNodePropertyValue(MainPath, Injected, TEXT("NodeName"), TEXT("Hijacked"));
+		TestFalse(TEXT("SetNodePropertyValue refuses an injected node"), NameWrite.bSuccess);
+		TestTrue(TEXT("...and says why"), NameWrite.Error.Contains(TEXT("injected from a subtree")));
+		// The echo fields are filled before the refusal, so the caller can see what it hit.
+		TestEqual(TEXT("...while still reporting what the path resolved to"), NameWrite.ResolvedNodeClass,
+			FString(TEXT("BTDecorator_ForceSuccess")));
+		TestEqual(TEXT("and the refused write changed nothing"),
+			UBehaviorTreeService::GetNodePropertyValue(MainPath, Injected, TEXT("NodeName")), BeforeName);
+
+		const FBTPropertySetResult KeyWrite = UBehaviorTreeService::SetNodeBlackboardKey(
+			MainPath, Injected, TEXT("BlackboardKey"), TEXT("Anything"));
+		TestFalse(TEXT("SetNodeBlackboardKey refuses an injected node"), KeyWrite.bSuccess);
+		TestTrue(TEXT("...and says why, rather than complaining about the property or the board"),
+			KeyWrite.Error.Contains(TEXT("injected from a subtree")));
+	}
 
 	TestTrue(TEXT("the RunBehavior node is still readable"),
 		UBehaviorTreeService::GetNodeInfo(MainPath, RunSub, RunInfo));
@@ -2029,6 +2055,447 @@ bool FVibeBTCyclicSubNodeTest::RunTest(const FString&)
 	Selector->Decorators.Reset();
 	TestEqual(TEXT("the tree still commits once the cycle is removed"),
 		UBehaviorTreeService::CompileAndSave(BTPath), FString());
+
+	return true;
+}
+
+namespace
+{
+	/** The live node instance at NodePath, read straight off the committed graph. */
+	UObject* VibeBTFindLiveInstance(const FString& BTPath, const FString& NodePath)
+	{
+		UBehaviorTree* Tree = LoadObject<UBehaviorTree>(nullptr, *BTPath);
+		UBehaviorTreeGraph* Graph = Tree ? Cast<UBehaviorTreeGraph>(Tree->BTGraph) : nullptr;
+		UBehaviorTreeGraphNode* Node = Graph ? VibeBT::ResolveNodePath(Graph, NodePath) : nullptr;
+		return Node ? ToRawPtr(Node->NodeInstance) : nullptr;
+	}
+
+	/**
+	 * The live FBlackboardKeySelector on a node.
+	 *
+	 * The resolved key ID is the whole point of SetNodeBlackboardKey and it cannot be seen from the
+	 * service's own return values: SelectedKeyID is transient (so it is not in the exported text)
+	 * and protected (so only GetSelectedKeyID() can read it). Asserting the selector's *name* would
+	 * prove nothing at all — an unresolved selector reads its name back perfectly and does nothing
+	 * at runtime, which is the entire reason that method exists.
+	 */
+	FBlackboardKeySelector* VibeBTFindLiveSelector(const FString& BTPath, const FString& NodePath,
+		const TCHAR* PropertyName)
+	{
+		UObject* Instance = VibeBTFindLiveInstance(BTPath, NodePath);
+		FStructProperty* Property = Instance
+			? CastField<FStructProperty>(Instance->GetClass()->FindPropertyByName(PropertyName))
+			: nullptr;
+		return (Property && Property->Struct == FBlackboardKeySelector::StaticStruct())
+			? Property->ContainerPtrToValuePtr<FBlackboardKeySelector>(Instance)
+			: nullptr;
+	}
+}
+
+// Node property reflection and blackboard key binding.
+//
+// Two things are being defended here, and neither is "the value came back":
+//
+//  1. The exported value is a FULL literal, never a delta against the class default. A delta is
+//     only meaningful next to the CDO it was taken against, so a value read from one node and
+//     written to another silently keeps whatever the *target* had in the members the delta omitted.
+//     The copy-between-two-Wait-nodes assertion below is what discriminates the two encodings.
+//     (Passing the instance itself as the delta container — the shape it is easiest to write by
+//     accident — is worse still: every member equals itself, so a struct exports as "()".)
+//
+//  2. A blackboard key selector is a name plus a resolved key ID, and only the ID is read at
+//     runtime. Every assertion about a binding here is therefore about GetSelectedKeyID(), read off
+//     the live instance; the name proves nothing.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBTNodePropertiesTest,
+	"VibeUE.BehaviorTree.Properties.SetAndRead", kBTTestFlags)
+bool FVibeBTNodePropertiesTest::RunTest(const FString&)
+{
+	const FString BBPath = FString(kBTTestDir) / TEXT("BB_PropsTest");
+	const FString BTPath = FString(kBTTestDir) / TEXT("BT_PropsTest");
+	FScopedFixtureReset ResetBB(BBPath);
+	FScopedFixtureReset ResetBT(BTPath);
+
+	// --- The blackboard. -------------------------------------------------------------------------
+	// Beyond the Bool and Object keys the brief calls for, the board carries a Float key and an
+	// Object(AnimMontage) key. Those are not decoration: the nodes below carry key selectors whose
+	// filters admit nothing else, and FBlackboardKeySelector::ResolveSelectedKey logs a
+	// LogBehaviorTree warning (BehaviorTreeTypes.cpp:556) — which fails the run — when
+	// InitSelection finds no key matching a filter at commit time.
+	TestTrue(TEXT("blackboard created"), UBlackboardService::CreateBlackboard(BBPath, FString()));
+	TestEqual(TEXT("Alpha (Bool) added"),
+		UBlackboardService::AddBlackboardKey(BBPath, TEXT("Alpha"), TEXT("Bool"), false), FString());
+	TestEqual(TEXT("TargetActor (Object) added"),
+		UBlackboardService::AddBlackboardKey(BBPath, TEXT("TargetActor"), TEXT("Object"), false), FString());
+	TestEqual(TEXT("TargetActor is an Actor key"),
+		UBlackboardService::SetBlackboardKeyObjectClass(BBPath, TEXT("TargetActor"),
+			TEXT("/Script/Engine.Actor")), FString());
+	TestEqual(TEXT("WaitSeconds (Float) added"),
+		UBlackboardService::AddBlackboardKey(BBPath, TEXT("WaitSeconds"), TEXT("Float"), false), FString());
+	TestEqual(TEXT("Montage (Object) added"),
+		UBlackboardService::AddBlackboardKey(BBPath, TEXT("Montage"), TEXT("Object"), false), FString());
+	TestEqual(TEXT("Montage is an AnimMontage key"),
+		UBlackboardService::SetBlackboardKeyObjectClass(BBPath, TEXT("Montage"),
+			TEXT("/Script/Engine.AnimMontage")), FString());
+
+	UBlackboardData* Board = LoadObject<UBlackboardData>(nullptr, *BBPath);
+	if (!TestNotNull(TEXT("board loaded"), Board))
+	{
+		return false;
+	}
+	const FBlackboard::FKey AlphaID = Board->GetKeyID(TEXT("Alpha"));
+	const FBlackboard::FKey TargetID = Board->GetKeyID(TEXT("TargetActor"));
+	// Without this the ID assertions below could hold for the wrong reason.
+	TestTrue(TEXT("Alpha and TargetActor resolve to distinct, valid key IDs"),
+		AlphaID != FBlackboard::InvalidKey && TargetID != FBlackboard::InvalidKey && AlphaID != TargetID);
+
+	// --- The tree. -------------------------------------------------------------------------------
+	TestEqual(TEXT("tree created"),
+		UBehaviorTreeService::CreateBehaviorTree(BTPath, BBPath), FString());
+	const FString Sel = UBehaviorTreeService::AddNode(
+		BTPath, TEXT("Root"), TEXT("BTComposite_Selector"), -1);
+	const FString Seq = UBehaviorTreeService::AddNode(BTPath, Sel, TEXT("BTComposite_Sequence"), -1);
+	const FString WaitA = UBehaviorTreeService::AddNode(BTPath, Seq, TEXT("BTTask_Wait"), -1);
+	const FString WaitB = UBehaviorTreeService::AddNode(BTPath, Seq, TEXT("BTTask_Wait"), -1);
+	const FString MoveTo = UBehaviorTreeService::AddNode(BTPath, Sel, TEXT("BTTask_MoveTo"), -1);
+	const FString Dec = UBehaviorTreeService::AddDecorator(
+		BTPath, Seq, TEXT("BTDecorator_Blackboard"), -1);
+	// Bailing out rather than continuing: every assertion below addresses these paths, and a suite
+	// of "no node at path" failures would say nothing about what actually broke.
+	if (!TestFalse(TEXT("selector added"), Sel.StartsWith(TEXT("ERROR")))
+		|| !TestFalse(TEXT("sequence added"), Seq.StartsWith(TEXT("ERROR")))
+		|| !TestFalse(TEXT("first wait added"), WaitA.StartsWith(TEXT("ERROR")))
+		|| !TestFalse(TEXT("second wait added"), WaitB.StartsWith(TEXT("ERROR")))
+		|| !TestFalse(TEXT("move-to added"), MoveTo.StartsWith(TEXT("ERROR")))
+		|| !TestFalse(TEXT("decorator added"), Dec.StartsWith(TEXT("ERROR"))))
+	{
+		AddError(FString::Printf(TEXT("fixture build failed: %s | %s | %s | %s | %s | %s"),
+			*Sel, *Seq, *WaitA, *WaitB, *MoveTo, *Dec));
+		return false;
+	}
+
+	// --- GetNodePropertyNames. -------------------------------------------------------------------
+	const TArray<FBTPropertyInfo> WaitProps =
+		UBehaviorTreeService::GetNodePropertyNames(BTPath, WaitA);
+	const FBTPropertyInfo* WaitTimeInfo = WaitProps.FindByPredicate(
+		[](const FBTPropertyInfo& P){ return P.Name == TEXT("WaitTime"); });
+	if (TestNotNull(TEXT("BTTask_Wait reports its WaitTime property"), WaitTimeInfo))
+	{
+		// UE 5.8 changed this from a bare float to a struct that can bind to a blackboard key
+		// (BTTask_Wait.h:24) — recorded because it is what the value literals below have to look like.
+		AddInfo(FString::Printf(TEXT("BTTask_Wait::WaitTime is of type %s, value %s"),
+			*WaitTimeInfo->Type, *WaitTimeInfo->Value));
+		TestFalse(TEXT("...and it is not a blackboard key selector"),
+			WaitTimeInfo->bIsBlackboardKeySelector);
+		TestFalse(TEXT("...and reports a value"), WaitTimeInfo->Value.IsEmpty());
+	}
+	TestFalse(TEXT("structure is not reported as a settable property"),
+		UBehaviorTreeService::GetNodePropertyNames(BTPath, Sel).ContainsByPredicate(
+			[](const FBTPropertyInfo& P){ return P.Name == TEXT("Children"); }));
+	// The graph's Root node carries no instance at all.
+	TestEqual(TEXT("the Root node reports no properties"),
+		UBehaviorTreeService::GetNodePropertyNames(BTPath, TEXT("Root")).Num(), 0);
+
+	const TArray<FBTPropertyInfo> DecProps = UBehaviorTreeService::GetNodePropertyNames(BTPath, Dec);
+	const FBTPropertyInfo* KeyInfo = DecProps.FindByPredicate(
+		[](const FBTPropertyInfo& P){ return P.Name == TEXT("BlackboardKey"); });
+	if (TestNotNull(TEXT("the decorator reports its BlackboardKey property"), KeyInfo))
+	{
+		TestTrue(TEXT("...flagged as a blackboard key selector"), KeyInfo->bIsBlackboardKeySelector);
+	}
+	TestTrue(TEXT("and a plain property on the same node is not flagged"),
+		DecProps.ContainsByPredicate([](const FBTPropertyInfo& P)
+		{
+			return P.Name == TEXT("NodeName") && !P.bIsBlackboardKeySelector;
+		}));
+
+	// --- SetNodePropertyValue: the ordinary case. -------------------------------------------------
+	const FBTPropertySetResult WaitWrite = UBehaviorTreeService::SetNodePropertyValue(
+		BTPath, WaitA, TEXT("WaitTime"), TEXT("(DefaultValue=3.500000)"));
+	TestTrue(TEXT("WaitTime written"), WaitWrite.bSuccess);
+	TestEqual(TEXT("no error on success"), WaitWrite.Error, FString());
+	TestEqual(TEXT("the response names the node it actually hit"), WaitWrite.ResolvedNodeClass,
+		FString(TEXT("BTTask_Wait")));
+	TestTrue(TEXT("the read-back carries the value that was written"),
+		WaitWrite.ValueAfterWrite.Contains(TEXT("3.500000")));
+	TestEqual(TEXT("GetNodePropertyValue agrees with ValueAfterWrite"),
+		UBehaviorTreeService::GetNodePropertyValue(BTPath, WaitA, TEXT("WaitTime")),
+		WaitWrite.ValueAfterWrite);
+
+	// --- The encoding, measured rather than assumed. -----------------------------------------------
+	//
+	// Three encodings of the same live value: against no defaults (what this service emits), against
+	// the class default object, and against the instance itself. The last two are what the property
+	// reader can quietly become, and neither is a value a caller could write back.
+	FString DeltaVsCdo;
+	FString DeltaVsSelf;
+	FString CdoLiteral;
+	if (UObject* WaitInstance = VibeBTFindLiveInstance(BTPath, WaitA))
+	{
+		if (FProperty* Property = WaitInstance->GetClass()->FindPropertyByName(TEXT("WaitTime")))
+		{
+			UObject* Cdo = WaitInstance->GetClass()->GetDefaultObject();
+			Property->ExportText_InContainer(0, DeltaVsCdo, WaitInstance, Cdo, WaitInstance, PPF_None);
+			Property->ExportText_InContainer(0, DeltaVsSelf, WaitInstance, WaitInstance,
+				WaitInstance, PPF_None);
+			VibeBT::ExportPropertyValue(Property, Cdo, CdoLiteral);
+		}
+	}
+	AddInfo(FString::Printf(
+		TEXT("WaitTime encodings — no defaults: '%s' | vs CDO: '%s' | vs self: '%s' | the CDO's own "
+			 "value: '%s'"),
+		*WaitWrite.ValueAfterWrite, *DeltaVsCdo, *DeltaVsSelf, *CdoLiteral));
+	TestFalse(TEXT("the class default is itself reported as a value, not as an empty delta"),
+		CdoLiteral.IsEmpty() || CdoLiteral == TEXT("()"));
+
+	// Same node, straight back: the round trip this service actually promises.
+	TestTrue(TEXT("the second Wait takes a two-member literal"),
+		UBehaviorTreeService::SetNodePropertyValue(
+			BTPath, WaitB, TEXT("WaitTime"), TEXT("(Key=\"WaitSeconds\",DefaultValue=1.000000)")).bSuccess);
+	const FString ValueB = UBehaviorTreeService::GetNodePropertyValue(BTPath, WaitB, TEXT("WaitTime"));
+	TestTrue(TEXT("both members are reported, not just the one that differs from the CDO"),
+		ValueB.Contains(TEXT("WaitSeconds")) && ValueB.Contains(TEXT("1.000000")));
+	TestTrue(TEXT("the value it reported is accepted back"),
+		UBehaviorTreeService::SetNodePropertyValue(BTPath, WaitB, TEXT("WaitTime"), ValueB).bSuccess);
+	TestEqual(TEXT("get -> set -> get on the same node reproduces the struct exactly"),
+		UBehaviorTreeService::GetNodePropertyValue(BTPath, WaitB, TEXT("WaitTime")), ValueB);
+
+	// The discriminating case for the export decision: a value that happens to EQUAL the class
+	// default. Exported against the CDO it collapses to "()" — indistinguishable from "unset", and
+	// worthless as an input. Exported against no defaults it is still the value it is.
+	// Built from the CDO's own literal rather than a hardcoded 5.0, so this keeps meaning the same
+	// thing if Epic changes BTTask_Wait's default. The explicit Key="None" is what clears the
+	// non-default member the previous write left on this node.
+	FString AtDefaultLiteral = CdoLiteral;
+	if (TestTrue(TEXT("the class default literal is a struct literal"), AtDefaultLiteral.StartsWith(TEXT("("))))
+	{
+		AtDefaultLiteral.InsertAt(1, TEXT("Key=\"None\","));
+	}
+	TestTrue(TEXT("the second Wait is set to exactly its class default"),
+		UBehaviorTreeService::SetNodePropertyValue(BTPath, WaitB, TEXT("WaitTime"), AtDefaultLiteral).bSuccess);
+	const FString ValueAtDefault =
+		UBehaviorTreeService::GetNodePropertyValue(BTPath, WaitB, TEXT("WaitTime"));
+	AddInfo(FString::Printf(TEXT("a value equal to the class default reads back as '%s' (CDO literal "
+								 "'%s', delta against the CDO would be '()')"),
+		*ValueAtDefault, *CdoLiteral));
+	TestTrue(TEXT("a value equal to the class default is still reported in full"),
+		ValueAtDefault.Contains(TEXT("DefaultValue")));
+	TestEqual(TEXT("...and matches the class default's own literal"), ValueAtDefault, CdoLiteral);
+
+	// Carrying a struct value BETWEEN nodes is a merge, not a copy, because UScriptStruct::ExportText
+	// omits members left at the struct's zero value whatever defaults it is handed. Asserted rather
+	// than glossed over: it is the one thing the documented encoding cannot do, and it would be a
+	// silent wrong answer for anyone who assumed otherwise.
+	const FString ValueA = UBehaviorTreeService::GetNodePropertyValue(BTPath, WaitA, TEXT("WaitTime"));
+	TestFalse(TEXT("the source value omits its default-valued Key member"),
+		ValueA.Contains(TEXT("Key")));
+	TestTrue(TEXT("the target is given a non-default Key first"),
+		UBehaviorTreeService::SetNodePropertyValue(
+			BTPath, WaitB, TEXT("WaitTime"), TEXT("(Key=\"WaitSeconds\",DefaultValue=1.000000)")).bSuccess);
+	TestTrue(TEXT("and accepts the other node's value"),
+		UBehaviorTreeService::SetNodePropertyValue(BTPath, WaitB, TEXT("WaitTime"), ValueA).bSuccess);
+	const FString Merged = UBehaviorTreeService::GetNodePropertyValue(BTPath, WaitB, TEXT("WaitTime"));
+	AddInfo(FString::Printf(TEXT("cross-node copy of '%s' onto a node with Key=\"WaitSeconds\" gives "
+								 "'%s' — a merge, which is the engine's struct encoding"),
+		*ValueA, *Merged));
+	TestTrue(TEXT("the omitted member kept the TARGET's value, which is what makes it a merge"),
+		Merged.Contains(TEXT("WaitSeconds")));
+
+	// --- An array property, round-tripped the same way. --------------------------------------------
+	// UE 5.8's AIModule has no BT node class with an editable array property at all (checked: the
+	// only TArray UPROPERTYs on BT types are FBlackboardKeySelector::AllowedTypes, which is
+	// transient, and UBlackboardData::Keys), so this uses one of the project's own tasks.
+	const FString Idle = UBehaviorTreeService::AddNode(BTPath, Sel, TEXT("NSTask_PatrolIdleWait"), -1);
+	if (TestFalse(TEXT("a task carrying an array property was added"), Idle.StartsWith(TEXT("ERROR"))))
+	{
+		const FBTPropertySetResult ArrayWrite = UBehaviorTreeService::SetNodePropertyValue(
+			BTPath, Idle, TEXT("IdleMontages"), TEXT("(None,None)"));
+		TestTrue(TEXT("an array literal is accepted"), ArrayWrite.bSuccess);
+		AddInfo(FString::Printf(TEXT("IdleMontages after write: '%s' (error: '%s')"),
+			*ArrayWrite.ValueAfterWrite, *ArrayWrite.Error));
+
+		const FString ArrayValue =
+			UBehaviorTreeService::GetNodePropertyValue(BTPath, Idle, TEXT("IdleMontages"));
+		TestEqual(TEXT("the array reads back as it was written"), ArrayValue, FString(TEXT("(None,None)")));
+		TestTrue(TEXT("and can be written straight back"),
+			UBehaviorTreeService::SetNodePropertyValue(BTPath, Idle, TEXT("IdleMontages"), ArrayValue).bSuccess);
+		TestEqual(TEXT("get -> set -> get reproduces the array exactly"),
+			UBehaviorTreeService::GetNodePropertyValue(BTPath, Idle, TEXT("IdleMontages")), ArrayValue);
+
+		// An empty array exports as an empty string, not "()" — FArrayProperty::ExportTextInnerItem
+		// opens the parenthesis on the first element and emits nothing at all when there are none
+		// (PropertyArray.cpp:1063-1116). Asserted rather than glossed over: it is the one value this
+		// service reports that cannot be handed straight back to it.
+		TestTrue(TEXT("the array can be emptied again"),
+			UBehaviorTreeService::SetNodePropertyValue(BTPath, Idle, TEXT("IdleMontages"), TEXT("()")).bSuccess);
+		TestEqual(TEXT("an empty array reads back as an empty string"),
+			UBehaviorTreeService::GetNodePropertyValue(BTPath, Idle, TEXT("IdleMontages")), FString());
+	}
+
+	// --- Refusals on the generic setter. -----------------------------------------------------------
+	const FBTPropertySetResult NoSuchProperty = UBehaviorTreeService::SetNodePropertyValue(
+		BTPath, WaitA, TEXT("NoSuchProperty"), TEXT("1"));
+	TestFalse(TEXT("a nonexistent property is refused"), NoSuchProperty.bSuccess);
+	TestTrue(TEXT("...with an explanation"), NoSuchProperty.Error.Contains(TEXT("has no property")));
+
+	// A real property that is structure rather than settable state. The message matters: "it errored"
+	// would also hold if the value had simply failed to parse.
+	const FBTPropertySetResult Structure = UBehaviorTreeService::SetNodePropertyValue(
+		BTPath, Sel, TEXT("Children"), TEXT("()"));
+	TestFalse(TEXT("a non-editable property is refused"), Structure.bSuccess);
+	TestTrue(TEXT("...as not editable, not as missing"), Structure.Error.Contains(TEXT("not editable")));
+
+	// A value that cannot be parsed must leave the property exactly as it was: ImportText applies a
+	// struct literal member by member and stops where it fails.
+	//
+	// Deliberately garbage from the first character. A literal that is merely wrong in one member
+	// (say "(Key=\"NoSuchKey\",DefaultValue=**nonsense**)") is NOT refused: the struct importer takes
+	// the members it understands, coerces what it can, and returns success — measured, and the
+	// reason this test does not use that shape.
+	const FString BeforeBadWrite =
+		UBehaviorTreeService::GetNodePropertyValue(BTPath, WaitA, TEXT("WaitTime"));
+	const FBTPropertySetResult BadValue = UBehaviorTreeService::SetNodePropertyValue(
+		BTPath, WaitA, TEXT("WaitTime"), TEXT("not-a-struct-literal"));
+	TestFalse(TEXT("an unparseable value is refused"), BadValue.bSuccess);
+	TestTrue(TEXT("...saying it could not parse it"), BadValue.Error.Contains(TEXT("could not parse")));
+	TestEqual(TEXT("and the half-applied literal was rolled back"),
+		UBehaviorTreeService::GetNodePropertyValue(BTPath, WaitA, TEXT("WaitTime")), BeforeBadWrite);
+
+	// Reads report their own failures rather than returning something value-shaped.
+	TestTrue(TEXT("reading a nonexistent property errors"),
+		UBehaviorTreeService::GetNodePropertyValue(BTPath, WaitA, TEXT("NoSuchProperty"))
+			.StartsWith(TEXT("ERROR")));
+	TestTrue(TEXT("reading through a nonexistent path errors"),
+		UBehaviorTreeService::GetNodePropertyValue(BTPath, TEXT("Root/Nope"), TEXT("NodeName"))
+			.StartsWith(TEXT("ERROR")));
+
+	// --- SetNodeBlackboardKey. ----------------------------------------------------------------------
+	const FBTPropertySetResult Bind = UBehaviorTreeService::SetNodeBlackboardKey(
+		BTPath, Dec, TEXT("BlackboardKey"), TEXT("Alpha"));
+	TestTrue(TEXT("the decorator's key is bound"), Bind.bSuccess);
+	TestEqual(TEXT("no error on success"), Bind.Error, FString());
+
+	// THE assertion. The name reads back correctly whether or not the binding resolved, so the ID is
+	// the only thing that distinguishes a working node from one that silently does nothing.
+	FBlackboardKeySelector* DecSelector = VibeBTFindLiveSelector(BTPath, Dec, TEXT("BlackboardKey"));
+	if (TestNotNull(TEXT("the decorator's live selector is reachable"), DecSelector))
+	{
+		AddInfo(FString::Printf(TEXT("decorator selector: name=%s id=%d (Alpha=%d, TargetActor=%d)"),
+			*DecSelector->SelectedKeyName.ToString(), (int32)DecSelector->GetSelectedKeyID(),
+			(int32)AlphaID, (int32)TargetID));
+		TestEqual(TEXT("the selector resolved to Alpha's key ID, not merely to its name"),
+			DecSelector->GetSelectedKeyID(), AlphaID);
+	}
+
+	// A key that does not exist fails loudly, and changes nothing.
+	const FBTPropertySetResult Missing = UBehaviorTreeService::SetNodeBlackboardKey(
+		BTPath, Dec, TEXT("BlackboardKey"), TEXT("NoSuchKey"));
+	TestFalse(TEXT("binding a nonexistent key is refused"), Missing.bSuccess);
+	TestTrue(TEXT("...naming the key and the board"),
+		Missing.Error.Contains(TEXT("NoSuchKey")) && Missing.Error.Contains(TEXT("BB_PropsTest")));
+	if (DecSelector)
+	{
+		TestEqual(TEXT("and the refused binding left the working one alone"),
+			DecSelector->GetSelectedKeyID(), AlphaID);
+	}
+
+	// The type filter. UBTTask_MoveTo accepts Object(AActor) and Vector keys only
+	// (BTTask_MoveTo.cpp:35-36), and ResolveSelectedKey does NOT check the filter — a Bool key would
+	// resolve to a perfectly valid ID here, so nothing but an explicit filter test can refuse it.
+	const FBTPropertySetResult WrongType = UBehaviorTreeService::SetNodeBlackboardKey(
+		BTPath, MoveTo, TEXT("BlackboardKey"), TEXT("Alpha"));
+	TestFalse(TEXT("binding a Bool key to an Object/Vector selector is refused"), WrongType.bSuccess);
+	TestTrue(TEXT("...as a type mismatch, not as a missing key"),
+		WrongType.Error.Contains(TEXT("does not accept")));
+	AddInfo(FString::Printf(TEXT("type-filter refusal: %s"), *WrongType.Error));
+
+	const FBTPropertySetResult RightType = UBehaviorTreeService::SetNodeBlackboardKey(
+		BTPath, MoveTo, TEXT("BlackboardKey"), TEXT("TargetActor"));
+	TestTrue(TEXT("...while an accepted type binds"), RightType.bSuccess);
+	if (FBlackboardKeySelector* MoveSelector = VibeBTFindLiveSelector(BTPath, MoveTo, TEXT("BlackboardKey")))
+	{
+		TestEqual(TEXT("and resolves to TargetActor's key ID"),
+			MoveSelector->GetSelectedKeyID(), TargetID);
+	}
+
+	// Wrong tool for the property.
+	const FBTPropertySetResult NotASelector = UBehaviorTreeService::SetNodeBlackboardKey(
+		BTPath, WaitA, TEXT("WaitTime"), TEXT("Alpha"));
+	TestFalse(TEXT("SetNodeBlackboardKey refuses a property that is not a key selector"),
+		NotASelector.bSuccess);
+	TestTrue(TEXT("...and says so"),
+		NotASelector.Error.Contains(TEXT("not a blackboard key selector")));
+
+	// --- Why the dedicated setter exists. -----------------------------------------------------------
+	// The generic path writes the selector's NAME and nothing else. Committing that runs
+	// UBTNode::PreSave (BTNode.cpp:231-254), which resets any selector bound to a key its filter
+	// forbids — so the generic write reports success and leaves the node bound to nothing, which is
+	// exactly the failure SetNodeBlackboardKey refuses up front.
+	AddExpectedMessagePlain(TEXT("but the key type isn't allowed"), ELogVerbosity::Warning,
+		EAutomationExpectedMessageFlags::Contains, /*Occurrences*/ 0);
+	const FBTPropertySetResult GenericWrite = UBehaviorTreeService::SetNodePropertyValue(
+		BTPath, MoveTo, TEXT("BlackboardKey"), TEXT("(SelectedKeyName=\"Alpha\")"));
+	AddInfo(FString::Printf(TEXT("generic write of a mistyped key: success=%s, value after write=%s"),
+		GenericWrite.bSuccess ? TEXT("true") : TEXT("false"), *GenericWrite.ValueAfterWrite));
+	TestTrue(TEXT("the generic path accepts the mistyped binding (it has no filter check)"),
+		GenericWrite.bSuccess);
+	if (FBlackboardKeySelector* MoveSelector = VibeBTFindLiveSelector(BTPath, MoveTo, TEXT("BlackboardKey")))
+	{
+		// The saved node is bound to nothing at all, having reported success.
+		TestTrue(TEXT("...and the commit discarded the binding it reported writing"),
+			MoveSelector->SelectedKeyName.IsNone());
+	}
+	TestEqual(TEXT("and the read-back is the saved state, not an echo of the input"),
+		GenericWrite.ValueAfterWrite,
+		UBehaviorTreeService::GetNodePropertyValue(BTPath, MoveTo, TEXT("BlackboardKey")));
+	TestFalse(TEXT("which is no longer the value that was asked for"),
+		GenericWrite.ValueAfterWrite.Contains(TEXT("Alpha")));
+
+	// ...and the dedicated setter puts it back.
+	TestTrue(TEXT("the dedicated setter restores a working binding"),
+		UBehaviorTreeService::SetNodeBlackboardKey(BTPath, MoveTo, TEXT("BlackboardKey"),
+			TEXT("TargetActor")).bSuccess);
+	if (FBlackboardKeySelector* MoveSelector = VibeBTFindLiveSelector(BTPath, MoveTo, TEXT("BlackboardKey")))
+	{
+		TestEqual(TEXT("resolved again"), MoveSelector->GetSelectedKeyID(), TargetID);
+	}
+
+	// --- A tree with no blackboard has nothing to bind against. -------------------------------------
+	const FString BarePath = FString(kBTTestDir) / TEXT("BT_PropsBareTest");
+	FScopedFixtureReset ResetBare(BarePath);
+	TestEqual(TEXT("bare tree created"),
+		UBehaviorTreeService::CreateBehaviorTree(BarePath, FString()), FString());
+	const FString BareSel = UBehaviorTreeService::AddNode(
+		BarePath, TEXT("Root"), TEXT("BTComposite_Selector"), -1);
+	const FString BareDec = UBehaviorTreeService::AddDecorator(
+		BarePath, BareSel, TEXT("BTDecorator_Blackboard"), -1);
+	if (TestFalse(TEXT("bare decorator added"), BareDec.StartsWith(TEXT("ERROR"))))
+	{
+		const FBTPropertySetResult NoBoard = UBehaviorTreeService::SetNodeBlackboardKey(
+			BarePath, BareDec, TEXT("BlackboardKey"), TEXT("Alpha"));
+		TestFalse(TEXT("binding against a tree with no blackboard is refused"), NoBoard.bSuccess);
+		TestTrue(TEXT("...saying that is why"), NoBoard.Error.Contains(TEXT("no blackboard asset")));
+	}
+
+	// --- The asset survived all of it. ---------------------------------------------------------------
+	TestEqual(TEXT("the tree still commits"), UBehaviorTreeService::CompileAndSave(BTPath), FString());
+	TestEqual(TEXT("and the edited value is still there afterwards"),
+		UBehaviorTreeService::GetNodePropertyValue(BTPath, WaitA, TEXT("WaitTime")), BeforeBadWrite);
+
+	// GetTree's "properties" map and GetNodePropertyValue are the same encoding, since a caller that
+	// reads a value out of the dump must be able to write it back.
+	const TSharedPtr<FJsonObject> Dump = ParseTree(UBehaviorTreeService::GetTree(BTPath));
+	const TSharedPtr<FJsonObject> WaitObject = FindNodeByPath(Dump, WaitA);
+	if (TestTrue(TEXT("the edited Wait node is in the dump"), WaitObject.IsValid()))
+	{
+		const TSharedPtr<FJsonObject>& Props = WaitObject->GetObjectField(TEXT("properties"));
+		FString DumpValue;
+		if (TestTrue(TEXT("the dump reports WaitTime as edited"),
+			Props->TryGetStringField(TEXT("WaitTime"), DumpValue)))
+		{
+			TestEqual(TEXT("and reports it in the same encoding GetNodePropertyValue does"),
+				DumpValue, UBehaviorTreeService::GetNodePropertyValue(BTPath, WaitA, TEXT("WaitTime")));
+		}
+	}
 
 	return true;
 }

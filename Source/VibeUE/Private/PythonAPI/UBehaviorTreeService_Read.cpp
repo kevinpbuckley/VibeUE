@@ -8,6 +8,7 @@
 #include "BehaviorTree/BTDecorator.h"
 #include "BehaviorTree/BTService.h"
 #include "BehaviorTree/BTTaskNode.h"
+#include "BehaviorTree/BehaviorTreeTypes.h"
 #include "BehaviorTreeGraph.h"
 #include "BehaviorTreeGraphNode.h"
 #include "BehaviorTreeGraphNode_CompositeDecorator.h"
@@ -96,11 +97,16 @@ namespace VibeBTRead
 	 * The node's edited state: every property a human could have changed in the details panel whose
 	 * value differs from the class default.
 	 *
-	 * Scoped to CPF_Edit deliberately. The alternative — every UPROPERTY that differs from the CDO —
+	 * Scoped to VibeBT::IsAuthorableProperty deliberately — the same definition GetNodePropertyNames
+	 * and SetNodePropertyValue use. The alternative — every UPROPERTY that differs from the CDO —
 	 * would report a composite's own Children array, its Services array and its ParentNode back
 	 * pointer as "properties", which is structure this JSON already describes as children /
-	 * decorators / services and which nothing may set directly. What is left is exactly the set a
-	 * later SetNodeProperty could round-trip.
+	 * decorators / services and which nothing may set directly. What is left is exactly the set
+	 * SetNodePropertyValue round-trips.
+	 *
+	 * The CDO is what decides *whether* a property is reported, and is deliberately not used to
+	 * export it: an export against defaults is a delta, and a delta of an array is "(3=...)", which
+	 * is not a value SetNodePropertyValue could read back. See VibeBT::ExportPropertyValue.
 	 */
 	TSharedPtr<FJsonObject> CollectEditedProperties(const UObject* Instance)
 	{
@@ -120,8 +126,7 @@ namespace VibeBTRead
 		for (TFieldIterator<FProperty> It(Class); It; ++It)
 		{
 			const FProperty* Property = *It;
-			if (!Property->HasAnyPropertyFlags(CPF_Edit)
-				|| Property->HasAnyPropertyFlags(CPF_EditConst | CPF_Transient | CPF_Deprecated))
+			if (!VibeBT::IsAuthorableProperty(Property))
 			{
 				continue;
 			}
@@ -131,7 +136,7 @@ namespace VibeBTRead
 			}
 
 			FString Value;
-			Property->ExportText_InContainer(0, Value, Instance, Defaults, nullptr, PPF_None);
+			VibeBT::ExportPropertyValue(Property, Instance, Value);
 			Properties->SetStringField(Property->GetName(), Value);
 		}
 
@@ -328,4 +333,110 @@ bool UBehaviorTreeService::GetNodeInfo(const FString& AssetPath, const FString& 
 	OutInfo.bInjected = Node->bInjectedNode != 0;
 	OutInfo.bHasCompositeDecorator = HasCompositeDecorator(Node);
 	return true;
+}
+
+namespace VibeBTRead
+{
+	/**
+	 * The node instance at NodePath, loaded read-only, or null with OutError set.
+	 *
+	 * No EnsureGraph, for the same reason GetTree has none: creating the editor graph here would
+	 * make reading a property a write to the asset.
+	 */
+	UObject* ResolveInstanceForRead(const FString& AssetPath, const FString& NodePath, FString& OutError)
+	{
+		UBehaviorTree* Tree =
+			LoadObject<UBehaviorTree>(nullptr, *AssetPath, nullptr, LOAD_NoWarn | LOAD_Quiet);
+		if (!Tree)
+		{
+			OutError = FString::Printf(TEXT("Behavior Tree not found: %s"), *AssetPath);
+			return nullptr;
+		}
+
+		UBehaviorTreeGraph* Graph = Cast<UBehaviorTreeGraph>(Tree->BTGraph);
+		if (!Graph)
+		{
+			OutError = FString::Printf(TEXT("%s has no editor graph"), *AssetPath);
+			return nullptr;
+		}
+
+		const UBehaviorTreeGraphNode* Node = VibeBT::ResolveNodePath(Graph, NodePath);
+		if (!Node)
+		{
+			OutError = FString::Printf(
+				TEXT("No node at path '%s' in %s (nothing there, or the path is ambiguous and needs an "
+					 "index, as in 'Sequence[1]')"),
+				*NodePath, *AssetPath);
+			return nullptr;
+		}
+
+		UObject* Instance = ToRawPtr(Node->NodeInstance);
+		if (!Instance)
+		{
+			OutError = FString::Printf(
+				TEXT("'%s' carries no Behavior Tree node instance, so it has no properties (the graph's "
+					 "Root node is always in this state)"),
+				*NodePath);
+			return nullptr;
+		}
+		return Instance;
+	}
+}
+
+TArray<FBTPropertyInfo> UBehaviorTreeService::GetNodePropertyNames(const FString& AssetPath,
+	const FString& NodePath)
+{
+	TArray<FBTPropertyInfo> Result;
+
+	FString Error;
+	const UObject* Instance = ResolveInstanceForRead(AssetPath, NodePath, Error);
+	if (!Instance)
+	{
+		// No error channel on this signature; the empty array is documented as "nothing addressable
+		// there", and GetNodeInfo is what distinguishes the cases.
+		return Result;
+	}
+
+	for (TFieldIterator<FProperty> It(Instance->GetClass()); It; ++It)
+	{
+		const FProperty* Property = *It;
+		if (!VibeBT::IsAuthorableProperty(Property))
+		{
+			continue;
+		}
+
+		FBTPropertyInfo Info;
+		Info.Name = Property->GetName();
+		Info.Type = Property->GetCPPType();
+		VibeBT::ExportPropertyValue(Property, Instance, Info.Value);
+
+		const FStructProperty* StructProperty = CastField<FStructProperty>(Property);
+		Info.bIsBlackboardKeySelector =
+			StructProperty && StructProperty->Struct == FBlackboardKeySelector::StaticStruct();
+
+		Result.Add(MoveTemp(Info));
+	}
+
+	return Result;
+}
+
+FString UBehaviorTreeService::GetNodePropertyValue(const FString& AssetPath, const FString& NodePath,
+	const FString& PropertyName)
+{
+	FString Error;
+	const UObject* Instance = ResolveInstanceForRead(AssetPath, NodePath, Error);
+	if (!Instance)
+	{
+		return FString::Printf(TEXT("ERROR: %s"), *Error);
+	}
+
+	const FProperty* Property = VibeBT::FindAuthorableProperty(Instance, PropertyName, Error);
+	if (!Property)
+	{
+		return FString::Printf(TEXT("ERROR: %s"), *Error);
+	}
+
+	FString Value;
+	VibeBT::ExportPropertyValue(Property, Instance, Value);
+	return Value;
 }

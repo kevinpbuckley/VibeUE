@@ -17,6 +17,7 @@
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "UObject/Package.h"
+#include "UObject/UnrealType.h"
 #include "UObject/UObjectGlobals.h"
 
 namespace VibeBT
@@ -560,6 +561,61 @@ namespace VibeBT
 
 		GClassHelperCache.Add(BaseClass, Helper);
 		return Helper;
+	}
+
+	bool IsAuthorableProperty(const FProperty* Property)
+	{
+		return Property
+			&& Property->HasAnyPropertyFlags(CPF_Edit)
+			&& !Property->HasAnyPropertyFlags(CPF_EditConst | CPF_Transient | CPF_Deprecated);
+	}
+
+	void ExportPropertyValue(const FProperty* Property, const UObject* Instance, FString& OutValue)
+	{
+		OutValue.Reset();
+		if (!Property || !Instance)
+		{
+			return;
+		}
+
+		// The fourth argument is the DELTA container, and passing one is what turns a value into a
+		// diff — including passing Instance itself, which turns every value into "()". It is
+		// deliberately null here; see the header for the measured behaviour.
+		Property->ExportText_InContainer(0, OutValue, Instance, /*Delta*/ nullptr,
+			const_cast<UObject*>(Instance), PPF_None);
+	}
+
+	FProperty* FindAuthorableProperty(const UObject* Instance, const FString& PropertyName,
+		FString& OutError)
+	{
+		if (!Instance)
+		{
+			OutError = TEXT("node carries no instance, so it has no properties");
+			return nullptr;
+		}
+
+		UClass* Class = Instance->GetClass();
+		FProperty* Property = Class->FindPropertyByName(FName(*PropertyName));
+		if (!Property)
+		{
+			OutError = FString::Printf(
+				TEXT("%s has no property '%s'. Use GetNodePropertyNames to list what is settable."),
+				*Class->GetName(), *PropertyName);
+			return nullptr;
+		}
+
+		if (!IsAuthorableProperty(Property))
+		{
+			// Deliberately distinct from "no such property": the name is right and the answer is
+			// still no, which is a different thing for a caller to know.
+			OutError = FString::Printf(
+				TEXT("%s::%s is not editable (it is structure, transient or derived state that the "
+					 "commit regenerates), so setting it would report success and change nothing"),
+				*Class->GetName(), *PropertyName);
+			return nullptr;
+		}
+
+		return Property;
 	}
 
 	TArray<UBehaviorTreeGraphNode*> GetChildNodes(const UBehaviorTreeGraphNode* Node)

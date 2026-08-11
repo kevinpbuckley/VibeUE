@@ -9,6 +9,9 @@
 #include "BehaviorTree/BTNode.h"
 #include "BehaviorTree/BTService.h"
 #include "BehaviorTree/BTTaskNode.h"
+#include "BehaviorTree/BehaviorTreeTypes.h"
+#include "BehaviorTree/Blackboard/BlackboardKeyType.h"
+#include "BehaviorTree/BlackboardData.h"
 #include "BehaviorTree/Composites/BTComposite_SimpleParallel.h"
 #include "BehaviorTree/Tasks/BTTask_RunBehavior.h"
 #include "BehaviorTreeGraph.h"
@@ -23,6 +26,8 @@
 #include "BehaviorTreeServiceInternal.h"
 #include "EdGraph/EdGraphPin.h"
 #include "EdGraph/EdGraphSchema.h"
+#include "Misc/StringOutputDevice.h"
+#include "UObject/UnrealType.h"
 
 /**
  * Structural writes to a Behavior Tree's editor graph.
@@ -1142,4 +1147,294 @@ FString UBehaviorTreeService::SetNodeName(const FString& AssetPath, const FStrin
 	Instance->NodeName = NewName;
 
 	return VibeBT::CommitGraph(Tree, Graph);
+}
+
+namespace VibeBTEdit
+{
+	/**
+	 * The node instance at NodePath, ready to be written, or null with Result.Error set.
+	 *
+	 * The echo fields are filled BEFORE any refusal, so a caller whose path resolved to the wrong
+	 * node can see that from the response rather than from the error text alone.
+	 *
+	 * The injected-node guard is here rather than left to the structural mutators' natural barriers:
+	 * those bail on a null input pin or in ResolveChildSlot, and a property write has no such
+	 * barrier — it resolves a path and writes. An injected node is a copy that
+	 * UBehaviorTreeGraphNode_SubtreeTask::UpdateInjectedNodes rebuilds from the subtree asset, so a
+	 * property written onto one reports success, saves, and is silently replaced by the subtree's
+	 * value on the next graph update.
+	 */
+	UObject* ResolveInstanceForWrite(UBehaviorTreeGraph* Graph, const FString& NodePath,
+		FBTPropertySetResult& Result)
+	{
+		UBehaviorTreeGraphNode* Node = VibeBT::ResolveNodePath(Graph, NodePath);
+		if (!Node)
+		{
+			Result.Error = FString::Printf(
+				TEXT("No node at path '%s' (nothing there, or the path is ambiguous and needs an index, "
+					 "as in 'Sequence[1]')"),
+				*NodePath);
+			return nullptr;
+		}
+
+		Result.ResolvedNodeClass = Node->NodeInstance
+			? Node->NodeInstance->GetClass()->GetName()
+			: FString();
+		Result.ResolvedNodeName = Node->GetNodeTitle(ENodeTitleType::ListView).ToString();
+
+		if (Node->bInjectedNode)
+		{
+			Result.Error = FString::Printf(
+				TEXT("'%s' was injected from a subtree and is read-only here. The engine regenerates "
+					 "injected nodes from the subtree asset, so a property written on one is discarded "
+					 "on the next graph update. Edit the subtree asset instead."),
+				*NodePath);
+			return nullptr;
+		}
+
+		UObject* Instance = ToRawPtr(Node->NodeInstance);
+		if (!Instance)
+		{
+			Result.Error = FString::Printf(
+				TEXT("'%s' carries no Behavior Tree node instance, so it has no properties to set (the "
+					 "graph's Root node is always in this state)"),
+				*NodePath);
+			return nullptr;
+		}
+		return Instance;
+	}
+
+	/**
+	 * Whether the selector's type filter admits this key — the same test
+	 * FBlackboardKeySelector::InitSelection applies when it picks a key for itself
+	 * (BehaviorTreeTypes.cpp:571-586), and the same one FBlackboardKeySelector::PreSave applies
+	 * when it decides whether to keep a binding at save time (:684-706).
+	 *
+	 * ResolveSelectedKey, notably, does NOT apply it: a mistyped key resolves to a perfectly valid
+	 * ID, so the ID check alone would let this through.
+	 */
+	bool IsKeyAllowedBySelector(const FBlackboardKeySelector& Selector, const FBlackboardEntry& Entry)
+	{
+		if (Selector.AllowedTypes.Num() == 0)
+		{
+			return true;
+		}
+		if (!Entry.KeyType)
+		{
+			return false;
+		}
+		for (const TObjectPtr<UBlackboardKeyType>& Filter : Selector.AllowedTypes)
+		{
+			if (Entry.KeyType->IsAllowedByFilter(ToRawPtr(Filter)))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** "Object, Vector" — the filter classes a selector accepts, for an error message. */
+	FString DescribeAllowedTypes(const FBlackboardKeySelector& Selector)
+	{
+		TArray<FString> Names;
+		for (const TObjectPtr<UBlackboardKeyType>& Filter : Selector.AllowedTypes)
+		{
+			if (const UBlackboardKeyType* Raw = ToRawPtr(Filter))
+			{
+				FString Name = Raw->GetClass()->GetName();
+				Name.RemoveFromStart(TEXT("BlackboardKeyType_"));
+				Names.AddUnique(Name);
+			}
+		}
+		return Names.Num() > 0 ? FString::Join(Names, TEXT(", ")) : FString(TEXT("<any>"));
+	}
+}
+
+FBTPropertySetResult UBehaviorTreeService::SetNodePropertyValue(const FString& AssetPath,
+	const FString& NodePath, const FString& PropertyName, const FString& Value)
+{
+	FBTPropertySetResult Result;
+
+	UBehaviorTree* Tree = nullptr;
+	UBehaviorTreeGraph* Graph = nullptr;
+	Result.Error = VibeBT::OpenWriteGuard(AssetPath, Tree, Graph);
+	if (!Result.Error.IsEmpty())
+	{
+		return Result;
+	}
+
+	UObject* Instance = ResolveInstanceForWrite(Graph, NodePath, Result);
+	if (!Instance)
+	{
+		return Result;
+	}
+
+	FProperty* Property = VibeBT::FindAuthorableProperty(Instance, PropertyName, Result.Error);
+	if (!Property)
+	{
+		return Result;
+	}
+
+	// The pre-image, as a full literal, so a partial import can be undone. ImportText applies a
+	// struct or array literal member by member and returns null where it fails, leaving everything
+	// it had already applied in place — a refused write that half-changed the node would be worse
+	// than either outcome.
+	FString Before;
+	VibeBT::ExportPropertyValue(Property, Instance, Before);
+
+	Instance->Modify();
+
+	// Errors captured rather than sent to GWarn: they belong in the response, and a tool that logs
+	// an error and returns a success-shaped result is exactly what this service exists to avoid.
+	FStringOutputDevice ImportErrors;
+	const TCHAR* Imported =
+		Property->ImportText_InContainer(*Value, Instance, Instance, PPF_None, &ImportErrors);
+	if (Imported == nullptr)
+	{
+		FStringOutputDevice RestoreErrors;
+		Property->ImportText_InContainer(*Before, Instance, Instance, PPF_None, &RestoreErrors);
+
+		Result.Error = FString::Printf(TEXT("could not parse '%s' as %s (%s::%s)"),
+			*Value, *Property->GetCPPType(), *Instance->GetClass()->GetName(), *PropertyName);
+		if (!ImportErrors.IsEmpty())
+		{
+			Result.Error += TEXT(": ") + FString(ImportErrors).TrimStartAndEnd();
+		}
+		VibeBT::ExportPropertyValue(Property, Instance, Result.ValueAfterWrite);
+		return Result;
+	}
+
+	Result.Error = VibeBT::CommitGraph(Tree, Graph);
+	if (!Result.Error.IsEmpty())
+	{
+		return Result;
+	}
+
+	// Read back AFTER the commit, never an echo of the input: the commit regenerates derived state
+	// and runs UBTNode::PreSave, which resets a blackboard key selector bound to a key that does not
+	// exist or whose type its filter forbids. A write that did not survive that must not report the
+	// value the caller asked for.
+	VibeBT::ExportPropertyValue(Property, Instance, Result.ValueAfterWrite);
+	Result.bSuccess = true;
+	return Result;
+}
+
+FBTPropertySetResult UBehaviorTreeService::SetNodeBlackboardKey(const FString& AssetPath,
+	const FString& NodePath, const FString& PropertyName, const FString& KeyName)
+{
+	FBTPropertySetResult Result;
+
+	UBehaviorTree* Tree = nullptr;
+	UBehaviorTreeGraph* Graph = nullptr;
+	Result.Error = VibeBT::OpenWriteGuard(AssetPath, Tree, Graph);
+	if (!Result.Error.IsEmpty())
+	{
+		return Result;
+	}
+
+	UObject* Instance = ResolveInstanceForWrite(Graph, NodePath, Result);
+	if (!Instance)
+	{
+		return Result;
+	}
+
+	FProperty* Property = VibeBT::FindAuthorableProperty(Instance, PropertyName, Result.Error);
+	if (!Property)
+	{
+		return Result;
+	}
+
+	FStructProperty* StructProperty = CastField<FStructProperty>(Property);
+	if (!StructProperty || StructProperty->Struct != FBlackboardKeySelector::StaticStruct())
+	{
+		Result.Error = FString::Printf(
+			TEXT("%s::%s is not a blackboard key selector (it is %s). Use SetNodePropertyValue for "
+				 "ordinary properties."),
+			*Instance->GetClass()->GetName(), *PropertyName, *Property->GetCPPType());
+		return Result;
+	}
+
+	UBlackboardData* Board = ToRawPtr(Tree->BlackboardAsset);
+	if (!Board)
+	{
+		Result.Error = FString::Printf(
+			TEXT("%s has no blackboard asset, so there is nothing to resolve '%s' against. Assign one "
+				 "with SetBlackboardAsset first."),
+			*AssetPath, *KeyName);
+		return Result;
+	}
+
+	// Validated against the board BEFORE the selector is touched, so a refused binding leaves the
+	// node exactly as it was — and so the engine's own "key not found" warning never fires.
+	const FName Key(*KeyName);
+	const FBlackboard::FKey KeyID = Board->GetKeyID(Key);
+	const FBlackboardEntry* Entry = (KeyID != FBlackboard::InvalidKey) ? Board->GetKey(KeyID) : nullptr;
+	if (!Entry)
+	{
+		Result.Error = FString::Printf(
+			TEXT("blackboard %s has no key '%s'. Use GetBlackboardKeys to list what is there."),
+			*Board->GetName(), *KeyName);
+		return Result;
+	}
+
+	FBlackboardKeySelector* Selector =
+		StructProperty->ContainerPtrToValuePtr<FBlackboardKeySelector>(Instance);
+	if (!IsKeyAllowedBySelector(*Selector, *Entry))
+	{
+		FString KeyTypeName = Entry->KeyType ? Entry->KeyType->GetClass()->GetName() : FString(TEXT("<none>"));
+		KeyTypeName.RemoveFromStart(TEXT("BlackboardKeyType_"));
+		Result.Error = FString::Printf(
+			TEXT("key '%s' on %s is of type %s, which %s::%s does not accept (it accepts: %s). Binding "
+				 "it anyway would resolve to a valid key ID and still never work, and "
+				 "UBTNode::PreSave would reset the selector to None on the next save."),
+			*KeyName, *Board->GetName(), *KeyTypeName, *Instance->GetClass()->GetName(), *PropertyName,
+			*DescribeAllowedTypes(*Selector));
+		return Result;
+	}
+
+	const FName PreviousKey = Selector->SelectedKeyName;
+	Instance->Modify();
+	Selector->SelectedKeyName = Key;
+	Selector->ResolveSelectedKey(*Board);
+
+	// Backstop. Unreachable given the two checks above — both of the engine's own failure conditions
+	// have already been ruled out — and kept because an unresolved ID is a silent runtime no-op, and
+	// this is the only place that can still see one.
+	if (Selector->GetSelectedKeyID() == FBlackboard::InvalidKey)
+	{
+		Selector->SelectedKeyName = PreviousKey;
+		Selector->InvalidateResolvedKey();
+		if (!PreviousKey.IsNone())
+		{
+			Selector->ResolveSelectedKey(*Board);
+		}
+		Result.Error = FString::Printf(
+			TEXT("key '%s' exists on %s and is of an accepted type, yet the selector would not resolve "
+				 "it; refusing rather than saving a node that silently does nothing"),
+			*KeyName, *Board->GetName());
+		return Result;
+	}
+
+	Result.Error = VibeBT::CommitGraph(Tree, Graph);
+	if (!Result.Error.IsEmpty())
+	{
+		return Result;
+	}
+
+	// Verified after the commit, because the commit is where a binding is undone: UpdateAsset
+	// re-resolves every selector against the tree's board, and the package save runs
+	// UBTNode::PreSave over all of them.
+	VibeBT::ExportPropertyValue(Property, Instance, Result.ValueAfterWrite);
+	if (Selector->SelectedKeyName != Key || Selector->GetSelectedKeyID() == FBlackboard::InvalidKey)
+	{
+		Result.Error = FString::Printf(
+			TEXT("the commit did not keep the binding of %s::%s to '%s' (it is now '%s'); the saved "
+				 "asset does not have the requested binding"),
+			*Instance->GetClass()->GetName(), *PropertyName, *KeyName,
+			*Selector->SelectedKeyName.ToString());
+		return Result;
+	}
+
+	Result.bSuccess = true;
+	return Result;
 }

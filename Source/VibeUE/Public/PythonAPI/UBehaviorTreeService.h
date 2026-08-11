@@ -103,6 +103,62 @@ struct FBTNodeInfo
 	FString Error;
 };
 
+/** One editable property of a Behavior Tree node instance. */
+USTRUCT(BlueprintType)
+struct FBTPropertyInfo
+{
+	GENERATED_BODY()
+
+	/** Property name, as passed to GetNodePropertyValue / SetNodePropertyValue. */
+	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
+	FString Name;
+
+	/** C++ type of the property, e.g. "float", "FString", "FBlackboardKeySelector". */
+	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
+	FString Type;
+
+	/** Current value as a full literal — what SetNodePropertyValue would take to reproduce it. */
+	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
+	FString Value;
+
+	/**
+	 * True when the property is an FBlackboardKeySelector, which must be written with
+	 * SetNodeBlackboardKey rather than SetNodePropertyValue.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
+	bool bIsBlackboardKeySelector = false;
+};
+
+/** Outcome of a node property write. */
+USTRUCT(BlueprintType)
+struct FBTPropertySetResult
+{
+	GENERATED_BODY()
+
+	/** True only if the value was written AND the asset committed. */
+	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
+	bool bSuccess = false;
+
+	/** Populated when the write was refused or failed. Empty on success. */
+	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
+	FString Error;
+
+	/** Instance class of the node the path resolved to, so a wrong target is visible. */
+	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
+	FString ResolvedNodeClass;
+
+	/** Display name of the node the path resolved to. */
+	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
+	FString ResolvedNodeName;
+
+	/**
+	 * The property re-read AFTER the commit, never an echo of the input — so a value the engine
+	 * rewrote or discarded on save comes back as what it really is.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
+	FString ValueAfterWrite;
+};
+
 /**
  * Read and author Behavior Tree assets.
  *
@@ -328,4 +384,87 @@ public:
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
 	static FString SetNodeName(const FString& AssetPath, const FString& NodePath,
 		const FString& NewName);
+
+	// =================================================================
+	// Node properties
+	// =================================================================
+
+	/**
+	 * Every editable property of the node (or sub-node) at NodePath, with its current value.
+	 *
+	 * "Editable" is the same set GetTree reports under "properties" — CPF_Edit, not EditConst /
+	 * Transient / Deprecated — but the whole set rather than only the edited ones, because this is
+	 * the discovery call: it answers "what can I set here", not "what has been set".
+	 *
+	 * Values are exported against no defaults, so a value read here can be handed back to
+	 * SetNodePropertyValue on the same node and reproduce it exactly. (GetTree's map reports the
+	 * same encoding, filtered to properties that differ from the class default.)
+	 *
+	 * Two things that encoding cannot express, both the engine's and neither hidden here: a struct
+	 * omits members still at their zero value, so carrying a value from one node to another merges
+	 * rather than copies; and an empty array reads back as an empty string, which is not importable.
+	 *
+	 * An empty array means the path named nothing, or named the graph's Root node, which carries no
+	 * instance and therefore no properties — every real BT node has at least NodeName. Use
+	 * GetNodeInfo to tell those apart; this call has no error channel of its own.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
+	static TArray<FBTPropertyInfo> GetNodePropertyNames(const FString& AssetPath,
+		const FString& NodePath);
+
+	/**
+	 * One property's current value in the encoding described on GetNodePropertyNames, or a string
+	 * starting with "ERROR: ".
+	 *
+	 * Read-only: like GetTree it never creates the editor graph, so reading an asset that has never
+	 * been opened reports that rather than writing to it.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
+	static FString GetNodePropertyValue(const FString& AssetPath, const FString& NodePath,
+		const FString& PropertyName);
+
+	/**
+	 * Set one property from a literal (the form GetNodePropertyValue returns) and save.
+	 *
+	 * ValueAfterWrite is re-read after the commit rather than echoed, because the commit is not a
+	 * passive save: UBehaviorTreeGraph::UpdateAsset regenerates derived state, and UBTNode::PreSave
+	 * resets any blackboard key selector bound to a key that does not exist or whose type the
+	 * selector's filter forbids. A value that did not survive that comes back as what it really is.
+	 *
+	 * A parse failure restores the property to what it was, because ImportText applies a struct or
+	 * array literal member by member and stops where it fails — a refused write must not leave the
+	 * node half-changed.
+	 *
+	 * Refuses injected nodes (copies the engine regenerates from a subtree asset) and anything that
+	 * is not an editable property. For an FBlackboardKeySelector use SetNodeBlackboardKey: this
+	 * route writes the selector's name and nothing else, which is not a binding — see below.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
+	static FBTPropertySetResult SetNodePropertyValue(const FString& AssetPath,
+		const FString& NodePath, const FString& PropertyName, const FString& Value);
+
+	/**
+	 * Bind an FBlackboardKeySelector property to a key on the tree's blackboard, and save.
+	 *
+	 * Separate from SetNodePropertyValue because a key selector is not a value: it is a name plus a
+	 * resolved key ID, and only the ID is read at runtime. Importing the name alone leaves the ID
+	 * unresolved, and a node whose selector is unresolved does nothing at all, silently — nothing
+	 * is logged, and the property reads back exactly as the caller wrote it.
+	 *
+	 * So this resolves the key against UBehaviorTree::BlackboardAsset and refuses, without touching
+	 * the selector, when:
+	 *   - the tree has no blackboard;
+	 *   - the key does not exist on it;
+	 *   - the key's type is not in the selector's AllowedTypes filter. Note that
+	 *     FBlackboardKeySelector::ResolveSelectedKey does NOT check the filter (only InitSelection
+	 *     does), so a mistyped binding resolves to a real ID and reads back as a working binding;
+	 *     what actually happens is that the node reads a key of a type it cannot use, and that
+	 *     UBTNode::PreSave silently resets the selector to None on the next save.
+	 *
+	 * As a last backstop the resolved ID is asserted after the write, and an unresolved one is
+	 * reported as an error with the selector restored.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
+	static FBTPropertySetResult SetNodeBlackboardKey(const FString& AssetPath,
+		const FString& NodePath, const FString& PropertyName, const FString& KeyName);
 };
