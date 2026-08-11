@@ -42,7 +42,7 @@ tool in a toolset (the most token-heavy thing here); reach for a **skill** plus 
 **VibeUE services (call from Python inside `execute_python_code`):** `unreal.<Name>Service.<method>()`
 — Blueprint, BlueprintGraph (via BlueprintService), Material(+Node), Widget, Skeleton, AnimSequence,
 AnimMontage, AnimGraph, Landscape(+Material), Foliage, MetaSound, SoundCue, Niagara(+Emitter,
-+ScratchPad), StateTree, Input, EnumStruct, UVMapping, RuntimeVirtualTexture, MapBlockout,
++ScratchPad), StateTree, BehaviorTree, Blackboard, Input, EnumStruct, UVMapping, RuntimeVirtualTexture, MapBlockout,
 GameplayTag, Viewport, Actor, Engine/ProjectSettings, **Performance** (`unreal.PerformanceService.frame_timing()`).
 These overlap-trimmed services keep only what the engine lacks — for plain asset/actor/blueprint
 basics the engine's own tools may be simpler (below).
