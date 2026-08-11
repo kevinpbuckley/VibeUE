@@ -163,20 +163,18 @@ namespace VibeBTRead
 		return false;
 	}
 
-	/** One decorator/service slot as JSON. Sub-nodes have no children of their own. */
-	TSharedPtr<FJsonValue> SubNodeToJson(const UBehaviorTreeGraphNode* SubNode)
-	{
-		const TSharedRef<FJsonObject> Object = MakeShared<FJsonObject>();
-		if (SubNode)
-		{
-			WriteCommonFields(SubNode, Object);
-		}
-		return MakeShared<FJsonValueObject>(Object);
-	}
-
 	/**
-	 * One node and its subtree. Visited is carried so a graph with a back edge — which the layout
-	 * pass already tolerates — is reported as a finite tree instead of hanging the caller.
+	 * One node as JSON, with its sub-nodes and its subtree.
+	 *
+	 * Deliberately the only node serialiser, used for decorators and services as well as for tree
+	 * nodes, so every node object in the result carries the same ten fields. Nothing is asserted
+	 * about a sub-node to make that true: a decorator has no pins, so GetChildNodes finds nothing,
+	 * and its own Decorators / Services arrays are empty because nothing in the engine or in this
+	 * service ever fills them. Reporting them by the same code path rather than hardcoding "empty"
+	 * means that if that ever stops being true, this says so instead of hiding it.
+	 *
+	 * Visited is carried so a graph with a back edge — which the layout pass already tolerates —
+	 * is reported as a finite tree instead of hanging the caller.
 	 */
 	TSharedRef<FJsonObject> NodeToJson(const UBehaviorTreeGraphNode* Node,
 		TSet<const UBehaviorTreeGraphNode*>& Visited)
@@ -185,21 +183,27 @@ namespace VibeBTRead
 		WriteCommonFields(Node, Object);
 		Object->SetBoolField(TEXT("bHasCompositeDecorator"), HasCompositeDecorator(Node));
 
+		Visited.Add(Node);
+
 		TArray<TSharedPtr<FJsonValue>> Decorators;
 		for (const TObjectPtr<UBehaviorTreeGraphNode>& Decorator : Node->Decorators)
 		{
-			Decorators.Add(SubNodeToJson(ToRawPtr(Decorator)));
+			if (const UBehaviorTreeGraphNode* Raw = ToRawPtr(Decorator))
+			{
+				Decorators.Add(MakeShared<FJsonValueObject>(NodeToJson(Raw, Visited)));
+			}
 		}
 		Object->SetArrayField(TEXT("decorators"), Decorators);
 
 		TArray<TSharedPtr<FJsonValue>> Services;
 		for (const TObjectPtr<UBehaviorTreeGraphNode>& Service : Node->Services)
 		{
-			Services.Add(SubNodeToJson(ToRawPtr(Service)));
+			if (const UBehaviorTreeGraphNode* Raw = ToRawPtr(Service))
+			{
+				Services.Add(MakeShared<FJsonValueObject>(NodeToJson(Raw, Visited)));
+			}
 		}
 		Object->SetArrayField(TEXT("services"), Services);
-
-		Visited.Add(Node);
 
 		TArray<TSharedPtr<FJsonValue>> Children;
 		for (const UBehaviorTreeGraphNode* Child : VibeBT::GetChildNodes(Node))

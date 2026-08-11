@@ -5,14 +5,18 @@
 #include "AIGraphTypes.h"
 #include "BehaviorTree/BehaviorTree.h"
 #include "BehaviorTree/BTCompositeNode.h"
+#include "BehaviorTree/BTDecorator.h"
 #include "BehaviorTree/BTNode.h"
+#include "BehaviorTree/BTService.h"
 #include "BehaviorTree/BTTaskNode.h"
 #include "BehaviorTree/Composites/BTComposite_SimpleParallel.h"
 #include "BehaviorTree/Tasks/BTTask_RunBehavior.h"
 #include "BehaviorTreeGraph.h"
 #include "BehaviorTreeGraphNode.h"
 #include "BehaviorTreeGraphNode_Composite.h"
+#include "BehaviorTreeGraphNode_Decorator.h"
 #include "BehaviorTreeGraphNode_Root.h"
+#include "BehaviorTreeGraphNode_Service.h"
 #include "BehaviorTreeGraphNode_SimpleParallel.h"
 #include "BehaviorTreeGraphNode_SubtreeTask.h"
 #include "BehaviorTreeGraphNode_Task.h"
@@ -62,6 +66,47 @@
  * The one shape that cannot be made safe this way is emptying the tree, because there is no valid
  * end state — so RemoveNode refuses the root's only child up front rather than mutating and then
  * failing at commit.
+ *
+ * ===========================================================================================
+ *  ...and why the sub-node functions do not call UAIGraphNode::AddSubNode
+ * ===========================================================================================
+ *
+ * Same reason, one level up. UAIGraphNode::AddSubNode is not a data operation; it ends with
+ *
+ *     ParentGraph->NotifyGraphChanged();
+ *     GetAIGraph()->UpdateAsset();          // AIGraphNode.cpp:297-298
+ *
+ * so attaching a decorator through it regenerates UBehaviorTree::RootNode on the spot — before
+ * CommitGraph runs, outside the discard guard, and (for AddDecorator's own failure paths) before
+ * this code has decided whether the attach is going to stand at all. It also opens an FScopedTransaction
+ * and calls AutowireNewNode, neither of which belongs in a headless batch edit.
+ *
+ * What it does that matters is all data: Rename the sub-node under the graph, set ParentNode, give it
+ * a GUID, run PostPlacedNewNode/AllocateDefaultPins, push it onto SubNodes, and hand it to
+ * OnSubNodeAdded. AttachSubNode below does exactly that list, minus the notifications, and creates the
+ * node with NewObject<>(Graph, ...) so the Rename is unnecessary to begin with.
+ *
+ * The two neighbouring engine helpers are safe but not used either:
+ *
+ *   - UBehaviorTreeGraphNode::OnSubNodeAdded (BehaviorTreeGraphNode.cpp:228-254) is pure data and
+ *     notifies nothing — but it always appends (ahead of the first injected decorator), so it cannot
+ *     honour an explicit Index. AttachSubNode reproduces its injected-node rule and adds the index.
+ *   - UBehaviorTreeGraphNode::InsertSubNodeAt (:290-345) does take an index, but a single int32 with
+ *     three +1-encoded byte fields packed into it, decoded per array. Passing an ordinary decorator
+ *     index to it silently means something else.
+ *
+ * Both halves of the attach are mandatory, and neither is redundant:
+ *
+ *   - Decorators / Services is what CreateBTFromGraph reads to build the runtime tree.
+ *   - SubNodes is what UAIGraph::CollectAllNodeInstances walks (AIGraph.cpp:188-205). A sub-node
+ *     missing from it has its UBTDecorator/UBTService instance treated as an orphan by
+ *     RemoveOrphanedNodes — which runs at the end of every CreateBTFromGraph — and renamed into the
+ *     transient package, i.e. the decorator this call just added is destroyed by the commit that was
+ *     supposed to save it.
+ *
+ * Sub-nodes are NOT added to UEdGraph::Nodes: they are reached through their owner, and the engine
+ * never puts them there (BTGraphHelpers::SpawnMissingDecoratorNodes, BehaviorTreeGraph.cpp:775-810).
+ * FindRootGraphNode, CountGraphNodes and ArrangeGraph all depend on that being true.
  */
 
 // Named, not anonymous: this module builds with unity/jumbo enabled, where two anonymous namespaces
@@ -343,6 +388,188 @@ namespace VibeBTEdit
 			return UBehaviorTreeGraphNode_Task::StaticClass();
 		}
 		return nullptr;
+	}
+
+	/** Which of a node's two sub-node arrays a call is about. */
+	enum class ESubNodeKind : uint8
+	{
+		Decorator,
+		Service
+	};
+
+	/** The owner's array for this kind. Never null — every UBehaviorTreeGraphNode has both. */
+	TArray<TObjectPtr<UBehaviorTreeGraphNode>>& SlotArray(UBehaviorTreeGraphNode* Owner, ESubNodeKind Kind)
+	{
+		return (Kind == ESubNodeKind::Decorator) ? Owner->Decorators : Owner->Services;
+	}
+
+	/** "decorator" / "service", for error messages and the path segment. */
+	const TCHAR* SubNodeKindName(ESubNodeKind Kind)
+	{
+		return (Kind == ESubNodeKind::Decorator) ? TEXT("decorator") : TEXT("service");
+	}
+
+	/**
+	 * Whether Node's sub-nodes reach the runtime tree at all, and why not when they do not.
+	 *
+	 * The rule is not "which graph node class is it" but "what does CreateBTFromGraph read". It reads
+	 * decorators and services off exactly two shapes: the node linked under the graph root (whose
+	 * decorators become UBehaviorTree::RootDecorators and whose services become the root composite's,
+	 * BehaviorTreeGraph.cpp:917-936 and 518-535), and each child graph node whose NodeInstance casts
+	 * to UBTCompositeNode or UBTTaskNode (:568-627). Anything else it skips, with a bare `continue`.
+	 *
+	 * So the test is the instance, not the class of the ed-graph node, and it catches three distinct
+	 * mistakes at once:
+	 *
+	 *  - The graph's Root node (UBehaviorTreeGraphNode_Root) carries no instance. Its OWN Decorators
+	 *    array is never read by anything: root-level decorators live on the top composite, one level
+	 *    down. A decorator attached to "Root" would sit in the saved asset forever and never run.
+	 *  - A decorator or service carries a UBTDecorator / UBTService instance, which is neither, so a
+	 *    sub-node of a sub-node is dropped.
+	 *  - A node whose instance failed to load carries null, and is skipped along with everything
+	 *    attached to it.
+	 *
+	 * Returns an empty string when Node can carry sub-nodes.
+	 */
+	FString CheckCanCarrySubNodes(UBehaviorTreeGraphNode* Node)
+	{
+		if (Node->IsA<UBehaviorTreeGraphNode_Root>())
+		{
+			return TEXT("the graph's Root node cannot carry decorators or services. Root-level "
+						"decorators belong on the tree's top composite (the node directly under Root): "
+						"that is where UBehaviorTreeGraph::CreateBTFromGraph reads "
+						"UBehaviorTree::RootDecorators from. One attached to Root itself would be saved "
+						"and never run.");
+		}
+
+		if (Node->IsSubNode())
+		{
+			return FString::Printf(
+				TEXT("%s is a decorator or service. Sub-nodes carry no sub-nodes of their own — attach "
+					 "to the node they are on instead."),
+				*DescribeNode(Node));
+		}
+
+		const UObject* Instance = ToRawPtr(Node->NodeInstance);
+		if (!Cast<UBTCompositeNode>(Instance) && !Cast<UBTTaskNode>(Instance))
+		{
+			return FString::Printf(
+				TEXT("%s carries no composite or task instance, so nothing attached to it would reach "
+					 "the runtime tree"),
+				*DescribeNode(Node));
+		}
+
+		return FString();
+	}
+
+	/**
+	 * Where an authored decorator may be inserted, given Index.
+	 *
+	 * Authored decorators always precede injected ones. That ordering is the engine's, not a
+	 * preference: UBehaviorTreeGraphNode::OnSubNodeAdded inserts before the first injected decorator
+	 * (BehaviorTreeGraphNode.cpp:232-249), CollectDecorators skips injected entries outright when
+	 * building the runtime tree (BehaviorTreeGraph.cpp:337-341), and
+	 * UBehaviorTreeGraphNode_SubtreeTask::UpdateInjectedNodes strips every injected decorator and
+	 * re-appends it on each refresh — so an authored decorator placed after one does not stay there.
+	 * Clamping here means the returned "@decorator[n]" path is the position the node actually keeps.
+	 *
+	 * Services have no injected counterpart (UpdateInjectedNodes only touches Decorators), so their
+	 * limit is simply the array length.
+	 */
+	int32 ClampSubNodeIndex(const TArray<TObjectPtr<UBehaviorTreeGraphNode>>& Slots, int32 Index,
+		ESubNodeKind Kind)
+	{
+		int32 Limit = Slots.Num();
+		if (Kind == ESubNodeKind::Decorator)
+		{
+			for (int32 SlotIndex = 0; SlotIndex < Slots.Num(); ++SlotIndex)
+			{
+				const UBehaviorTreeGraphNode* Slot = ToRawPtr(Slots[SlotIndex]);
+				if (Slot && Slot->bInjectedNode)
+				{
+					Limit = SlotIndex;
+					break;
+				}
+			}
+		}
+		return (Index < 0) ? Limit : FMath::Clamp(Index, 0, Limit);
+	}
+
+	/**
+	 * Create a sub-node of NodeClass and attach it to Owner at Index. Returns it, or null with
+	 * OutError set — in which case nothing was attached and nothing needs unwinding.
+	 *
+	 * The engine's UAIGraphNode::AddSubNode is deliberately not used; see the file header.
+	 */
+	UBehaviorTreeGraphNode* AttachSubNode(UBehaviorTreeGraph* Graph, UBehaviorTreeGraphNode* Owner,
+		UClass* NodeClass, ESubNodeKind Kind, int32 Index, FString& OutError)
+	{
+		UClass* const GraphNodeClass = (Kind == ESubNodeKind::Decorator)
+			? UBehaviorTreeGraphNode_Decorator::StaticClass()
+			: UBehaviorTreeGraphNode_Service::StaticClass();
+
+		// Outered to the graph from the start, which is both what AddSubNode's Rename() achieves and
+		// what UAIGraphNode::PostPlacedNewNode needs: it reaches the owning UBehaviorTree through
+		// GetGraph()->GetOuter() to outer the node instance there (AIGraphNode.cpp:32-49).
+		UBehaviorTreeGraphNode* SubNode =
+			NewObject<UBehaviorTreeGraphNode>(Graph, GraphNodeClass, NAME_None, RF_Transactional);
+		SubNode->ClassData = FGraphNodeClassData(NodeClass, FString());
+		SubNode->CreateNewGuid();
+		SubNode->PostPlacedNewNode();
+		SubNode->AllocateDefaultPins();     // decorators and services define this as "no pins"
+
+		if (!SubNode->NodeInstance)
+		{
+			// PostPlacedNewNode leaves NodeInstance null if the class failed to load. The sub-node is
+			// not attached to anything yet, so abandoning it here leaves the graph untouched.
+			OutError = FString::Printf(TEXT("failed to create a node instance of %s"),
+				*NodeClass->GetName());
+			return nullptr;
+		}
+
+		Graph->Modify();
+		Owner->Modify();
+
+		TArray<TObjectPtr<UBehaviorTreeGraphNode>>& Slots = SlotArray(Owner, Kind);
+		SubNode->ParentNode = Owner;
+		Owner->SubNodes.Add(SubNode);
+		Slots.Insert(SubNode, ClampSubNodeIndex(Slots, Index, Kind));
+
+		return SubNode;
+	}
+
+	/** Owner and slot array of a sub-node, or an error explaining why it is not one. */
+	FString ResolveSubNodeSlot(UBehaviorTreeGraphNode* SubNode, const FString& SubNodePath,
+		UBehaviorTreeGraphNode*& OutOwner, ESubNodeKind& OutKind, int32& OutIndex)
+	{
+		OutOwner = Cast<UBehaviorTreeGraphNode>(ToRawPtr(SubNode->ParentNode));
+		if (!OutOwner)
+		{
+			return FString::Printf(
+				TEXT("'%s' is not a decorator or service — it is a node in the tree. Use RemoveNode."),
+				*SubNodePath);
+		}
+
+		OutIndex = OutOwner->Decorators.IndexOfByKey(SubNode);
+		if (OutIndex != INDEX_NONE)
+		{
+			OutKind = ESubNodeKind::Decorator;
+			return FString();
+		}
+
+		OutIndex = OutOwner->Services.IndexOfByKey(SubNode);
+		if (OutIndex != INDEX_NONE)
+		{
+			OutKind = ESubNodeKind::Service;
+			return FString();
+		}
+
+		// Parented but in neither array. GetNodePath refuses to issue a path for this shape, so it is
+		// not reachable through a path this service handed out — but a hand-written one could name it.
+		return FString::Printf(
+			TEXT("'%s' has an owner but appears in neither its decorator nor its service list, so there "
+				 "is no slot to remove it from"),
+			*SubNodePath);
 	}
 }
 
@@ -662,6 +889,226 @@ FString UBehaviorTreeService::MoveNode(const FString& AssetPath, const FString& 
 		Slot.Pin->MakeLinkTo(NodeIn);
 		PlaceLinkAt(Slot.Pin, NodeIn, Slot.InsertPosition);
 	}
+
+	return VibeBT::CommitGraph(Tree, Graph);
+}
+
+namespace VibeBTEdit
+{
+	/** AddDecorator and AddService, which differ only in the base class, the slot and one gate. */
+	FString AddSubNodeOfKind(const FString& AssetPath, const FString& NodePath,
+		const FString& NodeClassName, int32 Index, ESubNodeKind Kind)
+	{
+		UBehaviorTree* Tree = nullptr;
+		UBehaviorTreeGraph* Graph = nullptr;
+		const FString GuardError = VibeBT::OpenWriteGuard(AssetPath, Tree, Graph);
+		if (!GuardError.IsEmpty())
+		{
+			return FString::Printf(TEXT("ERROR: %s"), *GuardError);
+		}
+
+		UBehaviorTreeGraphNode* Owner = VibeBT::ResolveNodePath(Graph, NodePath);
+		if (!Owner)
+		{
+			return FString::Printf(
+				TEXT("ERROR: no node at path '%s' in %s (nothing there, or the path is ambiguous and "
+					 "needs an index, as in 'Sequence[1]')"),
+				*NodePath, *AssetPath);
+		}
+
+		// The engine's own gate, asked of the graph rather than of the node: it is what the Behavior
+		// Tree editor's context menu consults before offering "Add Service"
+		// (BehaviorTreeGraphNode_Composite.cpp:84, BehaviorTreeGraphNode_Task.cpp:52). Stock
+		// UBehaviorTreeGraph answers true unconditionally (BehaviorTreeGraph.h:52) and no engine class
+		// overrides it, so this only ever fires for a project that subclasses the graph to forbid
+		// services. Honoured anyway: when a project does that, silently authoring services its own
+		// editor refuses to show is precisely the unrequested write this service exists to avoid.
+		if (Kind == ESubNodeKind::Service && !Graph->DoesSupportServices())
+		{
+			return FString::Printf(
+				TEXT("ERROR: %s does not support services (%s::DoesSupportServices() is false)"),
+				*AssetPath, *Graph->GetClass()->GetName());
+		}
+
+		if (Owner->bInjectedNode)
+		{
+			return FString::Printf(
+				TEXT("ERROR: '%s' was injected from a subtree and is read-only here. The engine "
+					 "regenerates injected nodes from the subtree asset, so anything attached to one "
+					 "is discarded on the next graph update. Edit the subtree asset instead."),
+				*NodePath);
+		}
+
+		// Checked before the class is resolved and before anything is created, so a refused add leaves
+		// no stray node behind.
+		const FString CarryError = CheckCanCarrySubNodes(Owner);
+		if (!CarryError.IsEmpty())
+		{
+			return FString::Printf(TEXT("ERROR: %s"), *CarryError);
+		}
+
+		UClass* const RequiredBase = (Kind == ESubNodeKind::Decorator)
+			? UBTDecorator::StaticClass()
+			: UBTService::StaticClass();
+		UClass* NodeClass = VibeBT::ResolveNodeClass(NodeClassName, RequiredBase);
+		if (!NodeClass)
+		{
+			return FString::Printf(
+				TEXT("ERROR: unknown or ambiguous Behavior Tree %s class '%s'. Use "
+					 "GetAvailableNodeTypes(\"%s\") to list what is available."),
+				SubNodeKindName(Kind), *NodeClassName,
+				Kind == ESubNodeKind::Decorator ? TEXT("Decorator") : TEXT("Service"));
+		}
+
+		FString AttachError;
+		UBehaviorTreeGraphNode* SubNode =
+			AttachSubNode(Graph, Owner, NodeClass, Kind, Index, AttachError);
+		if (!SubNode)
+		{
+			return FString::Printf(TEXT("ERROR: %s"), *AttachError);
+		}
+
+		const FString CommitError = VibeBT::CommitGraph(Tree, Graph);
+		if (!CommitError.IsEmpty())
+		{
+			return FString::Printf(TEXT("ERROR: %s"), *CommitError);
+		}
+
+		return VibeBT::GetNodePath(SubNode);
+	}
+}
+
+FString UBehaviorTreeService::AddDecorator(const FString& AssetPath, const FString& NodePath,
+	const FString& DecoratorClassName, int32 Index)
+{
+	return AddSubNodeOfKind(AssetPath, NodePath, DecoratorClassName, Index, ESubNodeKind::Decorator);
+}
+
+FString UBehaviorTreeService::AddService(const FString& AssetPath, const FString& NodePath,
+	const FString& ServiceClassName, int32 Index)
+{
+	return AddSubNodeOfKind(AssetPath, NodePath, ServiceClassName, Index, ESubNodeKind::Service);
+}
+
+FString UBehaviorTreeService::RemoveSubNode(const FString& AssetPath, const FString& SubNodePath)
+{
+	UBehaviorTree* Tree = nullptr;
+	UBehaviorTreeGraph* Graph = nullptr;
+	const FString GuardError = VibeBT::OpenWriteGuard(AssetPath, Tree, Graph);
+	if (!GuardError.IsEmpty())
+	{
+		return GuardError;
+	}
+
+	UBehaviorTreeGraphNode* SubNode = VibeBT::ResolveNodePath(Graph, SubNodePath);
+	if (!SubNode)
+	{
+		return FString::Printf(
+			TEXT("No sub-node at path '%s' in %s. Decorators and services are addressed by index on "
+				 "their owner, as in 'Root/Selector[0]/@decorator[0]'."),
+			*SubNodePath, *AssetPath);
+	}
+
+	if (SubNode->bInjectedNode)
+	{
+		return FString::Printf(
+			TEXT("'%s' was injected from a subtree and cannot be removed here: it is a copy that "
+				 "UBehaviorTreeGraphNode_SubtreeTask::UpdateInjectedNodes rebuilds from the subtree "
+				 "asset, so removing it would report success and come straight back. Remove it from the "
+				 "subtree asset instead."),
+			*SubNodePath);
+	}
+
+	UBehaviorTreeGraphNode* Owner = nullptr;
+	ESubNodeKind Kind = ESubNodeKind::Decorator;
+	int32 SlotIndex = INDEX_NONE;
+	const FString SlotError = ResolveSubNodeSlot(SubNode, SubNodePath, Owner, Kind, SlotIndex);
+	if (!SlotError.IsEmpty())
+	{
+		return SlotError;
+	}
+
+	// Data only, and deliberately not DestroyNode: a sub-node is not in UEdGraph::Nodes, and
+	// UAIGraphNode::DestroyNode routes back through ParentNode->RemoveSubNode into
+	// UEdGraphNode::DestroyNode. Dropping the two references is the whole removal — the graph node
+	// becomes unreferenced, and its now-orphaned UBTDecorator/UBTService instance is renamed into the
+	// transient package by the RemoveOrphanedNodes() that ends CreateBTFromGraph inside the commit.
+	Graph->Modify();
+	Owner->Modify();
+	SlotArray(Owner, Kind).RemoveAt(SlotIndex);
+	Owner->SubNodes.RemoveSingle(SubNode);
+	SubNode->ParentNode = nullptr;
+
+	return VibeBT::CommitGraph(Tree, Graph);
+}
+
+FString UBehaviorTreeService::SetNodeName(const FString& AssetPath, const FString& NodePath,
+	const FString& NewName)
+{
+	// Validated before the asset is opened: the name becomes the node's path segment, and one the
+	// grammar cannot express would leave the node un-addressable by any later call.
+	if (NewName.Contains(TEXT("/")))
+	{
+		return FString::Printf(
+			TEXT("Node names cannot contain '/': it is the path separator, so '%s' would leave the node "
+				 "un-addressable."),
+			*NewName);
+	}
+	if (NewName.EndsWith(TEXT("]")))
+	{
+		int32 OpenIdx = INDEX_NONE;
+		if (NewName.FindLastChar(TEXT('['), OpenIdx))
+		{
+			const FString IndexText = NewName.Mid(OpenIdx + 1, NewName.Len() - OpenIdx - 2);
+			if (!IndexText.IsEmpty() && IndexText.IsNumeric())
+			{
+				return FString::Printf(
+					TEXT("Node names cannot end in a numeric '[n]': the path grammar reads that as a "
+						 "sibling index, so '%s' would resolve to something else."),
+					*NewName);
+			}
+		}
+	}
+
+	UBehaviorTree* Tree = nullptr;
+	UBehaviorTreeGraph* Graph = nullptr;
+	const FString GuardError = VibeBT::OpenWriteGuard(AssetPath, Tree, Graph);
+	if (!GuardError.IsEmpty())
+	{
+		return GuardError;
+	}
+
+	UBehaviorTreeGraphNode* Node = VibeBT::ResolveNodePath(Graph, NodePath);
+	if (!Node)
+	{
+		return FString::Printf(
+			TEXT("No node at path '%s' in %s (nothing there, or the path is ambiguous and needs an "
+				 "index, as in 'Sequence[1]')"),
+			*NodePath, *AssetPath);
+	}
+
+	if (Node->bInjectedNode)
+	{
+		return FString::Printf(
+			TEXT("'%s' was injected from a subtree and is read-only here; the engine rebuilds it from "
+				 "the subtree asset, which is where its name belongs."),
+			*NodePath);
+	}
+
+	// The name lives on the node INSTANCE, not on the graph node: UBTNode::NodeName is what
+	// GetNodeName() returns and what every UBehaviorTreeGraphNode subclass reports as its title. The
+	// graph's Root node carries no instance, so it has no name to set.
+	UBTNode* Instance = Cast<UBTNode>(ToRawPtr(Node->NodeInstance));
+	if (!Instance)
+	{
+		return FString::Printf(
+			TEXT("'%s' carries no Behavior Tree node instance, so it has no name to set (the graph's "
+				 "Root node is always in this state)"),
+			*NodePath);
+	}
+
+	Instance->Modify();
+	Instance->NodeName = NewName;
 
 	return VibeBT::CommitGraph(Tree, Graph);
 }

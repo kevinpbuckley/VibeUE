@@ -18,6 +18,7 @@
 #include "BehaviorTree/Decorators/BTDecorator_Blackboard.h"
 #include "BehaviorTree/Decorators/BTDecorator_BlackboardBase.h"
 #include "BehaviorTree/Tasks/BTTask_MoveTo.h"
+#include "BehaviorTree/Tasks/BTTask_RunBehavior.h"
 #include "BehaviorTreeGraphNode_Decorator.h"
 #include "BehaviorTreeGraphNode_Task.h"
 #include "BehaviorTreeGraph.h"
@@ -1482,6 +1483,454 @@ bool FVibeBTSimpleParallelTest::RunTest(const FString&)
 		TestTrue(TEXT("the runtime tree is populated"), RuntimeNodes.Num() > 4);
 		TestEqual(TEXT("no node appears twice in the runtime tree"),
 			TSet<UBTNode*>(RuntimeNodes).Num(), RuntimeNodes.Num());
+	}
+
+	return true;
+}
+
+/**
+ * The node object GetTree emitted for Path, wherever it sits — under "children", "decorators" or
+ * "services". Searching by the node's own "path" field rather than walking a known route is what
+ * lets the same helper address a sub-node and a tree node.
+ */
+static TSharedPtr<FJsonObject> FindNodeByPath(const TSharedPtr<FJsonObject>& Node, const FString& Path)
+{
+	if (!Node.IsValid())
+	{
+		return nullptr;
+	}
+
+	FString NodePath;
+	if (Node->TryGetStringField(TEXT("path"), NodePath) && NodePath == Path)
+	{
+		return Node;
+	}
+
+	for (const TCHAR* Field : { TEXT("decorators"), TEXT("services"), TEXT("children") })
+	{
+		const TArray<TSharedPtr<FJsonValue>>* Array = nullptr;
+		if (!Node->TryGetArrayField(Field, Array))
+		{
+			continue;
+		}
+		for (const TSharedPtr<FJsonValue>& Value : *Array)
+		{
+			if (TSharedPtr<FJsonObject> Found = FindNodeByPath(Value->AsObject(), Path))
+			{
+				return Found;
+			}
+		}
+	}
+	return nullptr;
+}
+
+// Decorator and service CRUD, plus SetNodeName.
+//
+// The hazard behind all of this is UAIGraphNode::AddSubNode, which ends in NotifyGraphChanged() +
+// GetAIGraph()->UpdateAsset() (AIGraphNode.cpp:297-298) — a synchronous rebuild of the runtime tree
+// from a graph that is mid-edit, outside CommitGraph's discard guard. Nothing here calls it; see the
+// header of UBehaviorTreeService_Edit.cpp. The end-of-test runtime-tree assertions are what prove the
+// data-level attach is nevertheless complete: a sub-node missing from UAIGraphNode::SubNodes has its
+// instance destroyed as an orphan by the very commit that was supposed to save it, and one missing
+// from Decorators/Services never reaches UBTCompositeNode/UBTTaskNode at all.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBTSubNodesTest,
+	"VibeUE.BehaviorTree.SubNodes.Crud", kBTTestFlags)
+bool FVibeBTSubNodesTest::RunTest(const FString&)
+{
+	const FString BTPath = FString(kBTTestDir) / TEXT("BT_SubNodeTest");
+	FScopedFixtureReset ResetBT(BTPath);
+
+	// No blackboard on purpose. UBTDecorator_BlackboardBase::InitializeFromAsset invalidates its key
+	// selector silently when the tree has no board, where resolving against one that lacks a matching
+	// key logs a LogBehaviorTree warning (BehaviorTreeTypes.cpp:556) and fails the run.
+	TestEqual(TEXT("fixture tree created"),
+		UBehaviorTreeService::CreateBehaviorTree(BTPath, FString()), FString());
+
+	// GetBehaviorTreeInfo counts sub-nodes as well as graph nodes. Until this test there were never
+	// any sub-nodes to count, so that arm of its arithmetic has never been exercised.
+	auto NodeCount = [&]() -> int32
+	{
+		FBTAssetInfo Info;
+		return UBehaviorTreeService::GetBehaviorTreeInfo(BTPath, Info) ? Info.NodeCount : -1;
+	};
+	auto NodeObject = [&](const FString& Path)
+	{
+		return FindNodeByPath(ParseTree(UBehaviorTreeService::GetTree(BTPath)), Path);
+	};
+	// Class names of one node's decorators or services, in order, joined so a mismatch prints both
+	// sequences instead of a count.
+	auto ClassList = [&](const FString& OwnerPath, const TCHAR* Field) -> FString
+	{
+		const TSharedPtr<FJsonObject> Owner = NodeObject(OwnerPath);
+		if (!Owner.IsValid())
+		{
+			return TEXT("<no such node>");
+		}
+		TArray<FString> Names;
+		for (const TSharedPtr<FJsonValue>& Value : Owner->GetArrayField(Field))
+		{
+			Names.Add(Value->AsObject()->GetStringField(TEXT("class")));
+		}
+		return FString::Join(Names, TEXT(","));
+	};
+
+	const FString Sel = UBehaviorTreeService::AddNode(
+		BTPath, TEXT("Root"), TEXT("BTComposite_Selector"), -1);
+	const FString Seq = UBehaviorTreeService::AddNode(BTPath, Sel, TEXT("BTComposite_Sequence"), -1);
+	const FString Task = UBehaviorTreeService::AddNode(BTPath, Seq, TEXT("BTTask_Wait"), -1);
+	TestFalse(TEXT("selector added"), Sel.StartsWith(TEXT("ERROR")));
+	TestFalse(TEXT("sequence added"), Seq.StartsWith(TEXT("ERROR")));
+	TestFalse(TEXT("task added"), Task.StartsWith(TEXT("ERROR")));
+	TestEqual(TEXT("three nodes plus the root"), NodeCount(), 4);
+
+	// --- A decorator on the sequence. ------------------------------------------------------------
+	const FString Dec = UBehaviorTreeService::AddDecorator(
+		BTPath, Seq, TEXT("BTDecorator_Blackboard"), -1);
+	TestFalse(TEXT("decorator added"), Dec.StartsWith(TEXT("ERROR")));
+	TestEqual(TEXT("its path is an @decorator slot on its owner"), Dec, Seq + TEXT("/@decorator[0]"));
+	TestEqual(TEXT("GetTree reports it under decorators[0]"),
+		ClassList(Seq, TEXT("decorators")), FString(TEXT("BTDecorator_Blackboard")));
+	TestEqual(TEXT("GetBehaviorTreeInfo counts the sub-node"), NodeCount(), 5);
+
+	// VibeBT::ResolveNodePath has always implemented "@decorator[n]"/"@service[n]"; nothing had ever
+	// created a sub-node for it to resolve, so this is the first time those branches run.
+	FBTNodeInfo DecInfo;
+	TestTrue(TEXT("the @decorator[n] path resolves"),
+		UBehaviorTreeService::GetNodeInfo(BTPath, Dec, DecInfo));
+	TestEqual(TEXT("...to the decorator itself"), DecInfo.ClassName,
+		FString(TEXT("BTDecorator_Blackboard")));
+	TestEqual(TEXT("...and reports the path it was addressed by"), DecInfo.Path, Dec);
+	FBTNodeInfo SeqInfo;
+	TestTrue(TEXT("owner readable"), UBehaviorTreeService::GetNodeInfo(BTPath, Seq, SeqInfo));
+	TestEqual(TEXT("the owner reports one decorator"), SeqInfo.DecoratorCount, 1);
+	TestEqual(TEXT("...and no services"), SeqInfo.ServiceCount, 0);
+
+	// Sub-node JSON shape: the same ten fields a tree node carries, so one walk handles both.
+	{
+		const TSharedPtr<FJsonObject> DecObject = NodeObject(Dec);
+		if (TestTrue(TEXT("the decorator appears in the dump"), DecObject.IsValid()))
+		{
+			for (const TCHAR* Field : { TEXT("path"), TEXT("guid"), TEXT("class"), TEXT("name"),
+				TEXT("properties"), TEXT("bInjected"), TEXT("children"), TEXT("decorators"),
+				TEXT("services"), TEXT("bHasCompositeDecorator") })
+			{
+				TestTrue(FString::Printf(TEXT("a sub-node carries '%s'"), Field),
+					DecObject->HasField(Field));
+			}
+			TestEqual(TEXT("a sub-node has no children"),
+				DecObject->GetArrayField(TEXT("children")).Num(), 0);
+			TestEqual(TEXT("a sub-node has no decorators of its own"),
+				DecObject->GetArrayField(TEXT("decorators")).Num(), 0);
+			TestEqual(TEXT("a sub-node has no services of its own"),
+				DecObject->GetArrayField(TEXT("services")).Num(), 0);
+			TestFalse(TEXT("an authored sub-node is not injected"),
+				DecObject->GetBoolField(TEXT("bInjected")));
+			TestFalse(TEXT("and carries no composite decorator"),
+				DecObject->GetBoolField(TEXT("bHasCompositeDecorator")));
+		}
+	}
+
+	// --- A service on the selector. ----------------------------------------------------------------
+	const FString Svc = UBehaviorTreeService::AddService(
+		BTPath, Sel, TEXT("BTService_DefaultFocus"), -1);
+	TestFalse(TEXT("service added"), Svc.StartsWith(TEXT("ERROR")));
+	TestEqual(TEXT("its path is an @service slot"), Svc, Sel + TEXT("/@service[0]"));
+	TestEqual(TEXT("GetTree reports it under services[0]"),
+		ClassList(Sel, TEXT("services")), FString(TEXT("BTService_DefaultFocus")));
+	TestEqual(TEXT("the service is counted too"), NodeCount(), 6);
+
+	// --- Index 0 means first, not "somewhere". Decorator order is evaluation order. ---------------
+	const FString DecFirst = UBehaviorTreeService::AddDecorator(
+		BTPath, Seq, TEXT("BTDecorator_ForceSuccess"), 0);
+	TestEqual(TEXT("the inserted decorator takes slot 0"), DecFirst, Seq + TEXT("/@decorator[0]"));
+	TestEqual(TEXT("and the existing one shifted to slot 1"), ClassList(Seq, TEXT("decorators")),
+		FString(TEXT("BTDecorator_ForceSuccess,BTDecorator_Blackboard")));
+
+	// --- Removal, by the same "@decorator[n]" path. ------------------------------------------------
+	TestEqual(TEXT("the first decorator is removed"),
+		UBehaviorTreeService::RemoveSubNode(BTPath, Seq + TEXT("/@decorator[0]")), FString());
+	TestEqual(TEXT("the survivor slid back to slot 0"), ClassList(Seq, TEXT("decorators")),
+		FString(TEXT("BTDecorator_Blackboard")));
+	TestEqual(TEXT("the count dropped"), NodeCount(), 6);
+	TestTrue(TEXT("removing a slot that is now empty errors"),
+		!UBehaviorTreeService::RemoveSubNode(BTPath, Seq + TEXT("/@decorator[1]")).IsEmpty());
+
+	// The same round trip through the OTHER array. Decorators and services are two separate arrays on
+	// the owner and one wrong pick would put a service into the decorator list — where it would then
+	// be handed to CollectDecorators as a UBTDecorator and silently dropped.
+	{
+		const FString TempSvc = UBehaviorTreeService::AddService(
+			BTPath, Seq, TEXT("BTService_DefaultFocus"), -1);
+		TestEqual(TEXT("a service lands in the service array, not the decorator one"),
+			TempSvc, Seq + TEXT("/@service[0]"));
+		TestEqual(TEXT("and shows up under services"),
+			ClassList(Seq, TEXT("services")), FString(TEXT("BTService_DefaultFocus")));
+		TestEqual(TEXT("the decorator list is untouched by it"),
+			ClassList(Seq, TEXT("decorators")), FString(TEXT("BTDecorator_Blackboard")));
+		TestEqual(TEXT("and it removes again"),
+			UBehaviorTreeService::RemoveSubNode(BTPath, TempSvc), FString());
+		TestEqual(TEXT("leaving no services behind"), ClassList(Seq, TEXT("services")), FString());
+		TestEqual(TEXT("and the decorator still there"),
+			ClassList(Seq, TEXT("decorators")), FString(TEXT("BTDecorator_Blackboard")));
+	}
+
+	// --- A service on a TASK node. -----------------------------------------------------------------
+	// The brief expected this to be refused ("only composites carry services"). It is not true of
+	// UE 5.8: CreateBTFromGraph writes a task graph node's services to UBTTaskNode::Services
+	// (BehaviorTreeGraph.cpp:605-627), the Behavior Tree editor offers "Add Service" on a task
+	// (BehaviorTreeGraphNode_Task.cpp:52), and DoesSupportServices is a property of the *graph*, not
+	// of the node. Refusing it would block legal authoring, so it is accepted — and the runtime-tree
+	// assertion at the end of this test is what proves the acceptance is not merely cosmetic.
+	const FString TaskSvc = UBehaviorTreeService::AddService(
+		BTPath, Task, TEXT("BTService_DefaultFocus"), -1);
+	TestFalse(TEXT("a task accepts a service in UE 5.8"), TaskSvc.StartsWith(TEXT("ERROR")));
+	TestEqual(TEXT("its path is an @service slot on the task"), TaskSvc, Task + TEXT("/@service[0]"));
+
+	// --- Refusals. Each checks the message, because "it errored" would also hold if the call had
+	//     failed for an unrelated reason. -----------------------------------------------------------
+	// The graph's Root node: CreateBTFromGraph reads root-level decorators off the top composite, so
+	// one attached to the Root graph node would be saved and never run.
+	TestTrue(TEXT("no decorator on the graph Root node"),
+		UBehaviorTreeService::AddDecorator(BTPath, TEXT("Root"), TEXT("BTDecorator_ForceSuccess"), -1)
+			.Contains(TEXT("Root node cannot carry")));
+	TestTrue(TEXT("no service on the graph Root node"),
+		UBehaviorTreeService::AddService(BTPath, TEXT("Root"), TEXT("BTService_DefaultFocus"), -1)
+			.Contains(TEXT("Root node cannot carry")));
+	// A decorator carries no sub-nodes of its own.
+	TestTrue(TEXT("no decorator on a decorator"),
+		UBehaviorTreeService::AddDecorator(BTPath, Dec, TEXT("BTDecorator_ForceSuccess"), -1)
+			.Contains(TEXT("carry no sub-nodes")));
+	TestTrue(TEXT("no service on a decorator"),
+		UBehaviorTreeService::AddService(BTPath, Dec, TEXT("BTService_DefaultFocus"), -1)
+			.Contains(TEXT("carry no sub-nodes")));
+	// Class resolution is scoped to the right base, so a task class is not a decorator.
+	TestTrue(TEXT("a task class is not a decorator"),
+		UBehaviorTreeService::AddDecorator(BTPath, Seq, TEXT("BTTask_Wait"), -1)
+			.Contains(TEXT("unknown or ambiguous")));
+	TestTrue(TEXT("a decorator class is not a service"),
+		UBehaviorTreeService::AddService(BTPath, Seq, TEXT("BTDecorator_Blackboard"), -1)
+			.Contains(TEXT("unknown or ambiguous")));
+	TestTrue(TEXT("an invented class is refused"),
+		UBehaviorTreeService::AddDecorator(BTPath, Seq, TEXT("BTDecorator_Nonexistent"), -1)
+			.Contains(TEXT("unknown or ambiguous")));
+	// RemoveSubNode is not RemoveNode.
+	TestTrue(TEXT("RemoveSubNode refuses a tree node"),
+		UBehaviorTreeService::RemoveSubNode(BTPath, Seq).Contains(TEXT("Use RemoveNode")));
+	TestTrue(TEXT("RemoveSubNode refuses a path that names nothing"),
+		!UBehaviorTreeService::RemoveSubNode(BTPath, Seq + TEXT("/@decorator[7]")).IsEmpty());
+	// Four tree nodes, one decorator, two services — every refusal above left the asset alone.
+	TestEqual(TEXT("the refusals changed nothing"), NodeCount(), 7);
+
+	// --- SetNodeName. ------------------------------------------------------------------------------
+	TestEqual(TEXT("the sequence is renamed"),
+		UBehaviorTreeService::SetNodeName(BTPath, Seq, TEXT("GuardedBranch")), FString());
+	const FString Renamed = Sel + TEXT("/GuardedBranch[0]");
+	{
+		const TSharedPtr<FJsonObject> RenamedObject = NodeObject(Renamed);
+		if (TestTrue(TEXT("the node is addressable at its new path"), RenamedObject.IsValid()))
+		{
+			TestEqual(TEXT("GetTree reports the new name"),
+				RenamedObject->GetStringField(TEXT("name")), FString(TEXT("GuardedBranch")));
+			TestEqual(TEXT("the class is unchanged"),
+				RenamedObject->GetStringField(TEXT("class")), FString(TEXT("BTComposite_Sequence")));
+		}
+	}
+	// The name IS the path segment, so the old path is dead. Asserted rather than left implicit,
+	// because a caller holding a path across a rename is the obvious way to lose an edit.
+	FBTNodeInfo Stale;
+	TestFalse(TEXT("the old path no longer resolves"),
+		UBehaviorTreeService::GetNodeInfo(BTPath, Seq, Stale));
+
+	// A sub-node can be renamed too, and its path does not move: sub-node paths are positional.
+	const FString RenamedDec = Renamed + TEXT("/@decorator[0]");
+	TestEqual(TEXT("the decorator is renamed"),
+		UBehaviorTreeService::SetNodeName(BTPath, RenamedDec, TEXT("HasTarget")), FString());
+	{
+		const TSharedPtr<FJsonObject> DecObject = NodeObject(RenamedDec);
+		if (TestTrue(TEXT("the decorator is still at the same slot"), DecObject.IsValid()))
+		{
+			TestEqual(TEXT("GetTree reports the decorator's new name"),
+				DecObject->GetStringField(TEXT("name")), FString(TEXT("HasTarget")));
+		}
+	}
+
+	TestTrue(TEXT("the graph Root node has no name to set"),
+		UBehaviorTreeService::SetNodeName(BTPath, TEXT("Root"), TEXT("Anything"))
+			.Contains(TEXT("no Behavior Tree node instance")));
+	TestTrue(TEXT("a name containing the path separator is refused"),
+		UBehaviorTreeService::SetNodeName(BTPath, Renamed, TEXT("a/b"))
+			.Contains(TEXT("path separator")));
+	TestTrue(TEXT("a name ending in a numeric index is refused"),
+		UBehaviorTreeService::SetNodeName(BTPath, Renamed, TEXT("Guard[2]"))
+			.Contains(TEXT("sibling index")));
+	{
+		const TSharedPtr<FJsonObject> RenamedObject = NodeObject(Renamed);
+		TestTrue(TEXT("the refused renames left the name alone"), RenamedObject.IsValid());
+	}
+
+	// Clearing it falls back to the class-supplied title, which is what the path grammar uses.
+	TestEqual(TEXT("the name is cleared"),
+		UBehaviorTreeService::SetNodeName(BTPath, Renamed, FString()), FString());
+	TestTrue(TEXT("the class-supplied title is back"),
+		NodeObject(Sel + TEXT("/Sequence[0]")).IsValid());
+
+	// --- The runtime tree, which is the only thing that actually runs. -----------------------------
+	TestEqual(TEXT("the tree still commits"), UBehaviorTreeService::CompileAndSave(BTPath), FString());
+
+	UBehaviorTree* Tree = LoadObject<UBehaviorTree>(nullptr, *BTPath);
+	if (TestNotNull(TEXT("tree loaded"), Tree) &&
+		TestNotNull(TEXT("the runtime tree has a root"), ToRawPtr(Tree->RootNode)))
+	{
+		// The Selector is the top composite, so its service is the root composite's.
+		TestEqual(TEXT("the composite's service reached the runtime tree"),
+			Tree->RootNode->Services.Num(), 1);
+
+		if (TestEqual(TEXT("the top composite has one child"), Tree->RootNode->Children.Num(), 1))
+		{
+			const FBTCompositeChild& Child = Tree->RootNode->Children[0];
+			TestEqual(TEXT("the decorator reached the runtime tree"), Child.Decorators.Num(), 1);
+
+			UBTCompositeNode* Sequence = ToRawPtr(Child.ChildComposite);
+			if (TestNotNull(TEXT("that child is the sequence"), Sequence) &&
+				TestEqual(TEXT("which has one child of its own"), Sequence->Children.Num(), 1))
+			{
+				UBTTaskNode* WaitTask = ToRawPtr(Sequence->Children[0].ChildTask);
+				if (TestNotNull(TEXT("the sequence's child is the task"), WaitTask))
+				{
+					// The other half of the UE-5.8 correction above: not merely accepted, but written
+					// into UBTTaskNode::Services by the commit.
+					TestEqual(TEXT("the TASK's service reached the runtime tree"),
+						WaitTask->Services.Num(), 1);
+				}
+			}
+		}
+	}
+
+	return true;
+}
+
+// Injected nodes: the root-level decorators of a subtree, copied onto the BTTask_RunBehavior graph
+// node that references it (UBehaviorTreeGraphNode_SubtreeTask::UpdateInjectedNodes). They are copies
+// the engine regenerates, so every mutator has to refuse them — an edit that reports success and is
+// silently undone on the next graph update is worse than an error.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBTInjectedSubNodesTest,
+	"VibeUE.BehaviorTree.SubNodes.Injected", kBTTestFlags)
+bool FVibeBTInjectedSubNodesTest::RunTest(const FString&)
+{
+	const FString SubPath = FString(kBTTestDir) / TEXT("BT_InjectedSub");
+	const FString MainPath = FString(kBTTestDir) / TEXT("BT_InjectedMain");
+	FScopedFixtureReset ResetSub(SubPath);
+	FScopedFixtureReset ResetMain(MainPath);
+
+	// The subtree: a decorator on its TOP COMPOSITE, which is what becomes RootDecorators.
+	TestEqual(TEXT("subtree created"),
+		UBehaviorTreeService::CreateBehaviorTree(SubPath, FString()), FString());
+	const FString SubSel = UBehaviorTreeService::AddNode(
+		SubPath, TEXT("Root"), TEXT("BTComposite_Selector"), -1);
+	TestFalse(TEXT("subtree selector added"), SubSel.StartsWith(TEXT("ERROR")));
+	TestFalse(TEXT("subtree decorator added"),
+		UBehaviorTreeService::AddDecorator(SubPath, SubSel, TEXT("BTDecorator_ForceSuccess"), -1)
+			.StartsWith(TEXT("ERROR")));
+
+	UBehaviorTree* SubTree = LoadObject<UBehaviorTree>(nullptr, *SubPath);
+	if (!TestNotNull(TEXT("subtree loaded"), SubTree))
+	{
+		return false;
+	}
+	// The point of attaching to the top composite rather than to the Root graph node: this is where
+	// UBehaviorTree::RootDecorators comes from, and it is the only thing injection reads.
+	TestEqual(TEXT("the decorator became a root-level decorator of the subtree"),
+		SubTree->RootDecorators.Num(), 1);
+
+	// The main tree: a RunBehavior task pointing at it.
+	TestEqual(TEXT("main tree created"),
+		UBehaviorTreeService::CreateBehaviorTree(MainPath, FString()), FString());
+	const FString MainSel = UBehaviorTreeService::AddNode(
+		MainPath, TEXT("Root"), TEXT("BTComposite_Selector"), -1);
+	const FString RunSub = UBehaviorTreeService::AddNode(
+		MainPath, MainSel, TEXT("BTTask_RunBehavior"), -1);
+	TestFalse(TEXT("RunBehavior task added"), RunSub.StartsWith(TEXT("ERROR")));
+
+	UBehaviorTree* MainTree = LoadObject<UBehaviorTree>(nullptr, *MainPath);
+	if (!TestNotNull(TEXT("main tree loaded"), MainTree))
+	{
+		return false;
+	}
+	UBehaviorTreeGraph* MainGraph = Cast<UBehaviorTreeGraph>(MainTree->BTGraph);
+	if (!TestNotNull(TEXT("main graph present"), MainGraph))
+	{
+		return false;
+	}
+	UBehaviorTreeGraphNode* RunNode = VibeBT::ResolveNodePath(MainGraph, RunSub);
+	if (!TestNotNull(TEXT("the RunBehavior graph node resolves"), RunNode))
+	{
+		return false;
+	}
+
+	// UBTTask_RunBehavior::BehaviorAsset is protected and writing node properties is Task 8's job, so
+	// it is set through reflection here — test scaffolding, not the code under test.
+	FObjectProperty* AssetProperty = CastField<FObjectProperty>(
+		UBTTask_RunBehavior::StaticClass()->FindPropertyByName(TEXT("BehaviorAsset")));
+	if (!TestNotNull(TEXT("BehaviorAsset property reached"), AssetProperty))
+	{
+		return false;
+	}
+	AssetProperty->SetObjectPropertyValue(
+		AssetProperty->ContainerPtrToValuePtr<void>(ToRawPtr(RunNode->NodeInstance)), SubTree);
+
+	// What UBehaviorTreeGraph::Initialize() runs when a human opens the asset.
+	TestTrue(TEXT("the subtree's root decorator was injected"), MainGraph->UpdateInjectedNodes());
+
+	FBTNodeInfo RunInfo;
+	TestTrue(TEXT("the RunBehavior node is readable"),
+		UBehaviorTreeService::GetNodeInfo(MainPath, RunSub, RunInfo));
+	TestEqual(TEXT("it now carries one decorator"), RunInfo.DecoratorCount, 1);
+
+	const FString Injected = RunSub + TEXT("/@decorator[0]");
+	FBTNodeInfo InjectedInfo;
+	TestTrue(TEXT("the injected decorator is addressable"),
+		UBehaviorTreeService::GetNodeInfo(MainPath, Injected, InjectedInfo));
+	TestTrue(TEXT("and reported as injected"), InjectedInfo.bInjected);
+
+	// The three refusals.
+	TestTrue(TEXT("RemoveSubNode refuses an injected decorator"),
+		UBehaviorTreeService::RemoveSubNode(MainPath, Injected)
+			.Contains(TEXT("injected from a subtree")));
+	TestTrue(TEXT("SetNodeName refuses an injected node"),
+		UBehaviorTreeService::SetNodeName(MainPath, Injected, TEXT("Renamed"))
+			.Contains(TEXT("injected from a subtree")));
+	TestTrue(TEXT("AddDecorator refuses to attach to an injected node"),
+		UBehaviorTreeService::AddDecorator(MainPath, Injected, TEXT("BTDecorator_ForceSuccess"), -1)
+			.Contains(TEXT("injected from a subtree")));
+
+	TestTrue(TEXT("the RunBehavior node is still readable"),
+		UBehaviorTreeService::GetNodeInfo(MainPath, RunSub, RunInfo));
+	TestEqual(TEXT("the refused edits left the injected decorator in place"),
+		RunInfo.DecoratorCount, 1);
+
+	// An authored decorator on the same node lands AHEAD of the injected one, which is the order the
+	// engine maintains (OnSubNodeAdded inserts before the first injected entry) and the order that
+	// survives the next UpdateInjectedNodes, which strips and re-appends every injected decorator.
+	const FString Authored = UBehaviorTreeService::AddDecorator(
+		MainPath, RunSub, TEXT("BTDecorator_ForceSuccess"), -1);
+	TestEqual(TEXT("an appended decorator is placed ahead of the injected ones"),
+		Authored, RunSub + TEXT("/@decorator[0]"));
+
+	FBTNodeInfo AuthoredInfo;
+	TestTrue(TEXT("the authored decorator is readable"),
+		UBehaviorTreeService::GetNodeInfo(MainPath, Authored, AuthoredInfo));
+	TestFalse(TEXT("and is not itself injected"), AuthoredInfo.bInjected);
+	TestTrue(TEXT("the injected one moved to slot 1"),
+		UBehaviorTreeService::GetNodeInfo(MainPath, RunSub + TEXT("/@decorator[1]"), InjectedInfo));
+	TestTrue(TEXT("...and is still the injected one"), InjectedInfo.bInjected);
+
+	// Only the authored decorator reaches the runtime tree: CollectDecorators skips injected entries
+	// outright (BehaviorTreeGraph.cpp:337-341), because the subtree supplies them at runtime.
+	if (TestEqual(TEXT("the main tree's top composite has one child"),
+		MainTree->RootNode ? MainTree->RootNode->Children.Num() : -1, 1))
+	{
+		TestEqual(TEXT("exactly one decorator reached the runtime tree"),
+			MainTree->RootNode->Children[0].Decorators.Num(), 1);
 	}
 
 	return true;

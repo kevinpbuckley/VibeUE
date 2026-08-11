@@ -182,6 +182,14 @@ public:
 	 * "name", "children" (in execution order), "decorators", "services", "properties" (edited,
 	 * non-default values only), "bInjected", "bHasCompositeDecorator".
 	 *
+	 * Every node object carries all ten fields, including the objects inside "decorators" and
+	 * "services". A sub-node's "children" / "decorators" / "services" are always empty and its
+	 * "bHasCompositeDecorator" always false — decorators and services have no pins and carry no
+	 * sub-nodes of their own — but the keys are present, so a consumer can walk any node object
+	 * with one piece of code instead of branching on where it found it. The alternative (six
+	 * fields on a sub-node, ten on a tree node) is equally truthful and was rejected for that
+	 * reason: it makes every consumer, starting with BuildTree, special-case the two shapes.
+	 *
 	 * Read-only: unlike the mutators it never creates the editor graph, so an asset that has never
 	 * been opened reads back as an "error" field rather than being silently written to. The result
 	 * always parses, and always has a "children" array, error or not.
@@ -249,4 +257,74 @@ public:
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
 	static FString MoveNode(const FString& AssetPath, const FString& NodePath,
 		const FString& NewParentPath, int32 NewChildIndex);
+
+	// =================================================================
+	// Sub-nodes — decorators and services
+	// =================================================================
+
+	/**
+	 * Attach a decorator to the node at NodePath and save. Returns the new sub-node's path
+	 * ("<owner path>/@decorator[n]"), or a string starting with "ERROR: ".
+	 *
+	 * Index is the insert position among the node's existing decorators; < 0 appends. Decorator
+	 * order is evaluation order, so it is not cosmetic.
+	 *
+	 * Refused on any node that does not carry decorators into the runtime tree: the graph's Root
+	 * node (UBehaviorTreeGraph::CreateBTFromGraph reads root-level decorators off the *top
+	 * composite*, never off the Root graph node, so one attached there would simply never run),
+	 * a decorator or service (sub-nodes carry no sub-nodes of their own), a node injected from a
+	 * subtree, and any node whose instance is neither a composite nor a task.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
+	static FString AddDecorator(const FString& AssetPath, const FString& NodePath,
+		const FString& DecoratorClassName, int32 Index);
+
+	/**
+	 * Attach a service to the node at NodePath and save. Returns the new sub-node's path
+	 * ("<owner path>/@service[n]"), or a string starting with "ERROR: ".
+	 *
+	 * Index is the insert position among the node's existing services; < 0 appends.
+	 *
+	 * Refused on the same set of nodes as AddDecorator, and additionally when the graph class
+	 * answers false to UBehaviorTreeGraph::DoesSupportServices() — the engine's own gate, the one
+	 * the Behavior Tree editor's context menu uses (BehaviorTreeGraphNode_Composite.cpp:84,
+	 * BehaviorTreeGraphNode_Task.cpp:52).
+	 *
+	 * Note that in UE 5.8 both composites AND tasks carry services: CreateBTFromGraph writes a
+	 * task node's services to UBTTaskNode::Services (BehaviorTreeGraph.cpp:605-627) exactly as it
+	 * writes a composite's to UBTCompositeNode::Services (:518-535). A task is therefore accepted.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
+	static FString AddService(const FString& AssetPath, const FString& NodePath,
+		const FString& ServiceClassName, int32 Index);
+
+	/**
+	 * Detach and delete one decorator or service, addressed by its "@decorator[n]" / "@service[n]"
+	 * path, and save. Returns an empty string on success, else the error.
+	 *
+	 * Refuses anything that is not a sub-node (use RemoveNode for tree nodes) and anything injected
+	 * from a subtree — an injected decorator is a copy the engine regenerates from the subtree
+	 * asset, so removing it here would report success and be undone by the next graph update.
+	 *
+	 * Sub-node paths are positional, like every other path this service issues: removing one
+	 * renumbers the "@decorator[n]" of every later decorator on the same node.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
+	static FString RemoveSubNode(const FString& AssetPath, const FString& SubNodePath);
+
+	/**
+	 * Set the display name of a node or sub-node (UBTNode::NodeName) and save. An empty NewName
+	 * clears it, so the node falls back to the class-supplied description. Returns an empty string
+	 * on success, else the error.
+	 *
+	 * The name IS the path segment: after this call the node's old path no longer resolves, and
+	 * neither does any path through it. Re-read GetTree (or hold the node's "guid") across a
+	 * rename. For that reason a name containing "/" — or ending in a numeric "[n]", which the path
+	 * grammar reads as a sibling index — is refused rather than written and left un-addressable.
+	 *
+	 * Refused on the Root node, which has no instance to name, and on injected nodes.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
+	static FString SetNodeName(const FString& AssetPath, const FString& NodePath,
+		const FString& NewName);
 };
