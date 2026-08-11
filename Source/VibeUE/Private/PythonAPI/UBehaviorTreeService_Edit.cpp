@@ -1,4 +1,4 @@
-// Copyright Buckley Builds LLC 2026 All Rights Reserved.
+﻿// Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UBehaviorTreeService.h"
 
@@ -135,7 +135,8 @@
  */
 
 // Named, not anonymous: this module builds with unity/jumbo enabled, where two anonymous namespaces
-// in the same blob collide on identical helper names (docs/gotchas.md).
+// in the same blob collide on identical helper names — the second definition silently wins and the
+// other translation unit calls it instead of its own.
 namespace VibeBTEdit
 {
 	/** Name to put in an error message for a node whose class the caller would recognise. */

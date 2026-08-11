@@ -1,4 +1,4 @@
-// Copyright Buckley Builds LLC 2026 All Rights Reserved.
+﻿// Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UBehaviorTreeService.h"
 
@@ -55,7 +55,8 @@
  */
 
 // Named, not anonymous: this module builds with unity/jumbo enabled, where two anonymous namespaces
-// in the same blob collide on identical helper names (docs/gotchas.md).
+// in the same blob collide on identical helper names — the second definition silently wins and the
+// other translation unit calls it instead of its own.
 namespace VibeBTBuild
 {
 	/**
@@ -334,7 +335,14 @@ namespace VibeBTBuild
 	 * Write Source's "properties" onto the node at NodePath, recording every failure on its entry.
 	 *
 	 * Keys are applied in sorted order rather than in FJsonObject's map order, so two runs of the same
-	 * build write the same things in the same sequence and a failure is reproducible.
+	 * build write the same things in the same sequence and a failure is reproducible — but blackboard
+	 * key selectors go FIRST, ahead of the ordinary values, whatever the alphabet says. A node's
+	 * remaining properties can depend on what its selectors are bound to (a value is validated, or
+	 * re-derived, against the currently bound key); the reverse never happens, because binding a key
+	 * only ever reads the selector's own allowed types. Applying them in name order interleaves the
+	 * two, so a value could land while the node was still unbound and be rejected — recorded as a
+	 * failed entry in FBTBuildResult for a build that was in fact perfectly authorable, and dependent
+	 * on nothing but the property's spelling.
 	 */
 	void ApplyProperties(const FString& AssetPath, const FString& NodePath,
 		const TSharedPtr<FJsonObject>& Source, FBTBuildResult& Result, int32 EntryIndex)
@@ -345,8 +353,17 @@ namespace VibeBTBuild
 			return;
 		}
 
-		const TArray<FString> Names = SortedFieldNames(Properties);
 		const TSet<FString> Selectors = KeySelectorProperties(AssetPath, NodePath);
+
+		// Partitioned, not sorted twice: within each half the alphabetical order from
+		// SortedFieldNames survives, so the sequence is still fully determined by the JSON.
+		TArray<FString> Names;
+		TArray<FString> ValueNames;
+		for (const FString& Name : SortedFieldNames(Properties))
+		{
+			(Selectors.Contains(Name) ? Names : ValueNames).Add(Name);
+		}
+		Names.Append(MoveTemp(ValueNames));
 
 		for (const FString& Name : Names)
 		{

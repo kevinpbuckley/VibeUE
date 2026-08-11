@@ -27,9 +27,9 @@ namespace VibeAITest
 	 * else ever cleans it up). Without this, a second run collides with the first run's leftover
 	 * state and fails for reasons unrelated to whatever is actually being tested.
 	 *
-	 * Deliberately does not go through UEditorAssetLibrary::DeleteAsset: it has a documented
-	 * history in this project of reporting success without actually deleting
-	 * (docs/gotchas.md § VibeUE). Deletes the file directly instead, and the only thing trusted
+	 * Deliberately does not go through UEditorAssetLibrary::DeleteAsset: it returns true having
+	 * deleted nothing whenever something still references the asset — which, mid-suite, is the
+	 * normal case. Deletes the file directly instead, and the only thing trusted
 	 * as proof is asking the filesystem again afterwards — not this function's own return value,
 	 * not an in-memory/asset-registry re-query.
 	 */

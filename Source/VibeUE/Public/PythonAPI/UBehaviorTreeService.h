@@ -247,7 +247,8 @@ public:
 	 * BlackboardAssetPath may be empty. Returns an empty string on success, else the error.
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
-	static FString CreateBehaviorTree(const FString& AssetPath, const FString& BlackboardAssetPath);
+	static FString CreateBehaviorTree(const FString& AssetPath,
+		const FString& BlackboardAssetPath = TEXT(""));
 
 	/** Summary of a Behavior Tree asset. Returns false if the asset could not be loaded. */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
@@ -334,7 +335,7 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
 	static FString AddNode(const FString& AssetPath, const FString& ParentNodePath,
-		const FString& NodeClassName, int32 ChildIndex);
+		const FString& NodeClassName, int32 ChildIndex = -1);
 
 	/**
 	 * Remove a node and its subtree, and save. Returns an empty string on success, else the error.
@@ -383,7 +384,7 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
 	static FString AddDecorator(const FString& AssetPath, const FString& NodePath,
-		const FString& DecoratorClassName, int32 Index);
+		const FString& DecoratorClassName, int32 Index = -1);
 
 	/**
 	 * Attach a service to the node at NodePath and save. Returns the new sub-node's path
@@ -402,7 +403,7 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
 	static FString AddService(const FString& AssetPath, const FString& NodePath,
-		const FString& ServiceClassName, int32 Index);
+		const FString& ServiceClassName, int32 Index = -1);
 
 	/**
 	 * Detach and delete one decorator or service, addressed by its "@decorator[n]" / "@service[n]"
@@ -594,7 +595,7 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
 	static FBTBuildResult BuildTree(const FString& AssetPath, const FString& TreeJson,
-		bool bReplaceExisting);
+		bool bReplaceExisting = false);
 
 	// =================================================================
 	// Validation

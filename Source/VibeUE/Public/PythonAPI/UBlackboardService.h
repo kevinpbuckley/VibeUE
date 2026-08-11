@@ -51,7 +51,8 @@ public:
 
 	/** Create a Blackboard asset. ParentBlackboardPath may be empty. */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blackboard")
-	static bool CreateBlackboard(const FString& AssetPath, const FString& ParentBlackboardPath);
+	static bool CreateBlackboard(const FString& AssetPath,
+		const FString& ParentBlackboardPath = TEXT(""));
 
 	/** Every key on the asset, including keys inherited from its parent. */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blackboard")
