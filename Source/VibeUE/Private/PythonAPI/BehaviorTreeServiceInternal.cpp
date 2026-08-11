@@ -170,22 +170,69 @@ namespace VibeBT
 			return nullptr;
 		}
 
-		// Full object path, e.g. "/Script/AIModule.BTTask_MoveTo" or "/Game/AI/BTT_Foo.BTT_Foo_C".
-		UClass* Found = FindObject<UClass>(nullptr, *ClassName);
-
-		// Short native name, e.g. "BTTask_MoveTo".
-		if (!Found)
+		// Fast path: an exact, already-loaded full object path (e.g. "/Script/AIModule.BTTask_MoveTo"
+		// or "/Game/AI/BTT_Foo.BTT_Foo_C"). A full object path is unique by construction — unlike
+		// FindFirstObject's unscoped short-name search below that this deliberately does NOT use,
+		// there is no cross-package ambiguity to resolve here. This only ever short-circuits work;
+		// when it misses (not yet loaded), we fall through to the helper-based route below, which
+		// is the only route that can actually load a Blueprint class from disk.
+		if (UClass* Loaded = FindObject<UClass>(nullptr, *ClassName))
 		{
-			Found = FindFirstObject<UClass>(*ClassName);
+			return Loaded->IsChildOf(RequiredBase) ? Loaded : nullptr;
 		}
 
-		// Blueprint-generated class name, e.g. "BTT_ChaseTarget" -> "BTT_ChaseTarget_C".
-		if (!Found && !ClassName.EndsWith(TEXT("_C")))
+		// Everything else — short native name ("BTTask_MoveTo"), Blueprint generated-class name
+		// with or without "_C", and a not-yet-loaded Blueprint's full path — is matched against
+		// the primed, RequiredBase-scoped class list rather than a global object-name search.
+		// This is what makes an unloaded Blueprint class resolvable at all (only
+		// FGraphNodeClassData::GetClass() loads from disk; FindObject/FindFirstObject never do),
+		// and it keeps matches scoped to RequiredBase's own hierarchy, so a same-named class
+		// under a different node category can never be the accidental winner.
+		const TSharedPtr<FGraphNodeClassHelper> Helper = GetClassHelper(RequiredBase);
+		if (!Helper.IsValid())
 		{
-			Found = FindFirstObject<UClass>(*(ClassName + TEXT("_C")));
+			return nullptr;
 		}
 
-		return (Found && Found->IsChildOf(RequiredBase)) ? Found : nullptr;
+		TArray<FGraphNodeClassData> ClassData;
+		Helper->GatherClasses(RequiredBase, ClassData);
+
+		const FString GeneratedName =
+			ClassName.EndsWith(TEXT("_C")) ? ClassName : ClassName + TEXT("_C");
+
+		FGraphNodeClassData* Match = nullptr;
+		int32 MatchCount = 0;
+		for (FGraphNodeClassData& Data : ClassData)
+		{
+			const FString CandidateName = Data.GetClassName();
+			bool bNameMatches = (CandidateName == ClassName);
+			if (!bNameMatches && Data.IsBlueprint())
+			{
+				bNameMatches = (CandidateName == GeneratedName) ||
+					(Data.GetPackageName() + TEXT(".") + CandidateName == ClassName);
+			}
+
+			if (bNameMatches)
+			{
+				++MatchCount;
+				Match = &Data;
+			}
+		}
+
+		if (MatchCount != 1)
+		{
+			// Zero: unresolved. More than one: two classes under RequiredBase share this short
+			// name in different packages — silently picking one would be exactly the class of
+			// bug documented in docs/gotchas.md (display-name / short-name collisions resolving
+			// to the wrong class with no error). Refuse instead of guessing.
+			return nullptr;
+		}
+
+		// Only now, on the single surviving candidate, does GetClass() run — LoadPackage +
+		// FullyLoad for a Blueprint entry. Every rejected candidate above was matched by name
+		// alone, so this never loads more than the one class actually being resolved.
+		UClass* Resolved = Match->GetClass(/*bSilent=*/true);
+		return (Resolved && Resolved->IsChildOf(RequiredBase)) ? Resolved : nullptr;
 	}
 
 	TSharedPtr<FGraphNodeClassHelper> GetClassHelper(UClass* BaseClass)

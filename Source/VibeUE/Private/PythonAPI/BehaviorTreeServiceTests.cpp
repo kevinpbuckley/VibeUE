@@ -8,6 +8,8 @@
 #include "PythonAPI/UBlackboardService.h"
 #include "BehaviorTreeServiceInternal.h"
 #include "BehaviorTree/BehaviorTree.h"
+#include "BehaviorTree/BTTaskNode.h"
+#include "BehaviorTree/Tasks/BTTask_MoveTo.h"
 #include "BehaviorTreeGraph.h"
 #include "BehaviorTreeGraphNode_Composite.h"
 
@@ -211,5 +213,97 @@ bool FVibeBTNodeTypesTest::RunTest(const FString&)
 		UBehaviorTreeService::GetAvailableNodeTypes(TEXT("Nonsense")).Num(), 0);
 	return true;
 }
+
+// Native resolution: short name and full object path must both find the same real class.
+// (A collision test between the two forms would be redundant with ResolveWrongBase below,
+// since a wrong answer here would surface as IsChildOf failing against the wrong class.)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBTResolveNativeTest,
+	"VibeUE.BehaviorTree.Classes.ResolveNative", kBTTestFlags)
+bool FVibeBTResolveNativeTest::RunTest(const FString&)
+{
+	using namespace VibeBT;
+
+	UClass* ByShortName = ResolveNodeClass(TEXT("BTTask_MoveTo"), UBTTaskNode::StaticClass());
+	TestEqual(TEXT("resolves native task by short name"), ByShortName, UBTTask_MoveTo::StaticClass());
+
+	UClass* ByFullPath =
+		ResolveNodeClass(TEXT("/Script/AIModule.BTTask_MoveTo"), UBTTaskNode::StaticClass());
+	TestEqual(TEXT("resolves native task by full object path"), ByFullPath, UBTTask_MoveTo::StaticClass());
+
+	return true;
+}
+
+// A name that resolves to nothing, and a name that resolves to a real class of the WRONG
+// base, must both come back null — never the wrong-typed class.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBTResolveBogusAndWrongBaseTest,
+	"VibeUE.BehaviorTree.Classes.ResolveBogusAndWrongBase", kBTTestFlags)
+bool FVibeBTResolveBogusAndWrongBaseTest::RunTest(const FString&)
+{
+	using namespace VibeBT;
+
+	TestNull(TEXT("a name matching no class resolves to nullptr"),
+		ResolveNodeClass(TEXT("NotARealBTNodeClass_ThisNameDoesNotExist"), UBTTaskNode::StaticClass()));
+
+	// BTDecorator_Blackboard is a real, loaded, native class — just not a UBTTaskNode. If the
+	// RequiredBase guard were ever dropped (or the lookup fell back to an unscoped search),
+	// this would come back non-null instead.
+	TestNull(TEXT("a real class of the wrong base resolves to nullptr, not the wrong type"),
+		ResolveNodeClass(TEXT("BTDecorator_Blackboard"), UBTTaskNode::StaticClass()));
+
+	return true;
+}
+
+// Regression test for the Critical-1 finding: FindObject/FindFirstObject are pure in-memory
+// lookups and never load from disk, so the pre-fix ResolveNodeClass returned nullptr for any
+// Blueprint-generated BT class that wasn't already resident in this process — indistinguishable
+// from "no such class". Only FGraphNodeClassData::GetClass() (LoadPackage + FullyLoad) can pull
+// a Blueprint class in, and that only happens (post Important-3 fix) on the single matched
+// candidate inside ResolveNodeClass itself, never as a side effect of discovery.
+//
+// This test can only PROVE the cold-load path ran if BTT_RequestAttack_C is genuinely not
+// resident when it starts. That's not guaranteed by the language — nothing stops some other
+// system from having touched it earlier in the process — so this checks the precondition
+// explicitly (via AddInfo, visible in the automation log) rather than assuming it. In this
+// suite specifically it reliably holds: GetAvailableNodeTypes no longer force-loads Blueprint
+// classes (Important-3 fix, independently confirmed via diagnostic logging — see task-4-report.md),
+// and no other test in this file or BlackboardServiceTests.cpp touches AI task Blueprints.
+// If that precondition ever stops holding, the AddInfo line makes it visible instead of the
+// test silently passing for a weaker reason.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBTResolveBlueprintColdTest,
+	"VibeUE.BehaviorTree.Classes.ResolveBlueprintCold", kBTTestFlags)
+bool FVibeBTResolveBlueprintColdTest::RunTest(const FString&)
+{
+	using namespace VibeBT;
+
+	const FString ShortName = TEXT("BTT_RequestAttack");
+	const FString FullPath =
+		TEXT("/Game/Core/Controllers/AI/Tasks/BTT_RequestAttack.BTT_RequestAttack_C");
+
+	const bool bAlreadyResident = FindObject<UClass>(nullptr, *FullPath) != nullptr;
+	AddInfo(FString::Printf(
+		TEXT("BTT_RequestAttack_C resident before resolve: %s"),
+		bAlreadyResident ? TEXT("true (this run can't prove the cold-load path)") : TEXT("false")));
+
+	UClass* Resolved = ResolveNodeClass(ShortName, UBTTaskNode::StaticClass());
+	TestNotNull(TEXT("resolves an unloaded Blueprint task class by short name"), Resolved);
+	if (Resolved)
+	{
+		TestTrue(TEXT("resolved class derives from UBTTaskNode"),
+			Resolved->IsChildOf(UBTTaskNode::StaticClass()));
+		TestEqual(TEXT("resolved to the expected generated class"),
+			Resolved->GetName(), FString(TEXT("BTT_RequestAttack_C")));
+	}
+	return true;
+}
+
+// No genuine short-name collision exists in this project as of this writing: a diagnostic
+// sweep (GetAvailableNodeTypes for all four categories, grouped by ClassName) found zero
+// duplicates — Composite 3/3 unique, Task 55/55, Decorator 23/23, Service 10/10. Constructing
+// a fake one would require injecting a fabricated asset-registry entry (FGraphNodeClassHelper's
+// Blueprint gather step reads FAssetData, not in-memory UObjects, so a runtime-only stand-in
+// class doesn't reach it) — deep enough into engine internals that a bug there would be a
+// bug in the test, not a signal about ResolveNodeClass. Recorded here rather than fabricating
+// a passing assertion; the MatchCount > 1 branch in ResolveNodeClass is currently unexercised
+// by an automated test.
 
 #endif // WITH_AUTOMATION_TESTS

@@ -51,11 +51,28 @@ TArray<FBTNodeClassInfo> UBehaviorTreeService::GetAvailableNodeTypes(const FStri
 		Info.ClassName = Data.GetClassName();
 		Info.Category = Data.GetCategory().ToString();
 
-		// GetClass() loads the class if it isn't already resident — that's the price of
-		// knowing bIsBlueprint, since only the resolved UClass exposes ClassGeneratedBy.
-		UClass* ResolvedClass = Data.GetClass(/*bSilent=*/true);
-		Info.bIsBlueprint = ResolvedClass && ResolvedClass->ClassGeneratedBy != nullptr;
-		Info.ClassPath = ResolvedClass ? ResolvedClass->GetPathName() : Data.GetPackageName();
+		// IsBlueprint() is a free flag check (AssetName.Len() > 0 — set at construction from
+		// asset-registry data). Deliberately NOT using GetClass()->ClassGeneratedBy here: that
+		// forces a LoadPackage + FullyLoad per Blueprint entry, on every listing call, whose
+		// result is then discarded — dozens of blocking loads to answer a yes/no question.
+		Info.bIsBlueprint = Data.IsBlueprint();
+
+		if (Info.bIsBlueprint)
+		{
+			// Full object path built from asset-registry strings alone, so listing performs
+			// no loads at all: "<package>.<GeneratedClassName>", e.g.
+			// "/Game/AI/BTT_Foo.BTT_Foo_C".
+			Info.ClassPath = Data.GetPackageName() + TEXT(".") + Info.ClassName;
+		}
+		else
+		{
+			// Native entries were resolved from a TObjectIterator at graph-build time, so the
+			// UClass is already resident — GetClass() here is a pointer read, never a load.
+			UClass* ResolvedClass = Data.GetClass(/*bSilent=*/true);
+			Info.ClassPath = ResolvedClass
+				? ResolvedClass->GetPathName()
+				: Data.GetPackageName() + TEXT(".") + Info.ClassName;
+		}
 
 		Result.Add(MoveTemp(Info));
 	}
