@@ -26,6 +26,7 @@
 #include "BehaviorTreeServiceInternal.h"
 #include "EdGraph/EdGraphPin.h"
 #include "EdGraph/EdGraphSchema.h"
+#include "Misc/ScopeExit.h"
 #include "Misc/StringOutputDevice.h"
 #include "UObject/UnrealType.h"
 
@@ -1275,12 +1276,23 @@ FBTPropertySetResult UBehaviorTreeService::SetNodePropertyValue(const FString& A
 		return Result;
 	}
 
-	// The pre-image, as a full literal, so a partial import can be undone. ImportText applies a
-	// struct or array literal member by member and returns null where it fails, leaving everything
-	// it had already applied in place — a refused write that half-changed the node would be worse
-	// than either outcome.
-	FString Before;
-	VibeBT::ExportPropertyValue(Property, Instance, Before);
+	// The pre-image, so a partial import can be undone: ImportText applies a struct or array literal
+	// member by member and returns null where it fails, leaving everything it had already applied in
+	// place — a refused write that half-changed the node would be worse than either outcome.
+	//
+	// Copied at the VALUE level, not exported to text. A text pre-image cannot restore a struct:
+	// UScriptStruct::ExportText omits members sitting at the struct's default, so re-importing
+	// "(DefaultValue=3.500000)" leaves behind whatever member the failed import had already written.
+	// That is not hypothetical — it is what the first version of this rollback did, and a refused
+	// write survived on the node as Key="Hijacked" while the caller was told nothing had changed.
+	void* const Snapshot = FMemory::Malloc(Property->GetSize(), Property->GetMinAlignment());
+	Property->InitializeValue(Snapshot);
+	Property->CopyCompleteValue(Snapshot, Property->ContainerPtrToValuePtr<void>(Instance));
+	ON_SCOPE_EXIT
+	{
+		Property->DestroyValue(Snapshot);
+		FMemory::Free(Snapshot);
+	};
 
 	Instance->Modify();
 
@@ -1291,8 +1303,7 @@ FBTPropertySetResult UBehaviorTreeService::SetNodePropertyValue(const FString& A
 		Property->ImportText_InContainer(*Value, Instance, Instance, PPF_None, &ImportErrors);
 	if (Imported == nullptr)
 	{
-		FStringOutputDevice RestoreErrors;
-		Property->ImportText_InContainer(*Before, Instance, Instance, PPF_None, &RestoreErrors);
+		Property->CopyCompleteValue(Property->ContainerPtrToValuePtr<void>(Instance), Snapshot);
 
 		Result.Error = FString::Printf(TEXT("could not parse '%s' as %s (%s::%s)"),
 			*Value, *Property->GetCPPType(), *Instance->GetClass()->GetName(), *PropertyName);

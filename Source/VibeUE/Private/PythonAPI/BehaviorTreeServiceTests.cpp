@@ -2347,14 +2347,16 @@ bool FVibeBTNodePropertiesTest::RunTest(const FString&)
 	// A value that cannot be parsed must leave the property exactly as it was: ImportText applies a
 	// struct literal member by member and stops where it fails.
 	//
-	// Deliberately garbage from the first character. A literal that is merely wrong in one member
-	// (say "(Key=\"NoSuchKey\",DefaultValue=**nonsense**)") is NOT refused: the struct importer takes
-	// the members it understands, coerces what it can, and returns success — measured, and the
-	// reason this test does not use that shape.
+	// Deliberately a literal that fails LATE: an unterminated struct, whose first member imports
+	// cleanly before the parse runs off the end. That is what makes this assertion about the
+	// rollback rather than about ImportText refusing the string on sight — a literal that is merely
+	// garbage from the first character never writes anything, so it cannot tell the two apart.
+	// (A literal that is wrong only in a member's VALUE — "(DefaultValue=**nonsense**)" — is not
+	// refused at all: the struct importer coerces what it cannot parse and returns success. Measured.)
 	const FString BeforeBadWrite =
 		UBehaviorTreeService::GetNodePropertyValue(BTPath, WaitA, TEXT("WaitTime"));
 	const FBTPropertySetResult BadValue = UBehaviorTreeService::SetNodePropertyValue(
-		BTPath, WaitA, TEXT("WaitTime"), TEXT("not-a-struct-literal"));
+		BTPath, WaitA, TEXT("WaitTime"), TEXT("(Key=\"Hijacked\",DefaultValue=9.000000"));
 	TestFalse(TEXT("an unparseable value is refused"), BadValue.bSuccess);
 	TestTrue(TEXT("...saying it could not parse it"), BadValue.Error.Contains(TEXT("could not parse")));
 	TestEqual(TEXT("and the half-applied literal was rolled back"),
