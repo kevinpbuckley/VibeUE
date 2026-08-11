@@ -4,6 +4,7 @@
 
 #include "AIGraphTypes.h"
 #include "BehaviorTree/BehaviorTree.h"
+#include "BehaviorTree/BTCompositeNode.h"
 #include "BehaviorTree/BlackboardData.h"
 #include "BehaviorTreeGraph.h"
 #include "BehaviorTreeGraphNode.h"
@@ -188,26 +189,45 @@ namespace VibeBT
 			return nullptr;
 		}
 
+		/** Whether anything at all hangs off the graph root's output pin. */
+		bool GraphRootHasLink(const UBehaviorTreeGraphNode_Root* Root)
+		{
+			return Root && Root->Pins.Num() > 0 && Root->Pins[0] && Root->Pins[0]->LinkedTo.Num() > 0;
+		}
+
 		/**
-		 * Whether UpdateAsset() would find a node to rebuild the runtime tree from — i.e. whether
-		 * the root node's output pin leads to a BT graph node.
+		 * Whether committing this graph would leave the asset with a runtime tree, i.e. whether
+		 * UBehaviorTree::RootNode would come out non-null on the other side of UpdateAsset().
 		 *
-		 * Deliberately mirrors UBehaviorTreeGraph::UpdateAsset() statement for statement, including
-		 * the Cast (a link to a non-BT node leaves Node null there too), so this can never disagree
-		 * with the engine about whether the commit is about to discard the tree:
+		 * Deliberately mirrors the engine statement for statement, so it can never disagree with it
+		 * about what is about to happen — UpdateAsset() picks the node:
 		 *
 		 *   if (RootNode && RootNode->Pins.Num() > 0 && RootNode->Pins[0]->LinkedTo.Num() > 0)
 		 *       Node = Cast<UBehaviorTreeGraphNode>(RootNode->Pins[0]->LinkedTo[0]->GetOwningNode());
 		 *   CreateBTFromGraph(Node);
+		 *
+		 * and CreateBTFromGraph turns it into the new tree:
+		 *
+		 *   BTAsset->RootNode = Cast<UBTCompositeNode>(RootEdNode->NodeInstance);
+		 *
+		 * That last cast is why the NodeInstance check below is not belt-and-braces. A root linked
+		 * to a graph node carrying no instance (or a non-composite one) leaves BTAsset->RootNode
+		 * null, and the very next line — BTGraphHelpers::CreateChildren(BTAsset, BTAsset->RootNode,
+		 * ...) — dereferences it as RootNode->Children.Reset() behind a guard that only tests
+		 * RootEdNode (BehaviorTreeGraph.cpp:510-517). So that shape does not merely discard the
+		 * tree: it crashes the editor inside OnSave(). Refusing it here is the only place it can be
+		 * stopped, because the post-OnSave check never gets to run.
 		 */
-		bool GraphRootFeedsANode(const UBehaviorTreeGraphNode_Root* Root)
+		bool GraphWouldRebuildARuntimeTree(const UBehaviorTreeGraphNode_Root* Root)
 		{
-			if (!Root || Root->Pins.Num() == 0 || !Root->Pins[0] || Root->Pins[0]->LinkedTo.Num() == 0)
+			if (!GraphRootHasLink(Root))
 			{
 				return false;
 			}
 			const UEdGraphPin* LinkedPin = Root->Pins[0]->LinkedTo[0];
-			return LinkedPin && Cast<UBehaviorTreeGraphNode>(LinkedPin->GetOwningNode()) != nullptr;
+			const UBehaviorTreeGraphNode* LinkedNode =
+				LinkedPin ? Cast<UBehaviorTreeGraphNode>(LinkedPin->GetOwningNode()) : nullptr;
+			return LinkedNode && Cast<UBTCompositeNode>(LinkedNode->NodeInstance) != nullptr;
 		}
 	}
 
@@ -406,14 +426,15 @@ namespace VibeBT
 		// the graph is already repopulated by the time anything reaches here and this never fires.
 		// When it does fire, the reconstruction failed and the right answer is to stop, not to
 		// save the result.
-		if (Tree->RootNode && !GraphRootFeedsANode(Root))
+		if (Tree->RootNode && !GraphWouldRebuildARuntimeTree(Root))
 		{
 			return FString::Printf(
-				TEXT("Refusing to commit %s: its editor graph's root node leads to nothing while the "
-					 "asset still has a populated runtime node tree. Saving would discard that tree "
-					 "(UBehaviorTreeGraph::CreateBTFromGraph rebuilds it from the graph, and an empty "
-					 "graph rebuilds an empty tree). The asset on disk is unchanged; reload it and "
-					 "check that its graph was reconstructed before writing to it."),
+				TEXT("Refusing to commit %s: its editor graph would not rebuild a runtime tree (the "
+					 "root node leads to nothing, or to a node carrying no composite instance) while "
+					 "the asset still has a populated runtime node tree. Saving would discard that "
+					 "tree — UBehaviorTreeGraph::CreateBTFromGraph rebuilds it from the graph, and an "
+					 "empty graph rebuilds an empty tree. The asset on disk is unchanged. Run "
+					 "RepairGraphFromRuntimeTree to rebuild the graph from the runtime tree first."),
 				*Tree->GetPathName());
 		}
 

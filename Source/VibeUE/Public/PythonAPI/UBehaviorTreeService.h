@@ -107,4 +107,22 @@ public:
 	/** Re-run layout, regenerate the runtime tree from the graph, and save. */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
 	static FString CompileAndSave(const FString& AssetPath);
+
+	/**
+	 * Rebuild a missing or sparse editor graph from the asset's runtime node tree, then save.
+	 *
+	 * For assets whose graph holds nothing but its root while the runtime tree is intact: they
+	 * display as empty in the Behavior Tree editor, and any ordinary write to them is refused,
+	 * because committing that graph would overwrite the runtime tree with an empty one.
+	 *
+	 * Explicit and never implicit: no other entry point calls this, because rebuilding a
+	 * production asset's graph as a side effect of an unrelated edit is exactly the kind of
+	 * unrequested write this service exists to prevent. Refuses when there is nothing to repair —
+	 * no runtime tree, or a graph that already has nodes under its root. The before/after node
+	 * counts are logged.
+	 *
+	 * Returns an empty string on success, else the error.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
+	static FString RepairGraphFromRuntimeTree(const FString& AssetPath);
 };
