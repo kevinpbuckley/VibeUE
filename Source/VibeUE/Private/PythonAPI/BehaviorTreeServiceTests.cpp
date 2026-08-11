@@ -34,6 +34,7 @@
 #include "HAL/FileManager.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 
 static const EAutomationTestFlags kBTTestFlags =
@@ -2823,6 +2824,619 @@ bool FVibeBTValidateTest::RunTest(const FString&)
 			}
 		}
 	}
+
+	return true;
+}
+
+// ================================================================================================
+//  BuildTree — the batch layer.
+// ================================================================================================
+
+/**
+ * Every node under Node — children, decorators and services, at every depth — but not Node itself.
+ * The count BuildTree's Nodes array has to match when it skipped nothing.
+ */
+static int32 VibeBTCountNodes(const TSharedPtr<FJsonObject>& Node)
+{
+	int32 Count = 0;
+	if (!Node.IsValid())
+	{
+		return Count;
+	}
+	for (const TCHAR* Field : { TEXT("decorators"), TEXT("services"), TEXT("children") })
+	{
+		const TArray<TSharedPtr<FJsonValue>>* Array = nullptr;
+		if (!Node->TryGetArrayField(Field, Array))
+		{
+			continue;
+		}
+		for (const TSharedPtr<FJsonValue>& Value : *Array)
+		{
+			Count += 1 + VibeBTCountNodes(Value->AsObject());
+		}
+	}
+	return Count;
+}
+
+/**
+ * Deep comparison of two GetTree dumps, ignoring "guid" and NOTHING else — "path", "class", "name",
+ * "bInjected", "bHasCompositeDecorator", the whole "properties" map (in both directions, so a
+ * property the rebuild invented is a mismatch too) and the length and order of all three node arrays.
+ *
+ * The guid is the one field that legitimately differs: the rebuilt nodes are new graph nodes. Paths
+ * are NOT exempt — they are structural, so an exact rebuild reproduces them exactly, and a rebuild
+ * that put a SimpleParallel's background branch in the main-task slot would not.
+ */
+static bool VibeBTNodesMatch(const TSharedPtr<FJsonObject>& Expected,
+	const TSharedPtr<FJsonObject>& Actual, const FString& Where, FString& OutMismatch)
+{
+	if (!Expected.IsValid() || !Actual.IsValid())
+	{
+		OutMismatch = FString::Printf(TEXT("%s: one side is not a node object"), *Where);
+		return false;
+	}
+
+	for (const TCHAR* Field : { TEXT("path"), TEXT("class"), TEXT("name") })
+	{
+		FString Left;
+		FString Right;
+		Expected->TryGetStringField(Field, Left);
+		Actual->TryGetStringField(Field, Right);
+		if (Left != Right)
+		{
+			OutMismatch = FString::Printf(TEXT("%s: \"%s\" is '%s', expected '%s'"),
+				*Where, Field, *Right, *Left);
+			return false;
+		}
+	}
+
+	for (const TCHAR* Field : { TEXT("bInjected"), TEXT("bHasCompositeDecorator") })
+	{
+		bool bLeft = false;
+		bool bRight = false;
+		Expected->TryGetBoolField(Field, bLeft);
+		Actual->TryGetBoolField(Field, bRight);
+		if (bLeft != bRight)
+		{
+			OutMismatch = FString::Printf(TEXT("%s: \"%s\" is %s, expected %s"), *Where, Field,
+				bRight ? TEXT("true") : TEXT("false"), bLeft ? TEXT("true") : TEXT("false"));
+			return false;
+		}
+	}
+
+	{
+		const TSharedPtr<FJsonObject>* LeftProps = nullptr;
+		const TSharedPtr<FJsonObject>* RightProps = nullptr;
+		Expected->TryGetObjectField(TEXT("properties"), LeftProps);
+		Actual->TryGetObjectField(TEXT("properties"), RightProps);
+
+		// Collected by hand: FJsonObject's key type is UE::FSharedString in this engine version, not
+		// FString, so TMap::GetKeys deduces nothing for a TArray<FString>.
+		TSet<FString> Names;
+		if (LeftProps && LeftProps->IsValid())
+		{
+			for (const auto& Pair : (*LeftProps)->Values)
+			{
+				Names.Add(FString(*Pair.Key));
+			}
+		}
+		if (RightProps && RightProps->IsValid())
+		{
+			for (const auto& Pair : (*RightProps)->Values)
+			{
+				Names.Add(FString(*Pair.Key));
+			}
+		}
+		for (const FString& Name : Names)
+		{
+			FString Left;
+			FString Right;
+			if (LeftProps && LeftProps->IsValid())
+			{
+				(*LeftProps)->TryGetStringField(Name, Left);
+			}
+			if (RightProps && RightProps->IsValid())
+			{
+				(*RightProps)->TryGetStringField(Name, Right);
+			}
+			if (Left != Right)
+			{
+				OutMismatch = FString::Printf(TEXT("%s: property %s is '%s', expected '%s'"),
+					*Where, *Name, *Right, *Left);
+				return false;
+			}
+		}
+	}
+
+	for (const TCHAR* Field : { TEXT("decorators"), TEXT("services"), TEXT("children") })
+	{
+		const TArray<TSharedPtr<FJsonValue>>* Left = nullptr;
+		const TArray<TSharedPtr<FJsonValue>>* Right = nullptr;
+		Expected->TryGetArrayField(Field, Left);
+		Actual->TryGetArrayField(Field, Right);
+		const int32 LeftNum = Left ? Left->Num() : 0;
+		const int32 RightNum = Right ? Right->Num() : 0;
+		if (LeftNum != RightNum)
+		{
+			OutMismatch = FString::Printf(TEXT("%s: %d \"%s\", expected %d"),
+				*Where, RightNum, Field, LeftNum);
+			return false;
+		}
+		for (int32 Index = 0; Index < LeftNum; ++Index)
+		{
+			if (!VibeBTNodesMatch((*Left)[Index]->AsObject(), (*Right)[Index]->AsObject(),
+				FString::Printf(TEXT("%s/%s[%d]"), *Where, Field, Index), OutMismatch))
+			{
+				return false;
+			}
+		}
+	}
+
+	return true;
+}
+
+static FString VibeBTSerialiseJson(const TSharedPtr<FJsonObject>& Object)
+{
+	FString Out;
+	const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Out);
+	FJsonSerializer::Serialize(Object.ToSharedRef(), Writer);
+	return Out;
+}
+
+/**
+ * Pull a tree's RunBehavior subtrees' root decorators in as injected nodes, and say whether anything
+ * was injected.
+ *
+ * This is what UBehaviorTreeGraph::Initialize() runs when a human opens the asset
+ * (BehaviorTreeGraph.cpp:203-206). UpdateAsset — and therefore every commit this service makes — does
+ * NOT do it, so a tree whose RunBehavior task was just pointed at a subtree carries the injected
+ * copies only after this. Test scaffolding on both sides of the round trip, not the code under test.
+ */
+static bool VibeBTUpdateInjectedNodes(const FString& AssetPath)
+{
+	UBehaviorTree* Tree = LoadObject<UBehaviorTree>(nullptr, *AssetPath);
+	UBehaviorTreeGraph* Graph = Tree ? Cast<UBehaviorTreeGraph>(Tree->BTGraph) : nullptr;
+	return Graph && Graph->UpdateInjectedNodes();
+}
+
+/** How many entries of a build failed. */
+static int32 VibeBTFailedNodes(const FBTBuildResult& Result)
+{
+	int32 Failed = 0;
+	for (const FBTBuildNodeResult& Entry : Result.Nodes)
+	{
+		Failed += Entry.bSuccess ? 0 : 1;
+	}
+	return Failed;
+}
+
+/**
+ * BuildTree, end to end.
+ *
+ * The core assertion is the round trip: a tree built with the primitives, dumped with GetTree, and
+ * rebuilt from that dump into a second asset must produce a byte-identical dump apart from the GUIDs.
+ * That single comparison covers every field GetTree emits — including the two shapes this task was
+ * warned about, a SimpleParallel whose compacted "children" hides which fixed slot each child is in,
+ * and a struct element inside an array property, whose zero-valued members the engine omits on
+ * export (FArrayProperty::ExportTextInnerItem forces a fresh StructDefaults, PropertyArray.cpp:1055).
+ *
+ * The rest of the test is about what happens when it cannot do that: an unresolvable class, a target
+ * that already has a tree, and a target whose top-level node cannot be replaced at all.
+ */
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBTBuildRoundTripTest,
+	"VibeUE.BehaviorTree.Build.RoundTrip", kBTTestFlags)
+bool FVibeBTBuildRoundTripTest::RunTest(const FString&)
+{
+	const FString BBPath = FString(kBTTestDir) / TEXT("BB_BuildTest");
+	const FString SubPath = FString(kBTTestDir) / TEXT("BT_BuildSub");
+	const FString SrcPath = FString(kBTTestDir) / TEXT("BT_BuildSrc");
+	const FString DstPath = FString(kBTTestDir) / TEXT("BT_BuildDst");
+	const FString FreshPath = FString(kBTTestDir) / TEXT("BT_BuildFresh");
+	const FString BadPath = FString(kBTTestDir) / TEXT("BT_BuildBad");
+	const FString OverPath = FString(kBTTestDir) / TEXT("BT_BuildOver");
+	const FString WrongPath = FString(kBTTestDir) / TEXT("BT_BuildWrongTop");
+	const FString KeptPath = FString(kBTTestDir) / TEXT("BT_BuildKept");
+	const FString OtherBBPath = FString(kBTTestDir) / TEXT("BB_BuildOther");
+	const FString OtherPath = FString(kBTTestDir) / TEXT("BT_BuildOtherBoard");
+	FScopedFixtureReset ResetOtherBB(OtherBBPath);
+	FScopedFixtureReset ResetOtherBoard(OtherPath);
+	FScopedFixtureReset ResetBB(BBPath);
+	FScopedFixtureReset ResetSub(SubPath);
+	FScopedFixtureReset ResetSrc(SrcPath);
+	FScopedFixtureReset ResetDst(DstPath);
+	FScopedFixtureReset ResetFresh(FreshPath);
+	FScopedFixtureReset ResetBad(BadPath);
+	FScopedFixtureReset ResetOver(OverPath);
+	FScopedFixtureReset ResetWrong(WrongPath);
+	FScopedFixtureReset ResetKept(KeptPath);
+
+	// --- The blackboard. -------------------------------------------------------------------------
+	// The key set is not decoration: every FBlackboardKeySelector on the nodes below is resolved
+	// against this board at commit time, and InitSelection logs a LogBehaviorTree warning — which
+	// fails the run — when a selector's type filter matches no key at all (BehaviorTreeTypes.cpp:556).
+	TestTrue(TEXT("blackboard created"), UBlackboardService::CreateBlackboard(BBPath, FString()));
+	TestEqual(TEXT("Alpha (Bool) added"),
+		UBlackboardService::AddBlackboardKey(BBPath, TEXT("Alpha"), TEXT("Bool"), false), FString());
+	TestEqual(TEXT("TargetActor (Object) added"),
+		UBlackboardService::AddBlackboardKey(BBPath, TEXT("TargetActor"), TEXT("Object"), false),
+		FString());
+	TestEqual(TEXT("TargetActor is an Actor key"),
+		UBlackboardService::SetBlackboardKeyObjectClass(BBPath, TEXT("TargetActor"),
+			TEXT("/Script/Engine.Actor")), FString());
+	TestEqual(TEXT("WaitSeconds (Float) added"),
+		UBlackboardService::AddBlackboardKey(BBPath, TEXT("WaitSeconds"), TEXT("Float"), false),
+		FString());
+
+	// --- The source tree, built with the primitives. ----------------------------------------------
+	//
+	// Deliberately covers everything the JSON has to carry: nested composites, two decorators in a
+	// specific order on one node, a service, a bound key selector on a sub-node and on a task, an
+	// ordinary struct property, a node with an explicit NodeName (whose path segment is that name),
+	// and TWO SimpleParallels — one with both slots filled and one with only its background branch,
+	// which is the case where "children" array position is NOT the child slot.
+	TestEqual(TEXT("source tree created"),
+		UBehaviorTreeService::CreateBehaviorTree(SrcPath, BBPath), FString());
+
+	const FString Sel = UBehaviorTreeService::AddNode(
+		SrcPath, TEXT("Root"), TEXT("BTComposite_Selector"), -1);
+	const FString Seq = UBehaviorTreeService::AddNode(
+		SrcPath, Sel, TEXT("BTComposite_Sequence"), -1);
+	const FString WaitA = UBehaviorTreeService::AddNode(SrcPath, Seq, TEXT("BTTask_Wait"), -1);
+	const FString Move = UBehaviorTreeService::AddNode(SrcPath, Seq, TEXT("BTTask_MoveTo"), -1);
+	const FString Eqs = UBehaviorTreeService::AddNode(SrcPath, Seq, TEXT("BTTask_RunEQSQuery"), -1);
+	const FString Par = UBehaviorTreeService::AddNode(
+		SrcPath, Sel, TEXT("BTComposite_SimpleParallel"), -1);
+	// Slot 1 first, then slot 0: the background slot is the one the engine refills with a Wait on
+	// every save, so authoring it is a replace.
+	const FString ParBg = UBehaviorTreeService::AddNode(
+		SrcPath, Par, TEXT("BTComposite_Sequence"), 1);
+	const FString ParBgWait = UBehaviorTreeService::AddNode(SrcPath, ParBg, TEXT("BTTask_Wait"), -1);
+	const FString ParMain = UBehaviorTreeService::AddNode(SrcPath, Par, TEXT("BTTask_MoveTo"), 0);
+	// The second parallel keeps its main-task slot EMPTY, so GetTree reports exactly one child —
+	// sitting at array position 0 while occupying fixed slot 1.
+	const FString Lone = UBehaviorTreeService::AddNode(
+		SrcPath, Sel, TEXT("BTComposite_SimpleParallel"), -1);
+	const FString LoneBg = UBehaviorTreeService::AddNode(
+		SrcPath, Lone, TEXT("BTComposite_Sequence"), 1);
+	const FString LoneBgWait = UBehaviorTreeService::AddNode(SrcPath, LoneBg, TEXT("BTTask_Wait"), -1);
+
+	// A RunBehavior task pointing at a subtree whose top composite carries a decorator: that decorator
+	// is INJECTED into this tree, read-only, and must be skipped rather than replayed. The engine
+	// re-injects on every UpdateAsset (BehaviorTreeGraph.cpp:205), so a rebuild that skips it and
+	// replays the RunBehavior task's BehaviorAsset gets the injected copy back for free — while a
+	// rebuild that replayed it would attach a SECOND, authored decorator alongside the injected one.
+	TestEqual(TEXT("subtree created"),
+		UBehaviorTreeService::CreateBehaviorTree(SubPath, BBPath), FString());
+	const FString SubSel = UBehaviorTreeService::AddNode(
+		SubPath, TEXT("Root"), TEXT("BTComposite_Selector"), -1);
+	TestFalse(TEXT("subtree decorator added"),
+		UBehaviorTreeService::AddDecorator(SubPath, SubSel, TEXT("BTDecorator_ForceSuccess"), -1)
+			.StartsWith(TEXT("ERROR")));
+	const FString RunSub = UBehaviorTreeService::AddNode(
+		SrcPath, Sel, TEXT("BTTask_RunBehavior"), -1);
+	const FBTPropertySetResult SubAssetWrite = UBehaviorTreeService::SetNodePropertyValue(
+		SrcPath, RunSub, TEXT("BehaviorAsset"),
+		FString::Printf(TEXT("%s.%s"), *SubPath, *FPaths::GetBaseFilename(SubPath)));
+	TestTrue(TEXT("the RunBehavior task points at the subtree"), SubAssetWrite.bSuccess);
+
+	const FString Dec1 = UBehaviorTreeService::AddDecorator(
+		SrcPath, Seq, TEXT("BTDecorator_Blackboard"), -1);
+	const FString Dec2 = UBehaviorTreeService::AddDecorator(
+		SrcPath, Seq, TEXT("BTDecorator_ForceSuccess"), -1);
+	const FString Svc = UBehaviorTreeService::AddService(
+		SrcPath, Sel, TEXT("BTService_DefaultFocus"), -1);
+
+	// Bailing out rather than continuing: every assertion below is about the dump of this tree, and a
+	// suite of "no node at path" failures would say nothing about what actually broke.
+	const TArray<FString> Built = { Sel, Seq, WaitA, Move, Eqs, Par, ParBg, ParBgWait, ParMain, Lone,
+		LoneBg, LoneBgWait, SubSel, RunSub, Dec1, Dec2, Svc };
+	for (const FString& Path : Built)
+	{
+		if (Path.StartsWith(TEXT("ERROR")))
+		{
+			AddError(FString::Printf(TEXT("fixture build failed: %s"), *Path));
+			return false;
+		}
+	}
+
+	TestTrue(TEXT("an ordinary struct property is set"),
+		UBehaviorTreeService::SetNodePropertyValue(
+			SrcPath, WaitA, TEXT("WaitTime"), TEXT("(DefaultValue=3.500000)")).bSuccess);
+	TestTrue(TEXT("a key selector on a sub-node is bound"),
+		UBehaviorTreeService::SetNodeBlackboardKey(
+			SrcPath, Dec1, TEXT("BlackboardKey"), TEXT("Alpha")).bSuccess);
+	TestTrue(TEXT("a key selector on a task is bound"),
+		UBehaviorTreeService::SetNodeBlackboardKey(
+			SrcPath, Move, TEXT("BlackboardKey"), TEXT("TargetActor")).bSuccess);
+
+	// A STRUCT ELEMENT INSIDE AN ARRAY: FEQSParametrizedQueryExecutionRequest::QueryConfig is a
+	// TArray<FAIDynamicParam>, and every member of that element left at the struct default is omitted
+	// by the exporter whatever delta it is given (PropertyArray.cpp:1055-1102). The round-trip
+	// comparison below is what says whether that omission survives a rebuild.
+	const FBTPropertySetResult EqsWrite = UBehaviorTreeService::SetNodePropertyValue(
+		SrcPath, Eqs, TEXT("EQSRequest"), TEXT("(QueryConfig=((ParamName=\"BuildTreeParam\")))"));
+	AddInfo(FString::Printf(TEXT("EQSRequest after write: '%s' (error: '%s')"),
+		*EqsWrite.ValueAfterWrite, *EqsWrite.Error));
+	TestTrue(TEXT("an array-of-struct property is set"), EqsWrite.bSuccess);
+	TestTrue(TEXT("...and its element member survived the commit"),
+		EqsWrite.ValueAfterWrite.Contains(TEXT("BuildTreeParam")));
+
+	// Renamed LAST: the name IS the node's path segment, so this invalidates Seq and every path
+	// through it. BuildTree replays it as the NodeName property rather than through SetNodeName —
+	// "name" in the dump is the node TITLE, which for an unnamed node is its class description.
+	TestEqual(TEXT("a node is renamed"),
+		UBehaviorTreeService::SetNodeName(SrcPath, Seq, TEXT("GuardedBranch")), FString());
+
+	TestTrue(TEXT("the subtree's root decorator was injected into the source"),
+		VibeBTUpdateInjectedNodes(SrcPath));
+
+	const FString SrcJson = UBehaviorTreeService::GetTree(SrcPath);
+	const TSharedPtr<FJsonObject> SrcTree = ParseTree(SrcJson);
+	if (!TestTrue(TEXT("the source dump parses"), SrcTree.IsValid()))
+	{
+		AddError(FString::Printf(TEXT("source dump: %s"), *SrcJson));
+		return false;
+	}
+	const int32 SourceNodeCount = VibeBTCountNodes(SrcTree);
+	AddInfo(FString::Printf(TEXT("source tree: %d nodes below the root"), SourceNodeCount));
+
+	// The injected decorator is in the dump, and it is the engine's, not something authored here.
+	const FString InjectedPath = RunSub + TEXT("/@decorator[0]");
+	FBTNodeInfo InjectedInfo;
+	TestTrue(TEXT("the injected decorator is addressable in the source"),
+		UBehaviorTreeService::GetNodeInfo(SrcPath, InjectedPath, InjectedInfo));
+	TestTrue(TEXT("...and is flagged as injected"), InjectedInfo.bInjected);
+	TestTrue(TEXT("the dump carries the array-of-struct element"),
+		SrcJson.Contains(TEXT("BuildTreeParam")));
+	TestTrue(TEXT("the dump carries the renamed node's NodeName property"),
+		SrcJson.Contains(TEXT("GuardedBranch")));
+
+	// --- THE ROUND TRIP. -------------------------------------------------------------------------
+	TestEqual(TEXT("destination created"),
+		UBehaviorTreeService::CreateBehaviorTree(DstPath, BBPath), FString());
+	const FBTBuildResult Rebuild = UBehaviorTreeService::BuildTree(DstPath, SrcJson, true);
+	for (const FBTBuildNodeResult& Entry : Rebuild.Nodes)
+	{
+		if (!Entry.bSuccess)
+		{
+			AddError(FString::Printf(TEXT("BuildTree failed on '%s': %s"), *Entry.Path, *Entry.Error));
+		}
+	}
+	TestTrue(TEXT("the rebuild succeeded"), Rebuild.bSuccess);
+	TestEqual(TEXT("...with no overall error"), Rebuild.Error, FString());
+	TestEqual(TEXT("...and one entry per node in the JSON"), Rebuild.Nodes.Num(), SourceNodeCount);
+
+	// The injected decorator was skipped rather than replayed — and it is nevertheless present in the
+	// rebuilt tree (the comparison below), because replaying the RunBehavior task's BehaviorAsset is
+	// enough for the engine to inject it there too. A rebuild that replayed it instead would end up
+	// with a second, authored copy alongside this one, and the comparison would say so.
+	TestTrue(TEXT("the rebuilt tree injects the same decorator"), VibeBTUpdateInjectedNodes(DstPath));
+	const FBTBuildNodeResult* InjectedEntry = Rebuild.Nodes.FindByPredicate(
+		[&InjectedPath](const FBTBuildNodeResult& Entry) { return Entry.Path == InjectedPath; });
+	if (TestNotNull(TEXT("the injected node has an entry of its own"), InjectedEntry))
+	{
+		TestTrue(TEXT("...reported as a success"), InjectedEntry->bSuccess);
+		TestTrue(TEXT("...that says it was skipped"), InjectedEntry->Error.Contains(TEXT("skipped")));
+	}
+
+	const TSharedPtr<FJsonObject> DstTree = ParseTree(UBehaviorTreeService::GetTree(DstPath));
+	FString Mismatch;
+	if (!TestTrue(TEXT("the rebuilt tree matches the source, guids aside"),
+		VibeBTNodesMatch(SrcTree, DstTree, TEXT("Root"), Mismatch)))
+	{
+		AddError(Mismatch);
+	}
+
+	// The comparison above ignores exactly one field, and that field really did change — otherwise it
+	// would be asserting that two dumps of the same asset are equal.
+	if (SrcTree->GetArrayField(TEXT("children")).Num() == 1
+		&& DstTree.IsValid() && DstTree->GetArrayField(TEXT("children")).Num() == 1)
+	{
+		TestNotEqual(TEXT("the rebuild made new graph nodes"),
+			SrcTree->GetArrayField(TEXT("children"))[0]->AsObject()->GetStringField(TEXT("guid")),
+			DstTree->GetArrayField(TEXT("children"))[0]->AsObject()->GetStringField(TEXT("guid")));
+	}
+
+	// bReplaceExisting = false is not "always refuse": it is "refuse a tree that already has one".
+	TestEqual(TEXT("a fresh asset created"),
+		UBehaviorTreeService::CreateBehaviorTree(FreshPath, BBPath), FString());
+	const FBTBuildResult FreshBuild = UBehaviorTreeService::BuildTree(FreshPath, SrcJson, false);
+	TestTrue(TEXT("building into an empty tree does not need bReplaceExisting"), FreshBuild.bSuccess);
+	VibeBTUpdateInjectedNodes(FreshPath);
+	FString FreshMismatch;
+	if (!TestTrue(TEXT("...and produces the same tree"),
+		VibeBTNodesMatch(SrcTree, ParseTree(UBehaviorTreeService::GetTree(FreshPath)), TEXT("Root"),
+			FreshMismatch)))
+	{
+		AddError(FreshMismatch);
+	}
+
+	// --- A node whose class does not resolve. ------------------------------------------------------
+	// Broken on the parallel's BACKGROUND branch, which has a child of its own, so this covers both
+	// halves of the contract: the failing node is named, and its subtree is reported as not built
+	// rather than silently missing.
+	const TSharedPtr<FJsonObject> BrokenTree = ParseTree(SrcJson);
+	const TSharedPtr<FJsonObject> BrokenNode =
+		BrokenTree.IsValid() ? FindNodeByPath(BrokenTree, ParBg) : nullptr;
+	if (!TestTrue(TEXT("the node to break was found in the dump"), BrokenNode.IsValid()))
+	{
+		return false;
+	}
+	BrokenNode->SetStringField(TEXT("class"), TEXT("BTComposite_Nonexistent"));
+	const FString BrokenJson = VibeBTSerialiseJson(BrokenTree);
+
+	TestEqual(TEXT("bad-build target created"),
+		UBehaviorTreeService::CreateBehaviorTree(BadPath, BBPath), FString());
+	const FBTBuildResult BadBuild = UBehaviorTreeService::BuildTree(BadPath, BrokenJson, true);
+	TestFalse(TEXT("an unresolvable class fails the build"), BadBuild.bSuccess);
+	TestTrue(TEXT("...and the overall error points at the per-node results"),
+		BadBuild.Error.Contains(TEXT("nodes failed")));
+	TestEqual(TEXT("...with an entry for every node in the JSON"), BadBuild.Nodes.Num(),
+		SourceNodeCount);
+
+	const FBTBuildNodeResult* FailedEntry = BadBuild.Nodes.FindByPredicate(
+		[&ParBg](const FBTBuildNodeResult& Entry) { return Entry.Path == ParBg; });
+	if (TestNotNull(TEXT("the failing node is named in Nodes"), FailedEntry))
+	{
+		TestFalse(TEXT("...as a failure"), FailedEntry->bSuccess);
+		TestTrue(TEXT("...naming the class that did not resolve"),
+			FailedEntry->Error.Contains(TEXT("BTComposite_Nonexistent")));
+	}
+	const FBTBuildNodeResult* OrphanEntry = BadBuild.Nodes.FindByPredicate(
+		[&ParBgWait](const FBTBuildNodeResult& Entry) { return Entry.Path == ParBgWait; });
+	if (TestNotNull(TEXT("its child is reported too"), OrphanEntry))
+	{
+		TestFalse(TEXT("...as not built"), OrphanEntry->bSuccess);
+		TestTrue(TEXT("...because its parent was not created"),
+			OrphanEntry->Error.Contains(TEXT("its parent")));
+	}
+
+	// The point of the per-node list: the rest of the tree still reports its own outcomes, and was
+	// really built.
+	TestEqual(TEXT("exactly the broken node and its child failed"), VibeBTFailedNodes(BadBuild), 2);
+	TestTrue(TEXT("everything else succeeded"), BadBuild.Nodes.Num() - 2 > 5);
+	FBTNodeInfo BadSelInfo;
+	TestTrue(TEXT("the partially built asset is readable"),
+		UBehaviorTreeService::GetNodeInfo(BadPath, Sel, BadSelInfo));
+	TestEqual(TEXT("...and carries the branches that did build"), BadSelInfo.ChildCount, 4);
+
+	// ...and the comparison used above is not vacuous: this tree is genuinely different.
+	FString BadMismatch;
+	TestFalse(TEXT("the tree comparison rejects a tree that differs"),
+		VibeBTNodesMatch(SrcTree, ParseTree(UBehaviorTreeService::GetTree(BadPath)), TEXT("Root"),
+			BadMismatch));
+	AddInfo(FString::Printf(TEXT("first difference in the partially built tree: %s"), *BadMismatch));
+
+	// --- A target whose blackboard is not the source's. --------------------------------------------
+	// GetTree does not report the tree's blackboard, so key bindings are resolved against whatever the
+	// TARGET has. Every selector goes through SetNodeBlackboardKey, which checks the key against that
+	// board and refuses before touching the node; routing them through the generic setter instead
+	// would write the name and only find out at commit time, when UBTNode::PreSave rewrites it. The
+	// assertion is therefore on the message, not merely on the failure.
+	TestTrue(TEXT("a second blackboard created"),
+		UBlackboardService::CreateBlackboard(OtherBBPath, FString()));
+	// Keys of the right TYPES but the wrong names: a board with no key a selector's filter accepts
+	// makes FBlackboardKeySelector::InitSelection log a warning at commit, which fails the run.
+	TestEqual(TEXT("Other (Bool) added"),
+		UBlackboardService::AddBlackboardKey(OtherBBPath, TEXT("Other"), TEXT("Bool"), false), FString());
+	TestEqual(TEXT("Thing (Object) added"),
+		UBlackboardService::AddBlackboardKey(OtherBBPath, TEXT("Thing"), TEXT("Object"), false),
+		FString());
+	TestEqual(TEXT("Thing is an Actor key"),
+		UBlackboardService::SetBlackboardKeyObjectClass(OtherBBPath, TEXT("Thing"),
+			TEXT("/Script/Engine.Actor")), FString());
+	TestEqual(TEXT("Number (Float) added"),
+		UBlackboardService::AddBlackboardKey(OtherBBPath, TEXT("Number"), TEXT("Float"), false),
+		FString());
+	TestEqual(TEXT("wrong-board target created"),
+		UBehaviorTreeService::CreateBehaviorTree(OtherPath, OtherBBPath), FString());
+
+	const FBTBuildResult OtherBoard = UBehaviorTreeService::BuildTree(OtherPath, SrcJson, true);
+	TestFalse(TEXT("bindings against a board without those keys fail"), OtherBoard.bSuccess);
+	int32 MissingKeyErrors = 0;
+	for (const FBTBuildNodeResult& Entry : OtherBoard.Nodes)
+	{
+		if (!Entry.bSuccess)
+		{
+			AddInfo(FString::Printf(TEXT("wrong-board failure on '%s': %s"), *Entry.Path, *Entry.Error));
+			MissingKeyErrors += Entry.Error.Contains(TEXT("has no key")) ? 1 : 0;
+		}
+	}
+	// Both of the source's bound selectors — one on a decorator, one on a task — and each refused by
+	// the key binder rather than by a post-commit read-back.
+	TestEqual(TEXT("...naming the key and the board, on every failing node"), MissingKeyErrors,
+		VibeBTFailedNodes(OtherBoard));
+	TestTrue(TEXT("...on at least the two nodes that carry a binding"), MissingKeyErrors >= 2);
+
+	// --- bReplaceExisting = false, on a tree that already has one. ---------------------------------
+	const FString DstBefore = UBehaviorTreeService::GetTree(DstPath);
+	const FBTBuildResult Refused = UBehaviorTreeService::BuildTree(DstPath, SrcJson, false);
+	TestFalse(TEXT("a populated tree is refused without bReplaceExisting"), Refused.bSuccess);
+	TestTrue(TEXT("...saying so"), Refused.Error.Contains(TEXT("bReplaceExisting is false")));
+	TestEqual(TEXT("...having attempted no node at all"), Refused.Nodes.Num(), 0);
+	// Guids included: an identical dump means nothing was rebuilt, not merely that it ended up the same.
+	TestEqual(TEXT("...and having written nothing"), UBehaviorTreeService::GetTree(DstPath), DstBefore);
+
+	// --- A top-level node that cannot be replaced. -------------------------------------------------
+	// The tree's top-level node is the one node RemoveNode refuses (removing the root's only child
+	// would leave no runtime tree), and there is no ReplaceNode — so a different class there is
+	// refused BEFORE anything is cleared, rather than producing a Sequence-rooted hybrid carrying a
+	// Selector's children.
+	TestEqual(TEXT("wrong-top target created"),
+		UBehaviorTreeService::CreateBehaviorTree(WrongPath, BBPath), FString());
+	TestFalse(TEXT("...with a Sequence at the top"),
+		UBehaviorTreeService::AddNode(WrongPath, TEXT("Root"), TEXT("BTComposite_Sequence"), -1)
+			.StartsWith(TEXT("ERROR")));
+	const FString WrongBefore = UBehaviorTreeService::GetTree(WrongPath);
+	const FBTBuildResult WrongTop = UBehaviorTreeService::BuildTree(WrongPath, SrcJson, true);
+	TestFalse(TEXT("a mismatched top-level node is refused"), WrongTop.bSuccess);
+	TestTrue(TEXT("...naming both classes"),
+		WrongTop.Error.Contains(TEXT("BTComposite_Sequence"))
+			&& WrongTop.Error.Contains(TEXT("BTComposite_Selector")));
+	TestEqual(TEXT("...before clearing anything"),
+		UBehaviorTreeService::GetTree(WrongPath), WrongBefore);
+
+	// --- Rebuilding over a matching tree. ----------------------------------------------------------
+	// Same top-level class, so everything below it — children AND the top node's own decorators and
+	// services — is cleared and rebuilt from the JSON.
+	TestEqual(TEXT("overwrite target created"),
+		UBehaviorTreeService::CreateBehaviorTree(OverPath, BBPath), FString());
+	const FString OverSel = UBehaviorTreeService::AddNode(
+		OverPath, TEXT("Root"), TEXT("BTComposite_Selector"), -1);
+	const FString OverSeq = UBehaviorTreeService::AddNode(
+		OverPath, OverSel, TEXT("BTComposite_Sequence"), -1);
+	TestFalse(TEXT("stale subtree authored"),
+		UBehaviorTreeService::AddNode(OverPath, OverSeq, TEXT("BTTask_Wait"), -1)
+			.StartsWith(TEXT("ERROR")));
+	TestFalse(TEXT("stale decorator authored"),
+		UBehaviorTreeService::AddDecorator(OverPath, OverSel, TEXT("BTDecorator_ForceSuccess"), -1)
+			.StartsWith(TEXT("ERROR")));
+	TestFalse(TEXT("stale service authored"),
+		UBehaviorTreeService::AddService(OverPath, OverSel, TEXT("BTService_DefaultFocus"), -1)
+			.StartsWith(TEXT("ERROR")));
+
+	const FBTBuildResult Over = UBehaviorTreeService::BuildTree(OverPath, SrcJson, true);
+	for (const FBTBuildNodeResult& Entry : Over.Nodes)
+	{
+		if (!Entry.bSuccess)
+		{
+			AddError(FString::Printf(TEXT("rebuild over an existing tree failed on '%s': %s"),
+				*Entry.Path, *Entry.Error));
+		}
+	}
+	TestTrue(TEXT("rebuilding over a matching tree succeeds"), Over.bSuccess);
+	VibeBTUpdateInjectedNodes(OverPath);
+	FString OverMismatch;
+	if (!TestTrue(TEXT("...and leaves nothing of what was there before"),
+		VibeBTNodesMatch(SrcTree, ParseTree(UBehaviorTreeService::GetTree(OverPath)), TEXT("Root"),
+			OverMismatch)))
+	{
+		AddError(OverMismatch);
+	}
+
+	// --- The one hybrid bReplaceExisting can produce, reported rather than hidden. -----------------
+	// The retained top-level node keeps a property the JSON never mentions (here an explicit
+	// NodeName), because that node is reused rather than rebuilt. The build says so on that node.
+	TestEqual(TEXT("retained-node target created"),
+		UBehaviorTreeService::CreateBehaviorTree(KeptPath, BBPath), FString());
+	const FString KeptSel = UBehaviorTreeService::AddNode(
+		KeptPath, TEXT("Root"), TEXT("BTComposite_Selector"), -1);
+	TestEqual(TEXT("the top node carries a name of its own"),
+		UBehaviorTreeService::SetNodeName(KeptPath, KeptSel, TEXT("Kept")), FString());
+
+	const FBTBuildResult Kept = UBehaviorTreeService::BuildTree(KeptPath, SrcJson, true);
+	TestFalse(TEXT("a leftover on the retained top node fails the build"), Kept.bSuccess);
+	const FBTBuildNodeResult* KeptEntry = Kept.Nodes.FindByPredicate(
+		[&Sel](const FBTBuildNodeResult& Entry) { return Entry.Path == Sel; });
+	if (TestNotNull(TEXT("the top node has an entry"), KeptEntry))
+	{
+		TestFalse(TEXT("...which failed"), KeptEntry->bSuccess);
+		TestTrue(TEXT("...saying it was retained rather than rebuilt"),
+			KeptEntry->Error.Contains(TEXT("retained")));
+		TestTrue(TEXT("...and naming the property that does not match"),
+			KeptEntry->Error.Contains(TEXT("NodeName")));
+	}
+	TestEqual(TEXT("and nothing else failed"), VibeBTFailedNodes(Kept), 1);
 
 	return true;
 }

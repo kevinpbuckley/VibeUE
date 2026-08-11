@@ -159,6 +159,56 @@ struct FBTPropertySetResult
 	FString ValueAfterWrite;
 };
 
+/** Outcome of one node in a BuildTree walk. */
+USTRUCT(BlueprintType)
+struct FBTBuildNodeResult
+{
+	GENERATED_BODY()
+
+	/**
+	 * The node's path IN THE SUPPLIED JSON, not in the built asset — it is the only identifier a node
+	 * that could not be created has at all. On a build where nothing was skipped or refused it is
+	 * also the node's path in the target, because paths are structural.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
+	FString Path;
+
+	/** True when the target now carries this node as the JSON described it. */
+	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
+	bool bSuccess = false;
+
+	/**
+	 * Why this node's outcome is what it is. Empty for an ordinary success; populated for a failure,
+	 * and also for a success that did something other than create the node — an injected node that
+	 * was deliberately skipped, or a node that was retained rather than rebuilt.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
+	FString Error;
+};
+
+/** Outcome of BuildTree: one entry per node, deliberately not collapsed into a single boolean. */
+USTRUCT(BlueprintType)
+struct FBTBuildResult
+{
+	GENERATED_BODY()
+
+	/** True only when the call was accepted AND every entry in Nodes succeeded. */
+	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
+	bool bSuccess = false;
+
+	/**
+	 * Why the call as a whole failed — a malformed JSON, or a target this build cannot be applied to.
+	 * When the call ran but some nodes failed, this is a count pointing at Nodes rather than one of
+	 * their errors promoted arbitrarily.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
+	FString Error;
+
+	/** One entry per node described by the JSON, in the order the walk reached them (pre-order). */
+	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
+	TArray<FBTBuildNodeResult> Nodes;
+};
+
 /**
  * Read and author Behavior Tree assets.
  *
@@ -474,6 +524,77 @@ public:
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
 	static FBTPropertySetResult SetNodeBlackboardKey(const FString& AssetPath,
 		const FString& NodePath, const FString& PropertyName, const FString& KeyName);
+
+	// =================================================================
+	// Batch build
+	// =================================================================
+
+	/**
+	 * Build a whole tree into AssetPath from the JSON GetTree emits, node by node.
+	 *
+	 * A batch layer over AddNode / AddDecorator / AddService / SetNodePropertyValue /
+	 * SetNodeBlackboardKey and nothing else: it introduces no graph manipulation of its own, so every
+	 * guarantee (and every refusal) of those calls applies unchanged. TreeJson is exactly what GetTree
+	 * returns — the graph's Root node object, whose "class" is empty and whose "children" holds the
+	 * one top-level composite — so read -> edit -> write round-trips.
+	 *
+	 * The result carries one entry per node. A partial failure is reported node by node: a node whose
+	 * class does not resolve fails alone, its subtree is reported as not built, and its siblings are
+	 * still built and still report their own outcomes.
+	 *
+	 * What is replayed, and what is not:
+	 *  - "class" places the node, "properties" is written back onto it, "decorators" and "services"
+	 *    are attached in their listed order. A property flagged bIsBlackboardKeySelector by
+	 *    GetNodePropertyNames on the freshly created node goes through SetNodeBlackboardKey (with the
+	 *    key name read out of the literal); everything else goes through SetNodePropertyValue. A
+	 *    selector bound to None is skipped — that is the state a new node is already in.
+	 *  - "name" is NOT replayed. It is the node's TITLE (GetNodeTitle), which is the class description
+	 *    for a node nobody has renamed; writing it back through SetNodeName would give every node an
+	 *    explicit UBTNode::NodeName it did not have. A name a human actually set is carried in
+	 *    "properties" as NodeName, and replaying that property reproduces both the name and the title.
+	 *  - "guid" is not replayed: GUIDs are per-graph-node identity, and the built nodes are new nodes.
+	 *  - A node with "bInjected": true is skipped, and so is its subtree. Injected nodes are the
+	 *    engine's read-only copies of a RunBehavior subtree's nodes; every mutator refuses them, and
+	 *    the engine regenerates them from the subtree asset once the RunBehavior task is in place.
+	 *    They appear in Nodes as successes whose Error says they were skipped.
+	 *  - A decorator with an empty "class" is a composite (logic-operator) decorator: an editor-only
+	 *    sub-graph with no UBTDecorator class to name, which this cannot recreate. It is reported as a
+	 *    failure on that sub-node alone.
+	 *
+	 * SimpleParallel's two fixed slots are addressed by slot, never by array position. GetTree's
+	 * "children" is compacted (it lists linked children, not slots), so a parallel that reports one
+	 * child is reporting its BACKGROUND branch — the engine refills an empty background pin with a
+	 * Wait task on every save, so a saved parallel always has one — and that child is rebuilt into
+	 * slot 1, not slot 0. A parallel reporting two children rebuilds them into slots 0 and 1 in order.
+	 *
+	 * bReplaceExisting, precisely:
+	 *  - The tree's top-level composite CANNOT be replaced. RemoveNode refuses the root's only child
+	 *    (removing it would leave the asset with no runtime tree, which CommitGraph refuses to save)
+	 *    and there is no ReplaceNode. So:
+	 *  - false: the target must have no top-level node at all — a tree straight out of
+	 *    CreateBehaviorTree. Anything else is refused before a single write, naming what is there.
+	 *  - true: everything BELOW the top-level composite is removed — every child subtree, and its own
+	 *    decorators and services — and the JSON is then replayed onto the retained top node. Its class
+	 *    must match the JSON's top-level class; when it does not, the call is refused before anything
+	 *    is written rather than producing a hybrid, and the answer is to build into a fresh asset.
+	 *    Because that node is retained rather than rebuilt, a property it carries that TreeJson does
+	 *    not mention survives the build. That is checked for, not assumed: the retained node's edited
+	 *    properties are re-read afterwards and compared with the JSON's, and any difference fails that
+	 *    node's entry and names the properties.
+	 *
+	 * Prerequisites the JSON does not carry: blackboard key bindings resolve against the TARGET tree's
+	 * own blackboard (GetTree does not report the tree's blackboard asset), so assign it — with
+	 * CreateBehaviorTree or SetBlackboardAsset — before building, or every binding fails on its node.
+	 *
+	 * Cost: each primitive commits (layout, runtime-tree regeneration and a package save) on its own,
+	 * so a build performs one save per node, per sub-node and per property write rather than one at
+	 * the end. That is deliberate — the alternative is a deferred-commit mode on every primitive,
+	 * which would move the graph-safety and read-back-verification guarantees out of them — and it is
+	 * why this is a batch convenience, not a bulk-import path.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
+	static FBTBuildResult BuildTree(const FString& AssetPath, const FString& TreeJson,
+		bool bReplaceExisting);
 
 	// =================================================================
 	// Validation
