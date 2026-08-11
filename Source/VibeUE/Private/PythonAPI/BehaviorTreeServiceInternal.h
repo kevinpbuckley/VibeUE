@@ -7,6 +7,7 @@
 class UBehaviorTree;
 class UBehaviorTreeGraph;
 class UBehaviorTreeGraphNode;
+class UBehaviorTreeGraphNode_Root;
 
 // Real type is Editor/AIGraph's AIGraphTypes.h (global scope, not namespaced). Forward-declared
 // here at global scope so the elaborated-type-specifier below resolves to it rather than
@@ -52,6 +53,47 @@ namespace VibeBT
 
 	/** Shared asset-registry sweep used by both AI services. */
 	TArray<FString> ListAssetsOfClass(const UClass* Class, const FString& DirectoryPath);
+
+	/**
+	 * The graph's root node, or nullptr. A linear sweep of Nodes is the whole search: BT sub-nodes
+	 * (decorators, services) live in UAIGraphNode::SubNodes and are never added to UEdGraph::Nodes
+	 * (AIGraphNode.cpp, UAIGraphNode::AddSubNode).
+	 */
+	UBehaviorTreeGraphNode_Root* FindRootGraphNode(UBehaviorTreeGraph* Graph);
+
+	/**
+	 * Node's children, in current output-pin link order — which, on a graph committed through
+	 * CommitGraph (and therefore ArrangeGraph), is BT execution order.
+	 *
+	 * Neither deduplicated nor cycle-guarded: it reports exactly what the pins say, so callers that
+	 * walk the whole graph can decide for themselves what to do about a malformed one.
+	 */
+	TArray<UBehaviorTreeGraphNode*> GetChildNodes(const UBehaviorTreeGraphNode* Node);
+
+	/** Node's parent through its input pin, or nullptr for the root (and for orphaned nodes). */
+	UBehaviorTreeGraphNode* GetParentNode(const UBehaviorTreeGraphNode* Node);
+
+	/**
+	 * The path that ResolveNodePath will resolve back to Node, e.g.
+	 * "Root/Selector[0]/Sequence[1]/Wait[0]". Empty when Node is not reachable from the graph root.
+	 *
+	 * Segments are display names (UEdGraphNode::GetNodeTitle(ListView)) followed by an index among
+	 * the same-named siblings. The index is always emitted here — resolution treats it as optional,
+	 * but an issued path that omitted it would stop resolving as soon as a same-named sibling
+	 * appeared beside it. Sub-nodes get an "@decorator[n]" / "@service[n]" final segment.
+	 *
+	 * Paths are positional, not identities: inserting or removing a sibling before this one changes
+	 * what a previously returned path resolves to. Callers holding a path across a structural edit
+	 * must treat it the way they would a list index; FBTNodeInfo::Guid is the stable identity.
+	 */
+	FString GetNodePath(const UBehaviorTreeGraphNode* Node);
+
+	/**
+	 * Resolve a "/"-separated node path against Graph, or nullptr when it names nothing or is
+	 * ambiguous. The first segment is the literal keyword "Root" (case-insensitive), matching the
+	 * root graph node whatever its title; see GetNodePath for the rest of the grammar.
+	 */
+	UBehaviorTreeGraphNode* ResolveNodePath(UBehaviorTreeGraph* Graph, const FString& Path);
 
 	/**
 	 * Create Tree->BTGraph and its root node if either is missing, and leave the tree's

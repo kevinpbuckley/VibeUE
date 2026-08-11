@@ -56,6 +56,53 @@ struct FBTAssetInfo
 	FString Error;
 };
 
+/** One node in a Behavior Tree's editor graph, addressed by path. */
+USTRUCT(BlueprintType)
+struct FBTNodeInfo
+{
+	GENERATED_BODY()
+
+	/** Path this node resolves from, e.g. "Root/Selector/Sequence[1]/Wait". */
+	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
+	FString Path;
+
+	/** The graph node's stable GUID. Unlike Path, it does not change when siblings are inserted. */
+	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
+	FString Guid;
+
+	/** Node instance class name, e.g. "BTComposite_Selector". Empty for the root node. */
+	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
+	FString ClassName;
+
+	/** Display name, i.e. the node's title in the graph. */
+	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
+	FString NodeName;
+
+	/** Number of child nodes, in execution order. */
+	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
+	int32 ChildCount = 0;
+
+	/** Number of decorators attached to this node. */
+	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
+	int32 DecoratorCount = 0;
+
+	/** Number of services attached to this node. */
+	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
+	int32 ServiceCount = 0;
+
+	/** True when the node was injected from a subtree and must not be edited. */
+	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
+	bool bInjected = false;
+
+	/** True when one of the decorators is a composite (logic-operator) decorator. */
+	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
+	bool bHasCompositeDecorator = false;
+
+	/** Populated when the path could not be resolved. */
+	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
+	FString Error;
+};
+
 /**
  * Read and author Behavior Tree assets.
  *
@@ -125,4 +172,68 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
 	static FString RepairGraphFromRuntimeTree(const FString& AssetPath);
+
+	// =================================================================
+	// Structure — read
+	// =================================================================
+
+	/**
+	 * The whole tree as JSON, rooted at the graph's root node. Per node: "path", "guid", "class",
+	 * "name", "children" (in execution order), "decorators", "services", "properties" (edited,
+	 * non-default values only), "bInjected", "bHasCompositeDecorator".
+	 *
+	 * Read-only: unlike the mutators it never creates the editor graph, so an asset that has never
+	 * been opened reads back as an "error" field rather than being silently written to. The result
+	 * always parses, and always has a "children" array, error or not.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
+	static FString GetTree(const FString& AssetPath);
+
+	/**
+	 * One node, addressed by path. Returns false — with OutInfo.Error explaining why — when the
+	 * path names nothing or is ambiguous, so that "no such node" can never be mistaken for a node
+	 * whose fields happen to be empty.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
+	static bool GetNodeInfo(const FString& AssetPath, const FString& NodePath, FBTNodeInfo& OutInfo);
+
+	// =================================================================
+	// Structure — write
+	// =================================================================
+
+	/**
+	 * Add a composite or task node under ParentNodePath and save.
+	 *
+	 * ChildIndex is the insert position among the parent's existing children; < 0 appends. Returns
+	 * the new node's path, or a string starting with "ERROR: ".
+	 *
+	 * Note that the returned path is positional: adding or removing a same-named sibling later
+	 * changes what it resolves to.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
+	static FString AddNode(const FString& AssetPath, const FString& ParentNodePath,
+		const FString& NodeClassName, int32 ChildIndex);
+
+	/**
+	 * Remove a node and its subtree, and save. Returns an empty string on success, else the error.
+	 *
+	 * The whole subtree goes, not just the one node: a child left disconnected would be unreachable
+	 * from "Root", so no path could ever name it again, and it would sit in the asset forever as
+	 * invisible weight.
+	 *
+	 * Refuses on the root node, and on the root's only child — removing that would leave the tree
+	 * with no runtime root at all, which CommitGraph exists to refuse.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
+	static FString RemoveNode(const FString& AssetPath, const FString& NodePath);
+
+	/**
+	 * Re-parent a node (with its subtree) to NewChildIndex under NewParentPath, and save.
+	 * NewChildIndex < 0 appends. Returns an empty string on success, else the error.
+	 *
+	 * Refuses to move the root, and to move a node under itself or one of its own descendants.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
+	static FString MoveNode(const FString& AssetPath, const FString& NodePath,
+		const FString& NewParentPath, int32 NewChildIndex);
 };

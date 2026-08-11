@@ -23,9 +23,12 @@
 #include "BehaviorTreeGraph.h"
 #include "BehaviorTreeGraphNode_Composite.h"
 #include "BehaviorTreeGraphNode_Root.h"
+#include "Dom/JsonObject.h"
 #include "Editor.h"
 #include "Framework/Docking/TabManager.h"
 #include "HAL/FileManager.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 
 static const EAutomationTestFlags kBTTestFlags =
@@ -1103,6 +1106,202 @@ bool FVibeBTRepairIsNeverImplicitTest::RunTest(const FString&)
 	TestTrue(TEXT("info readable after the refusal"),
 		UBehaviorTreeService::GetBehaviorTreeInfo(BTPath, AfterEnsure));
 	TestEqual(TEXT("still not rebuilt"), AfterEnsure.NodeCount, 1);
+
+	return true;
+}
+
+static TSharedPtr<FJsonObject> ParseTree(const FString& Json)
+{
+	TSharedPtr<FJsonObject> Root;
+	const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Json);
+	FJsonSerializer::Deserialize(Reader, Root);
+	return Root;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBTStructureTest,
+	"VibeUE.BehaviorTree.Structure.Crud", kBTTestFlags)
+bool FVibeBTStructureTest::RunTest(const FString&)
+{
+	const FString BTPath = FString(TEXT("/Game/Developers/VibeUEBTTests")) / TEXT("BT_StructTest");
+	// Not in the brief, but the suite has to survive being run twice in a row without anything
+	// being deleted in between, and CreateBehaviorTree refuses to overwrite an existing asset.
+	FScopedFixtureReset ResetBT(BTPath);
+
+	TestEqual(TEXT("fixture tree created"),
+		UBehaviorTreeService::CreateBehaviorTree(BTPath, FString()), FString());
+
+	// Graph node count, sub-nodes included — GetBehaviorTreeInfo's own arithmetic, which until now
+	// has only ever been exercised on a tree holding nothing but its root node.
+	auto NodeCount = [&]() -> int32
+	{
+		FBTAssetInfo Info;
+		return UBehaviorTreeService::GetBehaviorTreeInfo(BTPath, Info) ? Info.NodeCount : -1;
+	};
+	TestEqual(TEXT("a fresh tree holds only its root"), NodeCount(), 1);
+
+	// Root -> Selector
+	const FString Sel = UBehaviorTreeService::AddNode(
+		BTPath, TEXT("Root"), TEXT("BTComposite_Selector"), -1);
+	TestFalse(TEXT("selector added"), Sel.StartsWith(TEXT("ERROR")));
+
+	// Selector -> Sequence, Sequence
+	const FString SeqA = UBehaviorTreeService::AddNode(BTPath, Sel, TEXT("BTComposite_Sequence"), -1);
+	const FString SeqB = UBehaviorTreeService::AddNode(BTPath, Sel, TEXT("BTComposite_Sequence"), -1);
+	TestFalse(TEXT("seqA added"), SeqA.StartsWith(TEXT("ERROR")));
+	TestFalse(TEXT("seqB added"), SeqB.StartsWith(TEXT("ERROR")));
+	TestNotEqual(TEXT("siblings get distinct paths"), SeqA, SeqB);
+
+	// A task under the first sequence.
+	const FString Task = UBehaviorTreeService::AddNode(BTPath, SeqA, TEXT("BTTask_Wait"), -1);
+	TestFalse(TEXT("task added"), Task.StartsWith(TEXT("ERROR")));
+
+	TestEqual(TEXT("four nodes plus the root"), NodeCount(), 5);
+
+	// A task has no output pin — nothing can be added under it.
+	TestTrue(TEXT("no children under a task"),
+		UBehaviorTreeService::AddNode(BTPath, Task, TEXT("BTTask_Wait"), -1).StartsWith(TEXT("ERROR")));
+
+	// An unknown class is rejected.
+	TestTrue(TEXT("unknown class rejected"),
+		UBehaviorTreeService::AddNode(BTPath, Sel, TEXT("BTTask_Nonexistent"), -1).StartsWith(TEXT("ERROR")));
+
+	// The root's pin takes one composite and nothing else. Both refusals matter: a second child
+	// there would be silently dropped by UpdateAsset, and a task there crashes the editor inside
+	// OnSave() (CreateBTFromGraph null-derefs the non-composite root).
+	TestTrue(TEXT("no task directly under the root"),
+		UBehaviorTreeService::AddNode(BTPath, TEXT("Root"), TEXT("BTTask_Wait"), -1).StartsWith(TEXT("ERROR")));
+	TestTrue(TEXT("no second child under the root"),
+		UBehaviorTreeService::AddNode(BTPath, TEXT("Root"), TEXT("BTComposite_Sequence"), -1)
+			.StartsWith(TEXT("ERROR")));
+
+	// A refused add must not leave a stray node behind in the graph.
+	TestEqual(TEXT("refused adds changed nothing"), NodeCount(), 5);
+
+	// Child GUIDs of the Selector, in the order GetTree reports them. Ordering is the whole
+	// point of this test: BT execution order is node X position, so a layout bug silently
+	// reorders execution and nothing else would catch it.
+	auto SelectorChildGuids = [&]() -> TArray<FString>
+	{
+		TArray<FString> Guids;
+		const TSharedPtr<FJsonObject> Tree = ParseTree(UBehaviorTreeService::GetTree(BTPath));
+		if (!Tree.IsValid()) { return Guids; }
+
+		// Root has exactly one child, the Selector.
+		const TArray<TSharedPtr<FJsonValue>>& RootKids = Tree->GetArrayField(TEXT("children"));
+		if (RootKids.Num() != 1) { return Guids; }
+
+		for (const TSharedPtr<FJsonValue>& Kid :
+			RootKids[0]->AsObject()->GetArrayField(TEXT("children")))
+		{
+			Guids.Add(Kid->AsObject()->GetStringField(TEXT("guid")));
+		}
+		return Guids;
+	};
+
+	TArray<FString> Order = SelectorChildGuids();
+	TestEqual(TEXT("selector has two children"), Order.Num(), 2);
+	const FString GuidA = Order.IsValidIndex(0) ? Order[0] : FString();
+	const FString GuidB = Order.IsValidIndex(1) ? Order[1] : FString();
+	TestNotEqual(TEXT("two distinct children"), GuidA, GuidB);
+
+	// "properties" is the node's *edited* state, so a node nobody has edited reports none — and in
+	// particular a composite's own Children array, which certainly differs from the class default
+	// by now, is structure rather than a property and belongs in "children" alone.
+	{
+		const TSharedPtr<FJsonObject> Tree = ParseTree(UBehaviorTreeService::GetTree(BTPath));
+		const TSharedPtr<FJsonObject> SelObject = Tree.IsValid()
+			&& Tree->GetArrayField(TEXT("children")).Num() == 1
+			? Tree->GetArrayField(TEXT("children"))[0]->AsObject()
+			: nullptr;
+		if (TestTrue(TEXT("the selector is in the dump"), SelObject.IsValid()))
+		{
+			TestTrue(TEXT("nodes carry a properties object"), SelObject->HasField(TEXT("properties")));
+			const TSharedPtr<FJsonObject>& Props = SelObject->GetObjectField(TEXT("properties"));
+			TestFalse(TEXT("structure is not reported as a property"),
+				Props->HasField(TEXT("Children")));
+			TestEqual(TEXT("an unedited node has no edited properties"), Props->Values.Num(), 0);
+		}
+	}
+
+	// Insert at index 0: it must become the FIRST child, not merely "a" child.
+	const FString First = UBehaviorTreeService::AddNode(
+		BTPath, Sel, TEXT("BTComposite_Sequence"), 0);
+	TestFalse(TEXT("insert at 0 ok"), First.StartsWith(TEXT("ERROR")));
+
+	Order = SelectorChildGuids();
+	TestEqual(TEXT("three children"), Order.Num(), 3);
+	const FString GuidFirst = Order.IsValidIndex(0) ? Order[0] : FString();
+	TestNotEqual(TEXT("new node is first"), GuidFirst, GuidA);
+	TestEqual(TEXT("A shifted to index 1"), Order.IsValidIndex(1) ? Order[1] : FString(), GuidA);
+	TestEqual(TEXT("B shifted to index 2"), Order.IsValidIndex(2) ? Order[2] : FString(), GuidB);
+
+	// Move that node to the end: order must become A, B, First.
+	TestEqual(TEXT("move ok"),
+		UBehaviorTreeService::MoveNode(BTPath, First, Sel, 2), FString());
+	Order = SelectorChildGuids();
+	TestEqual(TEXT("still three children"), Order.Num(), 3);
+	TestEqual(TEXT("A now first"),  Order.IsValidIndex(0) ? Order[0] : FString(), GuidA);
+	TestEqual(TEXT("B now second"), Order.IsValidIndex(1) ? Order[1] : FString(), GuidB);
+	TestEqual(TEXT("moved node last"), Order.IsValidIndex(2) ? Order[2] : FString(), GuidFirst);
+
+	// A move must not be able to detach a subtree from the root.
+	TestTrue(TEXT("no reparenting under a descendant"),
+		!UBehaviorTreeService::MoveNode(BTPath, Sel, SeqA, -1).IsEmpty());
+	TestTrue(TEXT("the root cannot be moved"),
+		!UBehaviorTreeService::MoveNode(BTPath, TEXT("Root"), Sel, -1).IsEmpty());
+
+	// GetNodeInfo agrees with the dump.
+	FBTNodeInfo SelInfo;
+	TestTrue(TEXT("node info readable"), UBehaviorTreeService::GetNodeInfo(BTPath, Sel, SelInfo));
+	TestEqual(TEXT("selector child count"), SelInfo.ChildCount, 3);
+	TestEqual(TEXT("selector class"), SelInfo.ClassName, FString(TEXT("BTComposite_Selector")));
+	TestFalse(TEXT("selector not injected"), SelInfo.bInjected);
+
+	// A path that resolves to nothing is an error, not a default-constructed success.
+	FBTNodeInfo Missing;
+	TestFalse(TEXT("bad path rejected"),
+		UBehaviorTreeService::GetNodeInfo(BTPath, TEXT("Root/Nope"), Missing));
+	TestTrue(TEXT("bad path explains itself"), !Missing.Error.IsEmpty());
+
+	// An unindexed segment naming three same-named siblings is ambiguous, and must be refused
+	// rather than resolved to whichever one happens to come first.
+	FBTNodeInfo Ambiguous;
+	TestFalse(TEXT("ambiguous path rejected"),
+		UBehaviorTreeService::GetNodeInfo(BTPath, TEXT("Root/Selector/Sequence"), Ambiguous));
+	TestTrue(TEXT("an index disambiguates it"),
+		UBehaviorTreeService::GetNodeInfo(BTPath, TEXT("Root/Selector/Sequence[1]"), SelInfo));
+
+	TestEqual(TEXT("five nodes plus the root"), NodeCount(), 6);
+
+	// Remove and confirm it is gone.
+	TestEqual(TEXT("remove ok"), UBehaviorTreeService::RemoveNode(BTPath, Task), FString());
+	TestTrue(TEXT("removing twice errors"),
+		!UBehaviorTreeService::RemoveNode(BTPath, Task).IsEmpty());
+	TestEqual(TEXT("the removed node is really gone"), NodeCount(), 5);
+
+	// The root can never be removed.
+	TestTrue(TEXT("root not removable"),
+		!UBehaviorTreeService::RemoveNode(BTPath, TEXT("Root")).IsEmpty());
+
+	// Nor can the tree be emptied through RemoveNode: the root takes exactly one child, so removing
+	// it would leave no runtime tree at all. Refused before anything is mutated.
+	TestTrue(TEXT("the root's only child is not removable"),
+		!UBehaviorTreeService::RemoveNode(BTPath, Sel).IsEmpty());
+	TestEqual(TEXT("the refused removal changed nothing"), NodeCount(), 5);
+
+	// Removing a node takes its subtree with it, rather than leaving children unreachable from
+	// "Root" and therefore un-addressable forever.
+	const FString SubTask = UBehaviorTreeService::AddNode(
+		BTPath, TEXT("Root/Selector/Sequence[0]"), TEXT("BTTask_Wait"), -1);
+	TestFalse(TEXT("subtree task added"), SubTask.StartsWith(TEXT("ERROR")));
+	TestEqual(TEXT("six nodes"), NodeCount(), 6);
+	TestEqual(TEXT("remove the parent"),
+		UBehaviorTreeService::RemoveNode(BTPath, TEXT("Root/Selector/Sequence[0]")), FString());
+	TestEqual(TEXT("parent and child both went"), NodeCount(), 4);
+
+	// And the asset that has been through all of that is still a valid, committable tree.
+	TestEqual(TEXT("the tree still commits"),
+		UBehaviorTreeService::CompileAndSave(BTPath), FString());
 
 	return true;
 }

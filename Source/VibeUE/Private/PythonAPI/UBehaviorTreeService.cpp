@@ -55,27 +55,6 @@ namespace
 		return LoadObject<T>(nullptr, *AssetPath, nullptr, LOAD_NoWarn | LOAD_Quiet);
 	}
 
-	/**
-	 * The graph's root node, or nullptr. BT sub-nodes (decorators, services) live in
-	 * UAIGraphNode::SubNodes and are never added to UEdGraph::Nodes, so sweeping Nodes is the
-	 * whole search.
-	 */
-	UBehaviorTreeGraphNode_Root* FindRootGraphNode(UBehaviorTreeGraph* Graph)
-	{
-		if (!Graph)
-		{
-			return nullptr;
-		}
-		for (UEdGraphNode* Node : Graph->Nodes)
-		{
-			if (UBehaviorTreeGraphNode_Root* Root = Cast<UBehaviorTreeGraphNode_Root>(Node))
-			{
-				return Root;
-			}
-		}
-		return nullptr;
-	}
-
 	/** Whether anything hangs off the graph root's output pin. */
 	bool RootHasLink(const UBehaviorTreeGraphNode_Root* Root)
 	{
@@ -127,7 +106,7 @@ namespace
 	 */
 	FString ApplyBlackboard(UBehaviorTree* Tree, UBehaviorTreeGraph* Graph, UBlackboardData* Board)
 	{
-		UBehaviorTreeGraphNode_Root* Root = FindRootGraphNode(Graph);
+		UBehaviorTreeGraphNode_Root* Root = VibeBT::FindRootGraphNode(Graph);
 		if (!Root)
 		{
 			return TEXT("Behavior Tree graph has no root node");
@@ -266,7 +245,7 @@ bool UBehaviorTreeService::GetBehaviorTreeInfo(const FString& AssetPath, FBTAsse
 	OutInfo.bHasGraph = Graph != nullptr;
 	if (Graph)
 	{
-		OutInfo.bHasRootNode = FindRootGraphNode(Graph) != nullptr;
+		OutInfo.bHasRootNode = VibeBT::FindRootGraphNode(Graph) != nullptr;
 		OutInfo.NodeCount = CountGraphNodes(Graph);
 	}
 
@@ -331,7 +310,7 @@ FString UBehaviorTreeService::RepairGraphFromRuntimeTree(const FString& AssetPat
 	}
 	UBehaviorTreeGraph* PreloadedGraph = Cast<UBehaviorTreeGraph>(PreloadedTree->BTGraph);
 	const bool bHasRuntimeTree = PreloadedTree->RootNode != nullptr;
-	const bool bGraphAlreadyPopulated = RootHasLink(FindRootGraphNode(PreloadedGraph));
+	const bool bGraphAlreadyPopulated = RootHasLink(VibeBT::FindRootGraphNode(PreloadedGraph));
 	const int32 NodesBefore = CountGraphNodes(PreloadedGraph);
 
 	// Runs first so an open editor or a locked graph is reported as such, rather than being
@@ -361,7 +340,7 @@ FString UBehaviorTreeService::RepairGraphFromRuntimeTree(const FString& AssetPat
 			*AssetPath, NodesBefore);
 	}
 
-	UBehaviorTreeGraphNode_Root* Root = FindRootGraphNode(Graph);
+	UBehaviorTreeGraphNode_Root* Root = VibeBT::FindRootGraphNode(Graph);
 	if (!Root)
 	{
 		return FString::Printf(TEXT("%s has no root node to rebuild from"), *AssetPath);

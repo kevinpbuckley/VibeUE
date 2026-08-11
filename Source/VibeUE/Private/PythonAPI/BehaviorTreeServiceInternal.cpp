@@ -3,6 +3,7 @@
 #include "BehaviorTreeServiceInternal.h"
 
 #include "AIGraphTypes.h"
+#include "Algo/Reverse.h"
 #include "BehaviorTree/BehaviorTree.h"
 #include "BehaviorTree/BTCompositeNode.h"
 #include "BehaviorTree/BlackboardData.h"
@@ -66,35 +67,13 @@ namespace VibeBT
 			Out[SelfIndex].Y = Depth * NodeSpacingY;
 		}
 
-		/** Children of a BT graph node, in current output-pin link order. Skips already-visited nodes to prevent cycles. */
+		/** GetChildNodes, minus anything already visited — the cycle guard the layout walk needs. */
 		void GatherChildren(UBehaviorTreeGraphNode* Node, TArray<UBehaviorTreeGraphNode*>& Out,
 			const TSet<UBehaviorTreeGraphNode*>& Visited)
 		{
-			Out.Reset();
-			if (!Node)
-			{
-				return;
-			}
-			for (UEdGraphPin* Pin : Node->Pins)
-			{
-				if (Pin && Pin->Direction == EGPD_Output)
-				{
-					for (UEdGraphPin* Linked : Pin->LinkedTo)
-					{
-						if (Linked)
-						{
-							if (UBehaviorTreeGraphNode* Child =
-								Cast<UBehaviorTreeGraphNode>(Linked->GetOwningNode()))
-							{
-								if (!Visited.Contains(Child))
-								{
-									Out.Add(Child);
-								}
-							}
-						}
-					}
-				}
-			}
+			Out = GetChildNodes(Node);
+			Out.RemoveAll([&Visited](UBehaviorTreeGraphNode* Child)
+				{ return Visited.Contains(Child); });
 		}
 
 		/** Build the structure mirror and, in the same pre-order, the node list to write back. */
@@ -166,29 +145,24 @@ namespace VibeBT
 		}
 	}
 
-	namespace
+	UBehaviorTreeGraphNode_Root* FindRootGraphNode(UBehaviorTreeGraph* Graph)
 	{
-		/**
-		 * The graph's root node, or nullptr. A linear sweep of Nodes is the whole search: BT
-		 * sub-nodes (decorators, services) live in UAIGraphNode::SubNodes and are never added to
-		 * UEdGraph::Nodes (AIGraphNode.cpp, UAIGraphNode::AddSubNode).
-		 */
-		UBehaviorTreeGraphNode_Root* FindRootGraphNode(UBehaviorTreeGraph* Graph)
+		if (!Graph)
 		{
-			if (!Graph)
-			{
-				return nullptr;
-			}
-			for (UEdGraphNode* Node : Graph->Nodes)
-			{
-				if (UBehaviorTreeGraphNode_Root* Root = Cast<UBehaviorTreeGraphNode_Root>(Node))
-				{
-					return Root;
-				}
-			}
 			return nullptr;
 		}
+		for (UEdGraphNode* Node : Graph->Nodes)
+		{
+			if (UBehaviorTreeGraphNode_Root* Root = Cast<UBehaviorTreeGraphNode_Root>(Node))
+			{
+				return Root;
+			}
+		}
+		return nullptr;
+	}
 
+	namespace
+	{
 		/** Whether anything at all hangs off the graph root's output pin. */
 		bool GraphRootHasLink(const UBehaviorTreeGraphNode_Root* Root)
 		{
@@ -586,5 +560,268 @@ namespace VibeBT
 
 		GClassHelperCache.Add(BaseClass, Helper);
 		return Helper;
+	}
+
+	TArray<UBehaviorTreeGraphNode*> GetChildNodes(const UBehaviorTreeGraphNode* Node)
+	{
+		TArray<UBehaviorTreeGraphNode*> Children;
+		if (!Node)
+		{
+			return Children;
+		}
+		for (const UEdGraphPin* Pin : Node->Pins)
+		{
+			if (!Pin || Pin->Direction != EGPD_Output)
+			{
+				continue;
+			}
+			for (const UEdGraphPin* Linked : Pin->LinkedTo)
+			{
+				if (!Linked)
+				{
+					continue;
+				}
+				if (UBehaviorTreeGraphNode* Child =
+					Cast<UBehaviorTreeGraphNode>(Linked->GetOwningNode()))
+				{
+					Children.Add(Child);
+				}
+			}
+		}
+		return Children;
+	}
+
+	UBehaviorTreeGraphNode* GetParentNode(const UBehaviorTreeGraphNode* Node)
+	{
+		if (!Node)
+		{
+			return nullptr;
+		}
+		for (const UEdGraphPin* Pin : Node->Pins)
+		{
+			if (Pin && Pin->Direction == EGPD_Input && Pin->LinkedTo.Num() > 0 && Pin->LinkedTo[0])
+			{
+				return Cast<UBehaviorTreeGraphNode>(Pin->LinkedTo[0]->GetOwningNode());
+			}
+		}
+		return nullptr;
+	}
+
+	namespace
+	{
+		/** The name a path segment matches on. */
+		FString NodeDisplayName(const UBehaviorTreeGraphNode* Node)
+		{
+			return Node ? Node->GetNodeTitle(ENodeTitleType::ListView).ToString() : FString();
+		}
+
+		/**
+		 * "Name[n]" for Node among Siblings, where n counts same-named siblings only.
+		 *
+		 * The index is always emitted, even when nothing currently shares the name. Resolution
+		 * treats it as optional, so a hand-written "Root/Selector/Wait" still works; but a path this
+		 * function hands back is one a caller is going to hold on to and use again, and a bare name
+		 * stops resolving the moment a same-named sibling is added next to it — turning a path that
+		 * was correct when it was issued into an "ambiguous" error two calls later. Emitting the
+		 * index means a returned path is never ambiguous, whatever is added around it afterwards.
+		 *
+		 * It is still positional: the node a path names can change when siblings are inserted or
+		 * removed before it. "guid" is the identity that survives that.
+		 */
+		FString SegmentFor(const UBehaviorTreeGraphNode* Node,
+			const TArray<UBehaviorTreeGraphNode*>& Siblings)
+		{
+			const FString Name = NodeDisplayName(Node);
+
+			int32 SameNamed = 0;
+			int32 IndexAmongSameNamed = INDEX_NONE;
+			for (const UBehaviorTreeGraphNode* Sibling : Siblings)
+			{
+				if (NodeDisplayName(Sibling) == Name)
+				{
+					if (Sibling == Node)
+					{
+						IndexAmongSameNamed = SameNamed;
+					}
+					++SameNamed;
+				}
+			}
+
+			return (IndexAmongSameNamed != INDEX_NONE)
+				? FString::Printf(TEXT("%s[%d]"), *Name, IndexAmongSameNamed)
+				: Name;
+		}
+
+		/** Split "Name[3]" into ("Name", 3); a bare "Name" yields INDEX_NONE. */
+		void SplitSegment(const FString& Segment, FString& OutName, int32& OutIndex)
+		{
+			OutName = Segment;
+			OutIndex = INDEX_NONE;
+
+			if (!Segment.EndsWith(TEXT("]")))
+			{
+				return;
+			}
+			int32 OpenIdx = INDEX_NONE;
+			if (!Segment.FindLastChar(TEXT('['), OpenIdx))
+			{
+				return;
+			}
+
+			const FString IndexText = Segment.Mid(OpenIdx + 1, Segment.Len() - OpenIdx - 2);
+			// A non-numeric bracket body is part of the name, not an index: refusing to guess keeps
+			// a node genuinely called "Wait[a]" addressable.
+			if (IndexText.IsEmpty() || !IndexText.IsNumeric())
+			{
+				return;
+			}
+
+			OutName = Segment.Left(OpenIdx);
+			OutIndex = FCString::Atoi(*IndexText);
+		}
+	}
+
+	FString GetNodePath(const UBehaviorTreeGraphNode* Node)
+	{
+		if (!Node)
+		{
+			return FString();
+		}
+
+		TArray<FString> Segments;
+
+		// A sub-node is addressed by its slot on its owner, not through pins — decorators and
+		// services have no pins at all — so it contributes one "@kind[n]" segment and then hands
+		// over to the ordinary pin walk from its owner upwards.
+		const UBehaviorTreeGraphNode* Current = Node;
+		if (const UBehaviorTreeGraphNode* Owner =
+			Cast<UBehaviorTreeGraphNode>(ToRawPtr(Node->ParentNode)))
+		{
+			UBehaviorTreeGraphNode* const Self = const_cast<UBehaviorTreeGraphNode*>(Node);
+			const int32 DecoratorIdx = Owner->Decorators.IndexOfByKey(Self);
+			const int32 ServiceIdx = Owner->Services.IndexOfByKey(Self);
+			if (DecoratorIdx != INDEX_NONE)
+			{
+				Segments.Add(FString::Printf(TEXT("@decorator[%d]"), DecoratorIdx));
+			}
+			else if (ServiceIdx != INDEX_NONE)
+			{
+				Segments.Add(FString::Printf(TEXT("@service[%d]"), ServiceIdx));
+			}
+			else
+			{
+				// Parented but in neither array: not addressable, so say so rather than hand back
+				// a path that resolves to the owner.
+				return FString();
+			}
+			Current = Owner;
+		}
+
+		// Walk to the root, one segment per hop. The visited set makes a corrupted graph with a
+		// parent cycle terminate instead of hanging.
+		TSet<const UBehaviorTreeGraphNode*> Visited;
+		while (Current && !Visited.Contains(Current))
+		{
+			Visited.Add(Current);
+
+			const UBehaviorTreeGraphNode* Parent = GetParentNode(Current);
+			if (!Parent)
+			{
+				break;
+			}
+			Segments.Add(SegmentFor(Current, GetChildNodes(Parent)));
+			Current = Parent;
+		}
+
+		// Anything that did not walk up to the root node is unreachable from it — an orphan left by
+		// a hand-edited graph, or a cycle — and has no path a caller could resolve.
+		if (!Current || !Current->IsA<UBehaviorTreeGraphNode_Root>())
+		{
+			return FString();
+		}
+
+		Algo::Reverse(Segments);
+
+		FString Path = TEXT("Root");
+		for (const FString& Segment : Segments)
+		{
+			Path += TEXT("/");
+			Path += Segment;
+		}
+		return Path;
+	}
+
+	UBehaviorTreeGraphNode* ResolveNodePath(UBehaviorTreeGraph* Graph, const FString& Path)
+	{
+		TArray<FString> Segments;
+		Path.ParseIntoArray(Segments, TEXT("/"), /*InCullEmpty*/ true);
+		if (Segments.Num() == 0)
+		{
+			return nullptr;
+		}
+
+		// The root segment is a keyword, not a name lookup: the root graph node's own title is
+		// "ROOT" (BehaviorTreeGraphNode_Root.cpp), and the grammar says every path starts at "Root".
+		if (!Segments[0].Equals(TEXT("Root"), ESearchCase::IgnoreCase))
+		{
+			return nullptr;
+		}
+
+		UBehaviorTreeGraphNode* Current = FindRootGraphNode(Graph);
+		for (int32 Index = 1; Current && Index < Segments.Num(); ++Index)
+		{
+			const FString& Segment = Segments[Index];
+
+			FString Name;
+			int32 Ordinal = INDEX_NONE;
+			SplitSegment(Segment, Name, Ordinal);
+
+			if (Name.StartsWith(TEXT("@")))
+			{
+				// Sub-node slots are addressed by index alone — an unindexed "@decorator" names the
+				// whole array, not a node.
+				if (Ordinal == INDEX_NONE)
+				{
+					return nullptr;
+				}
+				const TArray<TObjectPtr<UBehaviorTreeGraphNode>>* Slots = nullptr;
+				if (Name.Equals(TEXT("@decorator"), ESearchCase::IgnoreCase))
+				{
+					Slots = &Current->Decorators;
+				}
+				else if (Name.Equals(TEXT("@service"), ESearchCase::IgnoreCase))
+				{
+					Slots = &Current->Services;
+				}
+				if (!Slots || !Slots->IsValidIndex(Ordinal))
+				{
+					return nullptr;
+				}
+				Current = ToRawPtr((*Slots)[Ordinal]);
+				continue;
+			}
+
+			TArray<UBehaviorTreeGraphNode*> Matches;
+			for (UBehaviorTreeGraphNode* Child : GetChildNodes(Current))
+			{
+				if (NodeDisplayName(Child) == Name)
+				{
+					Matches.Add(Child);
+				}
+			}
+
+			if (Ordinal != INDEX_NONE)
+			{
+				Current = Matches.IsValidIndex(Ordinal) ? Matches[Ordinal] : nullptr;
+			}
+			else
+			{
+				// Exactly one, or nothing: an unindexed segment matching several siblings is
+				// ambiguous, and picking the first would silently edit the wrong node.
+				Current = (Matches.Num() == 1) ? Matches[0] : nullptr;
+			}
+		}
+
+		return Current;
 	}
 }
