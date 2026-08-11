@@ -396,13 +396,15 @@ public:
 	 * Transient / Deprecated — but the whole set rather than only the edited ones, because this is
 	 * the discovery call: it answers "what can I set here", not "what has been set".
 	 *
-	 * Values are exported against no defaults, so a value read here can be handed back to
-	 * SetNodePropertyValue on the same node and reproduce it exactly. (GetTree's map reports the
-	 * same encoding, filtered to properties that differ from the class default.)
+	 * Values are complete literals — every member of a struct is emitted, including members left at
+	 * their default — so a value read here can be handed to SetNodePropertyValue on this node or on
+	 * any other node of the same class and reproduce it exactly. (GetTree's map reports the same
+	 * encoding, filtered to properties that differ from the class default.)
 	 *
-	 * Two things that encoding cannot express, both the engine's and neither hidden here: a struct
-	 * omits members still at their zero value, so carrying a value from one node to another merges
-	 * rather than copies; and an empty array reads back as an empty string, which is not importable.
+	 * Two limits, both the engine's and neither hidden here: members of a STRUCT ELEMENT INSIDE AN
+	 * ARRAY that sit at their struct default are omitted (FArrayProperty exports array elements
+	 * against a default-constructed struct whatever it is handed), and an empty array reads back as
+	 * an empty string, which is not importable — pass "()" to empty one.
 	 *
 	 * An empty array means the path named nothing, or named the graph's Root node, which carries no
 	 * instance and therefore no properties — every real BT node has at least NodeName. Use
@@ -426,18 +428,23 @@ public:
 	/**
 	 * Set one property from a literal (the form GetNodePropertyValue returns) and save.
 	 *
-	 * ValueAfterWrite is re-read after the commit rather than echoed, because the commit is not a
-	 * passive save: UBehaviorTreeGraph::UpdateAsset regenerates derived state, and UBTNode::PreSave
-	 * resets any blackboard key selector bound to a key that does not exist or whose type the
-	 * selector's filter forbids. A value that did not survive that comes back as what it really is.
+	 * ValueAfterWrite is re-read after the commit rather than echoed, AND compared with what was
+	 * written, because the commit is not a passive save: UBTNode::PreSave rewrites two families of
+	 * property at save time, after this call has otherwise succeeded — FBlackboardKeySelector, and
+	 * FValueOrBlackboardKeyBase (which in UE 5.8 is what an ordinary numeric property such as
+	 * BTTask_Wait::WaitTime is). Both silently clear a binding whose key is missing or of the wrong
+	 * type. When the saved value differs from the written one, this reports failure and
+	 * ValueAfterWrite is what is actually on disk.
 	 *
 	 * A parse failure restores the property to what it was, because ImportText applies a struct or
 	 * array literal member by member and stops where it fails — a refused write must not leave the
-	 * node half-changed.
+	 * node half-changed. The restore is a value-level copy, so it bypasses any property Setter
+	 * (theoretical here: no BT node class declares one).
 	 *
 	 * Refuses injected nodes (copies the engine regenerates from a subtree asset) and anything that
 	 * is not an editable property. For an FBlackboardKeySelector use SetNodeBlackboardKey: this
-	 * route writes the selector's name and nothing else, which is not a binding — see below.
+	 * route writes the selector's name and nothing else, and only finds out at commit time whether
+	 * that was a legal binding — see below.
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
 	static FBTPropertySetResult SetNodePropertyValue(const FString& AssetPath,

@@ -2094,18 +2094,23 @@ namespace
 
 // Node property reflection and blackboard key binding.
 //
-// Two things are being defended here, and neither is "the value came back":
+// Three things are being defended here, and none of them is "the value came back":
 //
-//  1. The exported value is a FULL literal, never a delta against the class default. A delta is
-//     only meaningful next to the CDO it was taken against, so a value read from one node and
-//     written to another silently keeps whatever the *target* had in the members the delta omitted.
-//     The copy-between-two-Wait-nodes assertion below is what discriminates the two encodings.
-//     (Passing the instance itself as the delta container — the shape it is easiest to write by
-//     accident — is worse still: every member equals itself, so a struct exports as "()".)
+//  1. The exported value is a COMPLETE literal, never a diff. Anything exported relative to a
+//     default drops the members that match it, and a dropped member is not "unchanged" — it is
+//     whatever the target already had, or, on a node built from scratch, that class's default. The
+//     copy-between-two-Wait-nodes assertion below is what discriminates the encodings, and Task 10's
+//     BuildTree is what would silently rebuild a { Key="WaitSeconds", DefaultValue=0.0 } Wait node
+//     as 5.0 if this were got wrong.
 //
 //  2. A blackboard key selector is a name plus a resolved key ID, and only the ID is read at
 //     runtime. Every assertion about a binding here is therefore about GetSelectedKeyID(), read off
 //     the live instance; the name proves nothing.
+//
+//  3. A write is not finished when ImportText succeeds. UBTNode::PreSave rewrites blackboard
+//     bindings — FBlackboardKeySelector AND FValueOrBlackboardKeyBase, which is what an ordinary
+//     numeric property like BTTask_Wait::WaitTime is in UE 5.8 — during the save the commit
+//     performs. Both writers therefore verify what the asset actually kept.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBTNodePropertiesTest,
 	"VibeUE.BehaviorTree.Properties.SetAndRead", kBTTestFlags)
 bool FVibeBTNodePropertiesTest::RunTest(const FString&)
@@ -2223,11 +2228,12 @@ bool FVibeBTNodePropertiesTest::RunTest(const FString&)
 
 	// --- The encoding, measured rather than assumed. -----------------------------------------------
 	//
-	// Three encodings of the same live value: against no defaults (what this service emits), against
-	// the class default object, and against the instance itself. The last two are what the property
-	// reader can quietly become, and neither is a value a caller could write back.
+	// Three encodings of the same live value: against the instance itself (what this service emits,
+	// which is the engine's "export everything" path rather than a diff), against the class default
+	// object, and against no defaults at all. The last two both drop members, and a dropped member
+	// is a value a caller cannot write back.
 	FString DeltaVsCdo;
-	FString DeltaVsSelf;
+	FString DeltaVsNull;
 	FString CdoLiteral;
 	if (UObject* WaitInstance = VibeBTFindLiveInstance(BTPath, WaitA))
 	{
@@ -2235,17 +2241,23 @@ bool FVibeBTNodePropertiesTest::RunTest(const FString&)
 		{
 			UObject* Cdo = WaitInstance->GetClass()->GetDefaultObject();
 			Property->ExportText_InContainer(0, DeltaVsCdo, WaitInstance, Cdo, WaitInstance, PPF_None);
-			Property->ExportText_InContainer(0, DeltaVsSelf, WaitInstance, WaitInstance,
+			Property->ExportText_InContainer(0, DeltaVsNull, WaitInstance, nullptr,
 				WaitInstance, PPF_None);
 			VibeBT::ExportPropertyValue(Property, Cdo, CdoLiteral);
 		}
 	}
 	AddInfo(FString::Printf(
-		TEXT("WaitTime encodings — no defaults: '%s' | vs CDO: '%s' | vs self: '%s' | the CDO's own "
-			 "value: '%s'"),
-		*WaitWrite.ValueAfterWrite, *DeltaVsCdo, *DeltaVsSelf, *CdoLiteral));
-	TestFalse(TEXT("the class default is itself reported as a value, not as an empty delta"),
+		TEXT("WaitTime encodings — self-delta (what this service emits): '%s' | vs CDO: '%s' | vs no "
+			 "defaults: '%s' | the CDO's own value: '%s'"),
+		*WaitWrite.ValueAfterWrite, *DeltaVsCdo, *DeltaVsNull, *CdoLiteral));
+	// Not the discriminator — it holds under every encoding, because exporting the CDO against the
+	// CDO is itself a self-delta and always emits in full. The discriminating assertions are the two
+	// on ValueAtDefault below, and the cross-node copy after them.
+	TestFalse(TEXT("the class default literal is not empty"),
 		CdoLiteral.IsEmpty() || CdoLiteral == TEXT("()"));
+	TestTrue(TEXT("a complete literal carries every member, including ones left at their default"),
+		WaitWrite.ValueAfterWrite.Contains(TEXT("DefaultValue"))
+			&& WaitWrite.ValueAfterWrite.Contains(TEXT("Key")));
 
 	// Same node, straight back: the round trip this service actually promises.
 	TestTrue(TEXT("the second Wait takes a two-member literal"),
@@ -2262,16 +2274,11 @@ bool FVibeBTNodePropertiesTest::RunTest(const FString&)
 	// The discriminating case for the export decision: a value that happens to EQUAL the class
 	// default. Exported against the CDO it collapses to "()" — indistinguishable from "unset", and
 	// worthless as an input. Exported against no defaults it is still the value it is.
-	// Built from the CDO's own literal rather than a hardcoded 5.0, so this keeps meaning the same
-	// thing if Epic changes BTTask_Wait's default. The explicit Key="None" is what clears the
-	// non-default member the previous write left on this node.
-	FString AtDefaultLiteral = CdoLiteral;
-	if (TestTrue(TEXT("the class default literal is a struct literal"), AtDefaultLiteral.StartsWith(TEXT("("))))
-	{
-		AtDefaultLiteral.InsertAt(1, TEXT("Key=\"None\","));
-	}
+	// The CDO's own literal, taken from the CDO rather than hardcoded, so this keeps meaning the same
+	// thing if Epic changes BTTask_Wait's default. It needs no patching to clear the non-default Key
+	// this node currently carries: a complete literal names every member, so writing it IS a reset.
 	TestTrue(TEXT("the second Wait is set to exactly its class default"),
-		UBehaviorTreeService::SetNodePropertyValue(BTPath, WaitB, TEXT("WaitTime"), AtDefaultLiteral).bSuccess);
+		UBehaviorTreeService::SetNodePropertyValue(BTPath, WaitB, TEXT("WaitTime"), CdoLiteral).bSuccess);
 	const FString ValueAtDefault =
 		UBehaviorTreeService::GetNodePropertyValue(BTPath, WaitB, TEXT("WaitTime"));
 	AddInfo(FString::Printf(TEXT("a value equal to the class default reads back as '%s' (CDO literal "
@@ -2281,31 +2288,40 @@ bool FVibeBTNodePropertiesTest::RunTest(const FString&)
 		ValueAtDefault.Contains(TEXT("DefaultValue")));
 	TestEqual(TEXT("...and matches the class default's own literal"), ValueAtDefault, CdoLiteral);
 
-	// Carrying a struct value BETWEEN nodes is a merge, not a copy, because UScriptStruct::ExportText
-	// omits members left at the struct's zero value whatever defaults it is handed. Asserted rather
-	// than glossed over: it is the one thing the documented encoding cannot do, and it would be a
-	// silent wrong answer for anyone who assumed otherwise.
+	// Carrying a struct value BETWEEN nodes: a copy, not a merge. This is the assertion the encoding
+	// exists for, and the one Task 10's BuildTree depends on — it replays recorded values onto FRESH
+	// node instances, so any member the reader dropped comes back as that class's default instead of
+	// as the recorded value. WaitA's Key is at its default and the target's is not, which is exactly
+	// the case a defaults-relative export gets wrong.
 	const FString ValueA = UBehaviorTreeService::GetNodePropertyValue(BTPath, WaitA, TEXT("WaitTime"));
-	TestFalse(TEXT("the source value omits its default-valued Key member"),
+	TestTrue(TEXT("the source value names its default-valued Key member too"),
 		ValueA.Contains(TEXT("Key")));
 	TestTrue(TEXT("the target is given a non-default Key first"),
 		UBehaviorTreeService::SetNodePropertyValue(
 			BTPath, WaitB, TEXT("WaitTime"), TEXT("(Key=\"WaitSeconds\",DefaultValue=1.000000)")).bSuccess);
 	TestTrue(TEXT("and accepts the other node's value"),
 		UBehaviorTreeService::SetNodePropertyValue(BTPath, WaitB, TEXT("WaitTime"), ValueA).bSuccess);
-	const FString Merged = UBehaviorTreeService::GetNodePropertyValue(BTPath, WaitB, TEXT("WaitTime"));
-	AddInfo(FString::Printf(TEXT("cross-node copy of '%s' onto a node with Key=\"WaitSeconds\" gives "
-								 "'%s' — a merge, which is the engine's struct encoding"),
-		*ValueA, *Merged));
-	TestTrue(TEXT("the omitted member kept the TARGET's value, which is what makes it a merge"),
-		Merged.Contains(TEXT("WaitSeconds")));
+	const FString Copied = UBehaviorTreeService::GetNodePropertyValue(BTPath, WaitB, TEXT("WaitTime"));
+	AddInfo(FString::Printf(TEXT("cross-node copy of '%s' onto a node with Key=\"WaitSeconds\" gives '%s'"),
+		*ValueA, *Copied));
+	TestEqual(TEXT("get -> set -> get across two nodes reproduces the struct exactly"), Copied, ValueA);
+	TestFalse(TEXT("...leaving nothing of what the target used to hold"),
+		Copied.Contains(TEXT("WaitSeconds")));
 
 	// --- An array property, round-tripped the same way. --------------------------------------------
 	// UE 5.8's AIModule has no BT node class with an editable array property at all (checked: the
 	// only TArray UPROPERTYs on BT types are FBlackboardKeySelector::AllowedTypes, which is
-	// transient, and UBlackboardData::Keys), so this uses one of the project's own tasks.
+	// transient, and UBlackboardData::Keys), so this needs a project-supplied task and SKIPS where
+	// there is none. VibeUE is a standalone plugin: a hard dependency on a game class would make
+	// this suite unrunnable in any other project, and the array round trip is worth covering where
+	// it can be rather than not at all.
 	const FString Idle = UBehaviorTreeService::AddNode(BTPath, Sel, TEXT("NSTask_PatrolIdleWait"), -1);
-	if (TestFalse(TEXT("a task carrying an array property was added"), Idle.StartsWith(TEXT("ERROR"))))
+	if (Idle.StartsWith(TEXT("ERROR")))
+	{
+		AddInfo(TEXT("skipped the array round trip: no BT node class carrying an editable array "
+					 "property is available in this project (looked for NSTask_PatrolIdleWait)"));
+	}
+	else
 	{
 		const FBTPropertySetResult ArrayWrite = UBehaviorTreeService::SetNodePropertyValue(
 			BTPath, Idle, TEXT("IdleMontages"), TEXT("(None,None)"));
@@ -2427,23 +2443,29 @@ bool FVibeBTNodePropertiesTest::RunTest(const FString&)
 	TestTrue(TEXT("...and says so"),
 		NotASelector.Error.Contains(TEXT("not a blackboard key selector")));
 
-	// --- Why the dedicated setter exists. -----------------------------------------------------------
-	// The generic path writes the selector's NAME and nothing else. Committing that runs
-	// UBTNode::PreSave (BTNode.cpp:231-254), which resets any selector bound to a key its filter
-	// forbids — so the generic write reports success and leaves the node bound to nothing, which is
-	// exactly the failure SetNodeBlackboardKey refuses up front.
+	// --- Why the dedicated setter exists, and what the generic path can only do afterwards. ---------
+	//
+	// The generic path writes the selector's NAME and nothing else, and has no idea whether that was
+	// a legal binding. It finds out at commit time, from UBTNode::PreSave (BTNode.cpp:231-254), which
+	// resets any selector bound to a key its filter forbids — at which point the value the caller
+	// asked for is gone. The post-commit check is what turns that into a reported failure instead of
+	// a success with a surprising read-back; SetNodeBlackboardKey refuses the same call up front,
+	// without mutating the node and without the engine warning.
 	AddExpectedMessagePlain(TEXT("but the key type isn't allowed"), ELogVerbosity::Warning,
 		EAutomationExpectedMessageFlags::Contains, /*Occurrences*/ 0);
 	const FBTPropertySetResult GenericWrite = UBehaviorTreeService::SetNodePropertyValue(
 		BTPath, MoveTo, TEXT("BlackboardKey"), TEXT("(SelectedKeyName=\"Alpha\")"));
-	AddInfo(FString::Printf(TEXT("generic write of a mistyped key: success=%s, value after write=%s"),
-		GenericWrite.bSuccess ? TEXT("true") : TEXT("false"), *GenericWrite.ValueAfterWrite));
-	TestTrue(TEXT("the generic path accepts the mistyped binding (it has no filter check)"),
-		GenericWrite.bSuccess);
+	AddInfo(FString::Printf(TEXT("generic write of a mistyped key: success=%s, value after write=%s, "
+								 "error=%s"),
+		GenericWrite.bSuccess ? TEXT("true") : TEXT("false"), *GenericWrite.ValueAfterWrite,
+		*GenericWrite.Error));
+	TestFalse(TEXT("the generic path reports the discarded binding as a failure"), GenericWrite.bSuccess);
+	TestTrue(TEXT("...saying the commit did not keep what was written"),
+		GenericWrite.Error.Contains(TEXT("but the asset saved")));
 	if (FBlackboardKeySelector* MoveSelector = VibeBTFindLiveSelector(BTPath, MoveTo, TEXT("BlackboardKey")))
 	{
-		// The saved node is bound to nothing at all, having reported success.
-		TestTrue(TEXT("...and the commit discarded the binding it reported writing"),
+		// What the asset really holds: a node bound to nothing at all.
+		TestTrue(TEXT("...and the node really is bound to nothing"),
 			MoveSelector->SelectedKeyName.IsNone());
 	}
 	TestEqual(TEXT("and the read-back is the saved state, not an echo of the input"),
@@ -2452,7 +2474,40 @@ bool FVibeBTNodePropertiesTest::RunTest(const FString&)
 	TestFalse(TEXT("which is no longer the value that was asked for"),
 		GenericWrite.ValueAfterWrite.Contains(TEXT("Alpha")));
 
-	// ...and the dedicated setter puts it back.
+	// The same hazard on an ordinary-looking numeric property. In UE 5.8 BTTask_Wait::WaitTime is an
+	// FValueOrBBKey_Float, whose Key binds to a blackboard entry and whose
+	// FValueOrBlackboardKeyBase::PreSave (ValueOrBBKey.cpp:582-610) clears it exactly the way the key
+	// selector's does. GetNodePropertyNames reports bIsBlackboardKeySelector = false for it and
+	// SetNodeBlackboardKey refuses it, so the generic path is the ONLY way to write it, and the
+	// post-commit check is the only thing standing between a caller and a silently dropped binding.
+	AddExpectedMessagePlain(TEXT("but the type doesn't match in blackboard"), ELogVerbosity::Warning,
+		EAutomationExpectedMessageFlags::Contains, /*Occurrences*/ 0);
+	const FString BeforeMistyped =
+		UBehaviorTreeService::GetNodePropertyValue(BTPath, WaitB, TEXT("WaitTime"));
+	const FBTPropertySetResult MistypedValueKey = UBehaviorTreeService::SetNodePropertyValue(
+		BTPath, WaitB, TEXT("WaitTime"), TEXT("(Key=\"Alpha\",DefaultValue=2.000000)"));
+	AddInfo(FString::Printf(TEXT("FValueOrBBKey_Float bound to a Bool key: success=%s, before='%s', "
+								 "after='%s', error=%s"),
+		MistypedValueKey.bSuccess ? TEXT("true") : TEXT("false"), *BeforeMistyped,
+		*MistypedValueKey.ValueAfterWrite, *MistypedValueKey.Error));
+	TestFalse(TEXT("a mistyped FValueOrBBKey binding is reported as a failure, not silently dropped"),
+		MistypedValueKey.bSuccess);
+	TestTrue(TEXT("...saying the commit did not keep what was written"),
+		MistypedValueKey.Error.Contains(TEXT("but the asset saved")));
+	TestFalse(TEXT("...and the saved value really has lost the key"),
+		MistypedValueKey.ValueAfterWrite.Contains(TEXT("Alpha")));
+	TestEqual(TEXT("the reported value is what is really on the node"),
+		UBehaviorTreeService::GetNodePropertyValue(BTPath, WaitB, TEXT("WaitTime")),
+		MistypedValueKey.ValueAfterWrite);
+	// A correctly typed key on the same property still succeeds, so the check is not simply refusing
+	// everything that touches a blackboard binding.
+	const FBTPropertySetResult TypedValueKey = UBehaviorTreeService::SetNodePropertyValue(
+		BTPath, WaitB, TEXT("WaitTime"), TEXT("(Key=\"WaitSeconds\",DefaultValue=2.000000)"));
+	TestTrue(TEXT("a correctly typed FValueOrBBKey binding still succeeds"), TypedValueKey.bSuccess);
+	TestTrue(TEXT("...and survives the commit"),
+		TypedValueKey.ValueAfterWrite.Contains(TEXT("WaitSeconds")));
+
+	// ...and the dedicated setter puts the selector back.
 	TestTrue(TEXT("the dedicated setter restores a working binding"),
 		UBehaviorTreeService::SetNodeBlackboardKey(BTPath, MoveTo, TEXT("BlackboardKey"),
 			TEXT("TargetActor")).bSuccess);

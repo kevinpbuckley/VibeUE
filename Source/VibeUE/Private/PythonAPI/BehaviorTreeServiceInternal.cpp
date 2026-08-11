@@ -578,10 +578,13 @@ namespace VibeBT
 			return;
 		}
 
-		// The fourth argument is the DELTA container, and passing one is what turns a value into a
-		// diff — including passing Instance itself, which turns every value into "()". It is
-		// deliberately null here; see the header for the measured behaviour.
-		Property->ExportText_InContainer(0, OutValue, Instance, /*Delta*/ nullptr,
+		// Instance is deliberately passed as its own DELTA container. That is not a diff against
+		// itself: ExportText_InContainer resolves the delta pointer to the same address as the value
+		// (ContainerPtrToValuePtrForDefaults(NULL, ...) -> IsInContainer(nullptr) -> MAX_int32 ->
+		// true), and FProperty::ExportText_Direct opens with `if (Data==Delta || ...)` -> export.
+		// The delta is then handed down unchanged, so every nested member takes the same
+		// short-circuit. See the header for what that buys.
+		Property->ExportText_InContainer(0, OutValue, Instance, /*Delta*/ Instance,
 			const_cast<UObject*>(Instance), PPF_None);
 	}
 

@@ -1315,17 +1315,37 @@ FBTPropertySetResult UBehaviorTreeService::SetNodePropertyValue(const FString& A
 		return Result;
 	}
 
+	// What the import actually produced, captured before the commit can rewrite it.
+	FString Intended;
+	VibeBT::ExportPropertyValue(Property, Instance, Intended);
+
 	Result.Error = VibeBT::CommitGraph(Tree, Graph);
 	if (!Result.Error.IsEmpty())
 	{
 		return Result;
 	}
 
-	// Read back AFTER the commit, never an echo of the input: the commit regenerates derived state
-	// and runs UBTNode::PreSave, which resets a blackboard key selector bound to a key that does not
-	// exist or whose type its filter forbids. A write that did not survive that must not report the
-	// value the caller asked for.
+	// Read back AFTER the commit, never an echo of the input, and then checked against what was
+	// written — because the commit is not a passive save. UBTNode::PreSave walks every top-level
+	// struct property of every node and rewrites two whole families of them (BTNode.cpp:231-254):
+	// FBlackboardKeySelector, and FValueOrBlackboardKeyBase — which in UE 5.8 is what an ordinary
+	// numeric property like BTTask_Wait::WaitTime now is. Both reset a binding whose key is missing
+	// or of the wrong type, and both do it at save time, after this code has already succeeded. A
+	// write that did not survive that is a failed write, not a successful one with a surprising
+	// read-back.
 	VibeBT::ExportPropertyValue(Property, Instance, Result.ValueAfterWrite);
+	if (Result.ValueAfterWrite != Intended)
+	{
+		Result.Error = FString::Printf(
+			TEXT("%s::%s was written as '%s' but the asset saved '%s'. The commit rewrote it — for a "
+				 "blackboard binding this means the key does not exist on %s, or its type is not one "
+				 "the property accepts, and UBTNode::PreSave cleared it. The asset on disk holds the "
+				 "value reported here, not the one that was asked for."),
+			*Instance->GetClass()->GetName(), *PropertyName, *Intended, *Result.ValueAfterWrite,
+			*GetNameSafe(ToRawPtr(Tree->BlackboardAsset)));
+		return Result;
+	}
+
 	Result.bSuccess = true;
 	return Result;
 }
@@ -1396,8 +1416,9 @@ FBTPropertySetResult UBehaviorTreeService::SetNodeBlackboardKey(const FString& A
 		KeyTypeName.RemoveFromStart(TEXT("BlackboardKeyType_"));
 		Result.Error = FString::Printf(
 			TEXT("key '%s' on %s is of type %s, which %s::%s does not accept (it accepts: %s). Binding "
-				 "it anyway would resolve to a valid key ID and still never work, and "
-				 "UBTNode::PreSave would reset the selector to None on the next save."),
+				 "it anyway would resolve to a valid key ID and still never work, and on the next save "
+				 "UBTNode::PreSave would silently replace it — with None, or, if the selector allows "
+				 "None as a value, with whatever key InitSelection happens to match first."),
 			*KeyName, *Board->GetName(), *KeyTypeName, *Instance->GetClass()->GetName(), *PropertyName,
 			*DescribeAllowedTypes(*Selector));
 		return Result;

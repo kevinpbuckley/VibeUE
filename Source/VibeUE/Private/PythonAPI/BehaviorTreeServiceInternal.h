@@ -157,26 +157,31 @@ namespace VibeBT
 	bool IsAuthorableProperty(const FProperty* Property);
 
 	/**
-	 * Export Property's current value on Instance against NO defaults, which is as close to a full
-	 * literal as UE's text export gets. Measured behaviour, in this engine version:
+	 * Export Property's current value on Instance as a COMPLETE literal, by passing Instance as its
+	 * own delta container. Measured behaviour, in this engine version:
 	 *
-	 *  - Passing a default container (the CDO, say) makes FProperty::ExportText_InContainer emit
-	 *    nothing at all for any property that matches it. A node whose WaitTime happens to equal its
-	 *    class default would then be reported as "" or "()" — not a value, and not something
-	 *    SetNodePropertyValue could write back. Passing null is what keeps a value a value.
-	 *  - Passing the *instance itself* as the default container — the shape that is easiest to write
-	 *    by accident, since the container argument is already in hand — is the same bug at full
-	 *    strength: every member equals itself, so a struct exports as "()" and reads back as
-	 *    "unchanged".
-	 *  - What null defaults does NOT buy is a complete struct literal. UScriptStruct::ExportText
-	 *    substitutes a default-CONSTRUCTED struct when it is handed no defaults, so struct members
-	 *    still at their zero value are omitted whatever is passed here (Class.cpp:3560-3600). That
-	 *    is the engine's own copy/paste encoding, and it means a value read from one node and
-	 *    written to another merges rather than copies: the omitted members keep the target's
-	 *    values. Round-tripping a value onto the node it came from is exact; carrying one across
-	 *    nodes is not, and no port flag available here changes that (PPF_ExternalEditor would, but
-	 *    it also switches member names to authored names, which Blueprint-defined structs do not
-	 *    import back).
+	 *  - Self-delta is not a diff against itself, it is the engine's "export everything" path.
+	 *    ExportText_InContainer resolves the delta pointer through
+	 *    ContainerPtrToValuePtrForDefaults(NULL, Delta, Idx), whose IsInContainer(nullptr) test
+	 *    compares against MAX_int32 and is therefore always true, so the delta resolves to the same
+	 *    address as the value; FProperty::ExportText_Direct then opens with `if (Data==Delta || ...)`
+	 *    and exports (Property.cpp). The delta travels down unchanged, so UScriptStruct::ExportText
+	 *    hands each member Defaults == Value and every member takes the same short-circuit, at any
+	 *    depth.
+	 *  - Passing a real default container (the CDO, say) emits NOTHING for any property or member
+	 *    that matches it. Two ways that loses data: a node whose WaitTime equals its class default
+	 *    reports as "" or "()" — not a value, and not something SetNodePropertyValue could write
+	 *    back; and a member sitting at zero is dropped even when the class default is not zero, so
+	 *    { Key="WaitSeconds", DefaultValue=0.0 } exports as (Key="WaitSeconds") and replays onto a
+	 *    fresh BTTask_Wait as 5.0, silently.
+	 *  - Passing NO defaults is better but not enough: with a null delta each member is compared
+	 *    against ZERO (FProperty::Identical(Data, nullptr)), so members at zero are still dropped —
+	 *    the same silent-5.0 bug. Self-delta is what makes get -> set -> get exact, including
+	 *    between two different nodes.
+	 *  - The one residue: struct elements INSIDE an array. FArrayProperty::ExportTextInnerItem
+	 *    forces PropDefault to a default-constructed struct for a struct inner regardless of the
+	 *    delta (PropertyArray.cpp:1055-1102), so members of an array element that are at their
+	 *    struct default are omitted. Nothing available here changes that.
 	 *  - An empty array exports as an empty string rather than "()" — FArrayProperty emits the
 	 *    opening parenthesis with its first element and nothing at all when there are none
 	 *    (PropertyArray.cpp:1063-1116).
