@@ -3,11 +3,7 @@
 #include "PythonAPI/UBlackboardService.h"
 
 #include "BehaviorTree/BlackboardData.h"
-
-namespace VibeBT
-{
-	TArray<FString> ListAssetsOfClass(const UClass* Class, const FString& DirectoryPath);
-}
+#include "BehaviorTreeServiceInternal.h"
 
 TArray<FString> UBlackboardService::ListBlackboards(const FString& DirectoryPath)
 {

@@ -5,6 +5,7 @@
 #include "AssetRegistry/ARFilter.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "BehaviorTree/BehaviorTree.h"
+#include "BehaviorTreeServiceInternal.h"
 
 namespace VibeBT
 {
