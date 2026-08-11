@@ -9,6 +9,7 @@ class UBehaviorTree;
 class UBehaviorTreeGraph;
 class UBehaviorTreeGraphNode;
 class UBehaviorTreeGraphNode_Root;
+class UWorld;
 
 // Real type is Editor/AIGraph's AIGraphTypes.h (global scope, not namespaced). Forward-declared
 // here at global scope so the elaborated-type-specifier below resolves to it rather than
@@ -108,6 +109,50 @@ namespace VibeBT
 	UBehaviorTreeGraphNode* ResolveNodePath(UBehaviorTreeGraph* Graph, const FString& Path);
 
 	/**
+	 * Whether committing this graph would leave the asset with a runtime tree, i.e. whether
+	 * UBehaviorTree::RootNode would come out non-null on the other side of UpdateAsset().
+	 *
+	 * Deliberately mirrors the engine statement for statement, so it can never disagree with it
+	 * about what is about to happen — UpdateAsset() picks the node:
+	 *
+	 *   if (RootNode && RootNode->Pins.Num() > 0 && RootNode->Pins[0]->LinkedTo.Num() > 0)
+	 *       Node = Cast<UBehaviorTreeGraphNode>(RootNode->Pins[0]->LinkedTo[0]->GetOwningNode());
+	 *   CreateBTFromGraph(Node);
+	 *
+	 * and CreateBTFromGraph turns it into the new tree:
+	 *
+	 *   BTAsset->RootNode = Cast<UBTCompositeNode>(RootEdNode->NodeInstance);
+	 *
+	 * That last cast is why the NodeInstance check is not belt-and-braces. A root linked to a graph
+	 * node carrying no instance (or a non-composite one) leaves BTAsset->RootNode null, and the very
+	 * next line — BTGraphHelpers::CreateChildren(BTAsset, BTAsset->RootNode, ...) — dereferences it as
+	 * RootNode->Children.Reset() behind a guard that only tests RootEdNode
+	 * (BehaviorTreeGraph.cpp:510-517). So that shape does not merely discard the tree: it crashes the
+	 * editor inside OnSave(). Refusing it before the commit is the only place it can be stopped,
+	 * because the post-OnSave check never gets to run.
+	 *
+	 * Shared with ValidateTree, so the diagnostic and the refusal are the same predicate: an asset the
+	 * mutators will not write must never read back as healthy.
+	 */
+	bool GraphWouldRebuildARuntimeTree(const UBehaviorTreeGraphNode_Root* Root);
+
+	/**
+	 * The refusal a write must issue while a Play In Editor session is running, or an empty string
+	 * when PlayWorld is null.
+	 *
+	 * Split out from OpenWriteGuard so the decision is testable: an automation run is headless and
+	 * never has a play session, so the branch is otherwise unreachable from a test.
+	 *
+	 * Why writes are refused at all: CommitGraph runs UBehaviorTreeGraph::OnSave() -> UpdateAsset(),
+	 * which ends in UAIGraph::RemoveOrphanedNodes() (AIGraph.cpp:215-236). That marks every UBTNode
+	 * instance no longer referenced by the graph RF_Transient and renames it into the transient
+	 * package — while a live UBehaviorTreeComponent in the play session may be executing those very
+	 * instances — and then the package is saved. OpenWriteGuard's open-editor refusal does not cover
+	 * this: a running game holds no asset editor.
+	 */
+	FString PlaySessionRefusal(const FString& AssetPath, const UWorld* PlayWorld);
+
+	/**
 	 * Create Tree->BTGraph and its root node if either is missing, and leave the tree's
 	 * blackboard assignment exactly as it found it.
 	 *
@@ -125,10 +170,11 @@ namespace VibeBT
 	 * the write could not be trusted to land. Returns an empty string on success (OutTree and
 	 * OutGraph set), otherwise the error (both out-params left null).
 	 *
-	 * Refuses when a Behavior Tree editor is open on the asset — the open editor holds its own
-	 * EdGraph state, will not show the change, and overwrites it on the human's next save — and
-	 * when the graph is locked, because UpdateAsset() early-returns under bLockUpdates
-	 * (BehaviorTreeGraph.cpp:104) and the commit would report success having regenerated nothing.
+	 * Refuses when a Play In Editor session is running (see PlaySessionRefusal), when a Behavior Tree
+	 * editor is open on the asset — the open editor holds its own EdGraph state, will not show the
+	 * change, and overwrites it on the human's next save — and when the graph is locked, because
+	 * UpdateAsset() early-returns under bLockUpdates (BehaviorTreeGraph.cpp:104) and the commit would
+	 * report success having regenerated nothing.
 	 */
 	FString OpenWriteGuard(const FString& AssetPath, UBehaviorTree*& OutTree,
 		UBehaviorTreeGraph*& OutGraph);

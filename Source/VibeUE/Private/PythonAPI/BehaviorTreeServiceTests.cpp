@@ -30,6 +30,7 @@
 #include "BehaviorTreeGraphNode_Root.h"
 #include "Dom/JsonObject.h"
 #include "Editor.h"
+#include "Engine/World.h"
 #include "Framework/Docking/TabManager.h"
 #include "HAL/FileManager.h"
 #include "Serialization/JsonReader.h"
@@ -44,21 +45,24 @@ static const TCHAR* kBTTestDir = TEXT("/Game/Developers/VibeUEBTTests");
 
 using VibeAITest::FScopedFixtureReset;
 
-// The project ships 11 BT assets under /Game; listing must find at least the two
-// canonical ones. This also proves the AIModule/BehaviorTreeEditor link is live.
+// Listing must find the assets a project actually has, which also proves the
+// AIModule/BehaviorTreeEditor link is live. Deliberately asserts only that the sweep returns
+// something and reports what it found: VibeUE is a standalone plugin, so naming any particular
+// asset here would make the first test in the suite fail in every project but the one it was
+// written in — which is exactly the signal a maintainer must not be given.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBTListTest,
 	"VibeUE.BehaviorTree.Asset.List", kBTTestFlags)
 bool FVibeBTListTest::RunTest(const FString&)
 {
 	const TArray<FString> Trees = UBehaviorTreeService::ListBehaviorTrees(TEXT("/Game"));
 	TestTrue(TEXT("found behavior trees"), Trees.Num() > 0);
-	TestTrue(TEXT("found BT_Enemy"),
-		Trees.ContainsByPredicate([](const FString& P){ return P.Contains(TEXT("BT_Enemy")); }));
+	AddInfo(FString::Printf(TEXT("ListBehaviorTrees(/Game) found %d: %s"),
+		Trees.Num(), *FString::Join(Trees, TEXT(", "))));
 
 	const TArray<FString> Boards = UBlackboardService::ListBlackboards(TEXT("/Game"));
 	TestTrue(TEXT("found blackboards"), Boards.Num() > 0);
-	TestTrue(TEXT("found BB_Enemy"),
-		Boards.ContainsByPredicate([](const FString& P){ return P.Contains(TEXT("BB_Enemy")); }));
+	AddInfo(FString::Printf(TEXT("ListBlackboards(/Game) found %d: %s"),
+		Boards.Num(), *FString::Join(Boards, TEXT(", "))));
 	return true;
 }
 
@@ -771,6 +775,88 @@ bool FVibeBTRepairKeyBindingTest::RunTest(const FString&)
 		[](const UEdGraphNode* Node){ return Node && Node->IsA<UBehaviorTreeGraphNode_Root>(); }));
 
 	Graph->UnlockUpdates();
+	return true;
+}
+
+// The play-session refusal. A write during PIE is not merely awkward: CommitGraph's OnSave() ->
+// UpdateAsset() ends in UAIGraph::RemoveOrphanedNodes(), which marks every unreferenced UBTNode
+// RF_Transient and renames it into the transient package (AIGraph.cpp:215-236) — possibly one a live
+// UBehaviorTreeComponent is executing — and then saves the package. The open-editor refusal does not
+// cover it, because a running game holds no asset editor.
+//
+// Testability: the automation harness runs headless (-nullrhi -unattended) and cannot start a play
+// session, so the decision is a separate predicate, VibeBT::PlaySessionRefusal, and that is what is
+// asserted here in both directions. The wiring from OpenWriteGuard into it is then proved separately
+// by pointing GEditor->PlayWorld at a real world for the duration of exactly one guard call — which
+// is what the guard tests, and all it tests: nothing else in this process reads PlayWorld in that
+// window, and the value is restored whatever happens.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBTPlaySessionGuardTest,
+	"VibeUE.BehaviorTree.Asset.PlaySessionGuard", kBTTestFlags)
+bool FVibeBTPlaySessionGuardTest::RunTest(const FString&)
+{
+	const FString BTPath = FString(kBTTestDir) / TEXT("BT_PlaySessionGuardTest");
+	FScopedFixtureReset ResetBT(BTPath);
+
+	// --- The predicate, both ways. -------------------------------------------------------------
+	TestEqual(TEXT("no play world means no refusal"),
+		VibeBT::PlaySessionRefusal(BTPath, nullptr), FString());
+
+	UWorld* const StandInWorld = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+	if (!TestNotNull(TEXT("an editor world is available to stand in for a play world"), StandInWorld))
+	{
+		return false;
+	}
+
+	const FString Refusal = VibeBT::PlaySessionRefusal(BTPath, StandInWorld);
+	AddInfo(FString::Printf(TEXT("refusal text: %s"), *Refusal));
+	TestTrue(TEXT("a play world is refused"), !Refusal.IsEmpty());
+	TestTrue(TEXT("the refusal names the asset"), Refusal.Contains(TEXT("BT_PlaySessionGuardTest")));
+	TestTrue(TEXT("the refusal says a play session is what is in the way"),
+		Refusal.Contains(TEXT("Play In Editor")));
+
+	// --- The wiring: OpenWriteGuard actually asks. ----------------------------------------------
+	TestEqual(TEXT("tree created"),
+		UBehaviorTreeService::CreateBehaviorTree(BTPath, FString()), FString());
+
+	UBehaviorTree* GuardTree = nullptr;
+	UBehaviorTreeGraph* GuardGraph = nullptr;
+	TestEqual(TEXT("the guard opens the asset with no play session"),
+		VibeBT::OpenWriteGuard(BTPath, GuardTree, GuardGraph), FString());
+	TestNotNull(TEXT("...and hands back the tree"), GuardTree);
+
+	UWorld* const PlayWorldBefore = ToRawPtr(GEditor->PlayWorld);
+	FString GuardedError;
+	{
+		// Restores on every path out, including an exception or an early return added later.
+		struct FScopedPlayWorld
+		{
+			UWorld* Previous;
+			explicit FScopedPlayWorld(UWorld* World) : Previous(ToRawPtr(GEditor->PlayWorld))
+			{
+				GEditor->PlayWorld = World;
+			}
+			~FScopedPlayWorld() { GEditor->PlayWorld = Previous; }
+		} PretendPIE(StandInWorld);
+
+		GuardTree = nullptr;
+		GuardGraph = nullptr;
+		GuardedError = VibeBT::OpenWriteGuard(BTPath, GuardTree, GuardGraph);
+	}
+
+	TestEqual(TEXT("PlayWorld is restored"), ToRawPtr(GEditor->PlayWorld), PlayWorldBefore);
+	TestTrue(TEXT("the guard refuses while a play world is set"), !GuardedError.IsEmpty());
+	TestEqual(TEXT("and refuses with exactly the predicate's message"), GuardedError,
+		VibeBT::PlaySessionRefusal(BTPath, StandInWorld));
+	TestNull(TEXT("a refused write hands back no tree"), GuardTree);
+	TestNull(TEXT("...and no graph"), GuardGraph);
+
+	// The refusal is a condition, not a latch.
+	GuardTree = nullptr;
+	GuardGraph = nullptr;
+	TestEqual(TEXT("the guard opens the asset again once the play world is gone"),
+		VibeBT::OpenWriteGuard(BTPath, GuardTree, GuardGraph), FString());
+	TestNotNull(TEXT("...and hands back the tree again"), GuardTree);
+
 	return true;
 }
 
@@ -2824,6 +2910,73 @@ bool FVibeBTValidateTest::RunTest(const FString&)
 			}
 		}
 	}
+
+	return true;
+}
+
+// The sparse-graph shape — graph root feeding nothing, runtime tree populated — is the one asset
+// every mutator on this service refuses to write. ValidateTree has to say so: two tools in the same
+// service giving opposite answers about the same asset is worse than either answer alone, because
+// the diagnostic is the one a caller reaches for when a write is refused.
+//
+// Asserted as an agreement between the two, not as a message match: the same predicate
+// (VibeBT::GraphWouldRebuildARuntimeTree) decides both, so the test is that a refused write and a
+// clean bill of health can never coexist. The healthy direction is covered twice — here, before the
+// graph is made sparse, and by the "a healthy tree validates clean" assertion above, which would
+// break outright if this diagnostic misfired.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBTValidateSparseGraphTest,
+	"VibeUE.BehaviorTree.Validate.SparseGraph", kBTTestFlags)
+bool FVibeBTValidateSparseGraphTest::RunTest(const FString&)
+{
+	const FString BTPath = FString(kBTTestDir) / TEXT("BT_ValidateSparseTest");
+	FScopedFixtureReset ResetBT(BTPath);
+
+	FPopulatedTree Fixture;
+	if (!BuildPopulatedTree(*this, BTPath, Fixture))
+	{
+		return false;
+	}
+
+	auto FindRepairDiagnostic = [](const TArray<FString>& Diagnostics)
+	{
+		return Diagnostics.FindByPredicate([](const FString& Line)
+			{ return Line.Contains(TEXT("RepairGraphFromRuntimeTree")); });
+	};
+
+	// Before: the graph feeds a composite, so the write is allowed and there is nothing to report.
+	// (The fixture's lone childless Sequence does draw the composite-has-no-children diagnostic;
+	// what must be absent is specifically the repair one.)
+	const TArray<FString> HealthyDiag = UBehaviorTreeService::ValidateTree(BTPath);
+	TestNull(TEXT("a graph that would rebuild its runtime tree is not reported as damaged"),
+		FindRepairDiagnostic(HealthyDiag));
+
+	MakeGraphSparse(Fixture);
+	TestNotNull(TEXT("the runtime tree is still populated"), ToRawPtr(Fixture.Tree->RootNode));
+	TestEqual(TEXT("...behind a graph root that feeds nothing"), Fixture.RootOut->LinkedTo.Num(), 0);
+
+	// The write half of the disagreement: every mutator refuses this asset.
+	const FString WriteError = UBehaviorTreeService::CompileAndSave(BTPath);
+	TestTrue(TEXT("the write is refused"), !WriteError.IsEmpty());
+	TestTrue(TEXT("...and the refusal points at RepairGraphFromRuntimeTree"),
+		WriteError.Contains(TEXT("RepairGraphFromRuntimeTree")));
+
+	// The read half, which used to say "healthy".
+	const TArray<FString> SparseDiag = UBehaviorTreeService::ValidateTree(BTPath);
+	AddInfo(FString::Printf(TEXT("ValidateTree on the sparse asset returned %d line(s): %s"),
+		SparseDiag.Num(), *FString::Join(SparseDiag, TEXT(" | "))));
+	const FString* Reported = FindRepairDiagnostic(SparseDiag);
+	if (TestNotNull(TEXT("ValidateTree reports the asset the mutators refuse"), Reported))
+	{
+		TestTrue(TEXT("the diagnostic names the asset"),
+			Reported->Contains(TEXT("BT_ValidateSparseTest")));
+		TestTrue(TEXT("...and says what it is protecting"),
+			Reported->Contains(TEXT("runtime")));
+	}
+
+	// The runtime tree the whole guard exists for survived being diagnosed — ValidateTree is
+	// read-only, and running it on this shape must not be what destroys it.
+	TestEqual(TEXT("validating changed nothing"), ToRawPtr(Fixture.Tree->RootNode),
+		static_cast<UBTCompositeNode*>(Fixture.Sequence));
 
 	return true;
 }

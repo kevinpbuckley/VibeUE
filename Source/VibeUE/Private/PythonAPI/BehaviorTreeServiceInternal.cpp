@@ -13,6 +13,7 @@
 #include "EdGraph/EdGraphPin.h"
 #include "EdGraph/EdGraphSchema.h"
 #include "Editor.h"
+#include "Engine/World.h"
 #include "FileHelpers.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Subsystems/AssetEditorSubsystem.h"
@@ -170,40 +171,36 @@ namespace VibeBT
 			return Root && Root->Pins.Num() > 0 && Root->Pins[0] && Root->Pins[0]->LinkedTo.Num() > 0;
 		}
 
-		/**
-		 * Whether committing this graph would leave the asset with a runtime tree, i.e. whether
-		 * UBehaviorTree::RootNode would come out non-null on the other side of UpdateAsset().
-		 *
-		 * Deliberately mirrors the engine statement for statement, so it can never disagree with it
-		 * about what is about to happen — UpdateAsset() picks the node:
-		 *
-		 *   if (RootNode && RootNode->Pins.Num() > 0 && RootNode->Pins[0]->LinkedTo.Num() > 0)
-		 *       Node = Cast<UBehaviorTreeGraphNode>(RootNode->Pins[0]->LinkedTo[0]->GetOwningNode());
-		 *   CreateBTFromGraph(Node);
-		 *
-		 * and CreateBTFromGraph turns it into the new tree:
-		 *
-		 *   BTAsset->RootNode = Cast<UBTCompositeNode>(RootEdNode->NodeInstance);
-		 *
-		 * That last cast is why the NodeInstance check below is not belt-and-braces. A root linked
-		 * to a graph node carrying no instance (or a non-composite one) leaves BTAsset->RootNode
-		 * null, and the very next line — BTGraphHelpers::CreateChildren(BTAsset, BTAsset->RootNode,
-		 * ...) — dereferences it as RootNode->Children.Reset() behind a guard that only tests
-		 * RootEdNode (BehaviorTreeGraph.cpp:510-517). So that shape does not merely discard the
-		 * tree: it crashes the editor inside OnSave(). Refusing it here is the only place it can be
-		 * stopped, because the post-OnSave check never gets to run.
-		 */
-		bool GraphWouldRebuildARuntimeTree(const UBehaviorTreeGraphNode_Root* Root)
+	}
+
+	// Declared in the header (with its reasoning) rather than kept file-local, so ValidateTree can
+	// ask the same question the write guard does.
+	bool GraphWouldRebuildARuntimeTree(const UBehaviorTreeGraphNode_Root* Root)
+	{
+		if (!GraphRootHasLink(Root))
 		{
-			if (!GraphRootHasLink(Root))
-			{
-				return false;
-			}
-			const UEdGraphPin* LinkedPin = Root->Pins[0]->LinkedTo[0];
-			const UBehaviorTreeGraphNode* LinkedNode =
-				LinkedPin ? Cast<UBehaviorTreeGraphNode>(LinkedPin->GetOwningNode()) : nullptr;
-			return LinkedNode && Cast<UBTCompositeNode>(LinkedNode->NodeInstance) != nullptr;
+			return false;
 		}
+		const UEdGraphPin* LinkedPin = Root->Pins[0]->LinkedTo[0];
+		const UBehaviorTreeGraphNode* LinkedNode =
+			LinkedPin ? Cast<UBehaviorTreeGraphNode>(LinkedPin->GetOwningNode()) : nullptr;
+		return LinkedNode && Cast<UBTCompositeNode>(LinkedNode->NodeInstance) != nullptr;
+	}
+
+	FString PlaySessionRefusal(const FString& AssetPath, const UWorld* PlayWorld)
+	{
+		if (!PlayWorld)
+		{
+			return FString();
+		}
+
+		return FString::Printf(
+			TEXT("A Play In Editor session is running; stop it and retry writing %s. Committing runs "
+				 "UBehaviorTreeGraph::OnSave() -> UpdateAsset() -> RemoveOrphanedNodes(), which marks "
+				 "every UBTNode instance the graph no longer references transient and renames it into "
+				 "the transient package — possibly while a live UBehaviorTreeComponent is executing "
+				 "it — and then saves the package. The asset on disk is unchanged."),
+			*AssetPath);
 	}
 
 	FString EnsureGraph(UBehaviorTree* Tree)
@@ -311,11 +308,24 @@ namespace VibeBT
 			return FString::Printf(TEXT("Behavior Tree not found: %s"), *AssetPath);
 		}
 
-		// Both refusals are checked before EnsureGraph, so a refused write leaves the asset exactly
-		// as it was. That is not cosmetic for the lock check: EnsureGraph on a graph that has lost
-		// its root spawns one, Modify()s the graph and churns the blackboard binding of every node
-		// instance in it (see the restore in EnsureGraph) — all of it on an asset we are about to
-		// refuse to write.
+		// All three refusals are checked before EnsureGraph, so a refused write leaves the asset
+		// exactly as it was. That is not cosmetic for the lock check: EnsureGraph on a graph that has
+		// lost its root spawns one, Modify()s the graph and churns the blackboard binding of every
+		// node instance in it (see the restore in EnsureGraph) — all of it on an asset we are about
+		// to refuse to write.
+		//
+		// A running play session is checked first: it is the cheapest test and the one whose
+		// consequence is the worst (see PlaySessionRefusal — the commit reparents live node instances
+		// out from under an executing UBehaviorTreeComponent).
+		if (GEditor)
+		{
+			const FString PlayRefusal = PlaySessionRefusal(AssetPath, ToRawPtr(GEditor->PlayWorld));
+			if (!PlayRefusal.IsEmpty())
+			{
+				return PlayRefusal;
+			}
+		}
+
 		if (GEditor)
 		{
 			if (UAssetEditorSubsystem* AssetEditorSubsystem =
@@ -390,9 +400,9 @@ namespace VibeBT
 		// UpdateAsset() -> CreateBTFromGraph() opens by discarding the runtime tree outright
 		// ("//discard old tree": RootNode = nullptr, RootDecorators/RootDecoratorOps emptied) and
 		// rebuilds it from the graph — and it only has something to rebuild from when the root
-		// node's output pin leads somewhere (see GraphRootFeedsANode). Committing a graph whose
-		// root feeds nothing over an asset whose node tree is intact therefore replaces that tree
-		// with an empty one, on disk, with no undo.
+		// node's output pin leads somewhere (see GraphWouldRebuildARuntimeTree). Committing a graph
+		// whose root feeds nothing over an asset whose node tree is intact therefore replaces that
+		// tree with an empty one, on disk, with no undo.
 		//
 		// That combination — populated runtime tree, graph root feeding nothing — is precisely a
 		// graph-less or sparse-graph asset whose reconstruction either never ran or produced
@@ -526,9 +536,9 @@ namespace VibeBT
 		if (MatchCount != 1)
 		{
 			// Zero: unresolved. More than one: two classes under RequiredBase share this short
-			// name in different packages — silently picking one would be exactly the class of
-			// bug documented in docs/gotchas.md (display-name / short-name collisions resolving
-			// to the wrong class with no error). Refuse instead of guessing.
+			// name in different packages, and silently picking one would edit a node of the wrong
+			// class while reporting success. Refuse instead of guessing — the caller can pass a
+			// full object path to say which one it meant.
 			return nullptr;
 		}
 

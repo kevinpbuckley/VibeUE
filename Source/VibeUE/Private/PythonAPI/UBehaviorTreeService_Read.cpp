@@ -1,4 +1,4 @@
-// Copyright Buckley Builds LLC 2026 All Rights Reserved.
+﻿// Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UBehaviorTreeService.h"
 
@@ -93,7 +93,8 @@ TArray<FBTNodeClassInfo> UBehaviorTreeService::GetAvailableNodeTypes(const FStri
 }
 
 // Named, not anonymous: this module builds with unity/jumbo enabled, where two anonymous
-// namespaces in the same blob collide on identical helper names (docs/gotchas.md).
+// namespaces in the same blob collide on identical helper names — the second definition silently
+// wins and the other translation unit calls it instead of its own.
 namespace VibeBTRead
 {
 	/**
@@ -669,6 +670,22 @@ TArray<FString> UBehaviorTreeService::ValidateTree(const FString& AssetPath)
 		Diagnostics.Add(
 			FString::Printf(TEXT("ERROR: %s has no root node in its editor graph"), *AssetPath));
 		return Diagnostics;
+	}
+
+	// The whole-asset defect: a populated runtime tree behind a graph that would not rebuild one.
+	// Reported here because it is exactly the shape every mutator on this service refuses to write
+	// (VibeBT::CommitGraph's discard guard, same predicate) — without it, the one asset the service
+	// will not touch is the one ValidateTree calls healthy, and the caller is told to fix nothing.
+	// It is a property of the graph as a whole, not of any one node, so it precedes the node walk.
+	if (Tree->RootNode && !VibeBT::GraphWouldRebuildARuntimeTree(Root))
+	{
+		Diagnostics.Add(FString::Printf(
+			TEXT("%s: the editor graph would not rebuild a runtime tree (its root node leads to "
+				 "nothing, or to a node carrying no composite instance) while the asset still has a "
+				 "populated runtime node tree. Every write to this asset is refused, because "
+				 "committing would rebuild an empty tree over the populated one. Run "
+				 "RepairGraphFromRuntimeTree to rebuild the graph from the runtime tree first."),
+			*AssetPath));
 	}
 
 	const UBlackboardData* Blackboard = ToRawPtr(Tree->BlackboardAsset);
