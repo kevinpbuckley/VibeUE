@@ -195,17 +195,29 @@ namespace VibeBTBuild
 	 * Record Source's descendants as not built, with the reason. Called when a node itself could not
 	 * be created: everything under it is unreachable, and saying so per node is the difference between
 	 * a report and a silence.
+	 *
+	 * Depth-bounded like every walk over TreeJson: this one is the cheapest stack overflow in the
+	 * file — a hostile dump whose top-level class does not resolve sends the ENTIRE remaining JSON
+	 * through here, with no engine work per level to slow the descent.
 	 */
 	void RecordSubtreeUnbuilt(FBTBuildResult& Result, const TSharedPtr<FJsonObject>& Source,
-		const FString& Reason)
+		const FString& Reason, int32 Depth = 0)
 	{
+		if (Depth > VibeBT::MaxTreeDepth)
+		{
+			const int32 Index = BeginNode(Result, Source);
+			FailNode(Result, Index, FString::Printf(
+				TEXT("report truncated below this node: the JSON nests deeper than %d levels"),
+				VibeBT::MaxTreeDepth));
+			return;
+		}
 		for (const TCHAR* Field : { TEXT("decorators"), TEXT("services"), TEXT("children") })
 		{
 			for (const TSharedPtr<FJsonObject>& Child : NodeArray(Source, Field))
 			{
 				const int32 Index = BeginNode(Result, Child);
 				FailNode(Result, Index, Reason);
-				RecordSubtreeUnbuilt(Result, Child, Reason);
+				RecordSubtreeUnbuilt(Result, Child, Reason, Depth + 1);
 			}
 		}
 	}
@@ -355,15 +367,34 @@ namespace VibeBTBuild
 
 		const TSet<FString> Selectors = KeySelectorProperties(AssetPath, NodePath);
 
-		// Partitioned, not sorted twice: within each half the alphabetical order from
-		// SortedFieldNames survives, so the sequence is still fully determined by the JSON.
+		// Partitioned three ways, not sorted twice: within each partition the alphabetical order
+		// from SortedFieldNames survives, so the sequence is still fully determined by the JSON.
+		//
+		// NodeName goes LAST, unconditionally. Writing it retitles the node, and the title is the
+		// node's path segment — so every property applied after it through NodePath would resolve
+		// against a stale path: loudly ("No node at path") when nothing else matches, or SILENTLY
+		// onto a same-titled sibling when something does (a renamed Wait beside the engine-spawned
+		// background Wait of a SimpleParallel). Alphabetical order made this bite any renamed node
+		// with an edited property sorting after "NodeName" — WaitTime, RandomDeviation — which is
+		// most renamed nodes in a real tree. The file-header rule ("a node's own properties are
+		// written last") held BETWEEN nodes but not WITHIN this function.
 		TArray<FString> Names;
 		TArray<FString> ValueNames;
+		bool bHasNodeName = false;
 		for (const FString& Name : SortedFieldNames(Properties))
 		{
+			if (Name == TEXT("NodeName"))
+			{
+				bHasNodeName = true;
+				continue;
+			}
 			(Selectors.Contains(Name) ? Names : ValueNames).Add(Name);
 		}
 		Names.Append(MoveTemp(ValueNames));
+		if (bHasNodeName)
+		{
+			Names.Add(TEXT("NodeName"));
+		}
 
 		for (const FString& Name : Names)
 		{
@@ -441,7 +472,29 @@ namespace VibeBTBuild
 	}
 
 	void ReplayInto(const FString& AssetPath, const FString& TargetPath,
-		const TSharedPtr<FJsonObject>& Source, int32 EntryIndex, FBTBuildResult& Result);
+		const TSharedPtr<FJsonObject>& Source, int32 EntryIndex, FBTBuildResult& Result, int32 Depth);
+
+	/**
+	 * Write Source's "comment" — the graph node's comment bubble — onto the node at TargetPath.
+	 * An empty comment is not replayed: a fresh node already has none, and SetNodeComment costs a
+	 * commit. Runs BEFORE ApplyProperties, while TargetPath is still guaranteed to name the node
+	 * (a NodeName replay retitles it).
+	 */
+	void ApplyComment(const FString& AssetPath, const FString& TargetPath,
+		const TSharedPtr<FJsonObject>& Source, FBTBuildResult& Result, int32 EntryIndex)
+	{
+		const FString Comment = StringField(Source, TEXT("comment"));
+		if (Comment.IsEmpty())
+		{
+			return;
+		}
+		const FString Error = UBehaviorTreeService::SetNodeComment(AssetPath, TargetPath, Comment);
+		if (!Error.IsEmpty())
+		{
+			FailNode(Result, EntryIndex,
+				FString::Printf(TEXT("comment = '%s': %s"), *Comment, *Error));
+		}
+	}
 
 	/** Attach one of Source's sub-node arrays to the node at TargetPath, in listed order. */
 	void ReplaySubNodes(const FString& AssetPath, const FString& TargetPath,
@@ -482,17 +535,34 @@ namespace VibeBTBuild
 				continue;
 			}
 
+			ApplyComment(AssetPath, SubPath, Sub, Result, Index);
 			ApplyProperties(AssetPath, SubPath, Sub, Result, Index);
 		}
 	}
 
 	/** Create Source's children under the node at TargetPath and recurse into each. */
 	void ReplayChildren(const FString& AssetPath, const FString& TargetPath,
-		const TSharedPtr<FJsonObject>& Source, FBTBuildResult& Result)
+		const TSharedPtr<FJsonObject>& Source, FBTBuildResult& Result, int32 Depth)
 	{
 		const TArray<TSharedPtr<FJsonObject>> Children = NodeArray(Source, TEXT("children"));
 		if (Children.Num() == 0)
 		{
+			return;
+		}
+
+		// The bound turns a hostile or malformed dump's linear ten-thousand-node chain into a
+		// per-node failure report instead of a stack overflow. Legitimate GetTree output cannot
+		// reach it: GetTree truncates its own serialisation at the same depth.
+		if (Depth > VibeBT::MaxTreeDepth)
+		{
+			for (const TSharedPtr<FJsonObject>& Child : Children)
+			{
+				const int32 Index = BeginNode(Result, Child);
+				FailNode(Result, Index, FString::Printf(
+					TEXT("not built: the JSON nests deeper than %d levels, which no legitimate "
+						 "Behavior Tree does"), VibeBT::MaxTreeDepth));
+				RecordSubtreeUnbuilt(Result, Child, TEXT("not built: below the depth bound"), Depth);
+			}
 			return;
 		}
 
@@ -530,7 +600,7 @@ namespace VibeBTBuild
 				continue;
 			}
 
-			ReplayInto(AssetPath, ChildPath, Child, Index, Result);
+			ReplayInto(AssetPath, ChildPath, Child, Index, Result, Depth + 1);
 		}
 	}
 
@@ -545,11 +615,12 @@ namespace VibeBTBuild
 	 * ("@decorator[n]"), not by name.
 	 */
 	void ReplayInto(const FString& AssetPath, const FString& TargetPath,
-		const TSharedPtr<FJsonObject>& Source, int32 EntryIndex, FBTBuildResult& Result)
+		const TSharedPtr<FJsonObject>& Source, int32 EntryIndex, FBTBuildResult& Result, int32 Depth)
 	{
+		ApplyComment(AssetPath, TargetPath, Source, Result, EntryIndex);
 		ReplaySubNodes(AssetPath, TargetPath, Source, /*bDecorators*/ true, Result);
 		ReplaySubNodes(AssetPath, TargetPath, Source, /*bDecorators*/ false, Result);
-		ReplayChildren(AssetPath, TargetPath, Source, Result);
+		ReplayChildren(AssetPath, TargetPath, Source, Result, Depth);
 		ApplyProperties(AssetPath, TargetPath, Source, Result, EntryIndex);
 	}
 
@@ -841,7 +912,7 @@ FBTBuildResult UBehaviorTreeService::BuildTree(const FString& AssetPath, const F
 								"built either");
 			return Result;
 		}
-		ReplayInto(AssetPath, TopPath, SourceTop, TopIndex, Result);
+		ReplayInto(AssetPath, TopPath, SourceTop, TopIndex, Result, 0);
 	}
 	else
 	{
@@ -891,16 +962,26 @@ FBTBuildResult UBehaviorTreeService::BuildTree(const FString& AssetPath, const F
 			return Result;
 		}
 
+		// Captured BEFORE the clear, because the clear is destructive to disk one subtree at a
+		// time: a build that fails midway has already removed real nodes, and without this dump
+		// there is nothing to re-apply. It rides on the result rather than being logged so the
+		// caller that hit the failure is the one holding the recovery data.
+		Result.PreReplaceSnapshot = GetTree(AssetPath);
+
 		const FString ClearError = ClearBelow(AssetPath, Graph, TopPath);
 		if (!ClearError.IsEmpty())
 		{
 			Result.Error = FString::Printf(
-				TEXT("could not clear %s before rebuilding it: %s"), *AssetPath, *ClearError);
+				TEXT("could not clear %s before rebuilding it: %s. The asset HAS been modified — the "
+					 "clear removes and saves one subtree at a time — and PreReplaceSnapshot holds the "
+					 "tree as it was, so BuildTree(bReplaceExisting=true) with it restores the "
+					 "original."),
+				*AssetPath, *ClearError);
 			return Result;
 		}
 
 		const int32 TopIndex = BeginNode(Result, SourceTop);
-		ReplayInto(AssetPath, TopPath, SourceTop, TopIndex, Result);
+		ReplayInto(AssetPath, TopPath, SourceTop, TopIndex, Result, 0);
 
 		// The retained node is the only node in the build that was not created from scratch, so it is
 		// the only one that can still be carrying something nobody asked for.
@@ -920,6 +1001,13 @@ FBTBuildResult UBehaviorTreeService::BuildTree(const FString& AssetPath, const F
 	{
 		Result.Error = FString::Printf(TEXT("%d of %d nodes failed; see Nodes for each one"), Failed,
 			Result.Nodes.Num());
+		if (!Result.PreReplaceSnapshot.IsEmpty())
+		{
+			// A failed replace is not "nothing happened": the target was cleared and partially
+			// rebuilt, and each primitive saved as it went. Say so, and point at the way back.
+			Result.Error += TEXT(". The target was modified as far as the build got; "
+								 "PreReplaceSnapshot holds the tree as it was before the clear.");
+		}
 		return Result;
 	}
 

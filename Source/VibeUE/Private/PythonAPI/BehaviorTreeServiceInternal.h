@@ -27,6 +27,45 @@ namespace VibeBT
 	/** Vertical gap between tree depths, in graph units. */
 	constexpr int32 NodeSpacingY = 180;
 
+	/**
+	 * Depth bound on every recursive walk over a tree or a caller-supplied tree description.
+	 *
+	 * No legitimate Behavior Tree approaches it — the deepest production tree seen while building
+	 * this was 9 levels — but a corrupt asset (or a hostile BuildTree JSON) with a many-thousand
+	 * node linear chain would otherwise convert a read into a stack overflow, which takes the whole
+	 * editor down. Walks that hit the bound report an error; none of them silently truncate.
+	 */
+	constexpr int32 MaxTreeDepth = 1024;
+
+	/**
+	 * FName construction from a string longer than NAME_SIZE is a Fatal engine log
+	 * (UnrealNames.cpp: UE_CLOGF(Len > NAME_SIZE, ..., Fatal)) — an editor kill, reachable from any
+	 * MCP caller that passes an over-long key, property or asset name. Every entry point that turns
+	 * caller input into an FName (or into an object path lookup, which builds FNames per segment)
+	 * checks this first. Returns an error naming What, or empty when Value is safe.
+	 */
+	FString CheckNameLength(const FString& Value, const TCHAR* What);
+
+	/**
+	 * Throw away a package's dirty in-memory state by reloading it from disk (non-interactive),
+	 * and describe the outcome as a sentence to append to the error that made it necessary.
+	 *
+	 * For the failure paths where an in-memory object has diverged from disk and the divergence
+	 * must not linger: a dirty package left behind is shipped, silently, by the next successful
+	 * save of the same asset — a human's Save All included — and a stale copy turns a caller's
+	 * natural retry into a write of exactly the state a guard refused.
+	 */
+	FString DiscardDirtyStateFromDisk(class UPackage* Package);
+
+	/**
+	 * Whether AssetPath may be created or written by these services: a valid long package name,
+	 * within the FName length bound, and not under /Engine, /Script or /Temp — an agent has no
+	 * business writing assets into the engine installation, class packages are not assets, and
+	 * /Temp does not survive the session. Plugin content roots are deliberately allowed: mutating
+	 * a plugin's own content is a legitimate workflow. Returns an error, or empty when writable.
+	 */
+	FString CheckWritableAssetPath(const FString& AssetPath);
+
 	/** Structure-only mirror of a BT subtree, so layout can be tested without an editor. */
 	struct FLayoutNode
 	{
@@ -50,8 +89,22 @@ namespace VibeBT
 	 *
 	 * Replaces UBehaviorTreeGraph::AutoArrange(), which dereferences the Slate node widget
 	 * and crashes when no Behavior Tree editor tab is open.
+	 *
+	 * Returns an error — and writes no position at all — when the graph is a shape the layout
+	 * cannot arrange: deeper than MaxTreeDepth, or with an internal mirror/order mismatch (which
+	 * a hand-corrupted graph could in principle produce). Positions ARE execution order
+	 * (CreateBTFromGraph sorts children by X), so arranging such a graph partially would silently
+	 * reorder the tree; refusing is the only honest outcome, and CommitGraph turns the refusal
+	 * into a refused write.
 	 */
-	void ArrangeGraph(UBehaviorTreeGraphNode* RootNode);
+	FString ArrangeGraph(UBehaviorTreeGraphNode* RootNode);
+
+	/**
+	 * Release the module-lifetime FGraphNodeClassHelper cache. Called from the module's
+	 * ShutdownModule: ~FGraphNodeClassHelper unhooks FModuleManager and asset-registry delegates,
+	 * which must happen while those systems still exist, not at static teardown.
+	 */
+	void ShutdownClassHelperCache();
 
 	/** Shared asset-registry sweep used by both AI services. */
 	TArray<FString> ListAssetsOfClass(const UClass* Class, const FString& DirectoryPath);

@@ -155,6 +155,9 @@ namespace VibeBTRead
 		Out->SetStringField(TEXT("class"),
 			Node->NodeInstance ? Node->NodeInstance->GetClass()->GetName() : FString());
 		Out->SetStringField(TEXT("name"), Node->GetNodeTitle(ENodeTitleType::ListView).ToString());
+		// The graph node's comment bubble (SetNodeComment), not the instance's name: annotation,
+		// carried so a round-trip through BuildTree preserves it.
+		Out->SetStringField(TEXT("comment"), Node->NodeComment);
 		Out->SetObjectField(TEXT("properties"), CollectEditedProperties(ToRawPtr(Node->NodeInstance)));
 		Out->SetBoolField(TEXT("bInjected"), Node->bInjectedNode != 0);
 	}
@@ -186,13 +189,28 @@ namespace VibeBTRead
 	 * is reported as a finite tree instead of hanging the caller.
 	 */
 	TSharedRef<FJsonObject> NodeToJson(const UBehaviorTreeGraphNode* Node,
-		TSet<const UBehaviorTreeGraphNode*>& Visited)
+		TSet<const UBehaviorTreeGraphNode*>& Visited, int32 Depth = 0)
 	{
 		const TSharedRef<FJsonObject> Object = MakeShared<FJsonObject>();
 		WriteCommonFields(Node, Object);
 		Object->SetBoolField(TEXT("bHasCompositeDecorator"), HasCompositeDecorator(Node));
 
 		Visited.Add(Node);
+
+		// The Visited set makes a CYCLIC graph finite; a merely LINEAR chain of tens of thousands of
+		// nodes never revisits anything and would still overflow the stack. Past the bound the node
+		// reports itself truncated — with the standard arrays present but empty, so consumers that
+		// walk "children" unconditionally still can — rather than letting a read crash the editor.
+		if (Depth > VibeBT::MaxTreeDepth)
+		{
+			Object->SetStringField(TEXT("error"), FString::Printf(
+				TEXT("subtree truncated: deeper than %d levels, which no legitimate Behavior Tree "
+					 "is"), VibeBT::MaxTreeDepth));
+			Object->SetArrayField(TEXT("decorators"), TArray<TSharedPtr<FJsonValue>>());
+			Object->SetArrayField(TEXT("services"), TArray<TSharedPtr<FJsonValue>>());
+			Object->SetArrayField(TEXT("children"), TArray<TSharedPtr<FJsonValue>>());
+			return Object;
+		}
 
 		// The Visited test is on all three arms, not just "children". These two arms recurse — the
 		// serialiser they replaced did not — so without it a node listed among its own Decorators, or
@@ -206,7 +224,7 @@ namespace VibeBTRead
 			const UBehaviorTreeGraphNode* Raw = ToRawPtr(Decorator);
 			if (Raw && !Visited.Contains(Raw))
 			{
-				Decorators.Add(MakeShared<FJsonValueObject>(NodeToJson(Raw, Visited)));
+				Decorators.Add(MakeShared<FJsonValueObject>(NodeToJson(Raw, Visited, Depth + 1)));
 			}
 		}
 		Object->SetArrayField(TEXT("decorators"), Decorators);
@@ -217,7 +235,7 @@ namespace VibeBTRead
 			const UBehaviorTreeGraphNode* Raw = ToRawPtr(Service);
 			if (Raw && !Visited.Contains(Raw))
 			{
-				Services.Add(MakeShared<FJsonValueObject>(NodeToJson(Raw, Visited)));
+				Services.Add(MakeShared<FJsonValueObject>(NodeToJson(Raw, Visited, Depth + 1)));
 			}
 		}
 		Object->SetArrayField(TEXT("services"), Services);
@@ -227,7 +245,7 @@ namespace VibeBTRead
 		{
 			if (Child && !Visited.Contains(Child))
 			{
-				Children.Add(MakeShared<FJsonValueObject>(NodeToJson(Child, Visited)));
+				Children.Add(MakeShared<FJsonValueObject>(NodeToJson(Child, Visited, Depth + 1)));
 			}
 		}
 		Object->SetArrayField(TEXT("children"), Children);
@@ -265,6 +283,11 @@ FString UBehaviorTreeService::GetTree(const FString& AssetPath)
 	{
 		return TreeError(TEXT("AssetPath is empty"));
 	}
+	const FString LengthError = VibeBT::CheckNameLength(AssetPath, TEXT("AssetPath"));
+	if (!LengthError.IsEmpty())
+	{
+		return TreeError(LengthError);
+	}
 
 	UBehaviorTree* Tree =
 		LoadObject<UBehaviorTree>(nullptr, *AssetPath, nullptr, LOAD_NoWarn | LOAD_Quiet);
@@ -299,6 +322,12 @@ bool UBehaviorTreeService::GetNodeInfo(const FString& AssetPath, const FString& 
 	FBTNodeInfo& OutInfo)
 {
 	OutInfo = FBTNodeInfo();
+
+	OutInfo.Error = VibeBT::CheckNameLength(AssetPath, TEXT("AssetPath"));
+	if (!OutInfo.Error.IsEmpty())
+	{
+		return false;
+	}
 
 	UBehaviorTree* Tree =
 		LoadObject<UBehaviorTree>(nullptr, *AssetPath, nullptr, LOAD_NoWarn | LOAD_Quiet);
@@ -336,6 +365,7 @@ bool UBehaviorTreeService::GetNodeInfo(const FString& AssetPath, const FString& 
 	OutInfo.ServiceCount = Node->Services.Num();
 	OutInfo.bInjected = Node->bInjectedNode != 0;
 	OutInfo.bHasCompositeDecorator = HasCompositeDecorator(Node);
+	OutInfo.Comment = Node->NodeComment;
 	return true;
 }
 
@@ -349,6 +379,14 @@ namespace VibeBTRead
 	 */
 	UObject* ResolveInstanceForRead(const FString& AssetPath, const FString& NodePath, FString& OutError)
 	{
+		// Before the load: an object-path lookup builds an FName per segment, which is a fatal
+		// engine error past NAME_SIZE — reachable from any MCP caller's AssetPath.
+		OutError = VibeBT::CheckNameLength(AssetPath, TEXT("AssetPath"));
+		if (!OutError.IsEmpty())
+		{
+			return nullptr;
+		}
+
 		UBehaviorTree* Tree =
 			LoadObject<UBehaviorTree>(nullptr, *AssetPath, nullptr, LOAD_NoWarn | LOAD_Quiet);
 		if (!Tree)
@@ -640,6 +678,12 @@ TArray<FString> UBehaviorTreeService::ValidateTree(const FString& AssetPath)
 	if (AssetPath.IsEmpty())
 	{
 		Diagnostics.Add(TEXT("ERROR: AssetPath is empty"));
+		return Diagnostics;
+	}
+	const FString LengthError = VibeBT::CheckNameLength(AssetPath, TEXT("AssetPath"));
+	if (!LengthError.IsEmpty())
+	{
+		Diagnostics.Add(FString::Printf(TEXT("ERROR: %s"), *LengthError));
 		return Diagnostics;
 	}
 

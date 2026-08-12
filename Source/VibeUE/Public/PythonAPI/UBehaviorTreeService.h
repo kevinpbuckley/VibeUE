@@ -98,6 +98,10 @@ struct FBTNodeInfo
 	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
 	bool bHasCompositeDecorator = false;
 
+	/** The graph node's comment bubble (see SetNodeComment). Empty when none is set. */
+	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
+	FString Comment;
+
 	/** Populated when the path could not be resolved. */
 	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
 	FString Error;
@@ -207,6 +211,15 @@ struct FBTBuildResult
 	/** One entry per node described by the JSON, in the order the walk reached them (pre-order). */
 	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
 	TArray<FBTBuildNodeResult> Nodes;
+
+	/**
+	 * The target's GetTree dump captured immediately before a bReplaceExisting build cleared it,
+	 * and empty otherwise. The clear is destructive to disk one subtree at a time, so a build that
+	 * fails midway has already removed real nodes — this is the way back: feed it to
+	 * BuildTree(bReplaceExisting=true) to restore the tree that was there.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "BehaviorTree")
+	FString PreReplaceSnapshot;
 };
 
 /**
@@ -286,10 +299,11 @@ public:
 
 	/**
 	 * The whole tree as JSON, rooted at the graph's root node. Per node: "path", "guid", "class",
-	 * "name", "children" (in execution order), "decorators", "services", "properties" (edited,
-	 * non-default values only), "bInjected", "bHasCompositeDecorator".
+	 * "name", "comment" (the comment bubble, see SetNodeComment), "children" (in execution order),
+	 * "decorators", "services", "properties" (edited, non-default values only), "bInjected",
+	 * "bHasCompositeDecorator".
 	 *
-	 * Every node object carries all ten fields, including the objects inside "decorators" and
+	 * Every node object carries all eleven fields, including the objects inside "decorators" and
 	 * "services". A sub-node's "children" / "decorators" / "services" are always empty and its
 	 * "bHasCompositeDecorator" always false — decorators and services have no pins and carry no
 	 * sub-nodes of their own — but the keys are present, so a consumer can walk any node object
@@ -356,10 +370,15 @@ public:
 	 * Re-parent a node (with its subtree) to NewChildIndex under NewParentPath, and save.
 	 * NewChildIndex < 0 appends. Returns an empty string on success, else the error.
 	 *
+	 * Reordering WITHOUT re-parenting is the same call: MoveNode with NewParentPath naming the
+	 * node's current parent repositions it among its siblings, without ever unlinking it.
+	 *
 	 * Refuses to move the root, and to move a node under itself or one of its own descendants.
 	 * NewChildIndex means the same thing it does for AddNode, including SimpleParallel's two fixed
 	 * slots — but MoveNode never displaces anything, so an occupied slot is an error rather than a
-	 * replace.
+	 * replace. A SimpleParallel's background branch also cannot be moved AWAY: the engine refills
+	 * the emptied slot with a Wait task on save (the same reason RemoveNode refuses it), so the
+	 * move would leave an unrequested node behind. Replace it via AddNode(<parallel>, <class>, 1).
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
 	static FString MoveNode(const FString& AssetPath, const FString& NodePath,
@@ -435,6 +454,20 @@ public:
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
 	static FString SetNodeName(const FString& AssetPath, const FString& NodePath,
 		const FString& NewName);
+
+	/**
+	 * Set the comment bubble on a node or sub-node (UEdGraphNode::NodeComment) and save. An empty
+	 * Comment clears it. Returns an empty string on success, else the error.
+	 *
+	 * Unlike SetNodeName this is pure annotation: it changes no path segment and no runtime
+	 * behaviour, which makes it the right channel for recording WHY a subtree exists. It is
+	 * reported back as "comment" by GetTree (and FBTNodeInfo::Comment), and BuildTree replays it,
+	 * so it survives a round-trip. Allowed on the graph's Root node — a tree-level comment is a
+	 * legitimate thing to want — and refused only on injected nodes.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|BehaviorTree")
+	static FString SetNodeComment(const FString& AssetPath, const FString& NodePath,
+		const FString& Comment);
 
 	// =================================================================
 	// Node properties

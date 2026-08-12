@@ -19,6 +19,11 @@ namespace VibeBT
 	/** Shared asset-registry sweep used by both AI services. */
 	TArray<FString> ListAssetsOfClass(const UClass* Class, const FString& DirectoryPath)
 	{
+		// FARFilter converts the path to an FName, which is a fatal engine error past NAME_SIZE.
+		if (!CheckNameLength(DirectoryPath, TEXT("DirectoryPath")).IsEmpty())
+		{
+			return {};
+		}
 		const FAssetRegistryModule& ARM =
 			FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
 
@@ -61,17 +66,22 @@ namespace
 		return Root && Root->Pins.Num() > 0 && Root->Pins[0] && Root->Pins[0]->LinkedTo.Num() > 0;
 	}
 
-	/** Sub-nodes (decorators/services) hanging off Node, recursively. */
-	int32 CountSubNodes(const UAIGraphNode* Node)
+	/**
+	 * Sub-nodes (decorators/services) hanging off Node, recursively. A legitimate asset never
+	 * nests past depth 1 — sub-nodes carry no sub-nodes of their own — but SubNodes is serialised
+	 * data a corrupt asset can shape into a cycle, and this is reachable from the read-only
+	 * GetBehaviorTreeInfo, so the walk is depth-bounded rather than trusted.
+	 */
+	int32 CountSubNodes(const UAIGraphNode* Node, int32 Depth = 0)
 	{
 		int32 Count = 0;
-		if (Node)
+		if (Node && Depth <= 8)
 		{
 			for (const UAIGraphNode* SubNode : Node->SubNodes)
 			{
 				if (SubNode)
 				{
-					Count += 1 + CountSubNodes(SubNode);
+					Count += 1 + CountSubNodes(SubNode, Depth + 1);
 				}
 			}
 		}
@@ -129,13 +139,10 @@ TArray<FString> UBehaviorTreeService::ListBehaviorTrees(const FString& Directory
 
 FString UBehaviorTreeService::CreateBehaviorTree(const FString& AssetPath, const FString& BlackboardAssetPath)
 {
-	if (AssetPath.IsEmpty())
+	const FString PathError = VibeBT::CheckWritableAssetPath(AssetPath);
+	if (!PathError.IsEmpty())
 	{
-		return TEXT("AssetPath is empty");
-	}
-	if (!FPackageName::IsValidLongPackageName(AssetPath))
-	{
-		return FString::Printf(TEXT("Not a valid asset path: %s"), *AssetPath);
+		return PathError;
 	}
 
 	FString PackagePath;
@@ -224,6 +231,11 @@ bool UBehaviorTreeService::GetBehaviorTreeInfo(const FString& AssetPath, FBTAsse
 	if (AssetPath.IsEmpty())
 	{
 		OutInfo.Error = TEXT("AssetPath is empty");
+		return false;
+	}
+	OutInfo.Error = VibeBT::CheckNameLength(AssetPath, TEXT("AssetPath"));
+	if (!OutInfo.Error.IsEmpty())
+	{
 		return false;
 	}
 

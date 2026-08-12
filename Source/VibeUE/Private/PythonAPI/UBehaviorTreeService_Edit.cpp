@@ -139,6 +139,51 @@
 // other translation unit calls it instead of its own.
 namespace VibeBTEdit
 {
+	/**
+	 * The three name shapes the path grammar cannot express, refused wherever a node name can be
+	 * written — SetNodeName, and SetNodePropertyValue on UBTNode::NodeName, which is the same write
+	 * through reflection (and the route BuildTree replays a dump through). Checking only one of the
+	 * two would leave the other a bypass that renames a node into un-addressability.
+	 */
+	FString CheckNodeNameGrammar(const FString& NewName)
+	{
+		if (NewName.Contains(TEXT("/")))
+		{
+			return FString::Printf(
+				TEXT("Node names cannot contain '/': it is the path separator, so '%s' would leave the "
+					 "node un-addressable."),
+				*NewName);
+		}
+		if (NewName.StartsWith(TEXT("@")))
+		{
+			// ResolveNodePath dispatches on the leading '@' before it ever compares names: a segment
+			// starting with one is looked up in Decorators/Services by index, matches neither
+			// "@decorator" nor "@service", and returns nullptr. A node named "@foo" therefore has a
+			// path that GetNodePath will happily emit and nothing can resolve.
+			return FString::Printf(
+				TEXT("Node names cannot start with '@': the path grammar reserves that prefix for "
+					 "sub-node slots (@decorator[n], @service[n]), so '%s' would leave the node "
+					 "un-addressable."),
+				*NewName);
+		}
+		if (NewName.EndsWith(TEXT("]")))
+		{
+			int32 OpenIdx = INDEX_NONE;
+			if (NewName.FindLastChar(TEXT('['), OpenIdx))
+			{
+				const FString IndexText = NewName.Mid(OpenIdx + 1, NewName.Len() - OpenIdx - 2);
+				if (!IndexText.IsEmpty() && IndexText.IsNumeric())
+				{
+					return FString::Printf(
+						TEXT("Node names cannot end in a numeric '[n]': the path grammar reads that as "
+							 "a sibling index, so '%s' would resolve to something else."),
+						*NewName);
+				}
+			}
+		}
+		return FString();
+	}
+
 	/** Name to put in an error message for a node whose class the caller would recognise. */
 	FString DescribeNode(const UBehaviorTreeGraphNode* Node)
 	{
@@ -752,6 +797,16 @@ FString UBehaviorTreeService::RemoveNode(const FString& AssetPath, const FString
 					"is expressed relative to it.");
 	}
 
+	if (Node->IsSubNode())
+	{
+		// Redirected by kind, not left to the pin walk below: a sub-node has no pins, so without
+		// this it falls into "has no parent, so it is not part of the tree" — true of the pins and
+		// useless to a caller holding a perfectly good decorator path.
+		return FString::Printf(
+			TEXT("'%s' is a decorator or service, not a node in the tree. Use RemoveSubNode."),
+			*NodePath);
+	}
+
 	// Read off the link, not guessed from the parent's pin list — see LinkingParentPin.
 	UEdGraphPin* NodeIn = Node->GetInputPin();
 	UEdGraphPin* ParentPin = LinkingParentPin(NodeIn);
@@ -824,6 +879,14 @@ FString UBehaviorTreeService::MoveNode(const FString& AssetPath, const FString& 
 		return TEXT("The root node cannot be moved: it is the graph's entry point.");
 	}
 
+	if (Node->IsSubNode())
+	{
+		return FString::Printf(
+			TEXT("'%s' is a decorator or service, not a node in the tree. Sub-nodes are not moved: "
+				 "remove it with RemoveSubNode and re-add it on the other node."),
+			*NodePath);
+	}
+
 	UBehaviorTreeGraphNode* NewParent = VibeBT::ResolveNodePath(Graph, NewParentPath);
 	if (!NewParent)
 	{
@@ -862,6 +925,22 @@ FString UBehaviorTreeService::MoveNode(const FString& AssetPath, const FString& 
 	{
 		return FString::Printf(
 			TEXT("'%s' has no parent, so it is not part of the tree and cannot be moved within it"),
+			*NodePath);
+	}
+
+	// The same guard RemoveNode applies, for the same reason: moving the background branch away
+	// leaves that pin empty, and SpawnMissingNodesForParallel refills it with a BTTask_Wait inside
+	// the very commit this move saves through (BehaviorTreeGraph.cpp:1015-1074) — so the call would
+	// report success and leave a node in the tree the caller never asked for. Scoped to moves that
+	// actually LEAVE the pin: same-pin "moves" are no-ops on a single-link pin and harmless.
+	if (OldParent->IsA<UBehaviorTreeGraphNode_SimpleParallel>()
+		&& OldParentPin == OldParent->GetOutputPin(1)
+		&& OldParentPin != Slot.Pin)
+	{
+		return FString::Printf(
+			TEXT("'%s' is the background branch of a SimpleParallel, which the engine regenerates as "
+				 "a Wait task whenever the asset is saved, so moving it away would silently leave a "
+				 "new Wait in its place. Replace it instead: AddNode(<parallel path>, <class>, 1)."),
 			*NodePath);
 	}
 
@@ -1076,39 +1155,10 @@ FString UBehaviorTreeService::SetNodeName(const FString& AssetPath, const FStrin
 {
 	// Validated before the asset is opened: the name becomes the node's path segment, and one the
 	// grammar cannot express would leave the node un-addressable by any later call.
-	if (NewName.Contains(TEXT("/")))
+	const FString GrammarError = CheckNodeNameGrammar(NewName);
+	if (!GrammarError.IsEmpty())
 	{
-		return FString::Printf(
-			TEXT("Node names cannot contain '/': it is the path separator, so '%s' would leave the node "
-				 "un-addressable."),
-			*NewName);
-	}
-	if (NewName.StartsWith(TEXT("@")))
-	{
-		// ResolveNodePath dispatches on the leading '@' before it ever compares names: a segment
-		// starting with one is looked up in Decorators/Services by index, matches neither
-		// "@decorator" nor "@service", and returns nullptr. A node named "@foo" therefore has a path
-		// that GetNodePath will happily emit and nothing can resolve.
-		return FString::Printf(
-			TEXT("Node names cannot start with '@': the path grammar reserves that prefix for "
-				 "sub-node slots (@decorator[n], @service[n]), so '%s' would leave the node "
-				 "un-addressable."),
-			*NewName);
-	}
-	if (NewName.EndsWith(TEXT("]")))
-	{
-		int32 OpenIdx = INDEX_NONE;
-		if (NewName.FindLastChar(TEXT('['), OpenIdx))
-		{
-			const FString IndexText = NewName.Mid(OpenIdx + 1, NewName.Len() - OpenIdx - 2);
-			if (!IndexText.IsEmpty() && IndexText.IsNumeric())
-			{
-				return FString::Printf(
-					TEXT("Node names cannot end in a numeric '[n]': the path grammar reads that as a "
-						 "sibling index, so '%s' would resolve to something else."),
-					*NewName);
-			}
-		}
+		return GrammarError;
 	}
 
 	UBehaviorTree* Tree = nullptr;
@@ -1150,6 +1200,46 @@ FString UBehaviorTreeService::SetNodeName(const FString& AssetPath, const FStrin
 
 	Instance->Modify();
 	Instance->NodeName = NewName;
+
+	return VibeBT::CommitGraph(Tree, Graph);
+}
+
+FString UBehaviorTreeService::SetNodeComment(const FString& AssetPath, const FString& NodePath,
+	const FString& Comment)
+{
+	UBehaviorTree* Tree = nullptr;
+	UBehaviorTreeGraph* Graph = nullptr;
+	const FString GuardError = VibeBT::OpenWriteGuard(AssetPath, Tree, Graph);
+	if (!GuardError.IsEmpty())
+	{
+		return GuardError;
+	}
+
+	UBehaviorTreeGraphNode* Node = VibeBT::ResolveNodePath(Graph, NodePath);
+	if (!Node)
+	{
+		return FString::Printf(
+			TEXT("No node at path '%s' in %s (nothing there, or the path is ambiguous and needs an "
+				 "index, as in 'Sequence[1]')"),
+			*NodePath, *AssetPath);
+	}
+
+	if (Node->bInjectedNode)
+	{
+		return FString::Printf(
+			TEXT("'%s' was injected from a subtree and is read-only here; comment the node in the "
+				 "subtree asset instead."),
+			*NodePath);
+	}
+
+	// The comment lives on the GRAPH node (UEdGraphNode::NodeComment — the editor's comment
+	// bubble), not on the node instance, so unlike SetNodeName it changes no path segment and no
+	// runtime behaviour: it is pure annotation, and the natural place for an agent to record WHY a
+	// subtree exists. An empty Comment clears it. The graph's Root node is allowed — a tree-level
+	// comment is a legitimate thing to want.
+	Node->Modify();
+	Node->NodeComment = Comment;
+	Node->bCommentBubbleVisible = !Comment.IsEmpty();
 
 	return VibeBT::CommitGraph(Tree, Graph);
 }
@@ -1278,6 +1368,19 @@ FBTPropertySetResult UBehaviorTreeService::SetNodePropertyValue(const FString& A
 	if (!Property)
 	{
 		return Result;
+	}
+
+	// UBTNode::NodeName through reflection IS SetNodeName, so the same path-grammar refusals apply:
+	// without this, "NodeName" = "a/b" renames the node into un-addressability through the one
+	// route SetNodeName's own validation never sees — including BuildTree's replay of a dump whose
+	// name a human typed into the details panel, which has no such check of its own.
+	if (PropertyName == TEXT("NodeName"))
+	{
+		Result.Error = CheckNodeNameGrammar(Value);
+		if (!Result.Error.IsEmpty())
+		{
+			return Result;
+		}
 	}
 
 	// The pre-image, so a partial import can be undone: ImportText applies a struct or array literal

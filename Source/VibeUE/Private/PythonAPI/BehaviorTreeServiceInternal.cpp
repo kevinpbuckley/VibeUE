@@ -16,6 +16,8 @@
 #include "Engine/World.h"
 #include "FileHelpers.h"
 #include "Kismet2/BlueprintEditorUtils.h"
+#include "Misc/PackageName.h"
+#include "PackageTools.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "UObject/Package.h"
 #include "UObject/UnrealType.h"
@@ -23,6 +25,50 @@
 
 namespace VibeBT
 {
+	FString CheckNameLength(const FString& Value, const TCHAR* What)
+	{
+		// NAME_SIZE is the engine's own bound (UnrealNames.h); construction past it is Fatal, not
+		// an error, so this must run before any FName / object-path lookup sees the string.
+		if (Value.Len() >= NAME_SIZE)
+		{
+			return FString::Printf(
+				TEXT("%s is %d characters long; names are limited to %d (FName construction past "
+					 "that is a fatal engine error)"),
+				What, Value.Len(), NAME_SIZE - 1);
+		}
+		return FString();
+	}
+
+	FString CheckWritableAssetPath(const FString& AssetPath)
+	{
+		if (AssetPath.IsEmpty())
+		{
+			return TEXT("AssetPath is empty");
+		}
+		const FString LengthError = CheckNameLength(AssetPath, TEXT("AssetPath"));
+		if (!LengthError.IsEmpty())
+		{
+			return LengthError;
+		}
+		if (!FPackageName::IsValidLongPackageName(AssetPath))
+		{
+			return FString::Printf(TEXT("Not a valid asset path: %s"), *AssetPath);
+		}
+		for (const TCHAR* Forbidden : { TEXT("/Engine/"), TEXT("/Script/"), TEXT("/Temp/") })
+		{
+			if (AssetPath.StartsWith(Forbidden))
+			{
+				return FString::Printf(
+					TEXT("%s is under %s, which these services do not write to: engine content is "
+						 "not the project's to edit, script packages are not assets, and /Temp does "
+						 "not survive the session. Create the asset under /Game (or a plugin's "
+						 "content root)."),
+					*AssetPath, Forbidden);
+			}
+		}
+		return FString();
+	}
+
 	namespace
 	{
 		/** Number of leaf columns the subtree occupies. Leaves occupy exactly one. */
@@ -69,49 +115,49 @@ namespace VibeBT
 			Out[SelfIndex].Y = Depth * NodeSpacingY;
 		}
 
-		/** GetChildNodes, minus anything already visited — the cycle guard the layout walk needs. */
-		void GatherChildren(UBehaviorTreeGraphNode* Node, TArray<UBehaviorTreeGraphNode*>& Out,
-			const TSet<UBehaviorTreeGraphNode*>& Visited)
+		/**
+		 * Build the structure mirror and, in the same pre-order, the node list to write back.
+		 * Returns false when the walk exceeded MaxTreeDepth.
+		 *
+		 * The Visited test runs at SLOT-ALLOCATION time, per child, inside the recursion loop — not
+		 * once over the gathered list. The difference is a diamond (two parents pin-linked to the same
+		 * child): with an up-front filter, the child passes the filter under its second parent (its
+		 * first parent has not recursed yet), gets a Mirror slot allocated, and the recursion then
+		 * early-returns as already-visited — an empty slot ComputeLayout counts and OutOrder does not,
+		 * which was an editor-killing check() further down. Deciding per child at recursion time means
+		 * a slot exists exactly when a node was appended to OutOrder, by construction.
+		 */
+		bool BuildMirror(UBehaviorTreeGraphNode* Node, FLayoutNode& OutNode,
+			TArray<UBehaviorTreeGraphNode*>& OutOrder, TSet<UBehaviorTreeGraphNode*>& Visited,
+			int32 Depth)
 		{
-			Out = GetChildNodes(Node);
-			Out.RemoveAll([&Visited](UBehaviorTreeGraphNode* Child)
-				{ return Visited.Contains(Child); });
-		}
-
-		/** Build the structure mirror and, in the same pre-order, the node list to write back. */
-		void BuildMirror(UBehaviorTreeGraphNode* Node, FLayoutNode& OutNode,
-			TArray<UBehaviorTreeGraphNode*>& OutOrder, TSet<UBehaviorTreeGraphNode*>& Visited)
-		{
+			if (Depth > MaxTreeDepth)
+			{
+				return false;
+			}
 			if (!Node || Visited.Contains(Node))
 			{
-				return;
+				return true;
 			}
 
 			Visited.Add(Node);
 			OutOrder.Add(Node);
 
-			TArray<UBehaviorTreeGraphNode*> Children;
-			GatherChildren(Node, Children, Visited);
-
-			// Deduplicate: if the same child appears twice (duplicate pins), keep only the first.
-			// This must happen before allocating Mirror slots, so allocation matches recursion.
-			TSet<UBehaviorTreeGraphNode*> UniqueChildren(Children);
-			TArray<UBehaviorTreeGraphNode*> FilteredChildren;
-			FilteredChildren.Reserve(UniqueChildren.Num());
-			for (UBehaviorTreeGraphNode* Child : Children)
+			for (UBehaviorTreeGraphNode* Child : GetChildNodes(Node))
 			{
-				if (UniqueChildren.Contains(Child))
+				// Skips two shapes in one test: a duplicate pin link to a child this node already
+				// recursed into, and a diamond link to a child another parent already claimed.
+				if (!Child || Visited.Contains(Child))
 				{
-					FilteredChildren.Add(Child);
-					UniqueChildren.Remove(Child);
+					continue;
+				}
+				const int32 SlotIndex = OutNode.Children.AddDefaulted();
+				if (!BuildMirror(Child, OutNode.Children[SlotIndex], OutOrder, Visited, Depth + 1))
+				{
+					return false;
 				}
 			}
-
-			OutNode.Children.AddDefaulted(FilteredChildren.Num());
-			for (int32 Index = 0; Index < FilteredChildren.Num(); ++Index)
-			{
-				BuildMirror(FilteredChildren[Index], OutNode.Children[Index], OutOrder, Visited);
-			}
+			return true;
 		}
 	}
 
@@ -124,20 +170,33 @@ namespace VibeBT
 		return Positions;
 	}
 
-	void ArrangeGraph(UBehaviorTreeGraphNode* RootNode)
+	FString ArrangeGraph(UBehaviorTreeGraphNode* RootNode)
 	{
 		if (!RootNode)
 		{
-			return;
+			return FString();
 		}
 
 		FLayoutNode Mirror;
 		TArray<UBehaviorTreeGraphNode*> Order;
 		TSet<UBehaviorTreeGraphNode*> Visited;
-		BuildMirror(RootNode, Mirror, Order, Visited);
+		if (!BuildMirror(RootNode, Mirror, Order, Visited, 0))
+		{
+			return FString::Printf(
+				TEXT("the graph is deeper than %d levels, which no legitimate Behavior Tree is; "
+					 "refusing to lay it out (and therefore to commit it) rather than overflow the "
+					 "stack"),
+				MaxTreeDepth);
+		}
 
 		const TArray<FIntPoint> Positions = ComputeLayout(Mirror);
-		check(Positions.Num() == Order.Num());
+		if (!ensure(Positions.Num() == Order.Num()))
+		{
+			// Structurally unreachable (BuildMirror allocates a slot exactly when it appends to
+			// Order), and still not worth crashing over if a future edit breaks that: positions are
+			// execution order, so writing a misaligned set would silently reorder the tree.
+			return TEXT("internal layout error: position/order mismatch; no positions were written");
+		}
 
 		for (int32 Index = 0; Index < Order.Num(); ++Index)
 		{
@@ -145,6 +204,7 @@ namespace VibeBT
 			Order[Index]->NodePosX = Positions[Index].X;
 			Order[Index]->NodePosY = Positions[Index].Y;
 		}
+		return FString();
 	}
 
 	UBehaviorTreeGraphNode_Root* FindRootGraphNode(UBehaviorTreeGraph* Graph)
@@ -171,6 +231,26 @@ namespace VibeBT
 			return Root && Root->Pins.Num() > 0 && Root->Pins[0] && Root->Pins[0]->LinkedTo.Num() > 0;
 		}
 
+	}
+
+	// Declared in the header: the Blackboard service's save-failure paths need the same discipline.
+	FString DiscardDirtyStateFromDisk(UPackage* Package)
+	{
+		if (!Package)
+		{
+			return TEXT(", and there was no package to reload.");
+		}
+		FText ReloadError;
+		if (UPackageTools::ReloadPackages({ Package }, ReloadError,
+			EReloadPackagesInteractionMode::AssumePositive))
+		{
+			return TEXT(", and this in-memory copy has been reloaded from disk, so it is safe "
+						"to retry after fixing the cause.");
+		}
+		return FString::Printf(
+			TEXT(", but reloading the in-memory copy from disk failed (%s) — it is STALE and "
+				 "must not be written again until the editor reloads it."),
+			*ReloadError.ToString());
 	}
 
 	// Declared in the header (with its reasoning) rather than kept file-local, so ValidateTree can
@@ -298,6 +378,11 @@ namespace VibeBT
 		{
 			return TEXT("AssetPath is empty");
 		}
+		const FString LengthError = CheckNameLength(AssetPath, TEXT("AssetPath"));
+		if (!LengthError.IsEmpty())
+		{
+			return LengthError;
+		}
 
 		// LOAD_NoWarn | LOAD_Quiet: "not found" is a value this function returns to its caller, not
 		// an incident worth engine warnings in the log.
@@ -395,6 +480,28 @@ namespace VibeBT
 			return TEXT("Behavior Tree graph has no root node");
 		}
 
+		// A root LINKED to a node that would not rebuild a composite is refused unconditionally —
+		// independent of whether the asset currently has a runtime tree — because it is not merely
+		// a discard: CreateBTFromGraph assigns BTAsset->RootNode = Cast<UBTCompositeNode>(
+		// RootEdNode->NodeInstance), which is null for a node whose instance failed to load or is
+		// not a composite, and the very next call — BTGraphHelpers::CreateChildren(BTAsset,
+		// BTAsset->RootNode, RootEdNode, ...) — dereferences that null as RootNode->Children.Reset()
+		// behind a guard that only tests RootEdNode (BehaviorTreeGraph.cpp:510-517, 916). An asset
+		// whose top composite's Blueprint class was deleted loads in exactly this shape, with
+		// RootNode ALREADY null, so a guard gated on RootNode being non-null would wave the commit
+		// through to the engine crash.
+		const bool bRootLinked = GraphRootHasLink(Root);
+		if (bRootLinked && !GraphWouldRebuildARuntimeTree(Root))
+		{
+			return FString::Printf(
+				TEXT("Refusing to commit %s: its graph root is linked to a node carrying no composite "
+					 "instance (a deleted or unloadable node class, or a non-composite). Rebuilding the "
+					 "runtime tree from that shape dereferences a null root inside "
+					 "UBehaviorTreeGraph::CreateBTFromGraph and crashes the editor. The asset on disk "
+					 "is unchanged. Fix or replace the top-level node first."),
+				*Tree->GetPathName());
+		}
+
 		// Refuse to trade a populated runtime tree for an empty graph.
 		//
 		// UpdateAsset() -> CreateBTFromGraph() opens by discarding the runtime tree outright
@@ -411,22 +518,27 @@ namespace VibeBT
 		// the graph is already repopulated by the time anything reaches here and this never fires.
 		// When it does fire, the reconstruction failed and the right answer is to stop, not to
 		// save the result.
-		if (Tree->RootNode && !GraphWouldRebuildARuntimeTree(Root))
+		if (Tree->RootNode && !bRootLinked)
 		{
 			return FString::Printf(
 				TEXT("Refusing to commit %s: its editor graph would not rebuild a runtime tree (the "
-					 "root node leads to nothing, or to a node carrying no composite instance) while "
-					 "the asset still has a populated runtime node tree. Saving would discard that "
-					 "tree — UBehaviorTreeGraph::CreateBTFromGraph rebuilds it from the graph, and an "
-					 "empty graph rebuilds an empty tree. The asset on disk is unchanged. Run "
-					 "RepairGraphFromRuntimeTree to rebuild the graph from the runtime tree first."),
+					 "root node leads to nothing) while the asset still has a populated runtime node "
+					 "tree. Saving would discard that tree — UBehaviorTreeGraph::CreateBTFromGraph "
+					 "rebuilds it from the graph, and an empty graph rebuilds an empty tree. The asset "
+					 "on disk is unchanged. Run RepairGraphFromRuntimeTree to rebuild the graph from "
+					 "the runtime tree first."),
 				*Tree->GetPathName());
 		}
 
 		// Never UBehaviorTreeGraph::AutoArrange(): it dereferences RootNode->DEPRECATED_NodeWidget
 		// (BehaviorTreeGraph.cpp:1302), the Slate widget, which is only ever set while a Behavior
 		// Tree editor tab is open — it crashes the editor outright when called headlessly.
-		ArrangeGraph(Root);
+		const FString ArrangeError = ArrangeGraph(Root);
+		if (!ArrangeError.IsEmpty())
+		{
+			return FString::Printf(TEXT("Refusing to commit %s: %s"),
+				*Tree->GetPathName(), *ArrangeError);
+		}
 
 		// OnSave() is SpawnMissingNodesForParallel() + UpdateAsset(): exactly what the BT editor runs
 		// on save, and what regenerates UBehaviorTree::RootNode from the graph. A bare UpdateAsset()
@@ -439,15 +551,16 @@ namespace VibeBT
 		// happens after: CreateBTFromGraph assigns Cast<UBTCompositeNode>(RootEdNode->NodeInstance),
 		// which is still null when the root leads to a node carrying no instance, or one that is not
 		// a composite. This is the last point at which the file can still be protected — the
-		// in-memory tree is already gone, so the only safe thing left is to not persist it.
+		// in-memory tree is already gone, so the only safe thing left is to not persist it, and to
+		// put the in-memory copy back the way disk has it (see DiscardDirtyStateFromDisk: leaving it
+		// stale is how a natural retry ends up committing the emptied tree this refusal refused).
 		if (bHadRuntimeTree && !Tree->RootNode)
 		{
 			return FString::Printf(
 				TEXT("Refusing to save %s: rebuilding the runtime tree from the graph produced no root "
 					 "node, which would have replaced a populated tree with an empty one. Nothing was "
-					 "written — the asset on disk is unchanged — but this in-memory copy is now stale "
-					 "and must be reloaded before it is used again."),
-				*Tree->GetPathName());
+					 "written — the asset on disk is unchanged%s"),
+				*Tree->GetPathName(), *DiscardDirtyStateFromDisk(Tree->GetOutermost()));
 		}
 
 		UPackage* Package = Tree->GetOutermost();
@@ -463,7 +576,13 @@ namespace VibeBT
 		Tree->MarkPackageDirty();
 		if (!UEditorLoadingAndSavingUtils::SavePackages({ Package }, /*bOnlyDirty*/ false))
 		{
-			return FString::Printf(TEXT("Failed to save package %s"), *Package->GetName());
+			// The mutation is applied in memory but did not reach disk (read-only file, held LFS
+			// lock). Left as-is, the package sits dirty and the "failed" edit ships silently with the
+			// next successful save of the same asset — a human's Save All included — so the dirty
+			// state is discarded back to what disk holds.
+			return FString::Printf(TEXT("Failed to save package %s (read-only file or a held file "
+										"lock?). The edit did not reach disk%s"),
+				*Package->GetName(), *DiscardDirtyStateFromDisk(Package));
 		}
 
 		return FString();
@@ -479,7 +598,9 @@ namespace VibeBT
 
 	UClass* ResolveNodeClass(const FString& ClassName, UClass* RequiredBase)
 	{
-		if (ClassName.IsEmpty() || !RequiredBase)
+		// The length bound guards the FindObject below, whose path parse builds an FName per
+		// segment — fatal past NAME_SIZE, not an error.
+		if (ClassName.IsEmpty() || !RequiredBase || !CheckNameLength(ClassName, TEXT("class name")).IsEmpty())
 		{
 			return nullptr;
 		}
@@ -573,6 +694,16 @@ namespace VibeBT
 		return Helper;
 	}
 
+	void ShutdownClassHelperCache()
+	{
+		// ~FGraphNodeClassHelper unhooks FModuleManager and asset-registry delegates
+		// (AIGraphTypes.cpp:174-196). Running that at static teardown — the fate of a
+		// module-lifetime static released by nobody — touches systems that may already be gone;
+		// the module's ShutdownModule calls this instead, the same arrangement the engine's own
+		// modules use for their helper instances.
+		GClassHelperCache.Empty();
+	}
+
 	bool IsAuthorableProperty(const FProperty* Property)
 	{
 		return Property
@@ -608,6 +739,13 @@ namespace VibeBT
 		}
 
 		UClass* Class = Instance->GetClass();
+		// Before the FName: construction past NAME_SIZE is a fatal engine error, and PropertyName
+		// arrives verbatim from an MCP caller.
+		OutError = CheckNameLength(PropertyName, TEXT("PropertyName"));
+		if (!OutError.IsEmpty())
+		{
+			return nullptr;
+		}
 		FProperty* Property = Class->FindPropertyByName(FName(*PropertyName));
 		if (!Property)
 		{
