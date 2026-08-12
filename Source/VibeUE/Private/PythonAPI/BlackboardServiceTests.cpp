@@ -15,6 +15,8 @@
 #include "BehaviorTree/Decorators/BTDecorator_Blackboard.h"
 #include "BehaviorTree/Decorators/BTDecorator_BlackboardBase.h"
 #include "BehaviorTree/Tasks/BTTask_Wait.h"
+#include "Editor.h"
+#include "Engine/World.h"
 #include "FileHelpers.h"
 #include "HAL/FileManager.h"
 #include "Misc/Guid.h"
@@ -29,7 +31,8 @@ static const EAutomationTestFlags kBBTestFlags =
 static const TCHAR* kBBTestDir = TEXT("/Game/Developers/VibeUEBTTests");
 
 // ResetFixtureAsset / FScopedFixtureReset live in AIServiceTestFixture.h — the Behavior Tree
-// suite writes into the same gitignored fixture directory and needs identical semantics.
+// suite writes into the same fixture directory (NOT reliably gitignored; see the note there)
+// and needs identical semantics.
 using VibeAITest::FScopedFixtureReset;
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBBKeyCrudTest,
@@ -267,6 +270,253 @@ bool FVibeBBParentedKeyIdsTest::RunTest(const FString&)
 		(int32)ChildKeyId >= ParentBoard->GetNumKeys());
 	TestTrue(TEXT("child key ID does not collide with the parent's own key ID"),
 		ChildKeyId != ParentKeyId);
+
+	return true;
+}
+
+// =================================================================================================
+//  Coverage added by the post-review fixes (fix/bt-service-review).
+// =================================================================================================
+
+// The three key types the original suite never touched (Class, Enum, NativeEnum), the enum arm
+// of SetBlackboardKeyObjectClass, its error paths, and the post-creation editing the Blackboard
+// editor has always allowed and the service previously did not: bInstanceSynced, category,
+// description.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBBKeyTypesAndMetadataTest,
+	"VibeUE.Blackboard.Keys.TypesAndMetadata", kBBTestFlags)
+bool FVibeBBKeyTypesAndMetadataTest::RunTest(const FString&)
+{
+	const FString Path = FString(kBBTestDir) / TEXT("BB_TypesAndMetadata");
+	FScopedFixtureReset ResetFixture(Path);
+
+	TestTrue(TEXT("created"), UBlackboardService::CreateBlackboard(Path, FString()));
+
+	for (const TCHAR* Type : { TEXT("Class"), TEXT("Enum"), TEXT("NativeEnum") })
+	{
+		TestEqual(FString::Printf(TEXT("add %s key"), Type),
+			UBlackboardService::AddBlackboardKey(Path, FString::Printf(TEXT("Key%s"), Type), Type, false),
+			FString());
+	}
+
+	// Class key takes a base class; Enum key takes a UEnum by path.
+	TestEqual(TEXT("class key base class"),
+		UBlackboardService::SetBlackboardKeyObjectClass(Path, TEXT("KeyClass"), TEXT("/Script/Engine.Pawn")),
+		FString());
+	TestEqual(TEXT("enum key enum type"),
+		UBlackboardService::SetBlackboardKeyObjectClass(Path, TEXT("KeyEnum"),
+			TEXT("/Script/Engine.ECollisionChannel")),
+		FString());
+
+	TArray<FBBKeyInfo> Keys = UBlackboardService::GetBlackboardKeys(Path);
+	const FBBKeyInfo* ClassKey = Keys.FindByPredicate(
+		[](const FBBKeyInfo& K){ return K.Name == TEXT("KeyClass"); });
+	if (TestNotNull(TEXT("class key present"), ClassKey))
+	{
+		TestEqual(TEXT("class key type"), ClassKey->Type, FString(TEXT("Class")));
+		TestTrue(TEXT("class key base reported"), ClassKey->ObjectClassPath.Contains(TEXT("Pawn")));
+	}
+	const FBBKeyInfo* EnumKey = Keys.FindByPredicate(
+		[](const FBBKeyInfo& K){ return K.Name == TEXT("KeyEnum"); });
+	if (TestNotNull(TEXT("enum key present"), EnumKey))
+	{
+		TestTrue(TEXT("enum key enum reported"),
+			EnumKey->ObjectClassPath.Contains(TEXT("ECollisionChannel")));
+	}
+
+	// Error paths: missing key, a key kind that takes neither, a bogus path.
+	TestTrue(TEXT("missing key errors"),
+		!UBlackboardService::SetBlackboardKeyObjectClass(Path, TEXT("NoSuchKey"), TEXT("/Script/Engine.Pawn")).IsEmpty());
+	TestEqual(TEXT("add bool key"),
+		UBlackboardService::AddBlackboardKey(Path, TEXT("KeyBool"), TEXT("Bool"), false), FString());
+	TestTrue(TEXT("a Bool key takes no class"),
+		!UBlackboardService::SetBlackboardKeyObjectClass(Path, TEXT("KeyBool"), TEXT("/Script/Engine.Pawn")).IsEmpty());
+	TestTrue(TEXT("a bogus class path errors"),
+		!UBlackboardService::SetBlackboardKeyObjectClass(Path, TEXT("KeyClass"), TEXT("/Script/Engine.NoSuchClass_X")).IsEmpty());
+
+	// bInstanceSynced is editable AFTER creation now, both directions.
+	TestEqual(TEXT("sync on"),
+		UBlackboardService::SetBlackboardKeyInstanceSynced(Path, TEXT("KeyBool"), true), FString());
+	Keys = UBlackboardService::GetBlackboardKeys(Path);
+	const FBBKeyInfo* Synced = Keys.FindByPredicate(
+		[](const FBBKeyInfo& K){ return K.Name == TEXT("KeyBool"); });
+	if (TestNotNull(TEXT("bool key present"), Synced))
+	{
+		TestTrue(TEXT("synced after set"), Synced->bInstanceSynced);
+	}
+	TestEqual(TEXT("sync off"),
+		UBlackboardService::SetBlackboardKeyInstanceSynced(Path, TEXT("KeyBool"), false), FString());
+
+	// Category and description: set, read back, clear.
+	TestEqual(TEXT("metadata set"),
+		UBlackboardService::SetBlackboardKeyMetadata(Path, TEXT("KeyBool"),
+			TEXT("Combat"), TEXT("Whether the pawn is alerted.")), FString());
+	Keys = UBlackboardService::GetBlackboardKeys(Path);
+	const FBBKeyInfo* Documented = Keys.FindByPredicate(
+		[](const FBBKeyInfo& K){ return K.Name == TEXT("KeyBool"); });
+	if (TestNotNull(TEXT("documented key present"), Documented))
+	{
+		TestEqual(TEXT("category read back"), Documented->Category, FString(TEXT("Combat")));
+		TestEqual(TEXT("description read back"), Documented->Description,
+			FString(TEXT("Whether the pawn is alerted.")));
+	}
+	TestEqual(TEXT("metadata cleared"),
+		UBlackboardService::SetBlackboardKeyMetadata(Path, TEXT("KeyBool"), FString(), FString()),
+		FString());
+
+	return true;
+}
+
+// CreateBlackboard must never overwrite: the pre-fix version happily "re-created" over an
+// existing asset, wiping its keys on disk (empirically confirmed during review), and would
+// fatally collide with a loaded object of another class.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBBCreateGuardsTest,
+	"VibeUE.Blackboard.Asset.CreateGuards", kBBTestFlags)
+bool FVibeBBCreateGuardsTest::RunTest(const FString&)
+{
+	const FString Path = FString(kBBTestDir) / TEXT("BB_CreateGuards");
+	FScopedFixtureReset ResetFixture(Path);
+
+	TestTrue(TEXT("created"), UBlackboardService::CreateBlackboard(Path, FString()));
+	TestEqual(TEXT("key added"),
+		UBlackboardService::AddBlackboardKey(Path, TEXT("Precious"), TEXT("Float"), false), FString());
+
+	// The second create on the same path must be refused — and the key must survive.
+	TestFalse(TEXT("a second create on the same path is refused"),
+		UBlackboardService::CreateBlackboard(Path, FString()));
+	TestTrue(TEXT("the existing key survived the refused create"),
+		UBlackboardService::GetBlackboardKeys(Path).ContainsByPredicate(
+			[](const FBBKeyInfo& K){ return K.Name == TEXT("Precious"); }));
+
+	// Path validation: engine/script roots and over-long names are refused, not attempted.
+	TestFalse(TEXT("creating under /Engine is refused"),
+		UBlackboardService::CreateBlackboard(TEXT("/Engine/VibeUEShouldNeverExist"), FString()));
+	TestFalse(TEXT("creating under /Script is refused"),
+		UBlackboardService::CreateBlackboard(TEXT("/Script/VibeUEShouldNeverExist"), FString()));
+	TestFalse(TEXT("an over-long path is refused, not a fatal FName"),
+		UBlackboardService::CreateBlackboard(TEXT("/Game/") + FString::ChrN(2000, TEXT('x')), FString()));
+
+	// Over-long key names are errors on every entry point that takes one.
+	const FString LongKey = FString::ChrN(2000, TEXT('k'));
+	TestTrue(TEXT("over-long key name refused on add"),
+		!UBlackboardService::AddBlackboardKey(Path, LongKey, TEXT("Bool"), false).IsEmpty());
+	TestTrue(TEXT("over-long key name refused on remove"),
+		!UBlackboardService::RemoveBlackboardKey(Path, LongKey).IsEmpty());
+
+	return true;
+}
+
+// The blackboard mutators must hold the same write guards the BT service holds. The pre-fix
+// service had none: a key mutation during PIE went straight through (empirically confirmed),
+// re-indexing Keys under live UBlackboardComponents. Same FScopedPlayWorld pattern as
+// Asset.PlaySessionGuard: PlayWorld is pointed at the editor world for exactly one call.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBBWriteGuardsTest,
+	"VibeUE.Blackboard.Asset.WriteGuards", kBBTestFlags)
+bool FVibeBBWriteGuardsTest::RunTest(const FString&)
+{
+	const FString Path = FString(kBBTestDir) / TEXT("BB_WriteGuards");
+	FScopedFixtureReset ResetFixture(Path);
+
+	TestTrue(TEXT("created"), UBlackboardService::CreateBlackboard(Path, FString()));
+
+	UWorld* const StandInWorld = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+	if (!TestNotNull(TEXT("an editor world is available to stand in for a play world"), StandInWorld))
+	{
+		return false;
+	}
+
+	UWorld* const PlayWorldBefore = ToRawPtr(GEditor->PlayWorld);
+	FString DuringPIE;
+	{
+		struct FScopedPlayWorld
+		{
+			UWorld* Previous;
+			explicit FScopedPlayWorld(UWorld* World) : Previous(ToRawPtr(GEditor->PlayWorld))
+			{
+				GEditor->PlayWorld = World;
+			}
+			~FScopedPlayWorld() { GEditor->PlayWorld = Previous; }
+		} PretendPIE(StandInWorld);
+
+		DuringPIE = UBlackboardService::AddBlackboardKey(Path, TEXT("DuringPIE"), TEXT("Bool"), false);
+	}
+	TestEqual(TEXT("PlayWorld restored"), ToRawPtr(GEditor->PlayWorld), PlayWorldBefore);
+	TestTrue(TEXT("a key mutation during a play session is refused"), !DuringPIE.IsEmpty());
+	TestTrue(TEXT("...naming the session as the reason"), DuringPIE.Contains(TEXT("Play In Editor")));
+	TestFalse(TEXT("the refused key was not added"),
+		UBlackboardService::GetBlackboardKeys(Path).ContainsByPredicate(
+			[](const FBBKeyInfo& K){ return K.Name == TEXT("DuringPIE"); }));
+
+	// The refusal is a condition, not a latch.
+	TestEqual(TEXT("the same add goes through once the play world is gone"),
+		UBlackboardService::AddBlackboardKey(Path, TEXT("DuringPIE"), TEXT("Bool"), false), FString());
+
+	// SelfActor is engine-persistent on a parent-less board: removal would read back undone after
+	// the next reload, so it is refused up front.
+	const FString SelfError = UBlackboardService::RemoveBlackboardKey(Path, TEXT("SelfActor"));
+	TestTrue(TEXT("removing SelfActor is refused"), !SelfError.IsEmpty());
+	TestTrue(TEXT("...as engine-persistent"), SelfError.Contains(TEXT("persistent")));
+
+	return true;
+}
+
+// SetBlackboardParent: attach, inherited-key reporting, detach, cycle refusal, shadowing
+// refusal — the re-parenting the Blackboard editor has always allowed and the service lacked.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBBReparentTest,
+	"VibeUE.Blackboard.Keys.Reparent", kBBTestFlags)
+bool FVibeBBReparentTest::RunTest(const FString&)
+{
+	const FString ParentPath = FString(kBBTestDir) / TEXT("BB_ReparentParent");
+	const FString ChildPath = FString(kBBTestDir) / TEXT("BB_ReparentChild");
+	FScopedFixtureReset ResetParent(ParentPath);
+	FScopedFixtureReset ResetChild(ChildPath);
+
+	TestTrue(TEXT("parent created"), UBlackboardService::CreateBlackboard(ParentPath, FString()));
+	TestEqual(TEXT("parent key added"),
+		UBlackboardService::AddBlackboardKey(ParentPath, TEXT("SharedTarget"), TEXT("Object"), false), FString());
+	TestTrue(TEXT("child created (parentless)"), UBlackboardService::CreateBlackboard(ChildPath, FString()));
+	TestEqual(TEXT("child key added"),
+		UBlackboardService::AddBlackboardKey(ChildPath, TEXT("OwnKey"), TEXT("Int"), false), FString());
+
+	// Attach: the parent's key appears on the child as inherited.
+	TestEqual(TEXT("reparent onto the parent"),
+		UBlackboardService::SetBlackboardParent(ChildPath, ParentPath), FString());
+	TArray<FBBKeyInfo> Keys = UBlackboardService::GetBlackboardKeys(ChildPath);
+	const FBBKeyInfo* Inherited = Keys.FindByPredicate(
+		[](const FBBKeyInfo& K){ return K.Name == TEXT("SharedTarget"); });
+	if (TestNotNull(TEXT("inherited key visible on the child"), Inherited))
+	{
+		TestTrue(TEXT("...flagged as inherited"), Inherited->bInherited);
+	}
+	const FBBKeyInfo* Own = Keys.FindByPredicate(
+		[](const FBBKeyInfo& K){ return K.Name == TEXT("OwnKey"); });
+	if (TestNotNull(TEXT("own key still visible"), Own))
+	{
+		TestFalse(TEXT("...not flagged as inherited"), Own->bInherited);
+	}
+
+	// An inherited key is refused by the per-key mutators, naming the right fix.
+	TestTrue(TEXT("editing an inherited key is refused"),
+		UBlackboardService::SetBlackboardKeyInstanceSynced(ChildPath, TEXT("SharedTarget"), true)
+			.Contains(TEXT("inherited")));
+
+	// Cycle refusal: the parent cannot adopt its own child.
+	const FString CycleError = UBlackboardService::SetBlackboardParent(ParentPath, ChildPath);
+	TestTrue(TEXT("a parent cycle is refused"), !CycleError.IsEmpty());
+	TestTrue(TEXT("...named as a cycle"), CycleError.Contains(TEXT("cycle")));
+
+	// Shadowing refusal: a child owning a same-named key cannot adopt the parent that defines it.
+	TestEqual(TEXT("detach"),
+		UBlackboardService::SetBlackboardParent(ChildPath, FString()), FString());
+	TestEqual(TEXT("add colliding key"),
+		UBlackboardService::AddBlackboardKey(ChildPath, TEXT("SharedTarget"), TEXT("Bool"), false), FString());
+	const FString ShadowError = UBlackboardService::SetBlackboardParent(ChildPath, ParentPath);
+	TestTrue(TEXT("a shadowing reparent is refused"), !ShadowError.IsEmpty());
+	TestTrue(TEXT("...naming the colliding key"), ShadowError.Contains(TEXT("SharedTarget")));
+
+	// Detach worked: the inherited key is gone from the listing.
+	TestFalse(TEXT("after detach the parent's key is no longer listed"),
+		UBlackboardService::GetBlackboardKeys(ChildPath).ContainsByPredicate(
+			[](const FBBKeyInfo& K){ return K.Name == TEXT("SharedTarget") && K.bInherited; }));
 
 	return true;
 }

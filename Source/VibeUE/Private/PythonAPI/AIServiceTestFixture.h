@@ -15,8 +15,13 @@
 
 /**
  * Fixture-asset hygiene shared by the Blackboard and Behavior Tree test suites. Both write into
- * the same gitignored /Game/Developers/VibeUEBTTests directory, and both need the exact same
- * reset semantics, so it lives here rather than being duplicated (and left to drift) in each.
+ * the same /Game/Developers/VibeUEBTTests directory, and both need the exact same reset
+ * semantics, so it lives here rather than being duplicated (and left to drift) in each.
+ *
+ * NOTE: Content/Developers is NOT reliably gitignored — it is not in this repo, and its .uasset
+ * files are LFS-tracked here — so entry+exit resets are the only thing standing between a
+ * crashed run and test fixtures landing in version control. Host projects should either ignore
+ * Content/Developers or review `git status` after a run that failed.
  */
 namespace VibeAITest
 {

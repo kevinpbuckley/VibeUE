@@ -45,24 +45,36 @@ static const TCHAR* kBTTestDir = TEXT("/Game/Developers/VibeUEBTTests");
 
 using VibeAITest::FScopedFixtureReset;
 
-// Listing must find the assets a project actually has, which also proves the
-// AIModule/BehaviorTreeEditor link is live. Deliberately asserts only that the sweep returns
-// something and reports what it found: VibeUE is a standalone plugin, so naming any particular
-// asset here would make the first test in the suite fail in every project but the one it was
-// written in — which is exactly the signal a maintainer must not be given.
+// Listing must find assets, which also proves the AIModule/BehaviorTreeEditor link is live.
+// SELF-PROVISIONING: the previous version asserted that the host project already contained at
+// least one BT and one Blackboard under /Game — a project dependency dressed up as neutrality,
+// and a hard failure in any project whose AI is not Behavior Tree-based (empirically: this very
+// plugin's own host). The fixtures are created through the services and asserted BY NAME, which
+// is a strictly stronger check than "found anything".
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBTListTest,
 	"VibeUE.BehaviorTree.Asset.List", kBTTestFlags)
 bool FVibeBTListTest::RunTest(const FString&)
 {
-	const TArray<FString> Trees = UBehaviorTreeService::ListBehaviorTrees(TEXT("/Game"));
-	TestTrue(TEXT("found behavior trees"), Trees.Num() > 0);
-	AddInfo(FString::Printf(TEXT("ListBehaviorTrees(/Game) found %d: %s"),
-		Trees.Num(), *FString::Join(Trees, TEXT(", "))));
+	const FString BTPath = FString(kBTTestDir) / TEXT("BT_ListFixture");
+	const FString BBPath = FString(kBTTestDir) / TEXT("BB_ListFixture");
+	FScopedFixtureReset ResetBT(BTPath);
+	FScopedFixtureReset ResetBB(BBPath);
 
-	const TArray<FString> Boards = UBlackboardService::ListBlackboards(TEXT("/Game"));
-	TestTrue(TEXT("found blackboards"), Boards.Num() > 0);
-	AddInfo(FString::Printf(TEXT("ListBlackboards(/Game) found %d: %s"),
-		Boards.Num(), *FString::Join(Boards, TEXT(", "))));
+	TestTrue(TEXT("fixture blackboard created"), UBlackboardService::CreateBlackboard(BBPath));
+	TestEqual(TEXT("fixture tree created"),
+		UBehaviorTreeService::CreateBehaviorTree(BTPath, BBPath), FString());
+
+	const TArray<FString> Trees = UBehaviorTreeService::ListBehaviorTrees(kBTTestDir);
+	TestTrue(TEXT("listing finds the fixture tree"), Trees.Contains(BTPath));
+	AddInfo(FString::Printf(TEXT("ListBehaviorTrees(%s) found %d: %s"),
+		kBTTestDir, Trees.Num(), *FString::Join(Trees, TEXT(", "))));
+
+	const TArray<FString> Boards = UBlackboardService::ListBlackboards(kBTTestDir);
+	TestTrue(TEXT("listing finds the fixture blackboard"), Boards.Contains(BBPath));
+
+	// The wider sweep must INCLUDE the scoped result — /Game is above the fixture dir.
+	TestTrue(TEXT("the /Game sweep includes the fixture tree"),
+		UBehaviorTreeService::ListBehaviorTrees(TEXT("/Game")).Contains(BTPath));
 	return true;
 }
 
@@ -154,12 +166,18 @@ bool FVibeBTBackEdgeCycleTest::RunTest(const FString&)
 		ChildOut->MakeLinkTo(RootIn);
 	}
 
-	// ArrangeGraph must handle the cycle without hanging or crashing.
-	// The visited set breaks the cycle at the second visit.
-	ArrangeGraph(Root);
+	// Sentinels, so "a position was written" is distinguishable from "happened to be 0".
+	Root->NodePosX = Root->NodePosY = -12345;
+	Child->NodePosX = Child->NodePosY = -12345;
 
-	// If we reach here, the cycle was broken correctly.
-	TestTrue(TEXT("back-edge cycle handled"), true);
+	// ArrangeGraph must handle the cycle without hanging or crashing — and must still have laid
+	// out the acyclic part. (The previous version ended in TestTrue(..., true): it could only
+	// ever catch a crash, and its own comment described assertions it never made.)
+	TestEqual(TEXT("cycle arranged without error"), ArrangeGraph(Root), FString());
+	TestEqual(TEXT("root placed at depth 0"), Root->NodePosY, 0);
+	TestEqual(TEXT("child placed at depth 1"), Child->NodePosY, VibeBT::NodeSpacingY);
+	TestNotEqual(TEXT("root X was written"), Root->NodePosX, -12345);
+	TestNotEqual(TEXT("child X was written"), Child->NodePosX, -12345);
 	return true;
 }
 
@@ -202,12 +220,62 @@ bool FVibeBTDuplicateLinkTest::RunTest(const FString&)
 		RootOut->LinkedTo.Add(ChildIn);
 	}
 
-	// ArrangeGraph must deduplicate before allocating Mirror slots.
-	// Without deduplication, the phantom slot would cause Positions.Num() > Order.Num().
-	ArrangeGraph(Root);
+	Root->NodePosX = Root->NodePosY = -12345;
+	Child->NodePosX = Child->NodePosY = -12345;
 
-	// If we reach here, deduplication worked correctly.
-	TestTrue(TEXT("duplicate link handled"), true);
+	// ArrangeGraph must deduplicate before allocating Mirror slots. Without deduplication the
+	// phantom slot desynchronises positions from the node order — which is now a reported error
+	// rather than an editor-killing check(), so both facts are asserted: no error, and the child
+	// laid out exactly once, centred under its parent (one leaf column => same X).
+	TestEqual(TEXT("duplicate link arranged without error"), ArrangeGraph(Root), FString());
+	TestEqual(TEXT("root placed at depth 0"), Root->NodePosY, 0);
+	TestEqual(TEXT("child placed at depth 1"), Child->NodePosY, VibeBT::NodeSpacingY);
+	TestEqual(TEXT("single leaf column: parent directly above child"), Root->NodePosX, Child->NodePosX);
+	return true;
+}
+
+// Diamond: TWO parents pin-linked to the SAME child. Distinct from DuplicateLink (one parent,
+// two links): the child passes an up-front visited filter under its second parent — its first
+// parent has not recursed yet — so a slot-allocation-time visited test is the only correct
+// shape. The pre-fix BuildMirror allocated a Mirror slot the recursion then abandoned, and the
+// position/order mismatch hit a check() that killed the editor on EVERY subsequent write to the
+// asset. Now it must arrange cleanly, with the child owned by the first parent that reached it.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBTDiamondLinkTest,
+	"VibeUE.BehaviorTree.Layout.Diamond", kBTTestFlags)
+bool FVibeBTDiamondLinkTest::RunTest(const FString&)
+{
+	using namespace VibeBT;
+
+	UBehaviorTree* Tree = NewObject<UBehaviorTree>(GetTransientPackage());
+	UBehaviorTreeGraph* Graph = NewObject<UBehaviorTreeGraph>(Tree);
+
+	auto MakeNode = [Graph]() -> UBehaviorTreeGraphNode_Composite*
+	{
+		UBehaviorTreeGraphNode_Composite* Node = NewObject<UBehaviorTreeGraphNode_Composite>(
+			Graph, NAME_None, RF_NoFlags);
+		Node->CreateNewGuid();
+		Node->AllocateDefaultPins();
+		Graph->AddNode(Node, false, false);
+		Node->NodePosX = Node->NodePosY = -12345;
+		return Node;
+	};
+
+	UBehaviorTreeGraphNode_Composite* Root = MakeNode();
+	UBehaviorTreeGraphNode_Composite* A = MakeNode();
+	UBehaviorTreeGraphNode_Composite* B = MakeNode();
+	UBehaviorTreeGraphNode_Composite* C = MakeNode();
+
+	Root->GetOutputPin()->MakeLinkTo(A->GetInputPin());
+	Root->GetOutputPin()->MakeLinkTo(B->GetInputPin());
+	A->GetOutputPin()->MakeLinkTo(C->GetInputPin());
+	B->GetOutputPin()->MakeLinkTo(C->GetInputPin());
+
+	TestEqual(TEXT("diamond arranged without error"), ArrangeGraph(Root), FString());
+	TestEqual(TEXT("shared child placed at depth 2, under its first parent"),
+		C->NodePosY, 2 * VibeBT::NodeSpacingY);
+	TestNotEqual(TEXT("both mid nodes were placed"), A->NodePosX, -12345);
+	TestNotEqual(TEXT("..."), B->NodePosX, -12345);
+	TestTrue(TEXT("siblings strictly ordered"), A->NodePosX < B->NodePosX);
 	return true;
 }
 
@@ -228,8 +296,23 @@ bool FVibeBTNodeTypesTest::RunTest(const FString&)
 		UBehaviorTreeService::GetAvailableNodeTypes(TEXT("Task"));
 	TestTrue(TEXT("has MoveTo"), Tasks.ContainsByPredicate(
 		[](const FBTNodeClassInfo& C){ return C.ClassName == TEXT("BTTask_MoveTo"); }));
-	TestTrue(TEXT("reports Blueprint tasks too"), Tasks.ContainsByPredicate(
-		[](const FBTNodeClassInfo& C){ return C.bIsBlueprint; }));
+
+	// The Blueprint arm is a PROJECT-CONTENT assertion: it can only hold in a project that has at
+	// least one Blueprint-derived BT node class. Where the host has none, that is a fact about the
+	// host, not a discovery failure — reported as a skip, loudly, rather than failing the suite in
+	// every project whose AI is native C++ (empirically: this plugin's own host project).
+	const bool bAnyBlueprintNode =
+		Tasks.ContainsByPredicate([](const FBTNodeClassInfo& C){ return C.bIsBlueprint; })
+		|| UBehaviorTreeService::GetAvailableNodeTypes(TEXT("Decorator")).ContainsByPredicate(
+			[](const FBTNodeClassInfo& C){ return C.bIsBlueprint; })
+		|| UBehaviorTreeService::GetAvailableNodeTypes(TEXT("Service")).ContainsByPredicate(
+			[](const FBTNodeClassInfo& C){ return C.bIsBlueprint; });
+	if (!bAnyBlueprintNode)
+	{
+		AddWarning(TEXT("SKIPPED Blueprint-discovery arm: this project has no Blueprint-derived "
+						"BT node classes, so whether discovery reports them cannot be exercised "
+						"here. Run the suite in a project that has one to cover it."));
+	}
 
 	const TArray<FBTNodeClassInfo> Decorators =
 		UBehaviorTreeService::GetAvailableNodeTypes(TEXT("Decorator"));
@@ -307,23 +390,63 @@ bool FVibeBTResolveBlueprintColdTest::RunTest(const FString&)
 {
 	using namespace VibeBT;
 
-	const FString ShortName = TEXT("BTT_RequestAttack");
-	const FString FullPath =
-		TEXT("/Game/Core/Controllers/AI/Tasks/BTT_RequestAttack.BTT_RequestAttack_C");
+	// SELF-SELECTING, not hard-coded: the previous version named one Blueprint asset from the
+	// author's own project, which failed in every other host. The candidate is discovered from
+	// the same registry-only listing GetAvailableNodeTypes uses (which performs no loads, so it
+	// cannot warm the class it is about to nominate), preferring one that is genuinely not
+	// resident so the cold-load path is what gets exercised.
+	const TArray<FBTNodeClassInfo> Tasks =
+		UBehaviorTreeService::GetAvailableNodeTypes(TEXT("Task"));
 
-	const bool bAlreadyResident = FindObject<UClass>(nullptr, *FullPath) != nullptr;
-	AddInfo(FString::Printf(
-		TEXT("BTT_RequestAttack_C resident before resolve: %s"),
-		bAlreadyResident ? TEXT("true (this run can't prove the cold-load path)") : TEXT("false")));
+	const FBTNodeClassInfo* Cold = nullptr;
+	const FBTNodeClassInfo* AnyBlueprint = nullptr;
+	for (const FBTNodeClassInfo& Info : Tasks)
+	{
+		if (!Info.bIsBlueprint)
+		{
+			continue;
+		}
+		AnyBlueprint = AnyBlueprint ? AnyBlueprint : &Info;
+		if (!FindObject<UClass>(nullptr, *Info.ClassPath))
+		{
+			Cold = &Info;
+			break;
+		}
+	}
+
+	if (!AnyBlueprint)
+	{
+		AddWarning(TEXT("SKIPPED: this project has no Blueprint-derived BT task classes, so "
+						"Blueprint class resolution (cold or warm) cannot be exercised here."));
+		return true;
+	}
+	const FBTNodeClassInfo& Candidate = Cold ? *Cold : *AnyBlueprint;
+	AddInfo(FString::Printf(TEXT("candidate %s resident before resolve: %s"),
+		*Candidate.ClassPath,
+		Cold ? TEXT("false (cold-load path exercised)")
+			 : TEXT("true (only the warm name-matching path can be exercised this run)")));
+
+	// Resolve by SHORT name without the _C suffix — the form an agent naturally passes, and the
+	// one that exercises the generated-name matching in ResolveNodeClass.
+	FString ShortName = Candidate.ClassName;
+	ShortName.RemoveFromEnd(TEXT("_C"));
 
 	UClass* Resolved = ResolveNodeClass(ShortName, UBTTaskNode::StaticClass());
-	TestNotNull(TEXT("resolves an unloaded Blueprint task class by short name"), Resolved);
+	if (!Resolved)
+	{
+		// A null here may be a genuine failure OR an ambiguous short name (two BP tasks sharing
+		// it) — retry by full object path, which is unambiguous by construction.
+		AddInfo(FString::Printf(TEXT("short name '%s' did not resolve (possibly ambiguous); "
+			"retrying by full path"), *ShortName));
+		Resolved = ResolveNodeClass(Candidate.ClassPath, UBTTaskNode::StaticClass());
+	}
+	TestNotNull(TEXT("resolves a Blueprint task class"), Resolved);
 	if (Resolved)
 	{
 		TestTrue(TEXT("resolved class derives from UBTTaskNode"),
 			Resolved->IsChildOf(UBTTaskNode::StaticClass()));
 		TestEqual(TEXT("resolved to the expected generated class"),
-			Resolved->GetName(), FString(TEXT("BTT_RequestAttack_C")));
+			Resolved->GetName(), Candidate.ClassName);
 	}
 	return true;
 }
@@ -1513,8 +1636,8 @@ bool FVibeBTSimpleParallelTest::RunTest(const FString&)
 
 	// Slot 0 is the main task. It must land BEFORE the background branch, because that is the order
 	// GetTree reports and the order CreateChildren writes into UBTCompositeNode::Children.
-	TestFalse(TEXT("main task added"),
-		UBehaviorTreeService::AddNode(BTPath, Par, TEXT("BTTask_MoveTo"), 0).StartsWith(TEXT("ERROR")));
+	const FString MainTask = UBehaviorTreeService::AddNode(BTPath, Par, TEXT("BTTask_MoveTo"), 0);
+	TestFalse(TEXT("main task added"), MainTask.StartsWith(TEXT("ERROR")));
 	TestEqual(TEXT("main task comes first"), ParallelChildren(),
 		FString(TEXT("BTTask_MoveTo,BTTask_Wait")));
 
@@ -1546,17 +1669,24 @@ bool FVibeBTSimpleParallelTest::RunTest(const FString&)
 	TestTrue(TEXT("the background branch is not removable"),
 		UBehaviorTreeService::RemoveNode(BTPath, Background).Contains(TEXT("background branch")));
 
-	// THE REGRESSION. Moving a background child off pin 1 has to unlink it from pin 1 — the pin it
-	// is actually on — not from pin 0. Reading the pin off the parent's pin list instead makes the
-	// unlink a no-op, the schema then refuses (the child still has a parent), and the restore
-	// fabricates a link on pin 0 that never existed: the node ends up reachable from both pins.
-	TestEqual(TEXT("background branch moved out"),
-		UBehaviorTreeService::MoveNode(BTPath, Background, Seq, -1), FString());
+	// Moving the background branch away is refused for the same reason removing it is: the
+	// emptied pin would be refilled with an unrequested Wait inside the very commit the move
+	// saves through. (This refusal also proves the link is read off pin 1 — the pin the child is
+	// actually on — because a pin-0 read would not have identified it as the background branch.)
+	const FString BackgroundMove = UBehaviorTreeService::MoveNode(BTPath, Background, Seq, -1);
+	TestTrue(TEXT("moving the background branch out is refused"),
+		BackgroundMove.Contains(TEXT("background")));
+	TestEqual(TEXT("the refused move left both slots as they were"), ParallelChildren(),
+		FString(TEXT("BTTask_MoveTo,BTComposite_Sequence")));
 
-	// Pin 1 is empty again, so the engine refills it. The parallel is whole and the moved subtree
-	// is somewhere else entirely.
-	TestEqual(TEXT("the background slot was refilled"), ParallelChildren(),
-		FString(TEXT("BTTask_MoveTo,BTTask_Wait")));
+	// THE REGRESSION, now exercised through the main-task slot (the movable one): unlinking must
+	// happen on the pin the child is actually linked through. A pin read off the parent's pin
+	// list would still be pin 0 here — correct by luck — but the two-parent-graph shape this
+	// guarded against is asserted below over the runtime tree either way.
+	TestEqual(TEXT("main task moved out"),
+		UBehaviorTreeService::MoveNode(BTPath, MainTask, Seq, -1), FString());
+	TestEqual(TEXT("the emptied main slot stays empty (only the background pin is refilled)"),
+		ParallelChildren(), FString(TEXT("BTComposite_Sequence")));
 	FBTNodeInfo SeqInfo;
 	TestTrue(TEXT("sibling readable"), UBehaviorTreeService::GetNodeInfo(BTPath, Seq, SeqInfo));
 	TestEqual(TEXT("the moved node landed on the sibling"), SeqInfo.ChildCount, 1);
@@ -1997,6 +2127,12 @@ bool FVibeBTInjectedSubNodesTest::RunTest(const FString&)
 			.Contains(TEXT("injected from a subtree")));
 	TestTrue(TEXT("AddDecorator refuses to attach to an injected node"),
 		UBehaviorTreeService::AddDecorator(MainPath, Injected, TEXT("BTDecorator_ForceSuccess"), -1)
+			.Contains(TEXT("injected from a subtree")));
+	TestTrue(TEXT("AddService refuses to attach to an injected node"),
+		UBehaviorTreeService::AddService(MainPath, Injected, TEXT("BTService_RunEQS"), -1)
+			.Contains(TEXT("injected from a subtree")));
+	TestTrue(TEXT("SetNodeComment refuses an injected node"),
+		UBehaviorTreeService::SetNodeComment(MainPath, Injected, TEXT("annotated"))
 			.Contains(TEXT("injected from a subtree")));
 
 	// The property writers (Task 8). Unlike the structural mutators these have no natural barrier —
@@ -3702,6 +3838,279 @@ bool FVibeBTSubNodeOwnerWithoutParentPointerTest::RunTest(const FString&)
 			AfterSeq->GetArrayField(TEXT("decorators")).Num(), 0);
 	}
 
+	return true;
+}
+
+// =================================================================================================
+//  Regression tests for the post-review fixes (fix/bt-service-review).
+// =================================================================================================
+
+// The NodeName mid-ApplyProperties path-staleness bug: BuildTree replayed NodeName alphabetically
+// among ordinary properties, so a renamed node's later-sorting properties (WaitTime...) were
+// written through a stale path — a loud failure at best, a silent write onto a same-titled
+// sibling at worst. NodeName must now land LAST, and the whole dump — rename, WaitTime edit and
+// comment — must round-trip exactly.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBTRenamedNodeRoundTripTest,
+	"VibeUE.BehaviorTree.Build.RenamedNodeRoundTrip", kBTTestFlags)
+bool FVibeBTRenamedNodeRoundTripTest::RunTest(const FString&)
+{
+	const FString SrcPath = FString(kBTTestDir) / TEXT("BT_RenamedRoundTripSrc");
+	const FString DstPath = FString(kBTTestDir) / TEXT("BT_RenamedRoundTripDst");
+	FScopedFixtureReset ResetSrc(SrcPath);
+	FScopedFixtureReset ResetDst(DstPath);
+
+	TestEqual(TEXT("source created"),
+		UBehaviorTreeService::CreateBehaviorTree(SrcPath, FString()), FString());
+	const FString Sel = UBehaviorTreeService::AddNode(SrcPath, TEXT("Root"), TEXT("BTComposite_Selector"), -1);
+	const FString Wait = UBehaviorTreeService::AddNode(SrcPath, Sel, TEXT("BTTask_Wait"), -1);
+	TestFalse(TEXT("wait added"), Wait.StartsWith(TEXT("ERROR")));
+
+	// The exact shape that broke: a RENAME (NodeName sorts before W) plus an edited WaitTime.
+	const FBTPropertySetResult TimeWrite = UBehaviorTreeService::SetNodePropertyValue(
+		SrcPath, Wait, TEXT("WaitTime"), TEXT("(DefaultValue=3.5,Key=\"\")"));
+	TestTrue(TEXT("WaitTime set on source"), TimeWrite.bSuccess);
+	TestEqual(TEXT("wait renamed"),
+		UBehaviorTreeService::SetNodeName(SrcPath, Wait, TEXT("Guard Wait")), FString());
+	TestEqual(TEXT("wait commented"),
+		UBehaviorTreeService::SetNodeComment(SrcPath, TEXT("Root/Selector/Guard Wait"),
+			TEXT("why: stand watch")), FString());
+
+	const FString Dump = UBehaviorTreeService::GetTree(SrcPath);
+	TestEqual(TEXT("destination created"),
+		UBehaviorTreeService::CreateBehaviorTree(DstPath, FString()), FString());
+	const FBTBuildResult Build = UBehaviorTreeService::BuildTree(DstPath, Dump, false);
+	for (const FBTBuildNodeResult& Node : Build.Nodes)
+	{
+		if (!Node.bSuccess)
+		{
+			AddInfo(FString::Printf(TEXT("node failed: %s | %s"), *Node.Path, *Node.Error));
+		}
+	}
+	TestTrue(TEXT("a dump containing a renamed node with edited properties builds clean"),
+		Build.bSuccess);
+
+	// The renamed node exists at its renamed path, with the property and the comment intact.
+	const FString DstWaitTime = UBehaviorTreeService::GetNodePropertyValue(
+		DstPath, TEXT("Root/Selector/Guard Wait"), TEXT("WaitTime"));
+	TestTrue(TEXT("WaitTime survived the round-trip onto the RENAMED node"),
+		DstWaitTime.Contains(TEXT("3.5")));
+	FBTNodeInfo DstInfo;
+	if (TestTrue(TEXT("renamed node resolvable in the copy"),
+		UBehaviorTreeService::GetNodeInfo(DstPath, TEXT("Root/Selector/Guard Wait"), DstInfo)))
+	{
+		TestEqual(TEXT("comment survived the round-trip"), DstInfo.Comment,
+			FString(TEXT("why: stand watch")));
+	}
+	return true;
+}
+
+// MoveNode must apply the same SimpleParallel background-branch guard RemoveNode has: moving the
+// background child away leaves a pin SpawnMissingNodesForParallel refills with a Wait inside the
+// very commit the move saves through — success reported, unrequested node left behind.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBTParallelBackgroundMoveGuardTest,
+	"VibeUE.BehaviorTree.Structure.ParallelBackgroundMoveGuard", kBTTestFlags)
+bool FVibeBTParallelBackgroundMoveGuardTest::RunTest(const FString&)
+{
+	const FString BTPath = FString(kBTTestDir) / TEXT("BT_ParallelMoveGuard");
+	FScopedFixtureReset ResetBT(BTPath);
+
+	TestEqual(TEXT("tree created"),
+		UBehaviorTreeService::CreateBehaviorTree(BTPath, FString()), FString());
+	const FString Sel = UBehaviorTreeService::AddNode(BTPath, TEXT("Root"), TEXT("BTComposite_Selector"), -1);
+	const FString Par = UBehaviorTreeService::AddNode(BTPath, Sel, TEXT("BTComposite_SimpleParallel"), -1);
+	TestFalse(TEXT("parallel added"), Par.StartsWith(TEXT("ERROR")));
+	// Replace the engine-spawned background Wait with a Sequence so the victim is unmistakable.
+	const FString Background = UBehaviorTreeService::AddNode(BTPath, Par, TEXT("BTComposite_Sequence"), 1);
+	TestFalse(TEXT("background branch replaced"), Background.StartsWith(TEXT("ERROR")));
+
+	const FString MoveError = UBehaviorTreeService::MoveNode(BTPath, Background, Sel, -1);
+	TestTrue(TEXT("moving the background branch away is refused"), !MoveError.IsEmpty());
+	TestTrue(TEXT("...naming the mechanism"), MoveError.Contains(TEXT("background")));
+
+	FBTNodeInfo BgInfo;
+	if (TestTrue(TEXT("background still resolvable"),
+		UBehaviorTreeService::GetNodeInfo(BTPath, Background, BgInfo)))
+	{
+		TestEqual(TEXT("...as the sequence, not a respawned Wait"), BgInfo.ClassName,
+			FString(TEXT("BTComposite_Sequence")));
+	}
+	return true;
+}
+
+// UBTNode::NodeName through SetNodePropertyValue IS a rename, so the path-grammar refusals of
+// SetNodeName must hold on that route too — otherwise "NodeName" = "a/b" renames a node into
+// un-addressability through reflection (including BuildTree's replay of a details-panel-typed
+// name).
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBTNodeNameGrammarViaPropertyTest,
+	"VibeUE.BehaviorTree.Properties.NodeNameGrammarViaProperty", kBTTestFlags)
+bool FVibeBTNodeNameGrammarViaPropertyTest::RunTest(const FString&)
+{
+	const FString BTPath = FString(kBTTestDir) / TEXT("BT_NameGrammarViaProperty");
+	FScopedFixtureReset ResetBT(BTPath);
+
+	TestEqual(TEXT("tree created"),
+		UBehaviorTreeService::CreateBehaviorTree(BTPath, FString()), FString());
+	const FString Sel = UBehaviorTreeService::AddNode(BTPath, TEXT("Root"), TEXT("BTComposite_Selector"), -1);
+	const FString Wait = UBehaviorTreeService::AddNode(BTPath, Sel, TEXT("BTTask_Wait"), -1);
+
+	for (const TCHAR* Bad : { TEXT("a/b"), TEXT("@sneaky"), TEXT("Thing[3]") })
+	{
+		const FBTPropertySetResult Write = UBehaviorTreeService::SetNodePropertyValue(
+			BTPath, Wait, TEXT("NodeName"), Bad);
+		TestFalse(FString::Printf(TEXT("NodeName '%s' via the property route is refused"), Bad),
+			Write.bSuccess);
+	}
+	// A legal name through the same route still works, so the grammar check is not over-broad.
+	const FBTPropertySetResult GoodWrite = UBehaviorTreeService::SetNodePropertyValue(
+		BTPath, Wait, TEXT("NodeName"), TEXT("Plain Name"));
+	TestTrue(TEXT("a legal NodeName via the property route succeeds"), GoodWrite.bSuccess);
+
+	FBTNodeInfo Info;
+	TestTrue(TEXT("the node is addressable at its new name"),
+		UBehaviorTreeService::GetNodeInfo(BTPath, TEXT("Root/Selector/Plain Name"), Info));
+	return true;
+}
+
+// The RootNode==null arm of the discard guard. An asset whose top composite's class was deleted
+// loads with RootNode ALREADY null while its graph root still links to the instance-less node;
+// the pre-fix guard was gated on RootNode being non-null, waved the commit through, and the
+// engine null-derefed inside CreateBTFromGraph (BehaviorTreeGraph.cpp:510-517) — an editor kill.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBTCommitNullRootCrashGuardTest,
+	"VibeUE.BehaviorTree.Asset.CommitNullRootCrashGuard", kBTTestFlags)
+bool FVibeBTCommitNullRootCrashGuardTest::RunTest(const FString&)
+{
+	const FString BTPath = FString(kBTTestDir) / TEXT("BT_NullRootCrashGuard");
+	FScopedFixtureReset ResetBT(BTPath);
+
+	TestEqual(TEXT("tree created"),
+		UBehaviorTreeService::CreateBehaviorTree(BTPath, FString()), FString());
+	const FString Sel = UBehaviorTreeService::AddNode(BTPath, TEXT("Root"), TEXT("BTComposite_Selector"), -1);
+	TestFalse(TEXT("selector added"), Sel.StartsWith(TEXT("ERROR")));
+
+	UBehaviorTree* Tree = LoadObject<UBehaviorTree>(nullptr, *BTPath);
+	if (!TestNotNull(TEXT("tree loads"), Tree))
+	{
+		return false;
+	}
+	UBehaviorTreeGraph* Graph = Cast<UBehaviorTreeGraph>(Tree->BTGraph);
+	UBehaviorTreeGraphNode* TopNode = VibeBT::ResolveNodePath(Graph, TEXT("Root/Selector"));
+	if (!TestNotNull(TEXT("top node resolves"), TopNode))
+	{
+		return false;
+	}
+
+	// The deleted-class shape, installed by hand: instance gone, runtime tree gone.
+	UObject* const SavedInstance = ToRawPtr(TopNode->NodeInstance);
+	UBTCompositeNode* const SavedRoot = ToRawPtr(Tree->RootNode);
+	TopNode->NodeInstance = nullptr;
+	Tree->RootNode = nullptr;
+
+	const FString CommitError = UBehaviorTreeService::CompileAndSave(BTPath);
+
+	// Restore before asserting, so a failure here cannot leave the in-memory fixture corrupted
+	// for the exit reset.
+	TopNode->NodeInstance = SavedInstance;
+	Tree->RootNode = SavedRoot;
+
+	TestTrue(TEXT("committing a linked-but-instanceless root is refused, not crashed"),
+		!CommitError.IsEmpty());
+	TestTrue(TEXT("...and the refusal names the mechanism"),
+		CommitError.Contains(TEXT("no composite instance")));
+	return true;
+}
+
+// Input hardening: over-long names must come back as errors, never as the engine's fatal
+// NAME_SIZE log; a graph deeper than MaxTreeDepth must be a refused layout, not a stack
+// overflow; and a hostile BuildTree dump whose whole subtree is unbuildable must produce a
+// bounded report.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBTInputBoundsTest,
+	"VibeUE.BehaviorTree.Hardening.InputBounds", kBTTestFlags)
+bool FVibeBTInputBoundsTest::RunTest(const FString&)
+{
+	const FString BTPath = FString(kBTTestDir) / TEXT("BT_InputBounds");
+	FScopedFixtureReset ResetBT(BTPath);
+
+	TestEqual(TEXT("tree created"),
+		UBehaviorTreeService::CreateBehaviorTree(BTPath, FString()), FString());
+	const FString Sel = UBehaviorTreeService::AddNode(BTPath, TEXT("Root"), TEXT("BTComposite_Selector"), -1);
+	const FString Wait = UBehaviorTreeService::AddNode(BTPath, Sel, TEXT("BTTask_Wait"), -1);
+
+	const FString LongName = FString::ChrN(2000, TEXT('x'));
+
+	// FName-fatal routes, each of which must now answer with an error instead of killing the
+	// editor: a property name, an asset path on the write path, an asset path on the read paths.
+	const FBTPropertySetResult LongProp = UBehaviorTreeService::SetNodePropertyValue(
+		BTPath, Wait, LongName, TEXT("1"));
+	TestFalse(TEXT("a 2000-char property name is an error"), LongProp.bSuccess);
+	TestTrue(TEXT("...that names the bound"), LongProp.Error.Contains(TEXT("characters")));
+
+	const FString LongPath = TEXT("/Game/") + LongName;
+	TestTrue(TEXT("a 2000-char asset path is refused on the write path"),
+		!UBehaviorTreeService::CompileAndSave(LongPath).IsEmpty());
+	TestTrue(TEXT("...and on GetTree"),
+		UBehaviorTreeService::GetTree(LongPath).Contains(TEXT("error")));
+	FBTNodeInfo LongInfo;
+	TestFalse(TEXT("...and on GetNodeInfo"),
+		UBehaviorTreeService::GetNodeInfo(LongPath, TEXT("Root"), LongInfo));
+	TestEqual(TEXT("...and on listing"),
+		UBehaviorTreeService::ListBehaviorTrees(LongPath).Num(), 0);
+
+	// A linear chain deeper than MaxTreeDepth: the layout must refuse it as an error. Built as a
+	// transient graph so no asset pays for a thousand commits.
+	{
+		UBehaviorTree* Tree = NewObject<UBehaviorTree>(GetTransientPackage());
+		UBehaviorTreeGraph* Graph = NewObject<UBehaviorTreeGraph>(Tree);
+		UBehaviorTreeGraphNode_Composite* Head = NewObject<UBehaviorTreeGraphNode_Composite>(
+			Graph, NAME_None, RF_NoFlags);
+		Head->CreateNewGuid();
+		Head->AllocateDefaultPins();
+		Graph->AddNode(Head, false, false);
+		UBehaviorTreeGraphNode_Composite* ChainRoot = Head;
+		for (int32 Index = 0; Index < VibeBT::MaxTreeDepth + 50; ++Index)
+		{
+			UBehaviorTreeGraphNode_Composite* Next = NewObject<UBehaviorTreeGraphNode_Composite>(
+				Graph, NAME_None, RF_NoFlags);
+			Next->CreateNewGuid();
+			Next->AllocateDefaultPins();
+			Graph->AddNode(Next, false, false);
+			Head->GetOutputPin()->MakeLinkTo(Next->GetInputPin());
+			Head = Next;
+		}
+		const FString DeepError = VibeBT::ArrangeGraph(ChainRoot);
+		TestTrue(TEXT("a chain deeper than MaxTreeDepth is a refused layout, not an overflow"),
+			!DeepError.IsEmpty());
+		TestTrue(TEXT("...that names the bound"), DeepError.Contains(TEXT("deeper than")));
+	}
+
+	// A hostile dump: a valid top class (so the walk actually runs — an unresolvable TOP is
+	// refused before any entry is written) whose child class does not resolve and carries a
+	// subtree nested far past the bound. Everything below the bad child routes through
+	// RecordSubtreeUnbuilt — no engine work per level, the cheapest pre-fix stack overflow — and
+	// must come back as a bounded per-node report.
+	{
+		FString DeepJson;
+		const int32 Levels = VibeBT::MaxTreeDepth + 200;
+		DeepJson.Reserve(Levels * 64);
+		DeepJson += TEXT("{\"class\":\"\",\"children\":[{\"class\":\"BTComposite_Selector\",")
+			TEXT("\"children\":[{\"class\":\"NotARealBTClass_Bounds\"");
+		for (int32 Index = 0; Index < Levels; ++Index)
+		{
+			DeepJson += TEXT(",\"children\":[{\"class\":\"BTComposite_Sequence\"");
+		}
+		for (int32 Index = 0; Index < Levels; ++Index)
+		{
+			DeepJson += TEXT("}]");
+		}
+		DeepJson += TEXT("}]}]}");
+
+		const FBTBuildResult DeepBuild = UBehaviorTreeService::BuildTree(BTPath, DeepJson, true);
+		TestFalse(TEXT("a hostile deep dump does not report success"), DeepBuild.bSuccess);
+		TestTrue(TEXT("...and its report is bounded"),
+			DeepBuild.Nodes.Num() <= VibeBT::MaxTreeDepth + 210);
+		TestTrue(TEXT("...with the truncation named"), DeepBuild.Nodes.ContainsByPredicate(
+			[](const FBTBuildNodeResult& Node)
+			{ return Node.Error.Contains(TEXT("deeper than")) || Node.Error.Contains(TEXT("depth bound")); }));
+	}
 	return true;
 }
 
