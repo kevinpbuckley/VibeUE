@@ -389,25 +389,14 @@ struct FAddBoneParams
  * Skeleton and Skeletal Mesh service exposed directly to Python.
  *
  * This service provides comprehensive CRUD operations for Skeleton and SkeletalMesh assets
- * including bone hierarchy management, socket operations, retargeting configuration,
+ * including bone hierarchy management, retargeting configuration,
  * curve metadata, and blend profile management.
  *
  * Python Usage:
  *   import unreal
  *
- *   # List all bones in a skeletal mesh
- *   bones = unreal.SkeletonService.list_bones("/Game/Characters/SKM_Mannequin")
- *   for bone in bones:
- *       print(f"{bone.bone_name} -> {bone.parent_bone_name}")
- *
- *   # Add a socket
- *   unreal.SkeletonService.add_socket(
- *       "/Game/Characters/SKM_Mannequin",
- *       "Weapon_R",
- *       "hand_r",
- *       unreal.Vector(10, 0, 0),
- *       unreal.Rotator(0, 0, 90)
- *   )
+ *   # Discover skeleton assets
+ *   skeletons = unreal.SkeletonService.list_skeletons("/Game", True)
  *
  *   # Get skeleton info
  *   info = unreal.SkeletonService.get_skeleton_info("/Game/Characters/SK_Mannequin")

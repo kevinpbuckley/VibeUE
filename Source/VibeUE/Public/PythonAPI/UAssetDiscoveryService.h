@@ -8,29 +8,25 @@
 #include "UAssetDiscoveryService.generated.h"
 
 /**
- * Asset discovery service exposed directly to Python.
+ * Asset import/export and Content Browser service exposed directly to Python.
  *
- * This service provides asset search and discovery functionality with native
- * Unreal Engine types, eliminating the need for JSON serialization/deserialization.
+ * Asset search and general CRUD are provided by the engine's AssetTools toolset.
+ * This service owns crash-safe image import, texture export, Content Browser
+ * selection, and open-editor checks.
  *
  * Python Usage:
  *   import unreal
  *
- *   # Search for assets
- *   assets = unreal.AssetDiscoveryService.search_assets("BP_", "Blueprint")
- *   for asset in assets:
- *       print(asset.asset_name, asset.package_path)
+ *   # Import an image without pumping the task graph inside an MCP call
+ *   path, error = unreal.AssetDiscoveryService.import_asset(
+ *       "C:/Images/rocks.jpg", "/Game/UI/Textures", "T_Rocks")
  *
- *   # Get assets by type
- *   textures = unreal.AssetDiscoveryService.get_assets_by_type("Texture2D")
- *
- *   # Find specific asset (in Python the out-param becomes the return value: AssetData or None)
- *   asset_data = unreal.AssetDiscoveryService.find_asset_by_path("/Game/MyAsset")
+ *   # Inspect the current Content Browser selection
+ *   asset_data = unreal.AssetDiscoveryService.get_primary_content_browser_selection()
  *   if asset_data:
- *       print(f"Found: {asset_data.asset_name}")
+ *       print(asset_data.package_name)
  *
- * @note All methods are static and thread-safe
- * @note This replaces the JSON-based manage_asset MCP tool
+ * @note All methods are static.
  */
 UCLASS(BlueprintType)
 class VIBEUE_API UAssetDiscoveryService : public UToolsetDefinition

@@ -21,6 +21,7 @@
 #include "Utils/VibeUEReadinessSignal.h"
 #include "Misc/Paths.h"
 #include "Misc/FileHelper.h"
+#include "PythonAPI/BehaviorTreeServiceInternal.h"
 
 #define LOCTEXT_NAMESPACE "FModule"
 
@@ -437,6 +438,10 @@ void FModule::UnregisterToolsets()
 void FModule::ShutdownModule()
 {
 	FVibeUEReadinessSignal::Remove();
+
+	// Release the BT node-class helper cache while FModuleManager / the asset registry still
+	// exist — ~FGraphNodeClassHelper unhooks their delegates, which is UB at static teardown.
+	VibeBT::ShutdownClassHelperCache();
 
 	if (!bServicesInitialized)
 	{

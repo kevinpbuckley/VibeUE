@@ -112,6 +112,14 @@ examples in `scripts/apply_font.txt` and `scripts/apply_brush.txt`.
 > `letter_spacing`, `outline_size`) are clean. When verifying a font round-trip, parse the last
 > `(...)` group of these three fields (or compare scalars only) until #470 is fixed.
 
+### 🚨 Override-gated properties (SizeBox width/height etc.)
+
+`set_editor_property("width_override", 34.0)` on a `USizeBox` stores the value but leaves the paired
+`bOverride_WidthOverride` edit-condition flag false — the override silently never applies (the value
+even reads back as 34.0). Call the dedicated setters (`set_width_override()`, `set_height_override()`,
+`set_min_desired_width()`, ...) which set flag + value together. Applies to any widget property gated
+by a `bOverride_*` flag; after a raw property set, read the flag back before trusting the layout.
+
 ### 🚨 Animations require real property paths
 
 `add_animation_track` / `add_keyframe` target actual widget properties or slot aliases
@@ -189,6 +197,12 @@ unreal.WidgetService.set_property(path, "PlayButton", "ZOrder", "5")
 unreal.WidgetService.set_property(path, "HeaderRow", "Vertical Alignment", "Top")
 unreal.WidgetService.set_property(path, "HeaderRow", "Padding", "8")
 ```
+
+> ⚠️ **Slot-shadowed names resolve to the SLOT, not the widget.** A name that exists on both a widget
+> and its slot (e.g. `Horizontal Alignment` on a Border sitting in an Overlay — the Border also has its
+> own content-alignment property of the same name) is treated as the slot alias; the widget's own
+> property is untouched. Set widget-side properties natively instead:
+> `unreal.load_object(None, path + ".<BP>:WidgetTree.<Name>").set_editor_property(...)`.
 
 ### Reparenting — `reparent_widget`
 

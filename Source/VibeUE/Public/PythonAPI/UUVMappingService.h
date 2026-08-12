@@ -354,7 +354,7 @@ public:
 	 *
 	 * @note Also sets LightMapCoordinateIndex = DestUVIndex on the static mesh.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Generate Lightmap UVs"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Generate Lightmap UVs", ScriptName = "generate_lightmap_uvs;generate_lightmap_u_vs"))
 	static FUVMappingResult GenerateLightmapUVs(
 		const FString& MeshPath,
 		int32 SourceUVIndex = 0,
@@ -370,7 +370,7 @@ public:
 	 *
 	 * @note "Planar" projects along world +Z. "Cylindrical" wraps around world Z axis.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Auto Unwrap UVs"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Auto Unwrap UVs", ScriptName = "auto_unwrap_uvs;auto_unwrap_u_vs"))
 	static FUVMappingResult AutoUnwrapUVs(
 		const FString& MeshPath,
 		int32 LODIndex,
@@ -384,7 +384,7 @@ public:
 	 *
 	 * @param PaddingPercent - Padding between islands as percent of UV space.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Pack UVs"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Pack UVs", ScriptName = "pack_uvs;pack_u_vs"))
 	static FUVMappingResult PackUVs(
 		const FString& MeshPath,
 		int32 LODIndex,
@@ -400,7 +400,7 @@ public:
 	 * then translate.
 	 * Maps to action="transform_uvs".
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Transform UVs"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Transform UVs", ScriptName = "transform_uvs;transform_u_vs"))
 	static FUVMappingResult TransformUVs(
 		const FString& MeshPath,
 		int32 LODIndex,
@@ -415,7 +415,7 @@ public:
 	 * Mirror UVs across U=0.5 and/or V=0.5 in a channel.
 	 * Maps to action="flip_uvs".
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Flip UVs"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Flip UVs", ScriptName = "flip_uvs;flip_u_vs"))
 	static FUVMappingResult FlipUVs(
 		const FString& MeshPath,
 		int32 LODIndex,
@@ -446,7 +446,7 @@ public:
 	 * @param ScaleU/V, RotationDegrees, OffsetU/V - Affine transform applied to selected UVs.
 	 * @return Result; Message reports how many vertex instances were transformed.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Transform UVs By Normal"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Transform UVs By Normal", ScriptName = "transform_uvs_by_normal;transform_u_vs_by_normal"))
 	static FUVMappingResult TransformUVsByNormal(
 		const FString& MeshPath,
 		int32 LODIndex,
@@ -487,7 +487,7 @@ public:
 	 * @param PolygonGroupName - Slot name (use ListPolygonGroups to discover).
 	 *                           If empty or not found, returns failure.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Transform UVs By Polygon Group"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Transform UVs By Polygon Group", ScriptName = "transform_uvs_by_polygon_group;transform_u_vs_by_polygon_group"))
 	static FUVMappingResult TransformUVsByPolygonGroup(
 		const FString& MeshPath,
 		int32 LODIndex,

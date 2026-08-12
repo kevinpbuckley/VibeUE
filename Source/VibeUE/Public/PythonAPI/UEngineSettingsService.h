@@ -8,7 +8,7 @@
 
 /**
  * Result of an engine settings operation.
- * Python access: result = unreal.EngineSettingsService.set_setting(category, key, value)
+ * Python access: result = unreal.EngineSettingsService.set_engine_ini_value(section, key, value, config_file)
  *
  * Properties:
  * - success (bool): Whether the operation succeeded
@@ -94,15 +94,10 @@ struct FConsoleVariableInfo
  * Python Usage:
  *   import unreal
  *
- *   # List all categories
- *   categories = unreal.EngineSettingsService.list_categories()
- *   for cat in categories:
- *       print(f"{cat.category_id}: {cat.display_name} ({cat.setting_count} settings)")
- *
- *   # Get all settings in a category
- *   settings = unreal.EngineSettingsService.list_settings("rendering")
- *   for s in settings:
- *       print(f"  {s.key} = {s.value}")
+ *   # Inspect engine config sections and values
+ *   sections = unreal.EngineSettingsService.list_engine_sections("Engine.ini")
+ *   value = unreal.EngineSettingsService.get_engine_ini_value(
+ *       "/Script/Engine.Engine", "GameEngine", "Engine.ini")
  *
  *   # Get/set console variables
  *   value = unreal.EngineSettingsService.get_console_variable("r.ReflectionMethod")

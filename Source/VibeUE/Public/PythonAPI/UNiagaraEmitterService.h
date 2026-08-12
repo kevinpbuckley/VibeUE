@@ -93,7 +93,7 @@ struct FNiagaraModuleInfo_Custom
 };
 
 /**
- * Niagara Emitter Service - Python API for emitter color + module authoring.
+ * Niagara Emitter Service - Python API for emitter color and parameter authoring.
  *
  * Methods this service actually exposes (issue #462 — the docstring previously listed
  * renderer/module-input/script-discovery actions that are not bound):
@@ -104,9 +104,7 @@ struct FNiagaraModuleInfo_Custom
  * - set_color_curve_keys(system_path, emitter_name, keys)
  * - shift_color_hue(system_path, emitter_name, degrees)
  *
- * Modules / parameters:
- * - list_modules(system_path, emitter_name, stage)
- * - add_module(system_path, emitter_name, module_script_path, stage)
+ * Parameters:
  * - get_rapid_iteration_parameters(system_path, emitter_name, stage)
  *
  * For emitter add/copy/duplicate/remove/move and renderer CRUD, use the engine
@@ -116,12 +114,9 @@ struct FNiagaraModuleInfo_Custom
  * Python Usage:
  *   import unreal
  *
- *   # List modules
- *   modules = unreal.NiagaraEmitterService.list_modules("/Game/VFX/NS_Fire", "Sparks", "Update")
- *
- *   # Add a module
- *   unreal.NiagaraEmitterService.add_module("/Game/VFX/NS_Fire", "Sparks",
- *       "/Niagara/Modules/Update/Size/ScaleSpriteSize", "Update")
+ *   # Inspect rapid-iteration parameters for an emitter stage
+ *   params = unreal.NiagaraEmitterService.get_rapid_iteration_parameters(
+ *       "/Game/VFX/NS_Fire", "Sparks", "Update")
  *
  *   # Set color tint (works even with ColorFromCurve)
  *   unreal.NiagaraEmitterService.set_color_tint("/Game/VFX/NS_Fire", "Flames", "(0.0, 3.0, 0.0)")

@@ -93,6 +93,7 @@ tool-level control prefer the engine `EditorAppToolset` actions above.
 - **`StopPIE` tears down the world** via `RequestEndPlayMap`. Spawned PIE widget instances should be removed with `WidgetService.remove_widget_from_pie(handle)` before stopping.
 - **Save before starting.** Dirty asset changes are NOT picked up by PIE unless saved/compiled. Always `compile_blueprint(...)` before launching PIE to test Blueprint changes.
 - **Don't leave PIE running between tasks.** Subsequent edits (recompiles, asset moves, hot reload) can fail or behave oddly while a PIE world is alive. Call `StopPIE` before returning control to the user.
+- **Map-load delegates never fire on PIE start.** `FCoreUObjectDelegates::PreLoadMap` / `PostLoadMapWithWorld` (loading screens, post-load hooks, subsystem map handlers) are skipped because the PIE world is *duplicated* from the editor world, not loaded. To exercise them, trigger a real in-game transition once PIE is up: `unreal.GameplayStatics.open_level(pie_world, "MapName")`.
 
 ## When to use PIE
 
