@@ -131,6 +131,8 @@ public class VibeUE : ModuleRules
 				"StaticMeshDescription",  // For FStaticMeshAttributes / FStaticMeshOperations / FUVMapParameters
 				"ToolsetRegistry",        // UE 5.8 native AI toolset registry — exposes services as AICallable tools on Epic's MCP endpoint
 				"ModelContextProtocol",   // UE 5.8 native MCP server — VibeUE's dynamic tools are bridged onto Epic's endpoint
+				"AIModule",               // UBehaviorTree, UBlackboardData, UBTNode, blackboard key types
+				"GameplayTasks",          // AIModule dependency
 			}
 		);
 
@@ -148,6 +150,8 @@ public class VibeUE : ModuleRules
 					"StatusBar",           // For panel drawer integration
 					"ContentBrowser",      // For content browser selection queries
 					"MetasoundEditor",     // For UMetaSoundEditorSubsystem (FindOrBeginBuilding, BuildToAsset)
+					"AIGraph",             // UAIGraphNode, FGraphNodeClassHelper (BT node class discovery)
+					"BehaviorTreeEditor",  // UBehaviorTreeGraph / UBehaviorTreeGraphNode_* — the BT EdGraph write path
 				"GameplayTagsEditor",  // For IGameplayTagsEditorModule (add/remove/rename tags at editor time)
 				"TraceServices",       // For ITraceServicesModule / IAnalysisService (editor_control analyse action)
 				}
