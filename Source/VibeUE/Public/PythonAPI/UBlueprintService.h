@@ -2826,6 +2826,10 @@ public:
 	 *
 	 * Example:
 	 *   unreal.BlueprintService.set_property("/Game/BP_Player", "Health", "150.0")
+	 *
+	 * UE 5.3+ GameplayEffect compatibility:
+	 *   InheritableGameplayEffectTags and InheritableOwnedTagsContainer are persisted through
+	 *   their AssetTags and TargetTags GameplayEffect Components, respectively.
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints")
 	static bool SetProperty(

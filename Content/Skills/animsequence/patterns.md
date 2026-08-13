@@ -215,7 +215,8 @@ if info:
 9. **Reference Pose**: `create_from_pose` uses skeleton's reference pose
 10. **Notify Class Paths**: `add_notify` and `add_notify_state` require FULL class paths:
    - Instant notify: `/Script/Engine.AnimNotify`
-   - State notify: `/Script/Engine.AnimNotifyState`
+   - State notify: a concrete subclass such as `/Script/Engine.AnimNotifyState_Trail` (the base
+     `/Script/Engine.AnimNotifyState` is abstract and is rejected)
    - Sound notify: `/Script/Engine.AnimNotify_PlaySound`
    - Custom: `/Script/YourModule.YourNotifyClass`
 11. **Bone Rotation Axes Are Non-Intuitive**: Roll/Pitch/Yaw do NOT map predictably to world-space movement. Each bone's local coordinate system is different. **Always discover axis mappings** using `get_reference_pose()` and `get_pose_at_time()` before creating rotation animations!
@@ -224,3 +225,6 @@ if info:
 14. **Search-result objects use `anim_path`/`anim_name`, NOT `package_name`**: `search_animations`, `find_animations_for_skeleton`, and `list_anim_sequences` return `AnimSequenceInfo` objects (fields: `anim_path`, `anim_name`, `enable_root_motion`, `frame_rate`, `frame_count`, `bone_track_count`, `curve_count`, `notify_count`, `rate_scale`, `additive_anim_type`, `skeleton_path`, `raw_size`, `compressed_size`). `package_name`/`package_path` only exist on `AssetDiscoveryService.search_assets` results. Also **filter out `None`** entries before reading fields.
 15. **Scope searches to a folder**: a project-wide wildcard (e.g. `*Run*` over all of `/Game`) can exceed the 30 s Python timeout. Pass a `search_path` folder to keep `search_animations`/`list_anim_sequences` fast.
 16. **Verify frame rate after creation**: `create_anim_sequence(frame_rate=...)` has been observed to come back at 30 FPS for a 60 FPS request — always read back `get_animation_frame_rate(anim_path)` and don't assume a non-30 rate stuck.
+17. **Montages use `AnimMontageService`**: `AnimSequenceService` accepts `AnimSequence` assets only.
+    Passing an `AnimMontage` returns the failure sentinel; call the corresponding
+    `unreal.AnimMontageService` method instead.
