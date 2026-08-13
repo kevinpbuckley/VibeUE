@@ -996,7 +996,7 @@ public:
 	/**
 	 * Add an instant notify (point in time).
 	 *
-	 * @param AnimPath - Full path to the animation asset (use package_name from AssetData, not package_path)
+	 * @param AnimPath - Full path to an AnimSequence asset (montages must use AnimMontageService)
 	 * @param NotifyClass - Full class path (e.g., "/Script/Engine.AnimNotify" or "/Script/Engine.AnimNotify_PlaySound")
 	 * @param TriggerTime - Time in seconds when notify triggers
 	 * @param NotifyName - Optional name for the notify
@@ -1012,8 +1012,8 @@ public:
 	/**
 	 * Add a notify state (duration-based).
 	 *
-	 * @param AnimPath - Full path to the animation asset (use package_name from AssetData, not package_path)
-	 * @param NotifyStateClass - Full class path (e.g., "/Script/Engine.AnimNotifyState")
+	 * @param AnimPath - Full path to an AnimSequence asset (montages must use AnimMontageService)
+	 * @param NotifyStateClass - Full path to a concrete class (e.g., "/Script/Engine.AnimNotifyState_Trail")
 	 * @param StartTime - Start time in seconds
 	 * @param Duration - Duration in seconds
 	 * @param NotifyName - Optional name for the notify

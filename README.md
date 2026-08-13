@@ -17,7 +17,7 @@ https://www.vibeue.com/
 **VibeUE is the MCP Expansion + AI Editor Toolset for Unreal Engine 5.8+.** Unreal 5.8 added a
 built-in MCP server and AI toolsets; VibeUE is an **MCP Expansion** that plugs straight into them and
 adds a deep **AI Editor Toolset** — a library of editor capabilities — Blueprints, materials, landscape, foliage, animation, Niagara, UMG, audio, StateTree,
-gameplay tags, input, UVs, **performance/profiling**, and more — registered into the engine's own
+Behavior Trees & Blackboards, gameplay tags, input, UVs, **performance/profiling**, and more — registered into the engine's own
 `ToolsetRegistry` and `ModelContextProtocol` server, plus rich domain **skills** served through
 Unreal's native `AgentSkill` system. Any MCP-capable agent (Claude Code, Cursor, Copilot, …) drives
 your editor through Unreal's standard MCP endpoint.
@@ -45,6 +45,9 @@ VibeUE **complements** them — it focuses on the domains and depth the engine d
 - **UI** — UMG widgets with MVVM bindings, animation authoring, and preview/PIE validation.
 - **Higher-order Blueprint authoring** — timelines, event dispatchers, delegates, custom-event pins,
   comment boxes, and a batch `build_graph` builder.
+- **AI behavior authoring** — Behavior Tree node/decorator/service editing by structural path with
+  blackboard key binding, JSON tree round-trips, and validate/repair; full Blackboard asset + key
+  CRUD. Writes go through the editor EdGraph with PIE- and open-editor-aware refusal guards.
 - **Editor safety** — `TransactionService` wraps the editor's transaction buffer (undo / redo /
   checkpoints) so an agent can group and roll back its own edits — the engine's toolsets expose none.
 - **⚡ Performance & profiling** — VibeUE's standout: see the dedicated section below.
@@ -94,7 +97,7 @@ VibeUE plugs into three native UE 5.8+ systems:
 2. **MCP server** (`ModelContextProtocol`) — a small set of VibeUE utility tools are registered
    directly on the endpoint: `execute_python_code`, `discover_python_module`/`_class`/`_function`,
    `list_python_subsystems`, `deep_research`, `terrain_data`.
-3. **Skills** (`AgentSkillToolset`) — ~34 markdown skill packs register as native `UAgentSkill`s,
+3. **Skills** (`AgentSkillToolset`) — ~36 markdown skill packs register as native `UAgentSkill`s,
    discoverable via `ListSkills` and loaded lazily via `GetSkills`, alongside the engine's own skills.
 
 **Efficient usage (for agents):** `execute_python_code` is the workhorse — it batches a whole

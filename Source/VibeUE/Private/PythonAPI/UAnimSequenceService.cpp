@@ -58,8 +58,14 @@ UAnimSequence* UAnimSequenceService::LoadAnimSequence(const FString& AnimPath)
 		}
 		else
 		{
-			UE_LOG(LogTemp, Warning, TEXT("UAnimSequenceService::LoadAnimSequence: Not an AnimSequence: %s (got %s)"), 
-				*AnimPath, *LoadedObject->GetClass()->GetName());
+			const bool bIsMontage = LoadedObject->GetClass()->GetName().Contains(TEXT("AnimMontage"));
+			UE_LOG(LogTemp, Warning,
+				TEXT("UAnimSequenceService::LoadAnimSequence: Not an AnimSequence: %s (got %s).%s"),
+				*AnimPath,
+				*LoadedObject->GetClass()->GetName(),
+				bIsMontage
+					? TEXT(" Montage assets must use unreal.AnimMontageService (for example, add_notify or add_notify_state).")
+					: TEXT(""));
 			return nullptr;
 		}
 	}

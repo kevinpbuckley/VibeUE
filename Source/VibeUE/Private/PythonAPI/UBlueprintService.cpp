@@ -54,6 +54,7 @@
 #include "GameFramework/Character.h"
 #include "GameFramework/PlayerController.h"
 #include "UObject/Package.h"
+#include "UObject/UnrealType.h"
 #include "UObject/UObjectIterator.h"
 #include "Factories/BlueprintFactory.h"
 #include "WidgetBlueprintFactory.h"      // For creating WidgetBlueprints (UBlueprintFactory can't)
@@ -86,6 +87,188 @@
 
 namespace
 {
+	class FScopedVibePropertyValue
+	{
+	public:
+		explicit FScopedVibePropertyValue(FProperty* InProperty)
+			: Property(InProperty)
+			, Data(InProperty ? FMemory::Malloc(InProperty->GetSize(), InProperty->GetMinAlignment()) : nullptr)
+		{
+			if (Data)
+			{
+				Property->InitializeValue(Data);
+			}
+		}
+
+		~FScopedVibePropertyValue()
+		{
+			if (Data)
+			{
+				Property->DestroyValue(Data);
+				FMemory::Free(Data);
+			}
+		}
+
+		FScopedVibePropertyValue(const FScopedVibePropertyValue&) = delete;
+		FScopedVibePropertyValue& operator=(const FScopedVibePropertyValue&) = delete;
+
+		explicit operator bool() const { return Data != nullptr; }
+		void* GetData() const { return Data; }
+
+	private:
+		FProperty* Property = nullptr;
+		void* Data = nullptr;
+	};
+
+	/** Parse into default-initialized storage, then replace the destination as one value. ImportText
+	 * otherwise merges compound members into their existing storage, so an explicit empty array or
+	 * tag container can leave old entries behind. */
+	static bool ImportPropertyValueReplacing(
+		FProperty* Property,
+		void* Destination,
+		UObject* Owner,
+		const FString& Text)
+	{
+		FScopedVibePropertyValue ParsedValue(Property);
+		if (!ParsedValue || !Property->ImportText_Direct(*Text, ParsedValue.GetData(), Owner, PPF_None))
+		{
+			return false;
+		}
+
+		Property->CopyCompleteValue(Destination, ParsedValue.GetData());
+		return true;
+	}
+
+	/**
+	 * UE 5.3+ keeps the two legacy GameplayEffect tag containers as read-only compatibility
+	 * mirrors. UGameplayEffect::PreSave clears them and rebuilds them from GEComponents, so a
+	 * successful ImportText on the legacy property alone is discarded during SaveAsset.
+	 *
+	 * Keep BlueprintService independent of the optional GameplayAbilities plugin by using
+	 * reflection. When the target really is a GameplayEffect, mirror the requested legacy value
+	 * into the modern component that owns it before the asset is saved.
+	 */
+	static bool TrySetGameplayEffectTagCompatibilityProperty(
+		UObject* CDO,
+		const FString& PropertyName,
+		const FString& PropertyValue,
+		bool& bOutHandled,
+		FString& InOutExpectedValue)
+	{
+		bOutHandled = false;
+
+		const TCHAR* ComponentClassPath = nullptr;
+		const TCHAR* ComponentPropertyName = nullptr;
+		if (PropertyName == TEXT("InheritableGameplayEffectTags"))
+		{
+			ComponentClassPath = TEXT("/Script/GameplayAbilities.AssetTagsGameplayEffectComponent");
+			ComponentPropertyName = TEXT("InheritableAssetTags");
+		}
+		else if (PropertyName == TEXT("InheritableOwnedTagsContainer"))
+		{
+			ComponentClassPath = TEXT("/Script/GameplayAbilities.TargetTagsGameplayEffectComponent");
+			ComponentPropertyName = TEXT("InheritableGrantedTagsContainer");
+		}
+		else
+		{
+			return true;
+		}
+
+		bool bIsGameplayEffect = false;
+		for (UClass* Class = CDO ? CDO->GetClass() : nullptr; Class; Class = Class->GetSuperClass())
+		{
+			if (Class->GetPathName() == TEXT("/Script/GameplayAbilities.GameplayEffect"))
+			{
+				bIsGameplayEffect = true;
+				break;
+			}
+		}
+		if (!bIsGameplayEffect)
+		{
+			return true;
+		}
+		bOutHandled = true;
+
+		UClass* ComponentClass = LoadObject<UClass>(nullptr, ComponentClassPath);
+		FArrayProperty* ComponentsProperty = FindFProperty<FArrayProperty>(CDO->GetClass(), TEXT("GEComponents"));
+		FObjectPropertyBase* ComponentObjectProperty = ComponentsProperty
+			? CastField<FObjectPropertyBase>(ComponentsProperty->Inner)
+			: nullptr;
+		FProperty* ComponentValueProperty = ComponentClass
+			? ComponentClass->FindPropertyByName(ComponentPropertyName)
+			: nullptr;
+		if (!ComponentClass || !ComponentsProperty || !ComponentObjectProperty || !ComponentValueProperty)
+		{
+			UE_LOG(LogTemp, Error,
+				TEXT("SetProperty: GameplayEffect compatibility mapping for '%s' is unavailable in this engine build"),
+				*PropertyName);
+			return false;
+		}
+
+		void* ComponentsAddress = ComponentsProperty->ContainerPtrToValuePtr<void>(CDO);
+		FScriptArrayHelper Components(ComponentsProperty, ComponentsAddress);
+		UObject* Component = nullptr;
+		int32 AddedComponentIndex = INDEX_NONE;
+		for (int32 Index = 0; Index < Components.Num(); ++Index)
+		{
+			UObject* Candidate = ComponentObjectProperty->GetObjectPropertyValue(Components.GetRawPtr(Index));
+			if (Candidate && Candidate->IsA(ComponentClass))
+			{
+				Component = Candidate;
+				break;
+			}
+		}
+
+		if (!Component)
+		{
+			CDO->Modify();
+			Component = NewObject<UObject>(
+				CDO,
+				ComponentClass,
+				NAME_None,
+				CDO->GetMaskedFlags(RF_PropagateToSubObjects) | RF_Transactional);
+			if (!Component)
+			{
+				UE_LOG(LogTemp, Error,
+					TEXT("SetProperty: Failed to create GameplayEffect component '%s' for '%s'"),
+					ComponentClassPath, *PropertyName);
+				return false;
+			}
+
+			AddedComponentIndex = Components.AddValue();
+			ComponentObjectProperty->SetObjectPropertyValue(Components.GetRawPtr(AddedComponentIndex), Component);
+			UE_LOG(LogTemp, Log,
+				TEXT("SetProperty: Added GameplayEffect component '%s' for legacy property '%s'"),
+				ComponentClassPath, *PropertyName);
+		}
+
+		Component->Modify();
+		void* ComponentValueAddress = ComponentValueProperty->ContainerPtrToValuePtr<void>(Component);
+		if (!ImportPropertyValueReplacing(
+			ComponentValueProperty, ComponentValueAddress, Component, PropertyValue))
+		{
+			if (AddedComponentIndex != INDEX_NONE)
+			{
+				Components.RemoveValues(AddedComponentIndex, 1);
+				Component->MarkAsGarbage();
+			}
+			UE_LOG(LogTemp, Error,
+				TEXT("SetProperty: Failed to parse '%s' for GameplayEffect component property '%s'"),
+				*PropertyValue, ComponentPropertyName);
+			return false;
+		}
+
+#if WITH_EDITOR
+		FPropertyChangedEvent ChangedEvent(ComponentValueProperty, EPropertyChangeType::ValueSet);
+		Component->PostEditChangeProperty(ChangedEvent);
+#endif
+		// The component recomputes CombinedTags from Added/Removed (and any parent), so this is the
+		// canonical value the legacy compatibility mirror must contain after save.
+		ComponentValueProperty->ExportTextItem_Direct(
+			InOutExpectedValue, ComponentValueAddress, nullptr, Component, PPF_None);
+		return true;
+	}
+
 	static UEdGraph* ResolveBlueprintGraph(UBlueprint* Blueprint, const FString& GraphName)
 	{
 		if (!Blueprint)
@@ -5770,17 +5953,69 @@ bool UBlueprintService::SetProperty(
 	// Import property value from string. ImportText returns null on parse failure —
 	// report it instead of saving an unchanged asset and claiming success (issue #352).
 	void* PropertyAddr = Property->ContainerPtrToValuePtr<void>(CDO);
-	if (!Property->ImportText_Direct(*PropertyValue, PropertyAddr, CDO, PPF_None))
+	FScopedVibePropertyValue OriginalValue(Property);
+	Property->CopyCompleteValue(OriginalValue.GetData(), PropertyAddr);
+
+	FScopedVibePropertyValue ParsedValue(Property);
+	if (!ParsedValue || !Property->ImportText_Direct(*PropertyValue, ParsedValue.GetData(), CDO, PPF_None))
 	{
 		UE_LOG(LogTemp, Error, TEXT("SetProperty: Failed to parse '%s' for property '%s' (%s) — value rejected by ImportText"),
 			*PropertyValue, *PropertyName, *Property->GetClass()->GetName());
 		return false;
 	}
 
-	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
-	UEditorAssetLibrary::SaveAsset(BlueprintPath, false);
+	FString ExpectedValue;
+	Property->ExportTextItem_Direct(ExpectedValue, ParsedValue.GetData(), nullptr, CDO, PPF_None);
+	Property->CopyCompleteValue(PropertyAddr, ParsedValue.GetData());
 
-	UE_LOG(LogTemp, Log, TEXT("SetProperty: Set property '%s' = '%s'"), *PropertyName, *PropertyValue);
+	bool bHandledGameplayEffectCompatibilityProperty = false;
+	if (!TrySetGameplayEffectTagCompatibilityProperty(
+		CDO,
+		PropertyName,
+		PropertyValue,
+		bHandledGameplayEffectCompatibilityProperty,
+		ExpectedValue))
+	{
+		Property->CopyCompleteValue(PropertyAddr, OriginalValue.GetData());
+		return false;
+	}
+
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+	if (!UEditorAssetLibrary::SaveAsset(BlueprintPath, false))
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetProperty: Failed to save blueprint: %s"), *BlueprintPath);
+		return false;
+	}
+
+	// A successful parse is not a successful write when PreSave or another engine callback
+	// replaces the value. Re-read the persisted CDO and report that case instead of returning a
+	// false positive (issue #539).
+	UBlueprint* SavedBlueprint = LoadBlueprint(BlueprintPath);
+	UClass* SavedClass = SavedBlueprint ? SavedBlueprint->GeneratedClass : nullptr;
+	UObject* SavedCDO = SavedClass ? SavedClass->GetDefaultObject() : nullptr;
+	FProperty* SavedProperty = SavedClass ? SavedClass->FindPropertyByName(*PropertyName) : nullptr;
+	if (!SavedCDO || !SavedProperty)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetProperty: Could not verify saved property '%s' on '%s'"),
+			*PropertyName, *BlueprintPath);
+		return false;
+	}
+
+	FString ActualValue;
+	const void* SavedPropertyAddr = SavedProperty->ContainerPtrToValuePtr<void>(SavedCDO);
+	SavedProperty->ExportTextItem_Direct(ActualValue, SavedPropertyAddr, nullptr, SavedCDO, PPF_None);
+	if (ActualValue != ExpectedValue)
+	{
+		UE_LOG(LogTemp, Error,
+			TEXT("SetProperty: Property '%s' was written as '%s' but the asset saved '%s'. An engine callback rewrote the value."),
+			*PropertyName, *ExpectedValue, *ActualValue);
+		return false;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("SetProperty: Set property '%s' = '%s'%s"),
+		*PropertyName,
+		*ActualValue,
+		bHandledGameplayEffectCompatibilityProperty ? TEXT(" through its GameplayEffect component") : TEXT(""));
 	return true;
 }
 

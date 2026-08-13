@@ -223,6 +223,10 @@ Rules:
 - Property names are the **native C++ names**: `bReplicates`, `InitialLifeSpan`, `bCanBeDamaged` —
   the `b` prefix is NOT stripped here (a stripped name returns `None`).
 - Values read back as strings: compare `value == "True"`, not `value is True`.
+- On UE 5.3+, `set_property` maps the deprecated GameplayEffect CDO fields
+  `InheritableGameplayEffectTags` and `InheritableOwnedTagsContainer` to their Asset Tags and
+  Target Tags GameplayEffect Components. Writing only the legacy fields is otherwise erased by
+  `UGameplayEffect::PreSave`.
 
 ### ⚠️ Info Struct Fields (don't guess — these are the complete lists)
 
