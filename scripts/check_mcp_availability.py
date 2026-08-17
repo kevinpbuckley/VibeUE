@@ -1,4 +1,17 @@
-"""Pure HTTP MCP SDK preflight verification for VibeUE Unreal Editor sessions."""
+"""Pure HTTP MCP SDK availability check for VibeUE Unreal Editor sessions.
+
+Requirement:
+- Python 3 with ``asyncio``.
+- The official MCP Python SDK, ``mcp==2.0.0``.
+- A running Unreal Editor with VibeUE enabled.
+- A reachable VibeUE MCP HTTP endpoint.
+- An Editor session that has the expected Unreal project open.
+
+Exit codes:
+- 0: The preflight passed. A stream cleanup warning can occur after a pass.
+- 1: The preflight failed. The endpoint, tools, or open project did not match.
+- 2: Python could not import a required dependency.
+"""
 
 from __future__ import annotations
 
@@ -31,7 +44,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--project",
         type=Path,
-        default=repo_root / "Terra.uproject",
+        default=repo_root / f"{repo_root.name}.uproject",
         help="Expected .uproject path.",
     )
     parser.add_argument(
