@@ -112,10 +112,16 @@ if result.errors:
 - **`make_struct` needs the FULL struct path for engine structs** — `"FStateTreeEvent"` and
   `"StateTreeEvent"` both fail with "Struct type not found"; `"/Script/StateTreeModule.StateTreeEvent"`
   works. Short names only resolve for user-defined structs.
-- **`build_graph` returns `None` on ANY partial failure** (e.g. 2/3 nodes created) — it does NOT
-  return a result with per-item errors. Check the editor log (`LogTemp: BuildGraph: ...`) for which
-  node/connection/default failed, then repair incrementally with `get_nodes_in_graph` +
-  `connect_nodes` + `set_node_pin_value`.
+- **`build_graph` always returns the full result object (fixed in issue #552)** — on partial
+  failure inspect `result.success`, `result.errors`, `result.warnings`, `result.nodes_failed`,
+  `result.connections_failed`, `result.defaults_failed`, and `result.ref_to_node_id`, then repair
+  incrementally with `connect_nodes` + `set_node_pin_value`. `success` is now strict: any failed
+  node, connection, default, or compile error makes it False. Schema-dropped pin defaults (type
+  mismatch) are counted in `defaults_failed` instead of silently reported as set.
+- **`event` / `custom_event` node specs are idempotent (fixed in issue #551)** — an existing
+  override event (including the disabled ghost BeginPlay→Parent nodes that Blueprint SUBCLASS
+  templates ship) is adopted and enabled instead of duplicated; its GUID lands in
+  `ref_to_node_id` like a fresh node, so connections just work.
 - **Pin defaults on existing nodes**: use `set_node_pin_value(bp, graph, node_id, pin, value)` —
   struct pins accept serialized text, e.g. a GameplayTag pin takes `(TagName="My.Tag")`.
 - The engine `BlueprintTools.compile_blueprint` tool (via `call_tool`) requires the FULL object

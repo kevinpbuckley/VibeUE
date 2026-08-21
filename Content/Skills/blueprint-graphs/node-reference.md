@@ -36,8 +36,9 @@ unreal.BlueprintService.connect_nodes(bp_path, graph, val_get_id, "Cube", mesh_i
 unreal.BlueprintService.connect_nodes(bp_path, graph, mesh_id, "CubeMesh", next_id, "Target")
 ```
 
-The `class` param must be the generated class name (`BP_Cube_C`, not `BP_Cube`). It
-resolves via the same 3-step class fallback as the engine `BlueprintTools.create`.
+The `class` param accepts `"BP_Cube"`, `"BP_Cube_C"`, or a `/Game/...` asset path, and loads
+unloaded Blueprints (fixed in issue #552 — previously only an exact, already-loaded `_C` name
+worked; `cast` node specs got the same treatment).
 
 ### Setting a Member of Another Class / Component (`member_set` node)
 

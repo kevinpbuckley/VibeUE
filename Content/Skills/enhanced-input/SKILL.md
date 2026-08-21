@@ -151,3 +151,21 @@ keys = unreal.InputService.get_available_keys()
 ## Sample scripts (run via `execute_python_code`)
 
 - **`scripts/setup_input.txt`** — create an Input Action + Mapping Context and bind a key.
+
+## PIE input injection (issue #550)
+
+Test input-driven gameplay WITHOUT remapping game assets or OS-level SendKeys — inject directly
+into the running PIE session (no OS window focus needed):
+
+```python
+import unreal
+
+# Enhanced Input action, one input tick per call (loop to hold). X/Y/Z map to the value type.
+print(unreal.InputService.inject_action("/Game/Input/IA_Fire", 1.0))
+
+# Raw key through Slate to the game viewport: "tap" (default), "down", or "up".
+print(unreal.InputService.inject_key("SpaceBar"))
+```
+
+Both return JSON with `success`/`error_code` (PIE not running, no player controller yet, unknown
+key). See the `pie-testing` skill for the full verification loop.

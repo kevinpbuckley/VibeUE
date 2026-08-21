@@ -4,6 +4,8 @@ display_name: Play-In-Editor Testing
 description: Start, stop, and query Play-In-Editor (PIE) sessions for runtime testing of Blueprints, gameplay logic, widgets, AI, and any in-game behavior. Use when the user asks you to "play", "test", "run", "PIE", "start/stop the game", or otherwise needs a live game world to validate changes.
 vibeue_classes:
   - WidgetService
+  - InputService
+  - PerformanceService
 unreal_classes:
   - UEditorEngine
   - FRequestPlaySessionParams
@@ -85,6 +87,42 @@ unreal.WidgetService.remove_widget_from_pie(handle)
 
 `unreal.WidgetService.is_pie_running()` also still exists and is handy from inside Python; for
 tool-level control prefer the engine `EditorAppToolset` actions above.
+
+## Driving gameplay input in PIE — `InputService` (issue #550)
+
+Never remap game input assets or send OS keystrokes (SendKeys/AppActivate) to test a mechanic —
+inject input directly; no OS window focus needed:
+
+```python
+import unreal
+
+# Fire an Enhanced Input action once (value applies for one input tick; loop to hold).
+# X/Y/Z map onto the action's value type; Boolean uses X != 0.
+print(unreal.InputService.inject_action("/Game/Input/IA_Fire_Secondary"))
+
+# Or send a raw key to the game viewport through Slate ("tap" = down+up; also "down"/"up").
+print(unreal.InputService.inject_key("SpaceBar"))
+```
+
+Both return JSON with `success` and an `error_code` naming the problem (PIE not running, no player
+controller yet, unknown key, ...).
+
+## Seeing the game — `capture_image` (issues #544/#546)
+
+The `capture_image` MCP tool with `source="game"` screenshots the PIE viewport **including the
+Slate/UMG HUD** and returns a real image block you can look at (plus a PNG under
+`Saved/VibeUE/Captures`). This replaces the old `Shot showui` + read-the-file workaround — and
+`CaptureViewport` can never see PIE or UI at all.
+
+## Full-rate unfocused verification — `PerformanceService` (issue #549)
+
+An unfocused editor throttles to ~3 FPS, wrecking timed PIE runs. Disable throttling for the
+session instead of focus-hacking the window:
+
+```python
+unreal.PerformanceService.set_background_throttling(False)   # before the run
+unreal.PerformanceService.set_background_throttling(True)    # after
+```
 
 ## Gotchas
 

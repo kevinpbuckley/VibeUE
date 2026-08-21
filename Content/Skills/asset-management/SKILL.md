@@ -319,6 +319,16 @@ else:
 > fails. After deleting level assets, verify the `Content/...` folder on disk and remove leftover
 > `.umap` files manually.
 
+> ⚠️ **`delete_asset` false success is not limited to levels (issue #557).** Blueprints with live
+> references have also returned `True` while their files stayed on disk — and later touching such
+> half-deleted assets ("files gone, editor memory ghosts") has crashed the editor. After ANY
+> scripted delete, verify with a filesystem check (`os.path.exists` on the `.uasset`) or
+> `does_asset_exist`, and never read properties (e.g. mesh bounds) off an asset you just deleted.
+
+> ℹ️ **`CaptureAssetImage` cannot render Blueprints or Niagara systems** ("Asset type does not
+> support image capture"). To preview those, spawn them in the level on a clear spot, aim the
+> viewport camera, and use the `capture_image` MCP tool; delete the preview actors after.
+
 ### Import / Export Textures (VibeUE — crash-safe)
 
 ```python
