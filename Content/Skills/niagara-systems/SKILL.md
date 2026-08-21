@@ -68,6 +68,9 @@ reached with `call_tool` (discover them with `list_toolsets` / `describe_toolset
 > concrete **non-empty** default for the exact type and verify the system still reads back before
 > doing anything else. For scratch-module work, prefer the crash-safe `NiagaraScratchPadService`
 > (validated solid in the sweep).
+>
+> Also note (issue #557): `AddUserVariables` **returns null even on success** — a null result is
+> not a failure signal. Always verify the write landed with `GetUserVariables` afterwards.
 
 Creating a system, adding/copying/removing emitters, adding user parameters, listing emitters,
 compiling — these moved to the engine. Discover and call them like this:

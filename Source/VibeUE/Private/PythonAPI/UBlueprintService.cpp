@@ -4,6 +4,9 @@
 #include "PythonAPI/BlueprintTypeParser.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
+#include "Engine/Level.h"                // Level Blueprint resolution (LoadBlueprint on a map path)
+#include "Engine/LevelScriptBlueprint.h"
+#include "Engine/World.h"
 #include "Engine/SimpleConstructionScript.h"
 #include "Engine/SCS_Node.h"
 #include "WidgetBlueprint.h"
@@ -606,8 +609,31 @@ UBlueprint* UBlueprintService::LoadBlueprint(const FString& BlueprintPath)
 		return nullptr;
 	}
 
+	// Subobject paths (":" present) don't load through the asset library — resolve them
+	// directly. Covers explicit LevelScriptBlueprint paths like
+	// /Game/Maps/MyMap.MyMap:PersistentLevel.MyMap.
+	if (BlueprintPath.Contains(TEXT(":")))
+	{
+		return Cast<UBlueprint>(StaticLoadObject(UObject::StaticClass(), nullptr, *BlueprintPath));
+	}
+
 	UObject* LoadedObject = UEditorAssetLibrary::LoadAsset(BlueprintPath);
-	return Cast<UBlueprint>(LoadedObject);
+	if (UBlueprint* Blueprint = Cast<UBlueprint>(LoadedObject))
+	{
+		return Blueprint;
+	}
+
+	// A map/world path resolves to its persistent level's Level Blueprint, so every
+	// BlueprintService function works on level scripts by passing the map path.
+	if (const UWorld* World = Cast<UWorld>(LoadedObject))
+	{
+		if (World->PersistentLevel)
+		{
+			return World->PersistentLevel->GetLevelScriptBlueprint(/*bDontCreate*/ false);
+		}
+	}
+
+	return nullptr;
 }
 
 bool UBlueprintService::GetBlueprintInfo(const FString& BlueprintPath, FBlueprintDetailedInfo& OutInfo)
@@ -8883,8 +8909,51 @@ UEdGraphNode* UBlueprintService::CreateNodeFromDesc(
 			return nullptr;
 		}
 
+		// An override event (BeginPlay, Tick, overlaps, ...) can exist only once per Blueprint, and
+		// subclass templates ship ghost nodes for the common ones — adopt the existing node instead
+		// of stacking a duplicate (issue #551). Same contract as CreateNodeByKey (issue #349).
+		UClass* EventOwnerClass = EventFunction->GetOwnerClass();
+		UK2Node_Event* ExistingEvent = FBlueprintEditorUtils::FindOverrideForFunction(Blueprint, EventOwnerClass, EventFunction->GetFName());
+		if (!ExistingEvent)
+		{
+			// Ghost nodes can record the Blueprint's immediate parent rather than the declaring
+			// class as the member parent — match by name like OverrideFunction does.
+			for (UEdGraphNode* Node : Graph->Nodes)
+			{
+				UK2Node_Event* Candidate = Cast<UK2Node_Event>(Node);
+				if (Candidate && Candidate->bOverrideFunction &&
+					Candidate->EventReference.GetMemberName().ToString().Equals(*EventName, ESearchCase::IgnoreCase))
+				{
+					ExistingEvent = Candidate;
+					break;
+				}
+			}
+		}
+		if (ExistingEvent)
+		{
+			if (ExistingEvent->GetGraph() != Graph)
+			{
+				OutError = FString::Printf(TEXT("Node '%s': Event '%s' is already placed in graph '%s' — an override event can exist only once per Blueprint"),
+					*Desc.Ref, **EventName, *GetNameSafe(ExistingEvent->GetGraph()));
+				return nullptr;
+			}
+			ExistingEvent->Modify();
+			if (ExistingEvent->GetDesiredEnabledState() != ENodeEnabledState::Enabled)
+			{
+				// Ghost nodes ship disabled; adopting one for a build means the caller wants it live.
+				ExistingEvent->SetEnabledState(ENodeEnabledState::Enabled, /*bUserAction=*/false);
+			}
+			if (ExistingEvent->Pins.Num() == 0)
+			{
+				ExistingEvent->AllocateDefaultPins();
+			}
+			return ExistingEvent;
+		}
+
 		UK2Node_Event* EventNode = NewObject<UK2Node_Event>(Graph);
-		EventNode->EventReference.SetExternalMember(FName(**EventName), Blueprint->ParentClass);
+		// Bind to the declaring class, not the immediate parent — a subclass parent class here made
+		// the reference miss the engine's existing-override comparison (issue #551).
+		EventNode->EventReference.SetExternalMember(FName(**EventName), EventOwnerClass);
 		EventNode->bOverrideFunction = true;
 		EventNode->NodePosX = PosX;
 		EventNode->NodePosY = PosY;
@@ -8900,6 +8969,22 @@ UEdGraphNode* UBlueprintService::CreateNodeFromDesc(
 	{
 		const FString* EventName = Desc.Params.Find(TEXT("name"));
 		FName CustomEventName = EventName && !EventName->IsEmpty() ? FName(**EventName) : NAME_None;
+
+		// Custom event names are unique per Blueprint — adopt an existing node instead of stacking
+		// a duplicate, matching CreateNodeByKey's contract (issue #551).
+		if (CustomEventName != NAME_None)
+		{
+			if (UK2Node_Event* ExistingCustom = FBlueprintEditorUtils::FindCustomEventNode(Blueprint, CustomEventName))
+			{
+				if (ExistingCustom->GetGraph() != Graph)
+				{
+					OutError = FString::Printf(TEXT("Node '%s': Custom event '%s' already exists in graph '%s'"),
+						*Desc.Ref, *CustomEventName.ToString(), *GetNameSafe(ExistingCustom->GetGraph()));
+					return nullptr;
+				}
+				return ExistingCustom;
+			}
+		}
 
 		UBlueprintEventNodeSpawner* EventSpawner = UBlueprintEventNodeSpawner::Create(UK2Node_CustomEvent::StaticClass(), CustomEventName);
 		if (!EventSpawner)
@@ -8939,7 +9024,13 @@ UEdGraphNode* UBlueprintService::CreateNodeFromDesc(
 			return nullptr;
 		}
 
-		UClass* TargetUClass = FindFirstObject<UClass>(**TargetClass, EFindFirstObjectOptions::None, ELogVerbosity::Warning, TEXT("BuildGraph"));
+		// ResolveClassByName handles "BP_Foo", "BP_Foo_C", and "/Game/..." forms and loads unloaded
+		// Blueprints — the bare FindFirstObject needed an exact, already-loaded "_C" name (issue #552).
+		UClass* TargetUClass = ResolveClassByName(**TargetClass);
+		if (!TargetUClass)
+		{
+			TargetUClass = FindFirstObject<UClass>(**TargetClass, EFindFirstObjectOptions::None, ELogVerbosity::Warning, TEXT("BuildGraph"));
+		}
 		if (!TargetUClass)
 		{
 			OutError = FString::Printf(TEXT("Node '%s': Cast target class '%s' not found"), *Desc.Ref, **TargetClass);
@@ -9234,13 +9325,18 @@ UEdGraphNode* UBlueprintService::CreateNodeFromDesc(
 			return nullptr;
 		}
 
-		UClass* OwnerClass = nullptr;
-		for (TObjectIterator<UClass> It; It; ++It)
+		// ResolveClassByName accepts "BP_Foo", "BP_Foo_C", and "/Game/..." forms and loads unloaded
+		// Blueprints; the raw iterator needed an exact, already-loaded class name (issue #552).
+		UClass* OwnerClass = ResolveClassByName(*ClassName);
+		if (!OwnerClass)
 		{
-			if (It->GetName() == *ClassName)
+			for (TObjectIterator<UClass> It; It; ++It)
 			{
-				OwnerClass = *It;
-				break;
+				if (It->GetName() == *ClassName)
+				{
+					OwnerClass = *It;
+					break;
+				}
 			}
 		}
 
@@ -9285,13 +9381,18 @@ UEdGraphNode* UBlueprintService::CreateNodeFromDesc(
 			return nullptr;
 		}
 
-		UClass* OwnerClass = nullptr;
-		for (TObjectIterator<UClass> It; It; ++It)
+		// ResolveClassByName accepts "BP_Foo", "BP_Foo_C", and "/Game/..." forms and loads unloaded
+		// Blueprints; the raw iterator needed an exact, already-loaded class name (issue #552).
+		UClass* OwnerClass = ResolveClassByName(*ClassName);
+		if (!OwnerClass)
 		{
-			if (It->GetName() == *ClassName)
+			for (TObjectIterator<UClass> It; It; ++It)
 			{
-				OwnerClass = *It;
-				break;
+				if (It->GetName() == *ClassName)
+				{
+					OwnerClass = *It;
+					break;
+				}
 			}
 		}
 
@@ -9356,24 +9457,25 @@ namespace VibeUELayout
 	static float EstimateNodeWidth(const UEdGraphNode* Node);
 }
 
-bool UBlueprintService::BuildGraph(
+FBuildGraphResult UBlueprintService::BuildGraph(
 	const FString& BlueprintPath,
 	const FString& GraphName,
 	const TArray<FGraphNodeDesc>& Nodes,
 	const TArray<FGraphConnectionDesc>& Connections,
 	const TArray<FGraphPinDefaultDesc>& PinDefaults,
 	bool bAutoLayout,
-	bool bCompileAfter,
-	FBuildGraphResult& OutResult)
+	bool bCompileAfter)
 {
-	OutResult = FBuildGraphResult();
+	// Returned by value on every path — a bool + out-param made UE's Python binding hand the
+	// caller None on failure, throwing the diagnostics away (issue #552).
+	FBuildGraphResult OutResult;
 
 	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
 	if (!Blueprint)
 	{
 		OutResult.Errors.Add(FString::Printf(TEXT("Failed to load blueprint: %s"), *BlueprintPath));
 		UE_LOG(LogTemp, Error, TEXT("BuildGraph: Failed to load blueprint: %s"), *BlueprintPath);
-		return false;
+		return OutResult;
 	}
 
 	UEdGraph* Graph = ResolveBlueprintGraph(Blueprint, GraphName);
@@ -9385,7 +9487,7 @@ bool UBlueprintService::BuildGraph(
 	{
 		OutResult.Errors.Add(FString::Printf(TEXT("Graph '%s' not found in %s"), *GraphName, *BlueprintPath));
 		UE_LOG(LogTemp, Error, TEXT("BuildGraph: Graph '%s' not found in %s"), *GraphName, *BlueprintPath);
-		return false;
+		return OutResult;
 	}
 
 	// Wrap entire operation in a scoped transaction for Ctrl+Z undo
@@ -9582,7 +9684,18 @@ bool UBlueprintService::BuildGraph(
 
 		if (Schema)
 		{
+			// Silent-drop guard (issue #373 pattern, applied to batch defaults for issue #552):
+			// TrySetDefaultValue can refuse a value without returning false through this path, so
+			// verify the write landed instead of counting it as set.
+			const FString PreviousDefault = Pin->DefaultValue;
 			Schema->TrySetDefaultValue(*Pin, PinDefault.Value);
+			if (Pin->DefaultValue == PreviousDefault && Pin->DefaultValue != PinDefault.Value && !PinDefault.Value.IsEmpty())
+			{
+				OutResult.Warnings.Add(FString::Printf(TEXT("PinDefault %d: Schema dropped value '%s' for pin '%s' on '%s' (type mismatch?)"),
+					i, *PinDefault.Value, *PinDefault.PinName, *PinDefault.NodeRef));
+				OutResult.DefaultsFailed++;
+				continue;
+			}
 		}
 		else
 		{
@@ -9657,7 +9770,10 @@ bool UBlueprintService::BuildGraph(
 		}
 	}
 
-	OutResult.bSuccess = (OutResult.NodesFailed == 0 && OutResult.CompileErrors == 0);
+	// Connection/default failures count too now that the full result always reaches the caller —
+	// success means "everything you asked for happened" (issue #552).
+	OutResult.bSuccess = (OutResult.NodesFailed == 0 && OutResult.ConnectionsFailed == 0 &&
+		OutResult.DefaultsFailed == 0 && OutResult.CompileErrors == 0);
 
 	UE_LOG(LogTemp, Log, TEXT("BuildGraph: Complete — %d/%d nodes, %d/%d connections, %d/%d defaults. Success: %s"),
 		OutResult.NodesCreated, Nodes.Num(),
@@ -9665,7 +9781,7 @@ bool UBlueprintService::BuildGraph(
 		OutResult.DefaultsSet, PinDefaults.Num(),
 		OutResult.bSuccess ? TEXT("true") : TEXT("false"));
 
-	return OutResult.bSuccess;
+	return OutResult;
 }
 
 // ────────────────────────────────────────────────────────────────

@@ -4,6 +4,8 @@ display_name: Play-In-Editor Testing
 description: Start, stop, and query Play-In-Editor (PIE) sessions for runtime testing of Blueprints, gameplay logic, widgets, AI, and any in-game behavior. Use when the user asks you to "play", "test", "run", "PIE", "start/stop the game", or otherwise needs a live game world to validate changes.
 vibeue_classes:
   - WidgetService
+  - InputService
+  - PerformanceService
 unreal_classes:
   - UEditorEngine
   - FRequestPlaySessionParams
@@ -86,6 +88,42 @@ unreal.WidgetService.remove_widget_from_pie(handle)
 `unreal.WidgetService.is_pie_running()` also still exists and is handy from inside Python; for
 tool-level control prefer the engine `EditorAppToolset` actions above.
 
+## Driving gameplay input in PIE — `InputService` (issue #550)
+
+Never remap game input assets or send OS keystrokes (SendKeys/AppActivate) to test a mechanic —
+inject input directly; no OS window focus needed:
+
+```python
+import unreal
+
+# Fire an Enhanced Input action once (value applies for one input tick; loop to hold).
+# X/Y/Z map onto the action's value type; Boolean uses X != 0.
+print(unreal.InputService.inject_action("/Game/Input/IA_Fire_Secondary"))
+
+# Or send a raw key to the game viewport through Slate ("tap" = down+up; also "down"/"up").
+print(unreal.InputService.inject_key("SpaceBar"))
+```
+
+Both return JSON with `success` and an `error_code` naming the problem (PIE not running, no player
+controller yet, unknown key, ...).
+
+## Seeing the game — `capture_image` (issues #544/#546)
+
+The `capture_image` MCP tool with `source="game"` screenshots the PIE viewport **including the
+Slate/UMG HUD** and returns a real image block you can look at (plus a PNG under
+`Saved/VibeUE/Captures`). This replaces the old `Shot showui` + read-the-file workaround — and
+`CaptureViewport` can never see PIE or UI at all.
+
+## Full-rate unfocused verification — `PerformanceService` (issue #549)
+
+An unfocused editor throttles to ~3 FPS, wrecking timed PIE runs. Disable throttling for the
+session instead of focus-hacking the window:
+
+```python
+unreal.PerformanceService.set_background_throttling(False)   # before the run
+unreal.PerformanceService.set_background_throttling(True)    # after
+```
+
 ## Gotchas
 
 - **PIE start is asynchronous.** `StartPIE` returns immediately after `RequestPlaySession` is queued. The world isn't actually playing until the editor processes the request on its next tick. If you need to act inside the running world, give it a tick or poll `IsPIERunning`.
@@ -94,6 +132,7 @@ tool-level control prefer the engine `EditorAppToolset` actions above.
 - **Save before starting.** Dirty asset changes are NOT picked up by PIE unless saved/compiled. Always `compile_blueprint(...)` before launching PIE to test Blueprint changes.
 - **Don't leave PIE running between tasks.** Subsequent edits (recompiles, asset moves, hot reload) can fail or behave oddly while a PIE world is alive. Call `StopPIE` before returning control to the user.
 - **Map-load delegates never fire on PIE start.** `FCoreUObjectDelegates::PreLoadMap` / `PostLoadMapWithWorld` (loading screens, post-load hooks, subsystem map handlers) are skipped because the PIE world is *duplicated* from the editor world, not loaded. To exercise them, trigger a real in-game transition once PIE is up: `unreal.GameplayStatics.open_level(pie_world, "MapName")`.
+- **Python globals holding PIE objects CRASH the editor on PIE end.** Module-level variables from `execute_python_code` persist between calls and are GC roots (`FPyReferenceCollector`). If any still reference a PIE object (pawn, subsystem instance, quest/objective, widget) when PIE tears down, the engine asserts in `PlayLevel.cpp` ("Object from PIE level still referenced") and the editor dies. Before stopping PIE — or as the last statement of any call that inspected PIE objects — release them: `del pawn, sub, quest` or set them to `None`. Also holds for a `world` pointer cached across an in-game `open <map>` travel: it goes stale and using it raises "WorldContext requested with invalid context object"; re-fetch `get_game_world()` in the same call that uses it.
 
 ## When to use PIE
 

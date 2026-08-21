@@ -822,6 +822,18 @@ public:
 	                                                int32 TaskMatchIndex = -1, int32 GlobalTaskMatchIndex = -1);
 
 	/**
+	 * Bind a task property to a property exposed by an evaluator node.
+	 * Use this when a state task should read data produced by an evaluator in the same StateTree.
+	 * @param TaskMatchIndex Which matching state task to target for the struct type. -1 means the last matching task.
+	 * @param EvaluatorMatchIndex Which matching evaluator to target for the struct type. -1 means the last matching evaluator.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
+	static bool BindTaskPropertyToEvaluatorProperty(const FString& AssetPath, const FString& StatePath,
+	                                               const FString& TaskStructName, const FString& TaskPropertyPath,
+	                                               const FString& EvaluatorStructName, const FString& EvaluatorPropertyPath,
+	                                               int32 TaskMatchIndex = -1, int32 EvaluatorMatchIndex = -1);
+
+	/**
 	 * Remove the property binding on a task property (unbind it).
 	 * After unbinding, the property reverts to its default/unbound value.
 	 * @param TaskMatchIndex Which matching task to target for the struct type. -1 means the last matching task.
@@ -915,6 +927,18 @@ public:
 	                                                          int32 ConditionMatchIndex = -1, int32 GlobalTaskMatchIndex = -1);
 
 	/**
+	 * Bind an enter condition property to a property exposed by an evaluator node.
+	 * Use this when an enter condition should read data produced by an evaluator in the same StateTree.
+	 * @param ConditionMatchIndex Which matching condition to target. -1 means the last matching condition.
+	 * @param EvaluatorMatchIndex Which matching evaluator to target for the struct type. -1 means the last matching evaluator.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
+	static bool BindEnterConditionPropertyToEvaluatorProperty(const FString& AssetPath, const FString& StatePath,
+	                                                         const FString& ConditionStructName, const FString& ConditionPropertyPath,
+	                                                         const FString& EvaluatorStructName, const FString& EvaluatorPropertyPath,
+	                                                         int32 ConditionMatchIndex = -1, int32 EvaluatorMatchIndex = -1);
+
+	/**
 	 * Bind an enter condition property to a root parameter (e.g. parameter "CanChase" -> condition property "bLeft").
 	 * @param ConditionMatchIndex Which matching condition to target. -1 means the last matching condition.
 	 */
@@ -988,6 +1012,19 @@ public:
 	                                                          const FString& ConditionPropertyPath,
 	                                                          const FString& PayloadPropertyPath,
 	                                                          int32 ConditionMatchIndex = -1);
+
+	/**
+	 * Bind a transition condition property to a property exposed by an evaluator node.
+	 * Use this when a transition condition should read data produced by an evaluator in the same StateTree.
+	 * @param ConditionMatchIndex Which matching condition to target. -1 means the last matching condition.
+	 * @param EvaluatorMatchIndex Which matching evaluator to target for the struct type. -1 means the last matching evaluator.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
+	static bool BindTransitionConditionPropertyToEvaluatorProperty(const FString& AssetPath, const FString& StatePath,
+	                                                              int32 TransitionIndex, const FString& ConditionStructName,
+	                                                              const FString& ConditionPropertyPath,
+	                                                              const FString& EvaluatorStructName, const FString& EvaluatorPropertyPath,
+	                                                              int32 ConditionMatchIndex = -1, int32 EvaluatorMatchIndex = -1);
 
 	/** Remove the property binding on a transition condition property (unbind it). */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")

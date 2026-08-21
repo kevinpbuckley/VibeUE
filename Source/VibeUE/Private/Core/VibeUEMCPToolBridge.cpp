@@ -187,6 +187,39 @@ namespace
 					}
 				}
 
+				// A tool can return one image alongside its JSON by embedding a reserved
+				// "vibeue_image": {"mime_type", "base64"} field — surfaced here as a real MCP image
+				// content block so clients render the picture instead of receiving a megabyte of
+				// base64 inside a text block (issue #544).
+				if (!bIsError && ResultObj.IsValid())
+				{
+					const TSharedPtr<FJsonObject>* ImageObj = nullptr;
+					FString MimeType, Base64;
+					if (ResultObj->TryGetObjectField(TEXT("vibeue_image"), ImageObj) && ImageObj && ImageObj->IsValid() &&
+						(*ImageObj)->TryGetStringField(TEXT("mime_type"), MimeType) &&
+						(*ImageObj)->TryGetStringField(TEXT("base64"), Base64) && !Base64.IsEmpty())
+					{
+						ResultObj->RemoveField(TEXT("vibeue_image"));
+						FString TextPart;
+						const TSharedRef<TJsonWriter<>> TextWriter = TJsonWriterFactory<>::Create(&TextPart);
+						FJsonSerializer::Serialize(ResultObj.ToSharedRef(), TextWriter);
+
+						TSharedPtr<FJsonObject> ImageContent = MakeShared<FJsonObject>();
+						ImageContent->SetStringField(TEXT("type"), TEXT("image"));
+						ImageContent->SetStringField(TEXT("data"), Base64);
+						ImageContent->SetStringField(TEXT("mimeType"), MimeType);
+
+						TArray<TSharedPtr<FJsonValue>> Content;
+						Content.Add(MakeShared<FJsonValueObject>(UE::ModelContextProtocol::MakeTextContentObject(TextPart)));
+						Content.Add(MakeShared<FJsonValueObject>(ImageContent));
+
+						TSharedPtr<FJsonObject> ResultRoot = MakeShared<FJsonObject>();
+						ResultRoot->SetArrayField(TEXT("content"), Content);
+						OnComplete(FModelContextProtocolToolResult(ResultRoot));
+						return;
+					}
+				}
+
 				OnComplete(bIsError
 					? UE::ModelContextProtocol::MakeErrorResult(Result)
 					: UE::ModelContextProtocol::MakeTextResult(Result));

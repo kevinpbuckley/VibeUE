@@ -18,10 +18,13 @@ Options:
   --clean              Remove project and plugin build artifacts before building.
   --strict-rebuild     Remove this plugin's build artifacts before building.
   --skip-build         Launch without building.
+  --map PATH           Map to open on launch (e.g. /Game/Maps/TrainingPool). Without it the
+                       editor opens the project default map (issue #554).
   -h, --help           Show this help.
 EOF
 }
 
+map=""
 while (($#)); do
     case "$1" in
         --engine) engine_root="$2"; shift 2 ;;
@@ -29,6 +32,7 @@ while (($#)); do
         --clean) clean=true; shift ;;
         --strict-rebuild) strict_rebuild=true; shift ;;
         --skip-build) skip_build=true; shift ;;
+        --map) map="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
     esac
@@ -130,7 +134,11 @@ if [[ "$skip_build" == false ]]; then
     "$build_script" "${project_name}Editor" "$platform" "$mode" "$project_path" -waitmutex
 fi
 
-"$editor_bin" "$project_path" &
+if [[ -n "$map" ]]; then
+    "$editor_bin" "$project_path" "$map" &
+else
+    "$editor_bin" "$project_path" &
+fi
 editor_pid=$!
 
 # Same stale-signal guard as BuildAndLaunchGame.ps1: a crashed Editor can leave a readiness signal

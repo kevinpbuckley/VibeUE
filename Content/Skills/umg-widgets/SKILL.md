@@ -198,11 +198,12 @@ unreal.WidgetService.set_property(path, "HeaderRow", "Vertical Alignment", "Top"
 unreal.WidgetService.set_property(path, "HeaderRow", "Padding", "8")
 ```
 
-> ⚠️ **Slot-shadowed names resolve to the SLOT, not the widget.** A name that exists on both a widget
-> and its slot (e.g. `Horizontal Alignment` on a Border sitting in an Overlay — the Border also has its
-> own content-alignment property of the same name) is treated as the slot alias; the widget's own
-> property is untouched. Set widget-side properties natively instead:
-> `unreal.load_object(None, path + ".<BP>:WidgetTree.<Name>").set_editor_property(...)`.
+> **Shadowed names prefer the WIDGET (fixed in issue #553).** A name that exists on both a widget
+> and its slot (e.g. `HorizontalAlignment` on a Border sitting in an Overlay) now writes the
+> widget's own property; a log warning notes the ambiguity. To target the slot explicitly, prefix
+> with `Slot.` — e.g. `set_property(path, "BackgroundBorder", "Slot.HorizontalAlignment", "Center")`
+> (value aliases like `Fill`/`Center` still work behind the prefix). Names that exist only as slot
+> aliases (the lists above) keep resolving to the slot with no prefix needed.
 
 ### Reparenting — `reparent_widget`
 

@@ -15,8 +15,14 @@ from pathlib import Path
 
 from toolset_registry.agent_skill import agent_skill
 
-# Keep references to the dynamically created skill classes alive for the session.
-_VIBEUE_SKILL_CLASSES = []
+# Keep references to the dynamically created skill classes alive for the session, keyed by class
+# suffix. Stashed on the unreal module so re-running this file (console command VibeUE.ReloadSkills,
+# issue #557) UPDATES the existing classes' CDOs instead of re-declaring same-named classes — which
+# would leave superseded CLASS_NewerVersionExists ghosts behind in AgentSkill enumeration.
+_VIBEUE_SKILL_CLASSES = getattr(unreal, "_vibeue_skill_classes", None)
+if _VIBEUE_SKILL_CLASSES is None:
+    _VIBEUE_SKILL_CLASSES = {}
+    unreal._vibeue_skill_classes = _VIBEUE_SKILL_CLASSES
 
 _SKILLS_DIR = Path(__file__).resolve().parent.parent / "Skills"
 
@@ -43,7 +49,17 @@ def _parse_frontmatter(text):
 
 
 def _register_skill(class_suffix, description, instructions):
-    """Create and register a UAgentSkill subclass with the given content."""
+    """Create (or refresh) a registered UAgentSkill subclass with the given content."""
+    existing = _VIBEUE_SKILL_CLASSES.get(class_suffix)
+    if existing is not None:
+        # Reload path: the class already exists — refresh its CDO so ListSkills/GetSkills serve
+        # the new markdown without an editor restart (skills registered at startup only was
+        # issue #557). Deleted packs stay registered until the next editor launch.
+        cdo = existing.get_default_object()
+        cdo.set_editor_property("description", inspect.cleandoc(description or class_suffix))
+        cdo.set_editor_property("instructions", instructions)
+        return
+
     class_name = "VibeUE_" + class_suffix
     skill_cls = type(class_name, (unreal.AgentSkill,), {
         "__doc__": description or class_suffix,
@@ -55,7 +71,7 @@ def _register_skill(class_suffix, description, instructions):
     cdo = skill_cls.get_default_object()
     cdo.set_editor_property("description", inspect.cleandoc(description or class_suffix))
     cdo.set_editor_property("instructions", instructions)
-    _VIBEUE_SKILL_CLASSES.append(skill_cls)
+    _VIBEUE_SKILL_CLASSES[class_suffix] = skill_cls
 
 
 def _identifier(value):

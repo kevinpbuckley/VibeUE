@@ -1062,7 +1062,10 @@ public:
 	/**
 	 * Get comprehensive blueprint information.
 	 *
-	 * @param BlueprintPath - Full path to the blueprint (e.g., "/Game/Blueprints/BP_Player_Test")
+	 * @param BlueprintPath - Full path to the blueprint (e.g., "/Game/Blueprints/BP_Player_Test").
+	 *   A map/world path (e.g., "/Game/Maps/MainMenu") resolves to that level's Level Blueprint —
+	 *   this applies to EVERY BlueprintService function that takes a BlueprintPath, so level
+	 *   scripts can be inspected and edited like any other Blueprint.
 	 * @param OutInfo - Structure containing all blueprint details (C++ only)
 	 * @return True if successful, false if blueprint not found or invalid
 	 *
@@ -3308,6 +3311,10 @@ public:
 	 * Connections referencing failed nodes are skipped.
 	 * The graph is left in a valid state regardless of partial failures.
 	 *
+	 * Always returns the full FBuildGraphResult — on partial failure inspect .errors, .warnings,
+	 * .nodes_failed etc. (Returning bool + out-param made UE's Python binding fold the result away
+	 * to None on any failure, discarding the diagnostics — issue #552.)
+	 *
 	 * Python Usage:
 	 *   result = unreal.BlueprintService.build_graph(
 	 *       "/Game/BP_Player", "EventGraph",
@@ -3316,20 +3323,20 @@ public:
 	 *       [{"from_":"BeginPlay.then", "to":"Print.execute"}],
 	 *       [{"node_ref":"Print", "pin_name":"InString", "value":"Hello!"}],
 	 *       True, True)
+	 *   if not result.success: print(result.errors, result.warnings)
 	 *
 	 *   Note: Connection refs can be local refs (from Nodes array) or existing node GUIDs.
 	 *   Note: Use "from_" (with underscore) because "from" is a Python reserved keyword.
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints|BatchGraph")
-	static bool BuildGraph(
+	static FBuildGraphResult BuildGraph(
 		const FString& BlueprintPath,
 		const FString& GraphName,
 		const TArray<FGraphNodeDesc>& Nodes,
 		const TArray<FGraphConnectionDesc>& Connections,
 		const TArray<FGraphPinDefaultDesc>& PinDefaults,
 		bool bAutoLayout,
-		bool bCompileAfter,
-		FBuildGraphResult& OutResult
+		bool bCompileAfter
 	);
 
 	/**

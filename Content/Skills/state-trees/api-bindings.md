@@ -341,7 +341,31 @@ unreal.StateTreeService.bind_task_property_to_global_task_property(
 )
 ```
 
-#### Binding Evaluator Properties
+#### Binding FROM Evaluator Outputs (issue #556)
+
+Tasks and conditions can read data an evaluator produces — the evaluator-source mirror of the
+`*_to_global_task_property` family:
+
+```python
+# State task property <- evaluator output
+unreal.StateTreeService.bind_task_property_to_evaluator_property(
+    st_path, "Peaceful/Patrol", "STT_MoveToPatrolPoint",
+    "PatrolPointManager",           # target property on the state task
+    "STE_PatrolPointManagement",    # source evaluator name
+    "PatrolPointManager")           # source property on the evaluator
+
+# Enter condition property <- evaluator output
+unreal.StateTreeService.bind_enter_condition_property_to_evaluator_property(
+    st_path, "Peaceful/Patrol", "STC_CanPatrol", "bAllowed",
+    "STE_PatrolPointManagement", "bHasPoints")
+
+# Transition condition property <- evaluator output (transition_index after state_path)
+unreal.StateTreeService.bind_transition_condition_property_to_evaluator_property(
+    st_path, "Peaceful/Patrol", 0, "STC_CanPatrol", "bAllowed",
+    "STE_PatrolPointManagement", "bHasPoints")
+```
+
+#### Binding Evaluator Properties (evaluator as TARGET)
 
 Evaluators are global (not tied to a state), so there is no `state_path` parameter.
 

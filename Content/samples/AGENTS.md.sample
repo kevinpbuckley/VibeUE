@@ -17,11 +17,13 @@ There are two ways to act on the editor. Pick the cheap one:
   whole multi-step task (create + edit + compile + verify) in a single call, and `print()` only what
   you need back.
 - **`call_tool` — one tool per round-trip.** Genuinely needed only for **skills**
-  (`AgentSkillToolset`) and for the few Epic tools whose **result the MCP layer must surface for
-  you** (image returns like `CaptureViewport`). **Everything else from Epic's engine toolsets is
-  also reachable from inside `execute_python_code`** via `unreal.ToolsetRegistry.execute_tool(...)`
-  (see §2), so batch engine-toolset calls with your Python instead of spending a round-trip. Don't
-  use `call_tool` for work `execute_python_code` can batch.
+  (`AgentSkillToolset`). **Everything else from Epic's engine toolsets is also reachable from
+  inside `execute_python_code`** via `unreal.ToolsetRegistry.execute_tool(...)` (see §2), so batch
+  engine-toolset calls with your Python instead of spending a round-trip. Don't use `call_tool`
+  for work `execute_python_code` can batch.
+- **`capture_image` — screenshots you can actually SEE.** Returns a real MCP image block the
+  client renders (never a base64 text blob). `source="game"` captures the PIE viewport
+  **including the Slate/UMG HUD** — the thing `CaptureViewport` cannot see (see §6).
 
 **Speed + tokens:** **avoid `describe_toolset` as a habit** — it dumps the full JSON schema of every
 tool in a toolset (the most token-heavy thing here); reach for a **skill** plus a narrow
@@ -36,6 +38,9 @@ tool in a toolset (the most token-heavy thing here); reach for a **skill** plus 
 - `discover_python_module` / `discover_python_class` / `discover_python_function` — inspect the API
   (use `unreal` lowercase; narrow with `name_filter` / `method_filter`).
 - `list_python_subsystems` — list editor subsystems.
+- `capture_image` — screenshot as a real MCP image (see §6): `source` = `game` (PIE incl. UMG HUD),
+  `window` (whole editor window), or `editor` (viewport scene). Also saves a PNG under
+  `Saved/VibeUE/Captures` and returns the path.
 - `deep_research` — web search / page fetch / geocode (see §5).
 - `terrain_data` — real-world heightmaps + water splines (see §5).
 
@@ -53,31 +58,36 @@ exist as `unreal.*` (e.g. `unreal.EditorAppToolset`) but their AICallable functi
 exposed as Python methods — `unreal.EditorAppToolset.get_selected_assets()` fails. Invoke them
 through the registry instead (same dispatch `call_tool` uses, but in-process and batchable):
 ```python
-import unreal, json
-res = unreal.ToolsetRegistry.execute_tool(
-    "EditorToolset.EditorAppToolset",   # registered (namespaced) toolset name
-    "GetSelectedAssets",                # tool name
-    "{}")                               # args as a JSON string
-assert res.is_complete and not res.error, res.error
-out = json.loads(res.get_value_as_json_string())     # -> {"returnValue": ...}
+import unreal, vibeue   # vibeue ships in the plugin's Content/Python — always importable
+
+out = vibeue.exec_tool("EditorToolset.EditorAppToolset", "GetSelectedAssets")
+# exec_tool fills missing optional params from the tool's schema (so bare StartPIE/CaptureViewport
+# calls just work), reports ALL missing required params in ONE error, and returns fully-decoded
+# Python values (the raw execute_tool "returnValue" is sometimes double-encoded JSON).
 ```
-Discover exact names/schemas from Python: `unreal.ToolsetRegistry.get_all_toolset_json_schemas()`
-(all of them) or `get_toolset_json_schema("EditorToolset.EditorAppToolset")` (one). Names are
-namespaced — `EditorToolset.EditorAppToolset`, `NiagaraToolsets.NiagaraToolset_System`, etc. (a bare
-`"EditorAppToolset"` returns "Toolset not found"). Note `execute_tool` returns an **async** result:
-the editor tools above complete synchronously (`is_complete=True`), but for a long-running tool check
-`is_complete` / bind `on_completed` rather than assuming `value` is ready.
+Discover schemas by NAME with `vibeue.get_toolset_schema("EditorToolset.EditorAppToolset")` /
+`vibeue.list_toolset_names()`. (The engine's own
+`unreal.ToolsetRegistry.get_toolset_json_schema(...)` takes a **class object** like
+`unreal.EditorAppToolset`, NOT a name string; `get_all_toolset_json_schemas()` dumps everything —
+token-heavy.) Names are namespaced — `EditorToolset.EditorAppToolset`,
+`NiagaraToolsets.NiagaraToolset_System`, etc. (a bare `"EditorAppToolset"` returns "Toolset not
+found"). Raw `unreal.ToolsetRegistry.execute_tool(name, tool, args_json)` remains available; it
+returns an **async** result — the editor tools above complete synchronously (`is_complete=True`),
+but for a long-running tool check `is_complete` / bind `on_completed` rather than assuming `value`
+is ready.
 
 **Use the engine's native tools for these (VibeUE intentionally doesn't duplicate them):**
 - **Assets** (find / save / move / delete / duplicate / metadata): native Python
   `unreal.EditorAssetLibrary` / `EditorAssetSubsystem` inside `execute_python_code` (batchable), or
   Epic's `AssetTools` toolset (via `execute_tool` in-Python, or `call_tool`).
-- **Screenshots / vision**: Epic's `EditorAppToolset` — `CaptureViewport` (returns a PNG, and can
-  overlay a world grid + actor labels), `CaptureEditorImage`, `CaptureAssetImage`. **Use `call_tool`
-  for these** so the MCP layer surfaces the image for you to view (`execute_tool` would only hand
-  back a base64 string).
-- **PIE**: `EditorAppToolset.StartPIE` / `StopPIE` / `IsPIERunning` — batchable via `execute_tool`
-  (`"EditorToolset.EditorAppToolset"`), or `call_tool`.
+- **Screenshots / vision**: use VibeUE's **`capture_image` MCP tool** (see §6) — it is the only
+  path that returns a renderable image. Epic's `CaptureViewport`/`CaptureEditorImage`/
+  `CaptureAssetImage` return base64 **inside a text block** on every route (including `call_tool`),
+  which you cannot view and which can blow the client token limit; reach for `CaptureViewport` only
+  when you need its world-grid/actor-label annotations, via `vibeue.exec_tool` (which fills its
+  mandatory param shape for you).
+- **PIE**: `EditorAppToolset.StartPIE` / `StopPIE` / `IsPIERunning` — via `vibeue.exec_tool`
+  (bare `StartPIE` works; the raw path demands the full options shape), or `call_tool`.
 - **Logs**: `LogsToolset.GetLogEntries` — via `execute_tool` or `call_tool` (or read the `.log` file).
 - **DataTables / DataAssets / enum-struct basics**: Epic's `DataTableTools` / `DataAssetTools` /
   `ObjectTools` (via `execute_tool` or `call_tool`). (VibeUE keeps only `EnumStructService` for
@@ -158,10 +168,16 @@ unreal.BlueprintEditorLibrary.compile_blueprint(bp); print("COMPILED: BP_Enemy")
 
 After any **visible** change, capture and actually look before claiming success:
 ```
-call_tool(tool_name="CaptureViewport", toolset_name="EditorToolset.EditorAppToolset")
+capture_image                          # editor viewport scene (default when PIE is off)
+capture_image {"source": "game"}       # PIE game viewport INCLUDING the Slate/UMG HUD
+capture_image {"source": "window"}     # the whole editor window (any editor UI/panel)
 ```
-It returns a PNG (base64) and can overlay a world-space grid + actor labels for spatial awareness. For
-a running game, `StartPIE` first. **Open/read the image, judge it against the request, fix, re-capture.**
+`capture_image` returns a **real MCP image block** — you see the picture directly, no base64
+decoding, no token blowout — and saves a PNG under `Saved/VibeUE/Captures` (path in the result).
+`source="game"` is the ONLY way to screenshot the running game's HUD: Epic's `CaptureViewport`
+sees the editor camera scene, never PIE or Slate UI. For a running game, `StartPIE` first.
+**Look at the image, judge it against the request, fix, re-capture.** Reach for Epic's
+`CaptureViewport` (via `vibeue.exec_tool`) only when you need its world-grid/actor-label overlay.
 
 ---
 
@@ -179,6 +195,18 @@ print(unreal.PerformanceService.analyse("both", ""))       # frame stats + worst
 ```
 Load the `profiling` and `frame-rate` skills for the full drill-down.
 
+**Unfocused editor = ~3 FPS.** Editor background throttling makes unattended PIE runs useless and
+is NOT controlled by `t.IdleWhenNotInForeground` or `Slate.bAllowThrottling`. Disable it for the
+session before automated verification — no window-focus (AppActivate) hacks needed:
+```python
+unreal.PerformanceService.set_background_throttling(False)   # full rate while unfocused/minimized
+# ... run your PIE verification ...
+unreal.PerformanceService.set_background_throttling(True)    # restore when done
+```
+To drive gameplay in PIE without OS focus or input-asset remapping:
+`unreal.InputService.inject_action("/Game/Input/IA_Fire")` (Enhanced Input, one tick per call) and
+`unreal.InputService.inject_key("SpaceBar")` (raw key via Slate).
+
 ---
 
 ## 8. Build & launch
@@ -187,8 +215,12 @@ When asked to rebuild / relaunch / test, use the project script — not manual `
 - `./Plugins/VibeUE/BuildAndLaunchGame.ps1` (stops the editor, builds, relaunches).
 - `-StrictRebuild` for a full plugin recompile under warnings-as-errors; `-Clean` to wipe artifacts;
   `-SkipBuild` to relaunch only.
+- **`-Map /Game/Maps/YourMap`** — open a specific map. Without it the editor opens the project
+  DEFAULT map; after a mid-task relaunch that is usually the wrong level, and world-edit scripts
+  that grab "the current world" then modify the wrong map. Always pass `-Map` when your task
+  targets a non-default level, and verify `currentMap` from the readiness signal before editing.
 - On Linux or macOS: `./Plugins/VibeUE/BuildAndLaunchGame.sh --engine /path/to/UE5`.
-  Use `--strict-rebuild`, `--clean`, or `--skip-build` for the corresponding operations.
+  Use `--strict-rebuild`, `--clean`, `--skip-build`, or `--map` for the corresponding operations.
 
 **Readiness gate (required after launch, both platforms):**
 - Parse `Editor-PID=<pid>` from the launch script's output.
@@ -196,10 +228,20 @@ When asked to rebuild / relaunch / test, use the project script — not manual `
 - Wait at most 180 seconds; do not poll MCP. Fail if that Editor process exits or the timeout expires.
 - Ignore signal files for other or dead PIDs. The signal only means `RegisterToolsets()` reached its end;
   Python, World, and level readiness remain separate checks.
-- The file is JSON (`signal`, `pid`, `createdUtc`, `sessionStartUtc`, `pluginVersion`) and is written
-  atomically, so it is complete as soon as it appears. PIDs get recycled: the launch scripts clear a
-  stale same-PID signal on start, but if you launch the Editor yourself, check that `sessionStartUtc`
-  is later than your launch time before trusting it.
+- The file is JSON (`signal`, `pid`, `createdUtc`, `sessionStartUtc`, `pluginVersion`, `currentMap`)
+  and is written atomically, so it is complete as soon as it appears. It is re-published on every map
+  open, so `currentMap` (the loaded map's package name, e.g. `/Game/Maps/TrainingPool`) stays fresh —
+  gate world edits on it. PIDs get recycled: the launch scripts clear a stale same-PID signal on
+  start, but if you launch the Editor yourself, check that `sessionStartUtc` is later than your
+  launch time before trusting it.
+
+**Health heartbeat (is the editor alive?):** `Signals/editor-<pid>-health.json` is rewritten every
+~5s by a background thread and carries `updatedUtc` + `gameThreadStallSeconds`. Epic's MCP endpoint
+runs on the game thread with NO request timeout, so a dead or wedged editor hangs MCP calls for the
+client's full timeout (300s observed). Before waiting on a suspect call — or whenever results come
+back empty/strange — read the health file instead: file missing or `updatedUtc` older than ~15s →
+the process is gone (relaunch); `gameThreadStallSeconds` > ~10 → alive but wedged (modal dialog /
+crash handler — MCP will hang; relaunch); fresh and small → the editor is fine, look elsewhere.
 
 ---
 

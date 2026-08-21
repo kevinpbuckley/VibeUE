@@ -133,11 +133,13 @@ Build with the project script:
 ```
 Plugins/VibeUE/BuildAndLaunchGame.ps1                  # builds + launches the editor
 Plugins/VibeUE/BuildAndLaunchGame.ps1 -StrictRebuild   # full recompile (warnings-as-errors)
+Plugins/VibeUE/BuildAndLaunchGame.ps1 -Map /Game/Maps/MyMap   # open a specific map (issue #554)
 ```
 On Linux or macOS, use the platform-detecting shell script:
 ```bash
 Plugins/VibeUE/BuildAndLaunchGame.sh --engine /path/to/UE5
 Plugins/VibeUE/BuildAndLaunchGame.sh --engine /path/to/UE5 --strict-rebuild
+Plugins/VibeUE/BuildAndLaunchGame.sh --engine /path/to/UE5 --map /Game/Maps/MyMap
 ```
 Then **Edit → Plugins** → enable **VibeUE** and restart. Its services, tools, and skills now register
 onto the same endpoint, alongside the engine's own.
