@@ -3,6 +3,11 @@
 #include "Utils/VibeUEReadinessSignal.h"
 #include "Utils/VibeUEPaths.h"
 #include "CoreGlobals.h"
+#if WITH_EDITOR
+#include "Editor.h"
+#include "Engine/World.h"
+#include "UObject/Package.h"
+#endif
 #include "HAL/FileManager.h"
 #include "HAL/PlatformProcess.h"
 #include "HAL/PlatformTime.h"
@@ -38,7 +43,26 @@ FDateTime FVibeUEReadinessSignal::GetSessionStartUtc()
 	return FDateTime::UtcNow() - FTimespan::FromSeconds(SecondsSinceStart);
 }
 
-FString FVibeUEReadinessSignal::BuildSignalJson(uint32 ProcessId, const FDateTime& SessionStartUtc, const FDateTime& CreatedUtc)
+FString FVibeUEReadinessSignal::GetCurrentMapPackageName()
+{
+#if WITH_EDITOR
+	if (GEditor)
+	{
+		if (const UWorld* World = GEditor->GetEditorWorldContext().World())
+		{
+			if (const UPackage* Package = World->GetPackage())
+			{
+				// Unsaved worlds report their /Temp/ package — still tells a watcher "not your map".
+				return Package->GetName();
+			}
+		}
+	}
+#endif
+	return FString();
+}
+
+FString FVibeUEReadinessSignal::BuildSignalJson(uint32 ProcessId, const FDateTime& SessionStartUtc, const FDateTime& CreatedUtc,
+	const FString& CurrentMap)
 {
 	const TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
 	Root->SetStringField(TEXT("signal"), TEXT("toolsets-registered"));
@@ -48,6 +72,7 @@ FString FVibeUEReadinessSignal::BuildSignalJson(uint32 ProcessId, const FDateTim
 	Root->SetStringField(TEXT("createdUtc"), CreatedUtc.ToIso8601());
 	Root->SetStringField(TEXT("sessionStartUtc"), SessionStartUtc.ToIso8601());
 	Root->SetStringField(TEXT("pluginVersion"), FVibeUEPaths::GetPluginVersionName());
+	Root->SetStringField(TEXT("currentMap"), CurrentMap);
 
 	FString Payload;
 	const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Payload);
@@ -67,7 +92,7 @@ bool FVibeUEReadinessSignal::Publish()
 	const uint32 ProcessId = FPlatformProcess::GetCurrentProcessId();
 	const FString SignalPath = GetSignalPathForPid(ProcessId);
 	const FString TempPath = SignalPath + TEXT(".tmp");
-	const FString Payload = BuildSignalJson(ProcessId, GetSessionStartUtc(), FDateTime::UtcNow());
+	const FString Payload = BuildSignalJson(ProcessId, GetSessionStartUtc(), FDateTime::UtcNow(), GetCurrentMapPackageName());
 
 	// Write-then-move: an agent watching for the create event must never read a partial file.
 	if (!FFileHelper::SaveStringToFile(Payload, *TempPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))

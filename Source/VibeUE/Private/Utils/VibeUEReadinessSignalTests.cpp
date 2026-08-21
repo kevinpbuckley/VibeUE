@@ -46,7 +46,7 @@ bool FVibeReadinessSignalPayloadTest::RunTest(const FString&)
 {
 	const FDateTime SessionStart(2026, 8, 3, 10, 0, 0);
 	const FDateTime Created(2026, 8, 3, 10, 0, 42);
-	const FString Payload = FVibeUEReadinessSignal::BuildSignalJson(4242, SessionStart, Created);
+	const FString Payload = FVibeUEReadinessSignal::BuildSignalJson(4242, SessionStart, Created, TEXT("/Game/Maps/TestMap"));
 
 	// The file is named .json, so it has to parse as JSON — the original implementation wrote an
 	// empty file, which every consumer would have choked on.
@@ -63,6 +63,8 @@ bool FVibeReadinessSignalPayloadTest::RunTest(const FString&)
 	// sessionStartUtc is what lets an agent reject a stale signal from a reused PID.
 	TestEqual(TEXT("sessionStartUtc is ISO 8601"), Root->GetStringField(TEXT("sessionStartUtc")), SessionStart.ToIso8601());
 	TestFalse(TEXT("pluginVersion is populated"), Root->GetStringField(TEXT("pluginVersion")).IsEmpty());
+	// currentMap lets an agent gate world edits on the loaded level without an editor round-trip.
+	TestEqual(TEXT("currentMap round trips"), Root->GetStringField(TEXT("currentMap")), TEXT("/Game/Maps/TestMap"));
 
 	return true;
 }

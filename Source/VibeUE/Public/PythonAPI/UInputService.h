@@ -244,6 +244,10 @@ struct FInputTypeDiscoveryResult
  * - get_triggers: Get triggers on a key mapping
  * - get_available_trigger_types: Get available trigger types
  *
+ * PIE Input Injection (issue #550):
+ * - inject_action: Inject an Enhanced Input action value into the running PIE session
+ * - inject_key: Send a key press to the PIE game viewport via Slate (no OS focus needed)
+ *
  * Python Usage:
  *   import unreal
  *
@@ -577,6 +581,41 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input|Exists")
 	static bool KeyMappingExists(const FString& ContextPath, const FString& ActionPath);
+
+	// =================================================================
+	// PIE Input Injection (issue #550)
+	// =================================================================
+
+	/**
+	 * Inject an Enhanced Input action value into the running PIE session's first local player.
+	 * Removes the need to remap game input assets and send OS keystrokes just to test a mechanic.
+	 *
+	 * The value applies for one input tick — a Pressed/Triggered action fires once per call; call
+	 * repeatedly (once per ~frame) to simulate holding. X/Y/Z map onto the action's value type
+	 * (Boolean uses X != 0). Requires PIE; no OS window focus needed.
+	 *
+	 * @param ActionPath - Input Action asset path (/Game/Input/IA_Fire or full object path)
+	 * @return JSON: {success, action, value_type, injected:[x,y,z]} or {success:false, error_code, error_message}
+	 *
+	 * Example:
+	 *   unreal.InputService.inject_action("/Game/Input/IA_Fire_Secondary")   # fire once
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Input|PIE")
+	static FString InjectAction(const FString& ActionPath, float X = 1.0f, float Y = 0.0f, float Z = 0.0f);
+
+	/**
+	 * Send a key event to the running PIE game viewport through Slate (no OS focus, no SendKeys).
+	 * Slate focus is moved to the game viewport first, so this works with the editor unfocused.
+	 *
+	 * @param KeyName - FKey name, e.g. "SpaceBar", "W", "LeftMouseButton" (see get_available_keys)
+	 * @param EventType - "tap" (down then up, default), "down", or "up"
+	 * @return JSON: {success, key, event, handled_down, handled_up} or {success:false, error_code, error_message}
+	 *
+	 * Example:
+	 *   unreal.InputService.inject_key("SpaceBar")            # tap space in PIE
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Input|PIE")
+	static FString InjectKey(const FString& KeyName, const FString& EventType = TEXT("tap"));
 
 private:
 	/** Helper to load an Input Action */

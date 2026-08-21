@@ -18,6 +18,8 @@
 #include "ProfilingDebugging/MiscTrace.h"
 #include "PlayInEditorDataTypes.h"
 #include "Editor.h"
+#include "Editor/EditorEngine.h"
+#include "Editor/EditorPerformanceSettings.h"
 #include "TraceServices/ITraceServicesModule.h"
 #include "TraceServices/AnalysisService.h"
 #include "TraceServices/Model/AnalysisSession.h"
@@ -1288,5 +1290,52 @@ FString UPerformanceService::StopPIE()
 	TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
 	R->SetStringField(TEXT("status"), TEXT("PIE end requested"));
 	R->SetStringField(TEXT("hint"),   TEXT("PIE tears down on the next tick. If you were tracing, StopTrace then Analyse."));
+	return OkJson(R);
+}
+
+// True while an agent has asked for full-rate rendering regardless of focus (issue #549).
+static bool GDisableBackgroundThrottling = false;
+
+FString UPerformanceService::SetBackgroundThrottling(bool bEnabled)
+{
+	if (!GEditor) return ErrJson(TEXT("NO_EDITOR"), TEXT("GEditor not available."));
+
+	UEditorPerformanceSettings* Settings = GetMutableDefault<UEditorPerformanceSettings>();
+	if (!Settings) return ErrJson(TEXT("NO_SETTINGS"), TEXT("EditorPerformanceSettings not available."));
+
+	const bool bPreviousThrottle = Settings->bThrottleCPUWhenNotForeground != 0;
+	Settings->bThrottleCPUWhenNotForeground = bEnabled;
+	// Session-only on purpose: no SaveConfig(). PostEditChange so the unfocused-viewport render
+	// disable (which reads this setting) re-evaluates.
+	Settings->PostEditChange();
+
+	// The settings flag doesn't cover a minimized editor (AreAllWindowsHidden) — the engine checks
+	// ShouldDisableCPUThrottlingDelegates first, so register one that tracks our state.
+	GDisableBackgroundThrottling = !bEnabled;
+	static bool bDelegateRegistered = false;
+	if (!bDelegateRegistered)
+	{
+		GEditor->ShouldDisableCPUThrottlingDelegates.Add(
+			UEditorEngine::FShouldDisableCPUThrottling::CreateLambda([]() { return GDisableBackgroundThrottling; }));
+		bDelegateRegistered = true;
+	}
+
+	TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+	R->SetBoolField(TEXT("throttling_enabled"), bEnabled);
+	R->SetBoolField(TEXT("previous"), bPreviousThrottle);
+	R->SetStringField(TEXT("note"), bEnabled
+		? TEXT("Editor background throttling restored to normal.")
+		: TEXT("Editor runs at full rate while unfocused/minimized for this session. No more AppActivate hacks; re-enable when done."));
+	return OkJson(R);
+}
+
+FString UPerformanceService::GetBackgroundThrottling()
+{
+	const UEditorPerformanceSettings* Settings = GetDefault<UEditorPerformanceSettings>();
+	if (!Settings) return ErrJson(TEXT("NO_SETTINGS"), TEXT("EditorPerformanceSettings not available."));
+
+	TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+	R->SetBoolField(TEXT("throttling_enabled"), Settings->bThrottleCPUWhenNotForeground != 0);
+	R->SetBoolField(TEXT("delegate_override_active"), GDisableBackgroundThrottling);
 	return OkJson(R);
 }

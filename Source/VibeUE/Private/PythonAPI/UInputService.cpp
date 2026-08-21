@@ -15,6 +15,17 @@
 #include "InputTriggers.h"
 #include "EnhancedInputDeveloperSettings.h"
 
+// PIE input injection (issue #550)
+#include "Editor.h"
+#include "EnhancedInputSubsystems.h"
+#include "Engine/LocalPlayer.h"
+#include "GameFramework/PlayerController.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Misc/PackageName.h"
+#include "Dom/JsonObject.h"
+#include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
+
 // =================================================================
 // Helper Methods
 // =================================================================
@@ -848,4 +859,139 @@ bool UInputService::KeyMappingExists(const FString& ContextPath, const FString& 
 	}
 
 	return false;
+}
+// =================================================================
+// PIE Input Injection (issue #550)
+// =================================================================
+
+static FString InjectionErrorJson(const FString& Code, const FString& Message)
+{
+	TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+	Obj->SetBoolField(TEXT("success"), false);
+	Obj->SetStringField(TEXT("error_code"), Code);
+	Obj->SetStringField(TEXT("error_message"), Message);
+	FString Out;
+	const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Out);
+	FJsonSerializer::Serialize(Obj.ToSharedRef(), Writer);
+	return Out;
+}
+
+static FString InjectionOkJson(const TSharedRef<FJsonObject>& Obj)
+{
+	Obj->SetBoolField(TEXT("success"), true);
+	FString Out;
+	const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Out);
+	FJsonSerializer::Serialize(Obj, Writer);
+	return Out;
+}
+
+FString UInputService::InjectAction(const FString& ActionPath, float X, float Y, float Z)
+{
+	if (!GEditor || !GEditor->PlayWorld)
+	{
+		return InjectionErrorJson(TEXT("PIE_NOT_RUNNING"), TEXT("PIE is not running — start it first (inject_action drives the live PIE session)."));
+	}
+
+	UWorld* PlayWorld = GEditor->PlayWorld.Get();
+	APlayerController* PC = PlayWorld->GetFirstPlayerController();
+	if (!PC)
+	{
+		return InjectionErrorJson(TEXT("NO_PLAYER_CONTROLLER"), TEXT("PIE world has no player controller yet — PIE start is asynchronous, retry on a later tick."));
+	}
+	ULocalPlayer* LocalPlayer = PC->GetLocalPlayer();
+	if (!LocalPlayer)
+	{
+		return InjectionErrorJson(TEXT("NO_LOCAL_PLAYER"), TEXT("First player controller has no local player."));
+	}
+	UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(LocalPlayer);
+	if (!Subsystem)
+	{
+		return InjectionErrorJson(TEXT("NO_ENHANCED_INPUT"), TEXT("EnhancedInputLocalPlayerSubsystem unavailable — is the project using Enhanced Input?"));
+	}
+
+	// UEditorAssetLibrary::LoadAsset returns null during PIE, so resolve the object path directly
+	// (same pattern as WidgetService::SpawnWidgetInPIE).
+	FString ObjectPath = ActionPath;
+	if (!ObjectPath.Contains(TEXT(".")))
+	{
+		ObjectPath = FString::Printf(TEXT("%s.%s"), *ActionPath, *FPackageName::GetShortName(ActionPath));
+	}
+	const UInputAction* Action = LoadObject<UInputAction>(nullptr, *ObjectPath);
+	if (!Action)
+	{
+		return InjectionErrorJson(TEXT("ACTION_NOT_FOUND"), FString::Printf(TEXT("Input Action not found: %s"), *ActionPath));
+	}
+
+	FInputActionValue Value;
+	switch (Action->ValueType)
+	{
+	case EInputActionValueType::Boolean: Value = FInputActionValue(X != 0.0f); break;
+	case EInputActionValueType::Axis1D:  Value = FInputActionValue(X); break;
+	case EInputActionValueType::Axis2D:  Value = FInputActionValue(FVector2D(X, Y)); break;
+	case EInputActionValueType::Axis3D:  Value = FInputActionValue(FVector(X, Y, Z)); break;
+	default:                             Value = FInputActionValue(X); break;
+	}
+
+	Subsystem->InjectInputForAction(Action, Value, TArray<UInputModifier*>(), TArray<UInputTrigger*>());
+
+	TSharedRef<FJsonObject> R = MakeShared<FJsonObject>();
+	R->SetStringField(TEXT("action"), Action->GetName());
+	R->SetStringField(TEXT("value_type"), UEnum::GetValueAsString(Action->ValueType));
+	TArray<TSharedPtr<FJsonValue>> Injected;
+	Injected.Add(MakeShared<FJsonValueNumber>(X));
+	Injected.Add(MakeShared<FJsonValueNumber>(Y));
+	Injected.Add(MakeShared<FJsonValueNumber>(Z));
+	R->SetArrayField(TEXT("injected"), Injected);
+	R->SetStringField(TEXT("note"), TEXT("Value applies for one input tick; call repeatedly to hold."));
+	return InjectionOkJson(R);
+}
+
+FString UInputService::InjectKey(const FString& KeyName, const FString& EventType)
+{
+	if (!GEditor || !GEditor->PlayWorld)
+	{
+		return InjectionErrorJson(TEXT("PIE_NOT_RUNNING"), TEXT("PIE is not running — inject_key targets the PIE game viewport."));
+	}
+	if (!FSlateApplication::IsInitialized())
+	{
+		return InjectionErrorJson(TEXT("NO_SLATE"), TEXT("Slate is not initialized."));
+	}
+
+	const FKey Key = FindKeyByName(KeyName);
+	if (!Key.IsValid())
+	{
+		return InjectionErrorJson(TEXT("UNKNOWN_KEY"), FString::Printf(TEXT("Unknown key '%s' — see get_available_keys."), *KeyName));
+	}
+
+	const bool bDown = EventType.Equals(TEXT("down"), ESearchCase::IgnoreCase) || EventType.Equals(TEXT("tap"), ESearchCase::IgnoreCase);
+	const bool bUp = EventType.Equals(TEXT("up"), ESearchCase::IgnoreCase) || EventType.Equals(TEXT("tap"), ESearchCase::IgnoreCase);
+	if (!bDown && !bUp)
+	{
+		return InjectionErrorJson(TEXT("BAD_EVENT"), FString::Printf(TEXT("Unknown event_type '%s' — use 'tap', 'down', or 'up'."), *EventType));
+	}
+
+	FSlateApplication& Slate = FSlateApplication::Get();
+	// Route the synthesized event to the game: Slate focus is app-internal, so this works even when
+	// the OS focus is elsewhere — the whole point versus SendKeys.
+	Slate.SetAllUserFocusToGameViewport();
+
+	bool bHandledDown = false;
+	bool bHandledUp = false;
+	if (bDown)
+	{
+		const FKeyEvent DownEvent(Key, FModifierKeysState(), /*UserIndex=*/0, /*bIsRepeat=*/false, /*CharacterCode=*/0, /*KeyCode=*/0);
+		bHandledDown = Slate.ProcessKeyDownEvent(const_cast<FKeyEvent&>(DownEvent));
+	}
+	if (bUp)
+	{
+		const FKeyEvent UpEvent(Key, FModifierKeysState(), /*UserIndex=*/0, /*bIsRepeat=*/false, /*CharacterCode=*/0, /*KeyCode=*/0);
+		bHandledUp = Slate.ProcessKeyUpEvent(const_cast<FKeyEvent&>(UpEvent));
+	}
+
+	TSharedRef<FJsonObject> R = MakeShared<FJsonObject>();
+	R->SetStringField(TEXT("key"), Key.GetFName().ToString());
+	R->SetStringField(TEXT("event"), EventType.ToLower());
+	R->SetBoolField(TEXT("handled_down"), bHandledDown);
+	R->SetBoolField(TEXT("handled_up"), bHandledUp);
+	return InjectionOkJson(R);
 }

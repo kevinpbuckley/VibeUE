@@ -18,7 +18,12 @@ param(
     # registered), so agents can chain the next MCP call without watching the file
     # themselves. Exit codes: 0 ready, 2 timed out, 3 editor exited before ready.
     [switch]$WaitForReady,
-    [int]$ReadyTimeoutSec = 120
+    [int]$ReadyTimeoutSec = 120,
+    # Map to open on launch (e.g. /Game/Maps/TrainingPool). Without this the editor opens the
+    # project's default map, which after a mid-task relaunch is usually the WRONG level — world
+    # edits then land on the default map (issue #554). The loaded map is also published in the
+    # readiness signal JSON as "currentMap" so agents can verify before editing.
+    [string]$Map = ""
 )
 
 # ============================================================================
@@ -276,7 +281,12 @@ Write-Host "Launching Unreal Editor..." -ForegroundColor Yellow
 # verbatim, so a path with a space (e.g. Documents\Unreal Projects, Unreal's default
 # location) arrives as two invalid arguments and the editor silently opens the last
 # project or the Project Browser instead (issue #532).
-$editorProcess = Start-Process -FilePath $editorExe -ArgumentList "`"$projectPath`"" -PassThru
+$editorArgs = "`"$projectPath`""
+if ($Map) {
+    $editorArgs += " `"$Map`""
+    Write-Host "Opening map: $Map" -ForegroundColor Yellow
+}
+$editorProcess = Start-Process -FilePath $editorExe -ArgumentList $editorArgs -PassThru
 
 # Windows recycles process IDs, so an Editor that crashed without running OnPreExit can leave a signal
 # file whose name matches the PID we just got. VibeUE also clears it in RegisterToolsets(), but that runs

@@ -19,6 +19,7 @@
 #include "UObject/UObjectIterator.h"
 #include "Utils/VibeUEPaths.h"
 #include "Utils/VibeUEReadinessSignal.h"
+#include "Utils/VibeUEHealthSignal.h"
 #include "Misc/Paths.h"
 #include "Misc/FileHelper.h"
 #include "PythonAPI/BehaviorTreeServiceInternal.h"
@@ -296,6 +297,25 @@ static FAutoConsoleCommandWithArgsAndOutputDevice GenerateAgentConfigCommand(
 	FConsoleCommandWithArgsAndOutputDeviceDelegate::CreateStatic(GenerateVibeUEAgentConfig)
 );
 
+// Re-scan Content/Skills and refresh the registered AgentSkill CDOs so skill edits are served
+// without an editor restart (issue #557). init_unreal.py upserts: existing classes get fresh
+// markdown, new packs register; deleted packs linger until the next launch.
+static FAutoConsoleCommand ReloadSkillsCommand(
+	TEXT("VibeUE.ReloadSkills"),
+	TEXT("Re-read Content/Skills markdown into the registered AgentSkills (no editor restart needed)."),
+	FConsoleCommandDelegate::CreateLambda([]()
+	{
+		IPythonScriptPlugin* Python = IPythonScriptPlugin::Get();
+		if (!Python || !Python->IsPythonAvailable())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("VibeUE.ReloadSkills: Python is not available."));
+			return;
+		}
+		const FString ScriptPath = FVibeUEPaths::GetPluginContentDir() / TEXT("Python") / TEXT("init_unreal.py");
+		Python->ExecPythonCommand(*ScriptPath);
+	})
+);
+
 void FModule::StartupModule()
 {
 	UE_LOG(LogTemp, Display, TEXT("VibeUE Module has started"));
@@ -401,6 +421,23 @@ void FModule::RegisterToolsets()
 
 	// Reaching the end of RegisterToolsets is the complete readiness contract.
 	FVibeUEReadinessSignal::Publish();
+
+	// Out-of-band liveness for agents: Epic's MCP endpoint runs on the game thread with no request
+	// timeout, so a wedged editor hangs clients for their full timeout. The heartbeat file lets an
+	// agent tell dead / wedged / healthy apart from the filesystem (issue #555).
+	FVibeUEHealthSignal::Start();
+
+#if WITH_EDITOR
+	// The signal's currentMap field must track map changes, not just the map loaded at startup —
+	// agents gate world edits on it after a relaunch (issue #554).
+	if (!OnMapOpenedHandle.IsValid())
+	{
+		OnMapOpenedHandle = FEditorDelegates::OnMapOpened.AddLambda([](const FString&, bool)
+		{
+			FVibeUEReadinessSignal::Publish();
+		});
+	}
+#endif
 }
 
 void FModule::HandleMCPRefreshTools()
@@ -413,6 +450,14 @@ void FModule::HandleMCPRefreshTools()
 
 void FModule::UnregisterToolsets()
 {
+#if WITH_EDITOR
+	if (OnMapOpenedHandle.IsValid())
+	{
+		FEditorDelegates::OnMapOpened.Remove(OnMapOpenedHandle);
+		OnMapOpenedHandle.Reset();
+	}
+#endif
+
 	if (OnRefreshToolsHandle.IsValid())
 	{
 		if (IModelContextProtocolModule* MCPModule = IModelContextProtocolModule::Get())
@@ -437,6 +482,7 @@ void FModule::UnregisterToolsets()
 
 void FModule::ShutdownModule()
 {
+	FVibeUEHealthSignal::Stop();
 	FVibeUEReadinessSignal::Remove();
 
 	// Release the BT node-class helper cache while FModuleManager / the asset registry still
@@ -465,6 +511,7 @@ void FModule::ShutdownModule()
 void FModule::OnPreExit()
 {
 	UE_LOG(LogTemp, Display, TEXT("VibeUE OnPreExit - cleaning up Python services"));
+	FVibeUEHealthSignal::Stop();
 	FVibeUEReadinessSignal::Remove();
 	
 	// Release all C++ Python service instances

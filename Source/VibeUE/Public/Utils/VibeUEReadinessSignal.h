@@ -15,10 +15,14 @@
  * The signal means only "toolset registration finished for THIS process". Python, World and level
  * readiness remain separate checks.
  *
- * The file carries real JSON (pid, createdUtc, sessionStartUtc, pluginVersion) so a watcher can tell
- * a fresh signal from one left behind by a crashed editor whose PID the OS later reused: compare
- * `sessionStartUtc` against the time you launched the process. It is written to a .tmp sibling and
- * moved into place, so a watcher never observes a half-written file.
+ * The file carries real JSON (pid, createdUtc, sessionStartUtc, pluginVersion, currentMap) so a
+ * watcher can tell a fresh signal from one left behind by a crashed editor whose PID the OS later
+ * reused: compare `sessionStartUtc` against the time you launched the process. It is written to a
+ * .tmp sibling and moved into place, so a watcher never observes a half-written file.
+ *
+ * `currentMap` is the package name of the loaded editor map ("" when no world is up yet). The signal
+ * is re-published on every map open (issue #554), so agents can gate world edits on the right level
+ * from the filesystem; `sessionStartUtc` stays stable across re-publishes, `createdUtc` does not.
  */
 class VIBEUE_API FVibeUEReadinessSignal
 {
@@ -32,8 +36,12 @@ public:
 	/** Approximate UTC start time of this editor process, derived from GStartTime. */
 	static FDateTime GetSessionStartUtc();
 
+	/** Package name of the currently loaded editor map, or "" when unavailable (no GEditor/world). */
+	static FString GetCurrentMapPackageName();
+
 	/** Build the signal payload. Pure — split out so automation tests can verify it headlessly. */
-	static FString BuildSignalJson(uint32 ProcessId, const FDateTime& SessionStartUtc, const FDateTime& CreatedUtc);
+	static FString BuildSignalJson(uint32 ProcessId, const FDateTime& SessionStartUtc, const FDateTime& CreatedUtc,
+		const FString& CurrentMap);
 
 	/** Write the signal for this process. Returns false (and logs) if the directory or file write fails. */
 	static bool Publish();

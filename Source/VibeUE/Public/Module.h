@@ -39,4 +39,7 @@ private:
 	bool bServicesInitialized = false;
 
 	FDelegateHandle OnRefreshToolsHandle;
+
+	// Re-publishes the readiness signal on map open so its currentMap field stays fresh (issue #554).
+	FDelegateHandle OnMapOpenedHandle;
 };
