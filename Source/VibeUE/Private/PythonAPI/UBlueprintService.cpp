@@ -4,6 +4,9 @@
 #include "PythonAPI/BlueprintTypeParser.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
+#include "Engine/Level.h"                // Level Blueprint resolution (LoadBlueprint on a map path)
+#include "Engine/LevelScriptBlueprint.h"
+#include "Engine/World.h"
 #include "Engine/SimpleConstructionScript.h"
 #include "Engine/SCS_Node.h"
 #include "WidgetBlueprint.h"
@@ -606,8 +609,31 @@ UBlueprint* UBlueprintService::LoadBlueprint(const FString& BlueprintPath)
 		return nullptr;
 	}
 
+	// Subobject paths (":" present) don't load through the asset library — resolve them
+	// directly. Covers explicit LevelScriptBlueprint paths like
+	// /Game/Maps/MyMap.MyMap:PersistentLevel.MyMap.
+	if (BlueprintPath.Contains(TEXT(":")))
+	{
+		return Cast<UBlueprint>(StaticLoadObject(UObject::StaticClass(), nullptr, *BlueprintPath));
+	}
+
 	UObject* LoadedObject = UEditorAssetLibrary::LoadAsset(BlueprintPath);
-	return Cast<UBlueprint>(LoadedObject);
+	if (UBlueprint* Blueprint = Cast<UBlueprint>(LoadedObject))
+	{
+		return Blueprint;
+	}
+
+	// A map/world path resolves to its persistent level's Level Blueprint, so every
+	// BlueprintService function works on level scripts by passing the map path.
+	if (const UWorld* World = Cast<UWorld>(LoadedObject))
+	{
+		if (World->PersistentLevel)
+		{
+			return World->PersistentLevel->GetLevelScriptBlueprint(/*bDontCreate*/ false);
+		}
+	}
+
+	return nullptr;
 }
 
 bool UBlueprintService::GetBlueprintInfo(const FString& BlueprintPath, FBlueprintDetailedInfo& OutInfo)

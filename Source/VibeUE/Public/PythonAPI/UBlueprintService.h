@@ -1062,7 +1062,10 @@ public:
 	/**
 	 * Get comprehensive blueprint information.
 	 *
-	 * @param BlueprintPath - Full path to the blueprint (e.g., "/Game/Blueprints/BP_Player_Test")
+	 * @param BlueprintPath - Full path to the blueprint (e.g., "/Game/Blueprints/BP_Player_Test").
+	 *   A map/world path (e.g., "/Game/Maps/MainMenu") resolves to that level's Level Blueprint —
+	 *   this applies to EVERY BlueprintService function that takes a BlueprintPath, so level
+	 *   scripts can be inspected and edited like any other Blueprint.
 	 * @param OutInfo - Structure containing all blueprint details (C++ only)
 	 * @return True if successful, false if blueprint not found or invalid
 	 *

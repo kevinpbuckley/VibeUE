@@ -36,6 +36,15 @@ related_skills:
 
 ## Critical Rules
 
+### Level Blueprints: pass the MAP path
+
+Every `unreal.BlueprintService.*` function that takes a `blueprint_path` also accepts a **map/world
+path** (e.g. `/Game/Maps/MainMenu`) and resolves it to that level's **Level Blueprint** — inspect and
+edit level scripts exactly like normal Blueprints. Explicit subobject paths
+(`/Game/Maps/MyMap.MyMap:PersistentLevel.MyMap`) work too. Compile still goes through
+`unreal.BlueprintEditorLibrary.compile_blueprint(...)` on the returned/loaded level script, and the
+MAP asset is what you save afterwards (`unreal.EditorAssetLibrary.save_asset("/Game/Maps/MyMap")`).
+
 ### ⚠️ Engine `BlueprintTools` args are `{refPath}` objects, NOT strings
 
 Every UObject/UClass argument to the engine `BlueprintTools` toolset (`blueprint`, `asset_type`,
