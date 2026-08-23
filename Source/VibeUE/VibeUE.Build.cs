@@ -44,6 +44,14 @@ public class VibeUE : ModuleRules
 			);
 		}
 
+		// EnvironmentQueryEditor is a PLUGIN (Engine/Plugins/AI/EnvironmentQueryEditor), not an
+		// engine module like BehaviorTreeEditor. It is EnabledByDefault, but a project may disable
+		// it, so the EQS service compiles to stubs rather than breaking the whole plugin's build.
+		bool bEqsEditorPresent = File.Exists(
+			Path.Combine(EngineDirectory, "Plugins", "AI", "EnvironmentQueryEditor",
+				"EnvironmentQueryEditor.uplugin"));
+		PrivateDefinitions.Add("WITH_VIBEUE_EQS=" + (bEqsEditorPresent ? "1" : "0"));
+
 		// Ensure proper debug symbol generation for PDB files
 		if (Target.Configuration == UnrealTargetConfiguration.Debug || 
 		    Target.Configuration == UnrealTargetConfiguration.DebugGame ||
@@ -156,6 +164,11 @@ public class VibeUE : ModuleRules
 				"TraceServices",       // For ITraceServicesModule / IAnalysisService (editor_control analyse action)
 				}
 			);
+
+			if (bEqsEditorPresent)
+			{
+				PrivateDependencyModuleNames.Add("EnvironmentQueryEditor");  // EQS service: UEnvironmentQueryGraph / GraphNode_{Root,Option,Test}
+			}
 		}
 		
 		DynamicallyLoadedModuleNames.AddRange(

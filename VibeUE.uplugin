@@ -82,6 +82,11 @@
 			"Name": "EOSShared",
 			"Enabled": true,
 			"Optional": true
+		},
+		{
+			"Name": "EnvironmentQueryEditor",
+			"Enabled": true,
+			"Optional": true
 		}
 	]
 }

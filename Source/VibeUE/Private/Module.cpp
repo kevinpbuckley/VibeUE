@@ -23,6 +23,9 @@
 #include "Misc/Paths.h"
 #include "Misc/FileHelper.h"
 #include "PythonAPI/BehaviorTreeServiceInternal.h"
+#if WITH_VIBEUE_EQS
+#include "PythonAPI/EnvQueryServiceInternal.h"
+#endif
 
 #define LOCTEXT_NAMESPACE "FModule"
 
@@ -488,6 +491,10 @@ void FModule::ShutdownModule()
 	// Release the BT node-class helper cache while FModuleManager / the asset registry still
 	// exist — ~FGraphNodeClassHelper unhooks their delegates, which is UB at static teardown.
 	VibeBT::ShutdownClassHelperCache();
+#if WITH_VIBEUE_EQS
+	// Same reason, same lifetime: the EQS service keeps its own FGraphNodeClassHelper cache.
+	VibeEQS::ShutdownClassHelperCache();
+#endif
 
 	if (!bServicesInitialized)
 	{
