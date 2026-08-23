@@ -79,7 +79,7 @@ when two areas seem to fit, the one that *excludes* your task is telling you whe
 | Functional area | Use for â€” **NOT** forâ€¦ | Load skill(s) |
 |---|---|---|
 | **Scene & actors** | place / move / arrange / organize / tag actors in a level â€” NOT gameplay logic (â†’ Blueprints), NOT world-scale terrain/foliage (â†’ Environment), NOT attaching a Niagara/particle component (â†’ VFX) | `level-actors` |
-| **Blueprints & gameplay logic** | author Blueprint classes & graphs, Enhanced Input, gameplay tags â€” NOT AI behavior (â†’ AI), NOT AnimBP graphs (â†’ Animation), NOT C++/source (coding-agent handoff) | `blueprints`, `blueprint-graphs`, `enhanced-input`, `gameplay-tags` |
+| **Blueprints & gameplay logic** | author Blueprint classes & graphs, Enhanced Input, gameplay tags, Gameplay Ability System (abilities/attributes/effects/cues) â€” NOT AI behavior (â†’ AI), NOT AnimBP graphs (â†’ Animation), NOT C++/source (coding-agent handoff) | `blueprints`, `blueprint-graphs`, `enhanced-input`, `gameplay-tags`, `gas` |
 | **AI** | author StateTree logic â€” states, tasks, transitions, event payloads, delegate bindings â€” NOT character body animation (â†’ Animation), NOT generic actor placement (â†’ Scene) | `state-trees` |
 | **Animation & rigging** | AnimBP state machines, AnimSequence keyframes, montages & AnimNotify wiring, bone/skeleton editing & retarget â€” NOT cinematic timelines (Epic Sequencer), NOT AI movement (â†’ AI), NOT authoring/adding sound assets â€” even a character's footstep sounds (â†’ Audio) | `animation-blueprint`, `animsequence`, `animation-editing`, `animation-montage`, `skeleton` |
 | **Materials & shading** | materials, instances, graph nodes, Custom HLSL â€” NOT Niagara particle materials (â†’ VFX), NOT landscape auto-materials (â†’ Environment) | `materials` |
@@ -152,6 +152,7 @@ called via `call_tool` (run `describe_toolset` for action names/params):
 | List / read / filter / tail UE logs | `LogsToolset` |
 | Search / open / save / move / import assets | `AssetTools` |
 | Single-tag gameplay-tag CRUD | `GameplayTagsToolset` (see `gameplay-tags` skill) |
+| Inspect a live Ability System (attributes/tags/effects/abilities), attribute-set discovery, gameplay cues | `GASToolsets.*` (see `gas` skill) |
 
 Performance/Insights tracing is the one net-new VibeUE service â€” `unreal.PerformanceService.*` (see
 the `profiling` skill) â€” because Unreal 5.8 ships no performance toolset.
