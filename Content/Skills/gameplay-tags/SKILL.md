@@ -23,8 +23,9 @@ keywords:
 
 Manage Unreal Engine Gameplay Tags. Core CRUD (add / remove / rename / list) is now owned by
 Unreal 5.8's native **`GameplayTagsToolset`** (call it via `call_tool`). VibeUE keeps only the
-delta the engine toolset does NOT provide — runtime hierarchy queries and bulk registration:
-`unreal.GameplayTagService.has_tag` / `get_tag_info` / `get_children` / `add_tags`.
+delta the engine toolset does NOT provide — runtime hierarchy queries, bulk registration, and
+tag-value lookup: `unreal.GameplayTagService.has_tag` / `get_tag_info` / `get_children` /
+`add_tags` / `request_tag` / `request_tag_container`.
 
 Tags are written to INI config **and** registered at runtime — they appear immediately in the editor tag picker without restart.
 
@@ -37,6 +38,7 @@ Tags are written to INI config **and** registered at runtime — they appear imm
 | Add / remove / rename a single tag, list all tags | engine **`GameplayTagsToolset`** via `call_tool` (run `describe_toolset` for its action names/params) |
 | Bulk-register many tags at once | `unreal.GameplayTagService.add_tags([...], comment, source)` |
 | Check existence | `unreal.GameplayTagService.has_tag(name)` |
+| **Obtain an FGameplayTag VALUE** for a tag-typed API | `unreal.GameplayTagService.request_tag(name)` / `request_tag_container(names)` — Python CANNOT construct `FGameplayTag` itself (`TagName` is read-only, `MakeLiteralGameplayTag` takes a tag). Use these for `has_matching_gameplay_tag`, `send_gameplay_event_to_actor`, `assign_tag_set_by_caller_magnitude`, tag-keyed `TMap` authoring, tag queries, etc. `request_tag` returns an invalid tag (never asserts) for unregistered names — check `.is_valid()` |
 | Detailed info (comment/source/redirect/child count) | `unreal.GameplayTagService.get_tag_info(name)` |
 | Direct children of a tag | `unreal.GameplayTagService.get_children(parent)` |
 
