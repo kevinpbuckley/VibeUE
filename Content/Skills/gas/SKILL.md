@@ -54,12 +54,14 @@ the routing map plus the live-verified gotchas.
   `asc = unreal.AbilitySystemLibrary.get_ability_system_component(actor)`.
 - **`FGameplayTag` cannot be constructed from raw Python**: `unreal.GameplayTag(tag_name=...)` is
   rejected, `TagName` is read-only via `set_editor_property`, and
-  `GameplayTagLibrary.make_literal_gameplay_tag` takes an FGameplayTag (circular). Consequence:
-  tag-parameter APIs (`asc.has_matching_gameplay_tag`, `send_gameplay_event_to_actor`) are
-  unusable from raw Python. Work around it:
-  - **reads** → Epic inspector `GetActiveTags` (returns tag names as strings);
-  - **event sending / tag checks** → call a project-side `BlueprintCallable` seam that owns the
-    tag (e.g. a controller method that sends the event), or hand off to C++.
+  `GameplayTagLibrary.make_literal_gameplay_tag` takes an FGameplayTag (circular).
+  **Use VibeUE's escape hatch**: `unreal.GameplayTagService.request_tag("A.B.C")` returns the real
+  registered tag VALUE (invalid tag for unknown names — check with
+  `GameplayTagLibrary.is_gameplay_tag_valid`), and `request_tag_container([...])` batches into a
+  container. That unlocks every tag-typed API: `asc.has_matching_gameplay_tag`,
+  `send_gameplay_event_to_actor`, `assign_tag_set_by_caller_magnitude`, tag-keyed `TMap`
+  authoring, and tag queries. For pure READS the Epic inspector `GetActiveTags` also returns tag
+  names as strings without needing tag values.
 - `asc.get_owned_gameplay_tags()` is NOT exposed. Use the inspector.
 - ASC `BlueprintCallable`s that take a **class** work fine:
   `asc.try_activate_ability_by_class(unreal.MyGA_Class)` — this is the reliable Python path to
