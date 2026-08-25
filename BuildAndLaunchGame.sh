@@ -86,6 +86,18 @@ fi
 
 project_root="$(dirname -- "$project_path")"
 project_name="$(basename -- "${project_path%.uproject}")"
+build_manifest="$project_root/Saved/VibeUE/last-build.json"
+
+write_build_manifest() {
+    local status="$1" exit_code="${2:-null}" diagnostic="${3:-}"
+    mkdir -p -- "$(dirname -- "$build_manifest")"
+    local completed="null"
+    [[ "$status" == "succeeded" || "$status" == "failed" || "$status" == "skipped" ]] && completed="\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\""
+    local temp="$build_manifest.tmp"
+    printf '{"schema":"vibeue.build.v1","status":"%s","projectFile":"%s","engineRoot":"%s","target":"%sEditor","platform":"%s","configuration":"%s","completedAtIso":%s,"exitCode":%s,"verdict":"%s","logPath":"","diagnostic":"%s"}\n' \
+        "$status" "$project_path" "$engine_root" "$project_name" "$platform" "$mode" "$completed" "$exit_code" "$status" "$diagnostic" > "$temp"
+    mv -f -- "$temp" "$build_manifest"
+}
 
 stop_editor() {
     local pids
@@ -131,7 +143,16 @@ elif [[ "$strict_rebuild" == true ]]; then
 fi
 
 if [[ "$skip_build" == false ]]; then
-    "$build_script" "${project_name}Editor" "$platform" "$mode" "$project_path" -waitmutex
+    write_build_manifest running null
+    if "$build_script" "${project_name}Editor" "$platform" "$mode" "$project_path" -waitmutex; then
+        write_build_manifest succeeded 0
+    else
+        code=$?
+        write_build_manifest failed "$code" "UnrealBuildTool returned a non-zero exit code."
+        exit "$code"
+    fi
+else
+    write_build_manifest skipped null "Build was skipped by caller; this is not compile verification."
 fi
 
 if [[ -n "$map" ]]; then

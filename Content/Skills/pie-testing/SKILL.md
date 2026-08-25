@@ -55,6 +55,34 @@ call_tool(toolset="EditorToolset.EditorAppToolset", tool="StopPIE")
 
 ## Standard Test Loop
 
+For repeatable multi-step verification, prefer `WorkflowService.run_scenario()` over hand-composing
+the loop. It queues a state machine on editor ticks, waits for actual PIE readiness, scopes log
+assertions to the scenario start, uses VibeUE's focus-free input injection, captures evidence, and
+always tears PIE down on pass, failure, or cancellation. Poll `get_scenario(id)` until its `status`
+is `passed`, `failed`, or `cancelled`:
+
+```python
+import json, unreal
+spec = {
+  "name": "secondary fire consumes ammo",
+  "preflight": {"save_dirty_assets": True, "compile_blueprints": ["/Game/Weapons/BP_Rifle"]},
+  "steps": [
+    {"action":"start_pie"},
+    {"action":"wait_for_pie", "timeout_seconds":30},
+    {"action":"inject_action", "path":"/Game/Input/IA_Fire_Secondary"},
+    {"action":"wait", "seconds":0.25},
+    {"action":"assert_log", "contains":"SecondaryFire"},
+    {"action":"capture_game", "name":"after-secondary-fire"}
+  ],
+  "teardown": {"stop_pie": True}
+}
+queued = json.loads(unreal.WorkflowService.run_scenario(json.dumps(spec)))
+# Poll in separate tool calls; do not block the editor game thread with time.sleep.
+```
+
+Use the lower-level primitives below for interactive investigation, one-off probes, or actions not in
+the scenario schema. Never spin/sleep inside one editor Python call while waiting for a scenario.
+
 ```
 # 1. Make sure you're starting from a clean state
 call_tool(toolset="EditorToolset.EditorAppToolset", tool="StopPIE")   # no-op if not running

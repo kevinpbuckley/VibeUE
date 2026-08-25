@@ -23,6 +23,7 @@
 #include "Misc/Paths.h"
 #include "Misc/FileHelper.h"
 #include "PythonAPI/BehaviorTreeServiceInternal.h"
+#include "PythonAPI/UWorkflowService.h"
 #if WITH_VIBEUE_EQS
 #include "PythonAPI/EnvQueryServiceInternal.h"
 #endif
@@ -332,6 +333,7 @@ void FModule::StartupModule()
 	}
 
 	bServicesInitialized = true;
+	UWorkflowService::InitializeJournal();
 
 	// Clear screenshots directory from previous sessions to save disk space
 	FVibeUEPaths::ClearScreenshotsDir();
@@ -485,6 +487,7 @@ void FModule::UnregisterToolsets()
 
 void FModule::ShutdownModule()
 {
+	UWorkflowService::ShutdownJournal();
 	FVibeUEHealthSignal::Stop();
 	FVibeUEReadinessSignal::Remove();
 
@@ -518,6 +521,7 @@ void FModule::ShutdownModule()
 void FModule::OnPreExit()
 {
 	UE_LOG(LogTemp, Display, TEXT("VibeUE OnPreExit - cleaning up Python services"));
+	UWorkflowService::ShutdownJournal();
 	FVibeUEHealthSignal::Stop();
 	FVibeUEReadinessSignal::Remove();
 	
