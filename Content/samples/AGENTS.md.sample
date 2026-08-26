@@ -5,6 +5,20 @@ into the engine's `ToolsetRegistry` and are reachable through the MCP tools you 
 
 **ALWAYS use the MCP tools / Python API for Unreal operations — NEVER read `.uasset` files from disk.**
 
+### Environment, evidence, and unattended work
+
+- Call `unreal.WorkflowService.get_environment()` before claiming Unreal source, UBT, a compiler,
+  or an engine installation is missing. Prefer the reported `engineSource.path` over memory or web
+  guesses about engine behavior.
+- C++ work is not complete without `lastBuild.status == "succeeded"` from a real build. A skipped,
+  missing, running, failed, or stale result is not verification. Use the plugin's
+  `BuildAndLaunchGame.ps1`/`.sh` when Live Coding is unsafe.
+- Wrap unattended mutations with `start_run(name, metadata)` and `finish_run(run_id, outcome,
+  summary)`. Attach scenario, build, and bulk-report artifacts; affected UObject packages are
+  deduplicated automatically while the run is active.
+- Use `run_scenario(spec_json)` for repeatable PIE input/assert/evidence loops and poll
+  `get_scenario(id)` from separate calls. Use the `bulk-maintenance` skill for dry-run-first batches.
+
 ---
 
 ## 1. The efficient interaction model (read this first)
