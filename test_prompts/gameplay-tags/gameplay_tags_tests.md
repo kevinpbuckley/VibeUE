@@ -90,3 +90,20 @@ Add an OnEvent transition from Idle to Patrol.
 Set the transition's event tag to "AI.StartPatrol".
 Compile and save.
 ```
+
+---
+
+### 10. Obtain a real FGameplayTag value for a tag-typed API (request_tag)
+
+```
+Using Python, get the FGameplayTag value for "Cube.StartChasing" via
+unreal.GameplayTagService.request_tag and prove it works end to end: call
+has_matching_gameplay_tag with it on any actor's AbilitySystemComponent (or
+build a container with request_tag_container(["Cube.StartChasing", "Cube.Idle"])
+and print its size). Then request a bogus name "Fake.DoesNotExist" and confirm
+the returned tag reports is_valid() == False without any assert or error.
+```
+
+Expected: request_tag returns a usable tag object (NOT constructible any other
+way from Python), container contains 2 tags, bogus name yields an invalid tag
+plus a LogGameplayTagService warning - never a crash.

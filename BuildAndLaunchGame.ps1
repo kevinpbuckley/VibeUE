@@ -119,6 +119,30 @@ if (-not $enginePath) {
 
 $buildBat  = Join-Path $enginePath "Engine\Build\BatchFiles\Build.bat"
 $editorExe = Join-Path $enginePath "Engine\Binaries\Win64\UnrealEditor.exe"
+$buildManifestPath = Join-Path $projectRoot "Saved\VibeUE\last-build.json"
+
+function Write-BuildManifest([string]$Status, [Nullable[int]]$ExitCode, [string]$Diagnostic = "") {
+    $manifestDir = Split-Path $buildManifestPath -Parent
+    New-Item -ItemType Directory -Path $manifestDir -Force | Out-Null
+    $payload = [ordered]@{
+        schema = "vibeue.build.v1"
+        status = $Status
+        projectFile = [IO.Path]::GetFullPath($projectPath)
+        engineRoot = [IO.Path]::GetFullPath($enginePath)
+        target = "${projectName}Editor"
+        platform = "Win64"
+        configuration = $Mode
+        command = "Build.bat ${projectName}Editor Win64 $Mode `"$projectPath`" -waitmutex"
+        completedAtIso = if ($Status -in @("succeeded", "failed", "skipped")) { [DateTime]::UtcNow.ToString("o") } else { $null }
+        exitCode = $ExitCode
+        verdict = $Status
+        logPath = Join-Path $env:LOCALAPPDATA "UnrealBuildTool\Log.txt"
+        diagnostic = $Diagnostic
+    }
+    $temp = "$buildManifestPath.tmp"
+    $payload | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $temp -Encoding UTF8
+    Move-Item -LiteralPath $temp -Destination $buildManifestPath -Force
+}
 
 Write-Host "=== $projectName Build and Launch Script ===" -ForegroundColor Cyan
 Write-Host "Script  : $PSScriptRoot" -ForegroundColor Gray
@@ -227,16 +251,19 @@ if ($StrictRebuild -and -not $Clean) {
 # Build the project
 if (-not $SkipBuild) {
     Write-Host "Building $projectName in $Mode mode (strict: warnings-as-errors via VibeUE.Build.cs)..." -ForegroundColor Yellow
+    Write-BuildManifest "running" $null
     
     & $buildBat "${projectName}Editor" Win64 $Mode $projectPath -waitmutex
     
     if ($LASTEXITCODE -ne 0) {
+        Write-BuildManifest "failed" $LASTEXITCODE "UnrealBuildTool returned a non-zero exit code."
         Write-Host "Build failed! Exit code: $LASTEXITCODE" -ForegroundColor Red
         exit 1
     }
-    
+    Write-BuildManifest "succeeded" 0
     Write-Host "Build completed successfully!" -ForegroundColor Green
 } else {
+    Write-BuildManifest "skipped" $null "Build was skipped by caller; this is not compile verification."
     Write-Host "Skipping build..." -ForegroundColor Yellow
 }
 

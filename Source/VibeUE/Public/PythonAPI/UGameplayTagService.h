@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "GameplayTagContainer.h"
 #include "ToolsetRegistry/ToolsetDefinition.h"
 #include "UGameplayTagService.generated.h"
 
@@ -135,6 +136,40 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|GameplayTags")
 	static TArray<FVibeGameplayTagInfo> GetChildren(const FString& ParentTag);
+
+	/**
+	 * Look up a registered gameplay tag by name and return the real FGameplayTag VALUE.
+	 *
+	 * This is the editor-scripting escape hatch: Python cannot construct an FGameplayTag
+	 * (the struct's TagName is read-only and BlueprintGameplayTagLibrary::MakeLiteralGameplayTag
+	 * takes a tag, not a string), which blocks every tag-typed engine API — e.g.
+	 * SendGameplayEventToActor, HasMatchingGameplayTag, AssignTagSetByCallerMagnitude,
+	 * and TMap<FGameplayTag, ...> authoring.
+	 *
+	 * Python:
+	 *   tag = unreal.GameplayTagService.request_tag("Ability.Fire")
+	 *   asc.has_matching_gameplay_tag(tag)
+	 *
+	 * @param TagName - Full tag name (redirects from renamed tags are applied)
+	 * @return The registered tag, or an INVALID tag (is_valid() false) when the name is
+	 *         not registered — never asserts.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|GameplayTags")
+	static FGameplayTag RequestTag(const FString& TagName);
+
+	/**
+	 * Look up several registered tags at once and return them as a container.
+	 * Unregistered names are skipped (see the log for which). Convenience for
+	 * container-typed APIs (tag queries, RemoveActiveEffectsWithGrantedTags, ...).
+	 *
+	 * Python:
+	 *   c = unreal.GameplayTagService.request_tag_container(["State.Stunned", "State.Rooted"])
+	 *
+	 * @param TagNames - Full tag names
+	 * @return Container holding every name that resolved to a registered tag
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|GameplayTags")
+	static FGameplayTagContainer RequestTagContainer(const TArray<FString>& TagNames);
 
 #if WITH_EDITOR
 	// =================================================================

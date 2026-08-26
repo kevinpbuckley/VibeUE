@@ -2,6 +2,7 @@
 
 #include "Utils/VibeUEReadinessSignal.h"
 #include "Utils/VibeUEPaths.h"
+#include "Utils/VibeUEEnvironment.h"
 #include "CoreGlobals.h"
 #if WITH_EDITOR
 #include "Editor.h"
@@ -73,6 +74,7 @@ FString FVibeUEReadinessSignal::BuildSignalJson(uint32 ProcessId, const FDateTim
 	Root->SetStringField(TEXT("sessionStartUtc"), SessionStartUtc.ToIso8601());
 	Root->SetStringField(TEXT("pluginVersion"), FVibeUEPaths::GetPluginVersionName());
 	Root->SetStringField(TEXT("currentMap"), CurrentMap);
+	Root->SetObjectField(TEXT("environment"), FVibeUEEnvironment::BuildObject());
 
 	FString Payload;
 	const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Payload);

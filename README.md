@@ -50,6 +50,9 @@ VibeUE **complements** them — it focuses on the domains and depth the engine d
   CRUD. Writes go through the editor EdGraph with PIE- and open-editor-aware refusal guards.
 - **Editor safety** — `TransactionService` wraps the editor's transaction buffer (undo / redo /
   checkpoints) so an agent can group and roll back its own edits — the engine's toolsets expose none.
+- **Verified workflows** — `WorkflowService` adds an authoritative engine/build manifest, durable
+  task journals with affected-asset provenance, asynchronous PIE scenarios (compile → input →
+  assertion → capture → guaranteed teardown), and dry-run-first resumable bulk maintenance.
 - **⚡ Performance & profiling** — VibeUE's standout: see the dedicated section below.
 - **Python-first access** — run any `unreal.*` Python in the editor and introspect the whole API.
 - **Web research** — search / fetch / geocode for in-context research and terrain workflows.
