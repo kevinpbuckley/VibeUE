@@ -1474,6 +1474,77 @@ bool USkeletonService::LearnFromAnimations(
 	return true;
 }
 
+bool USkeletonService::LearnFromAnimationReferences(const FString& SkeletonPath,
+	const TArray<FString>& AnimationPaths, int32 SamplesPerAnimation,
+	FLearnedConstraintsInfo& OutConstraints)
+{
+	OutConstraints = FLearnedConstraintsInfo();
+	USkeleton* Skeleton = LoadSkeleton(SkeletonPath);
+	if (!Skeleton || AnimationPaths.IsEmpty() || AnimationPaths.Num() > 32
+		|| SamplesPerAnimation < 1 || SamplesPerAnimation > 100) return false;
+	const FReferenceSkeleton& Ref = Skeleton->GetReferenceSkeleton();
+	if (Ref.GetNum() == 0) return false;
+	TArray<FString> Paths;
+	for (const FString& Path : AnimationPaths) Paths.AddUnique(Path);
+	Paths.Sort();
+	FLearnedConstraintsInfo Learned;
+	Learned.SkeletonPath = Skeleton->GetPathName();
+	Learned.bUseObservedLimits = true;
+	TArray<TArray<FRotator>> Samples;
+	Samples.SetNum(Ref.GetNum());
+	for (const FString& Path : Paths)
+	{
+		UAnimSequence* Anim = LoadObject<UAnimSequence>(nullptr, *Path);
+		if (!Anim || Anim->GetSkeleton() != Skeleton) return false;
+		const FString CanonicalPath = Anim->GetPathName();
+		if (Learned.SourceAnimations.Contains(CanonicalPath)) continue;
+		Learned.SourceAnimations.Add(CanonicalPath);
+		for (int32 Sample = 0; Sample < SamplesPerAnimation; ++Sample)
+		{
+			const double Time = SamplesPerAnimation == 1 ? 0.0
+				: Anim->GetPlayLength() * static_cast<double>(Sample) / (SamplesPerAnimation - 1);
+			FAnimExtractContext Context(Time);
+			for (int32 Bone = 0; Bone < Ref.GetNum(); ++Bone)
+			{
+				FTransform Transform;
+				Anim->GetBoneTransform(Transform, FSkeletonPoseBoneIndex(Bone), Context, true);
+				if (Transform.ContainsNaN()) return false;
+				Samples[Bone].Add(Transform.GetRotation().Rotator());
+				++Learned.TotalSamples;
+			}
+		}
+	}
+	Learned.SourceAnimations.Sort();
+	Learned.AnimationCount = Learned.SourceAnimations.Num();
+	for (int32 Bone = 0; Bone < Ref.GetNum(); ++Bone)
+	{
+		TArray<float> Pitch, Yaw, Roll;
+		for (const FRotator& Rotation : Samples[Bone])
+		{
+			Pitch.Add(Rotation.Pitch); Yaw.Add(Rotation.Yaw); Roll.Add(Rotation.Roll);
+		}
+		Pitch.Sort(); Yaw.Sort(); Roll.Sort();
+		FLearnedBoneRange Range;
+		Range.BoneName = Ref.GetBoneName(Bone).ToString();
+		Range.SampleCount = Pitch.Num();
+		Range.MinRotation = FRotator(Pitch[0], Yaw[0], Roll[0]);
+		Range.MaxRotation = FRotator(Pitch.Last(), Yaw.Last(), Roll.Last());
+		const int32 Low = Range.SampleCount * 5 / 100;
+		const int32 High = FMath::Min(Range.SampleCount - 1, Range.SampleCount * 95 / 100);
+		Range.Percentile5 = FRotator(Pitch[Low], Yaw[Low], Roll[Low]);
+		Range.Percentile95 = FRotator(Pitch[High], Yaw[High], Roll[High]);
+		Learned.BoneRanges.Add(Range);
+	}
+	OutConstraints = Learned;
+	CachedLearnedConstraints.Add(SkeletonPath, Learned);
+	if (CachedSkeletonProfiles.Contains(SkeletonPath))
+	{
+		CachedSkeletonProfiles[SkeletonPath].bHasLearnedConstraints = true;
+		CachedSkeletonProfiles[SkeletonPath].LearnedRanges = Learned.BoneRanges;
+	}
+	return true;
+}
+
 bool USkeletonService::GetLearnedConstraints(const FString& SkeletonPath, FLearnedConstraintsInfo& OutConstraints)
 {
 	if (CachedLearnedConstraints.Contains(SkeletonPath))
@@ -1555,8 +1626,8 @@ bool USkeletonService::ValidateBoneRotation(
 			if (Range.BoneName.Equals(BoneName, ESearchCase::IgnoreCase))
 			{
 				// Use safe percentile range
-				MinLimit = Range.Percentile5;
-				MaxLimit = Range.Percentile95;
+				MinLimit = Learned.bUseObservedLimits ? Range.MinRotation : Range.Percentile5;
+				MaxLimit = Learned.bUseObservedLimits ? Range.MaxRotation : Range.Percentile95;
 				bFound = true;
 				break;
 			}
