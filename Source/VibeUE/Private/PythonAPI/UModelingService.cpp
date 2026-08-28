@@ -56,6 +56,13 @@
 #include "UObject/Package.h"
 #include "UObject/StrongObjectPtr.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "AssetImportTask.h"
+#include "AssetToolsModule.h"
+#include "IAssetTools.h"
+#include "Math/RandomStream.h"
+#include "Misc/Paths.h"
+#include "Modules/ModuleManager.h"
+#include "Selections/MeshConnectedComponents.h"
 #include "DynamicMesh/DynamicBoneAttribute.h"
 #include "DynamicMesh/DynamicVertexSkinWeightsAttribute.h"
 #include "Engine/SkinnedAssetCommon.h"
@@ -1757,6 +1764,59 @@ FModelingResult UModelingService::SetLODs(const FString& AssetPath, const TArray
 	return R;
 }
 
+namespace
+{
+	/** Shared tail of every bake: run the baker, then save one Texture2D asset per requested type (T_<BaseName>_<Suffix>). */
+	FModelingBakeResult RunBake(UDynamicMesh* Target, UDynamicMesh* Source, const TArray<FGeometryScriptBakeTypeOptions>& Types, const TArray<FString>& Suffixes,
+		int32 Resolution, const FString& OutputFolder, const FString& BaseName, int32 TargetUVLayer, int32 SamplesPerPixel)
+	{
+		FModelingBakeResult Result;
+		FGeometryScriptBakeTargetMeshOptions TargetOptions;
+		TargetOptions.TargetUVLayer = TargetUVLayer;
+		FGeometryScriptBakeSourceMeshOptions SourceOptions;
+		FGeometryScriptBakeTextureOptions BakeOptions;
+		if (!ParseEnum(FString::Printf(TEXT("Resolution%d"), Resolution), BakeOptions.Resolution))
+		{
+			Result.Message = FString::Printf(TEXT("Unsupported resolution %d (use a power of two from 16 to 8192)"), Resolution);
+			return Result;
+		}
+		if (!ParseEnum(FString::Printf(TEXT("Sample%d"), SamplesPerPixel), BakeOptions.SamplesPerPixel))
+		{
+			BakeOptions.SamplesPerPixel = EGeometryScriptBakeSamplesPerPixel::Sample1;
+		}
+		UGeometryScriptDebug* Debug = NewDebug();
+		// The baker samples through the target's tangent frame; session meshes rarely carry tangents yet.
+		UGeometryScriptLibrary_MeshNormalsFunctions::ComputeTangents(Target, FGeometryScriptTangentsOptions(), Debug);
+		const TArray<UTexture2D*> Textures = UGeometryScriptLibrary_MeshBakeFunctions::BakeTexture(Target, FTransform::Identity, TargetOptions,
+			Source, FTransform::Identity, SourceOptions, Types, BakeOptions, Debug);
+		if (DebugHasErrors(Debug) || Textures.Num() != Types.Num())
+		{
+			Result.Message = FString::Printf(TEXT("Bake failed: %s"), *DebugText(Debug));
+			return Result;
+		}
+		for (int32 i = 0; i < Textures.Num(); ++i)
+		{
+			if (!Textures[i]) { continue; }
+			FGeometryScriptCreateNewTexture2DAssetOptions TextureOptions;
+			TextureOptions.bOverwriteIfExists = true;
+			EGeometryScriptOutcomePins Outcome = EGeometryScriptOutcomePins::Failure;
+			const FString AssetPath = OutputFolder / FString::Printf(TEXT("T_%s_%s"), *BaseName, *Suffixes[i]);
+			UTexture2D* Saved = UGeometryScriptLibrary_CreateNewAssetFunctions::CreateNewTexture2DAsset(Textures[i], AssetPath, TextureOptions, Outcome, Debug);
+			if (Outcome != EGeometryScriptOutcomePins::Success || !Saved)
+			{
+				Result.Message = FString::Printf(TEXT("Could not save %s: %s"), *AssetPath, *DebugText(Debug));
+				return Result;
+			}
+			Saved->BlockOnAnyAsyncBuild();   // the texture compiles asynchronously; finish it so a save or delete right after cannot race it
+			UEditorAssetLibrary::SaveAsset(Saved->GetPathName(), false);
+			Result.TexturePaths.Add(Saved->GetPathName());
+		}
+		Result.bSuccess = true;
+		Result.Message = FString::Printf(TEXT("Baked %d texture(s) at %d"), Result.TexturePaths.Num(), Resolution);
+		return Result;
+	}
+}
+
 FModelingBakeResult UModelingService::BakeTextures(int32 TargetHandle, int32 SourceHandle, const FString& BakeTypes, int32 Resolution, const FString& OutputFolder,
 	const FString& BaseName, int32 TargetUVLayer, int32 SamplesPerPixel)
 {
@@ -1781,54 +1841,54 @@ FModelingBakeResult UModelingService::BakeTextures(int32 TargetHandle, int32 Sou
 		else if (Name.Equals(TEXT("AmbientOcclusion"), ESearchCase::IgnoreCase)) { Types.Add(UGeometryScriptLibrary_MeshBakeFunctions::MakeBakeTypeAmbientOcclusion()); Suffixes.Add(TEXT("AO")); }
 		else if (Name.Equals(TEXT("Curvature"), ESearchCase::IgnoreCase)) { Types.Add(UGeometryScriptLibrary_MeshBakeFunctions::MakeBakeTypeCurvature()); Suffixes.Add(TEXT("Curv")); }
 		else if (Name.Equals(TEXT("Position"), ESearchCase::IgnoreCase)) { Types.Add(UGeometryScriptLibrary_MeshBakeFunctions::MakeBakeTypePosition()); Suffixes.Add(TEXT("Pos")); }
-		else { Result.Message = FString::Printf(TEXT("Unknown bake type '%s' (use TangentNormal, ObjectNormal, FaceNormal, BentNormal, AmbientOcclusion, Curvature, Position)"), *Name); return Result; }
-	}
-	if (Types.Num() == 0) { Result.Message = TEXT("No bake types given"); return Result; }
-
-	FGeometryScriptBakeTargetMeshOptions TargetOptions;
-	TargetOptions.TargetUVLayer = TargetUVLayer;
-	FGeometryScriptBakeSourceMeshOptions SourceOptions;
-	FGeometryScriptBakeTextureOptions BakeOptions;
-	if (!ParseEnum(FString::Printf(TEXT("Resolution%d"), Resolution), BakeOptions.Resolution))
-	{
-		Result.Message = FString::Printf(TEXT("Unsupported resolution %d (use a power of two from 16 to 8192)"), Resolution);
-		return Result;
-	}
-	if (!ParseEnum(FString::Printf(TEXT("Sample%d"), SamplesPerPixel), BakeOptions.SamplesPerPixel))
-	{
-		BakeOptions.SamplesPerPixel = EGeometryScriptBakeSamplesPerPixel::Sample1;
-	}
-
-	UGeometryScriptDebug* Debug = NewDebug();
-	// The baker samples through the target's tangent frame; session meshes rarely carry tangents yet.
-	UGeometryScriptLibrary_MeshNormalsFunctions::ComputeTangents(Target, FGeometryScriptTangentsOptions(), Debug);
-	const TArray<UTexture2D*> Textures = UGeometryScriptLibrary_MeshBakeFunctions::BakeTexture(Target, FTransform::Identity, TargetOptions,
-		Source, FTransform::Identity, SourceOptions, Types, BakeOptions, Debug);
-	if (DebugHasErrors(Debug) || Textures.Num() != Types.Num())
-	{
-		Result.Message = FString::Printf(TEXT("Bake failed: %s"), *DebugText(Debug));
-		return Result;
-	}
-	for (int32 i = 0; i < Textures.Num(); ++i)
-	{
-		if (!Textures[i]) { continue; }
-		FGeometryScriptCreateNewTexture2DAssetOptions TextureOptions;
-		TextureOptions.bOverwriteIfExists = true;
-		EGeometryScriptOutcomePins Outcome = EGeometryScriptOutcomePins::Failure;
-		const FString AssetPath = OutputFolder / FString::Printf(TEXT("T_%s_%s"), *BaseName, *Suffixes[i]);
-		UTexture2D* Saved = UGeometryScriptLibrary_CreateNewAssetFunctions::CreateNewTexture2DAsset(Textures[i], AssetPath, TextureOptions, Outcome, Debug);
-		if (Outcome != EGeometryScriptOutcomePins::Success || !Saved)
+		else if (Name.Equals(TEXT("VertexColor"), ESearchCase::IgnoreCase)) { Types.Add(UGeometryScriptLibrary_MeshBakeFunctions::MakeBakeTypeVertexColor()); Suffixes.Add(TEXT("VC")); }
+		else if (Name.Equals(TEXT("MaterialID"), ESearchCase::IgnoreCase)) { Types.Add(UGeometryScriptLibrary_MeshBakeFunctions::MakeBakeTypeMaterialID()); Suffixes.Add(TEXT("ID")); }
+		else if (Name.Equals(TEXT("UVShell"), ESearchCase::IgnoreCase)) { Types.Add(UGeometryScriptLibrary_MeshBakeFunctions::MakeBakeTypeUVShell(TargetUVLayer, 1.f, FLinearColor::White, FLinearColor(0.25f, 0.25f, 0.25f), FLinearColor::Black)); Suffixes.Add(TEXT("UV")); }
+		else if (Name.Equals(TEXT("Height"), ESearchCase::IgnoreCase)) { Types.Add(UGeometryScriptLibrary_MeshBakeFunctions::MakeBakeTypeHeight()); Suffixes.Add(TEXT("H")); }
+		else
 		{
-			Result.Message = FString::Printf(TEXT("Could not save %s: %s"), *AssetPath, *DebugText(Debug));
+			Result.Message = FString::Printf(TEXT("Unknown bake type '%s' (use TangentNormal, ObjectNormal, FaceNormal, BentNormal, AmbientOcclusion, Curvature, Position, VertexColor, MaterialID, UVShell, Height; textures via bake_texture_transfer)"), *Name);
 			return Result;
 		}
-		Saved->BlockOnAnyAsyncBuild();   // the texture compiles asynchronously; finish it so a save or delete right after cannot race it
-		UEditorAssetLibrary::SaveAsset(Saved->GetPathName(), false);
-		Result.TexturePaths.Add(Saved->GetPathName());
 	}
-	Result.bSuccess = true;
-	Result.Message = FString::Printf(TEXT("Baked %d texture(s) at %d"), Result.TexturePaths.Num(), Resolution);
-	return Result;
+	if (Types.Num() == 0) { Result.Message = TEXT("No bake types given"); return Result; }
+	return RunBake(Target, Source, Types, Suffixes, Resolution, OutputFolder, BaseName, TargetUVLayer, SamplesPerPixel);
+}
+
+FModelingBakeResult UModelingService::BakeTextureTransfer(int32 TargetHandle, int32 SourceHandle, const FString& SourceTexturePaths, int32 Resolution, const FString& OutputFolder,
+	const FString& BaseName, int32 TargetUVLayer, int32 SourceUVLayer, int32 SamplesPerPixel)
+{
+	FModelingBakeResult Result;
+	UDynamicMesh* Target = FindMesh(TargetHandle);
+	if (!Target) { Result.Message = NoMesh(TargetHandle).Message; return Result; }
+	UDynamicMesh* Source = FindMesh(SourceHandle);
+	if (!Source) { Result.Message = NoMesh(SourceHandle).Message; return Result; }
+	if (!OutputFolder.StartsWith(TEXT("/")) || BaseName.IsEmpty()) { Result.Message = TEXT("OutputFolder must be a content path (e.g. /Game/Textures) and BaseName non-empty"); return Result; }
+	TArray<FString> Paths;
+	SourceTexturePaths.ParseIntoArray(Paths, TEXT(","), true);
+	TArray<UTexture2D*> Textures;
+	for (FString& Path : Paths)
+	{
+		Path.TrimStartAndEndInline();
+		if (Path.IsEmpty()) { continue; }
+		UTexture2D* Texture = LoadAssetAs<UTexture2D>(Path);
+		if (!Texture) { Result.Message = FString::Printf(TEXT("Texture2D not found: %s"), *Path); return Result; }
+		Textures.Add(Texture);
+	}
+	if (Textures.Num() == 0) { Result.Message = TEXT("SourceTexturePaths must list at least one Texture2D asset (comma-separated, in source material-ID order for several)"); return Result; }
+	TArray<FGeometryScriptBakeTypeOptions> Types;
+	TArray<FString> Suffixes;
+	if (Textures.Num() == 1)
+	{
+		Types.Add(UGeometryScriptLibrary_MeshBakeFunctions::MakeBakeTypeTexture(Textures[0], SourceUVLayer));
+		Suffixes.Add(TEXT("Tex"));
+	}
+	else
+	{
+		Types.Add(UGeometryScriptLibrary_MeshBakeFunctions::MakeBakeTypeMultiTexture(Textures, SourceUVLayer));
+		Suffixes.Add(TEXT("MultiTex"));
+	}
+	return RunBake(Target, Source, Types, Suffixes, Resolution, OutputFolder, BaseName, TargetUVLayer, SamplesPerPixel);
 }
 
 FModelingResult UModelingService::SpawnStaticMeshActor(const FString& AssetPath, FTransform Transform, const FString& ActorLabel)
@@ -2467,5 +2527,557 @@ FModelingResult UModelingService::SetAssetMaterials(const FString& AssetPath, co
 	R.bSuccess = true;
 	R.AssetPath = AssetPath;
 	R.Message = FString::Printf(TEXT("Assigned %d material slot(s) on %s"), Materials.Num(), *AssetPath);
+	return R;
+}
+
+// =========================================================================
+// UV control
+// =========================================================================
+
+namespace
+{
+	FGeometryScriptGroupLayer DefaultGroupLayer()
+	{
+		FGeometryScriptGroupLayer Layer;
+		Layer.bDefaultLayer = true;
+		return Layer;
+	}
+
+	/** Case-insensitive enum lookup so "Polygroups" finds PolyGroups. */
+	template <typename TEnum>
+	bool ParseEnumLoose(const FString& Name, TEnum& Out)
+	{
+		const UEnum* E = StaticEnum<TEnum>();
+		const FString Wanted = Name.TrimStartAndEnd();
+		for (int32 i = 0; i < E->NumEnums() - 1; ++i)
+		{
+			if (E->GetNameStringByIndex(i).Equals(Wanted, ESearchCase::IgnoreCase))
+			{
+				Out = static_cast<TEnum>(E->GetValueByIndex(i));
+				return true;
+			}
+		}
+		return false;
+	}
+
+	int32 NumUVLayers(UDynamicMesh* Mesh)
+	{
+		int32 Num = 0;
+		Mesh->ProcessMesh([&Num](const FDynamicMesh3& M) { Num = M.HasAttributes() ? M.Attributes()->NumUVLayers() : 0; });
+		return Num;
+	}
+
+	FGeometryScriptMeshSelection SelectionForMaterial(UDynamicMesh* Mesh, int32 MaterialID)
+	{
+		TArray<int32> TriangleIDs;
+		Mesh->ProcessMesh([&](const FDynamicMesh3& M)
+		{
+			if (!M.HasAttributes() || !M.Attributes()->HasMaterialID()) { return; }
+			const FDynamicMeshMaterialAttribute* Materials = M.Attributes()->GetMaterialID();
+			for (const int32 Tid : M.TriangleIndicesItr())
+			{
+				if (Materials->GetValue(Tid) == MaterialID) { TriangleIDs.Add(Tid); }
+			}
+		});
+		FGeometryScriptMeshSelection Selection;
+		UGeometryScriptLibrary_MeshSelectionFunctions::ConvertIndexArrayToMeshSelection(Mesh, TriangleIDs, EGeometryScriptMeshSelectionType::Triangles, Selection);
+		return Selection;
+	}
+}
+
+FModelingResult UModelingService::SetPolygroup(int32 Handle, const FString& SelectionName, int32 GroupID)
+{
+	UDynamicMesh* Mesh = FindMesh(Handle);
+	if (!Mesh) { return NoMesh(Handle); }
+	FGeometryScriptMeshSelection Selection;
+	FString Error;
+	if (!ResolveSelection(Handle, SelectionName, Mesh, Selection, Error)) { return Fail(Handle, Error); }
+	Mesh->EditMesh([](FDynamicMesh3& M)
+	{
+		if (!M.HasTriangleGroups()) { M.EnableTriangleGroups(0); }
+	});
+	UGeometryScriptDebug* Debug = NewDebug();
+	int32 SetID = 0;
+	UGeometryScriptLibrary_MeshPolygroupFunctions::SetPolygroupForMeshSelection(Mesh, DefaultGroupLayer(), Selection, SetID, FMath::Max(0, GroupID), GroupID < 0, false);
+	return Finish(Handle, Mesh, Debug, FString::Printf(TEXT("Selection '%s' is now polygroup %d"), *SelectionName, SetID));
+}
+
+FModelingResult UModelingService::RecomputeUVs(int32 Handle, int32 UVLayer, const FString& IslandSource, const FString& Method, const FString& SelectionName, bool bAlignIslandsWithAxes)
+{
+	UDynamicMesh* Mesh = FindMesh(Handle);
+	if (!Mesh) { return NoMesh(Handle); }
+	FGeometryScriptMeshSelection Selection;
+	FString Error;
+	if (!ResolveSelection(Handle, SelectionName, Mesh, Selection, Error)) { return Fail(Handle, Error); }
+	FGeometryScriptRecomputeUVsOptions Options;
+	if (!ParseEnumLoose(IslandSource, Options.IslandSource))
+	{
+		return Fail(Handle, FString::Printf(TEXT("Unknown island source '%s' (use %s)"), *IslandSource, *EnumNames<EGeometryScriptUVIslandSource>()));
+	}
+	if (!ParseEnumLoose(Method, Options.Method))
+	{
+		return Fail(Handle, FString::Printf(TEXT("Unknown unwrap method '%s' (use %s)"), *Method, *EnumNames<EGeometryScriptUVFlattenMethod>()));
+	}
+	Options.GroupLayer = DefaultGroupLayer();
+	Options.bAutoAlignIslandsWithAxes = bAlignIslandsWithAxes;
+	if (UVLayer >= NumUVLayers(Mesh)) { SetNumUVLayers(Handle, UVLayer + 1); }
+	UGeometryScriptDebug* Debug = NewDebug();
+	UGeometryScriptLibrary_MeshUVFunctions::RecomputeMeshUVs(Mesh, UVLayer, Options, Selection, Debug);
+	return Finish(Handle, Mesh, Debug, FString::Printf(TEXT("Recomputed UV layer %d from %s (%s) - islands are not packed yet, run layout_uv"), UVLayer, *IslandSource, *Method));
+}
+
+FModelingResult UModelingService::TransformUV(int32 Handle, int32 UVLayer, const FString& SelectionName, FVector2D Translation, FVector2D Scale, float RotationDeg, FVector2D Origin)
+{
+	UDynamicMesh* Mesh = FindMesh(Handle);
+	if (!Mesh) { return NoMesh(Handle); }
+	FGeometryScriptMeshSelection Selection;
+	FString Error;
+	if (!ResolveSelection(Handle, SelectionName, Mesh, Selection, Error)) { return Fail(Handle, Error); }
+	if (UVLayer < 0 || UVLayer >= NumUVLayers(Mesh)) { return Fail(Handle, FString::Printf(TEXT("UV layer %d does not exist (mesh has %d)"), UVLayer, NumUVLayers(Mesh))); }
+	UGeometryScriptDebug* Debug = NewDebug();
+	if (!Scale.Equals(FVector2D(1, 1)))
+	{
+		UGeometryScriptLibrary_MeshUVFunctions::ScaleMeshUVs(Mesh, UVLayer, Scale, Origin, Selection, Debug);
+	}
+	if (!FMath::IsNearlyZero(RotationDeg))
+	{
+		UGeometryScriptLibrary_MeshUVFunctions::RotateMeshUVs(Mesh, UVLayer, RotationDeg, Origin, Selection, Debug);
+	}
+	if (!Translation.IsNearlyZero())
+	{
+		UGeometryScriptLibrary_MeshUVFunctions::TranslateMeshUVs(Mesh, UVLayer, Translation, Selection, Debug);
+	}
+	return Finish(Handle, Mesh, Debug, FString::Printf(TEXT("Transformed UVs of '%s' in layer %d"), *SelectionName, UVLayer));
+}
+
+FModelingResult UModelingService::LayoutUV(int32 Handle, int32 UVLayer, const FString& LayoutType, const FString& SelectionName, int32 TextureResolution, float Scale, FVector2D Translation)
+{
+	UDynamicMesh* Mesh = FindMesh(Handle);
+	if (!Mesh) { return NoMesh(Handle); }
+	FGeometryScriptMeshSelection Selection;
+	FString Error;
+	if (!ResolveSelection(Handle, SelectionName, Mesh, Selection, Error)) { return Fail(Handle, Error); }
+	if (UVLayer < 0 || UVLayer >= NumUVLayers(Mesh)) { return Fail(Handle, FString::Printf(TEXT("UV layer %d does not exist (mesh has %d)"), UVLayer, NumUVLayers(Mesh))); }
+	FGeometryScriptLayoutUVsOptions Options;
+	if (!ParseEnumLoose(LayoutType, Options.LayoutType))
+	{
+		return Fail(Handle, FString::Printf(TEXT("Unknown layout type '%s' (use %s)"), *LayoutType, *EnumNames<EGeometryScriptUVLayoutType>()));
+	}
+	Options.TextureResolution = FMath::Clamp(TextureResolution, 16, 16384);
+	Options.Scale = Scale;
+	Options.Translation = Translation;
+	UGeometryScriptDebug* Debug = NewDebug();
+	UGeometryScriptLibrary_MeshUVFunctions::LayoutMeshUVs(Mesh, UVLayer, Options, Selection, Debug);
+	return Finish(Handle, Mesh, Debug, FString::Printf(TEXT("%s layout of UV layer %d"), *LayoutType, UVLayer));
+}
+
+FModelingResult UModelingService::PackUVPerMaterial(int32 Handle, int32 UVLayer, int32 TextureResolution)
+{
+	UDynamicMesh* Mesh = FindMesh(Handle);
+	if (!Mesh) { return NoMesh(Handle); }
+	if (UVLayer < 0 || UVLayer >= NumUVLayers(Mesh)) { return Fail(Handle, FString::Printf(TEXT("UV layer %d does not exist (mesh has %d)"), UVLayer, NumUVLayers(Mesh))); }
+	TSet<int32> MaterialIDs;
+	Mesh->ProcessMesh([&MaterialIDs](const FDynamicMesh3& M)
+	{
+		if (!M.HasAttributes() || !M.Attributes()->HasMaterialID()) { return; }
+		for (const int32 Tid : M.TriangleIndicesItr()) { MaterialIDs.Add(M.Attributes()->GetMaterialID()->GetValue(Tid)); }
+	});
+	if (MaterialIDs.Num() == 0) { return Fail(Handle, TEXT("Mesh has no material IDs (set_material_id first) - use layout_uv for a single-material pack")); }
+	FGeometryScriptLayoutUVsOptions Options;
+	Options.LayoutType = EGeometryScriptUVLayoutType::Repack;
+	Options.TextureResolution = FMath::Clamp(TextureResolution, 16, 16384);
+	UGeometryScriptDebug* Debug = NewDebug();
+	for (const int32 MaterialID : MaterialIDs)
+	{
+		UGeometryScriptLibrary_MeshUVFunctions::LayoutMeshUVs(Mesh, UVLayer, Options, SelectionForMaterial(Mesh, MaterialID), Debug);
+	}
+	return Finish(Handle, Mesh, Debug, FString::Printf(TEXT("Packed UV layer %d separately for %d material ID(s) - each slot now uses the full 0-1 range"), UVLayer, MaterialIDs.Num()));
+}
+
+FModelingUVStats UModelingService::GetUVStats(int32 Handle, int32 UVLayer, int32 GridResolution)
+{
+	FModelingUVStats Stats;
+	UDynamicMesh* Mesh = FindMesh(Handle);
+	if (!Mesh) { Stats.Message = NoMesh(Handle).Message; return Stats; }
+	if (UVLayer < 0 || UVLayer >= NumUVLayers(Mesh)) { Stats.Message = FString::Printf(TEXT("UV layer %d does not exist (mesh has %d)"), UVLayer, NumUVLayers(Mesh)); return Stats; }
+
+	FGeometryScriptMeshSelection All;
+	UGeometryScriptLibrary_MeshSelectionFunctions::CreateSelectAllMeshSelection(Mesh, All, EGeometryScriptMeshSelectionType::Triangles);
+	double MeshArea = 0.0, UVArea = 0.0;
+	FBox MeshBounds(ForceInit);
+	FBox2D UVBounds(ForceInit);
+	bool bValid = false, bUnset = false;
+	UGeometryScriptLibrary_MeshUVFunctions::GetMeshUVSizeInfo(Mesh, UVLayer, All, MeshArea, UVArea, MeshBounds, UVBounds, bValid, bUnset, true, nullptr);
+	Stats.MeshArea = static_cast<float>(MeshArea);
+	Stats.UVArea = static_cast<float>(UVArea);
+	Stats.UVBoundsMin = UVBounds.Min;
+	Stats.UVBoundsMax = UVBounds.Max;
+	Stats.TexelsPerCmAt1K = MeshArea > 0.0 ? static_cast<float>(FMath::Sqrt(UVArea / MeshArea) * 1024.0) : 0.f;
+
+	const int32 Res = FMath::Clamp(GridResolution, 16, 4096);
+	TArray<uint8> Hits;
+	Hits.SetNumZeroed(Res * Res);
+	Mesh->ProcessMesh([&](const FDynamicMesh3& M)
+	{
+		const FDynamicMeshUVOverlay* UV = M.Attributes()->GetUVLayer(UVLayer);
+		if (!UV) { return; }
+		FMeshConnectedComponents Components(&M);
+		Components.FindConnectedTriangles([UV](int32 T0, int32 T1) { return UV->AreTrianglesConnected(T0, T1); });
+		Stats.NumIslands = Components.Num();
+		for (const int32 Tid : M.TriangleIndicesItr())
+		{
+			if (!UV->IsSetTriangle(Tid)) { ++Stats.NumUnsetTriangles; continue; }
+			FVector2f A, B, C;
+			UV->GetTriElements(Tid, A, B, C);
+			const FVector2f P0 = A * Res, P1 = B * Res, P2 = C * Res;
+			const int32 X0 = FMath::Clamp(FMath::FloorToInt(FMath::Min3(P0.X, P1.X, P2.X)), 0, Res - 1), X1 = FMath::Clamp(FMath::CeilToInt(FMath::Max3(P0.X, P1.X, P2.X)), 0, Res - 1);
+			const int32 Y0 = FMath::Clamp(FMath::FloorToInt(FMath::Min3(P0.Y, P1.Y, P2.Y)), 0, Res - 1), Y1 = FMath::Clamp(FMath::CeilToInt(FMath::Max3(P0.Y, P1.Y, P2.Y)), 0, Res - 1);
+			const float Area = (P1.X - P0.X) * (P2.Y - P0.Y) - (P2.X - P0.X) * (P1.Y - P0.Y);
+			if (FMath::Abs(Area) < 1e-6f) { continue; }
+			for (int32 Y = Y0; Y <= Y1; ++Y)
+			{
+				for (int32 X = X0; X <= X1; ++X)
+				{
+					const FVector2f P(X + 0.5f, Y + 0.5f);
+					const float W0 = ((P1.X - P.X) * (P2.Y - P.Y) - (P2.X - P.X) * (P1.Y - P.Y)) / Area;
+					const float W1 = ((P2.X - P.X) * (P0.Y - P.Y) - (P0.X - P.X) * (P2.Y - P.Y)) / Area;
+					const float W2 = 1.f - W0 - W1;
+					if (W0 >= 0.f && W1 >= 0.f && W2 >= 0.f)
+					{
+						uint8& Cell = Hits[Y * Res + X];
+						if (Cell < 255) { ++Cell; }
+					}
+				}
+			}
+		}
+	});
+	int32 Covered = 0, Overlapped = 0;
+	for (const uint8 Cell : Hits)
+	{
+		if (Cell > 0) { ++Covered; }
+		if (Cell > 1) { ++Overlapped; }
+	}
+	Stats.Coverage = static_cast<float>(Covered) / static_cast<float>(Res * Res);
+	Stats.OverlapFraction = Covered > 0 ? static_cast<float>(Overlapped) / static_cast<float>(Covered) : 0.f;
+	Stats.bSuccess = true;
+	Stats.Message = FString::Printf(TEXT("%d island(s), %.0f%% of 0-1 covered, %.1f%% overlapping, %d unset triangle(s), %.2f texels/cm at 1K"),
+		Stats.NumIslands, Stats.Coverage * 100.f, Stats.OverlapFraction * 100.f, Stats.NumUnsetTriangles, Stats.TexelsPerCmAt1K);
+	return Stats;
+}
+
+bool UModelingService::WorldToUV(int32 Handle, FVector Point, int32 UVLayer, FVector2D& OutUV)
+{
+	OutUV = FVector2D::ZeroVector;
+	UDynamicMesh* Mesh = FindMesh(Handle);
+	if (!Mesh || UVLayer < 0 || UVLayer >= NumUVLayers(Mesh)) { return false; }
+	UGeometryScriptDebug* Debug = NewDebug();
+	FGeometryScriptDynamicMeshBVH BVH;
+	UGeometryScriptLibrary_MeshSpatial::BuildBVHForMesh(Mesh, BVH, Debug);
+	FGeometryScriptTrianglePoint Nearest;
+	EGeometryScriptSearchOutcomePins Outcome = EGeometryScriptSearchOutcomePins::NotFound;
+	UGeometryScriptLibrary_MeshSpatial::FindNearestPointOnMesh(Mesh, BVH, Point, FGeometryScriptSpatialQueryOptions(), Nearest, Outcome, Debug);
+	if (Outcome != EGeometryScriptSearchOutcomePins::Found || !Nearest.bValid) { return false; }
+	bool bFound = false;
+	Mesh->ProcessMesh([&](const FDynamicMesh3& M)
+	{
+		const FDynamicMeshUVOverlay* UV = M.Attributes()->GetUVLayer(UVLayer);
+		if (!UV || !UV->IsSetTriangle(Nearest.TriangleID)) { return; }
+		FVector2f A, B, C;
+		UV->GetTriElements(Nearest.TriangleID, A, B, C);
+		const FVector2f Result = A * static_cast<float>(Nearest.BaryCoords.X) + B * static_cast<float>(Nearest.BaryCoords.Y) + C * static_cast<float>(Nearest.BaryCoords.Z);
+		OutUV = FVector2D(Result.X, Result.Y);
+		bFound = true;
+	});
+	return bFound;
+}
+
+// =========================================================================
+// Image tools
+// =========================================================================
+
+namespace
+{
+	bool ParseCompression(const FString& Name, TextureCompressionSettings& Out)
+	{
+		const FString N = Name.TrimStartAndEnd();
+		if (N.Equals(TEXT("Default"), ESearchCase::IgnoreCase)) { Out = TC_Default; return true; }
+		if (N.Equals(TEXT("Normalmap"), ESearchCase::IgnoreCase)) { Out = TC_Normalmap; return true; }
+		if (N.Equals(TEXT("Masks"), ESearchCase::IgnoreCase)) { Out = TC_Masks; return true; }
+		if (N.Equals(TEXT("Grayscale"), ESearchCase::IgnoreCase)) { Out = TC_Grayscale; return true; }
+		if (N.Equals(TEXT("HDR"), ESearchCase::IgnoreCase)) { Out = TC_HDR; return true; }
+		return false;
+	}
+
+	/** Perlin fBm that wraps at the image borders (blend of the four torus-shifted lookups). */
+	float TileableNoise(float U, float V, float Cells, const FVector2D& Offset)
+	{
+		const FVector2D P(U * Cells, V * Cells);
+		const float N00 = FMath::PerlinNoise2D(P + Offset);
+		const float N10 = FMath::PerlinNoise2D(P - FVector2D(Cells, 0) + Offset);
+		const float N01 = FMath::PerlinNoise2D(P - FVector2D(0, Cells) + Offset);
+		const float N11 = FMath::PerlinNoise2D(P - FVector2D(Cells, Cells) + Offset);
+		return FMath::Lerp(FMath::Lerp(N00, N10, U), FMath::Lerp(N01, N11, U), V);
+	}
+
+	void FinishTextureEdit(UTexture2D* Texture, bool bSaveAsset)
+	{
+		Texture->UpdateResource();
+		Texture->PostEditChange();
+		Texture->MarkPackageDirty();
+		Texture->BlockOnAnyAsyncBuild();
+		SaveIf(bSaveAsset, Texture->GetPathName());
+	}
+}
+
+FModelingResult UModelingService::ImportTexture(const FString& FilePath, const FString& AssetPath, bool bSRGB, const FString& Compression, bool bSaveAsset)
+{
+	if (!FPaths::FileExists(FilePath)) { return Fail(-1, FString::Printf(TEXT("File not found: %s"), *FilePath)); }
+	if (!AssetPath.StartsWith(TEXT("/"))) { return Fail(-1, FString::Printf(TEXT("AssetPath must be a content path like /Game/Textures/T_Name (got '%s')"), *AssetPath)); }
+	TextureCompressionSettings Settings = TC_Default;
+	if (!ParseCompression(Compression, Settings)) { return Fail(-1, FString::Printf(TEXT("Unknown compression '%s' (use Default, Normalmap, Masks, Grayscale, HDR)"), *Compression)); }
+
+	UAssetImportTask* Task = NewObject<UAssetImportTask>();
+	Task->Filename = FilePath;
+	Task->DestinationPath = FPackageName::GetLongPackagePath(AssetPath);
+	Task->DestinationName = FPackageName::GetLongPackageAssetName(AssetPath);
+	Task->bAutomated = true;
+	Task->bReplaceExisting = true;
+	Task->bSave = false;
+	FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get().ImportAssetTasks({ Task });
+	UTexture2D* Texture = Task->GetObjects().Num() > 0 ? Cast<UTexture2D>(Task->GetObjects()[0]) : nullptr;
+	if (!Texture) { return Fail(-1, FString::Printf(TEXT("Import of %s produced no Texture2D (unsupported format?)"), *FilePath)); }
+	Texture->SRGB = bSRGB;
+	Texture->CompressionSettings = Settings;
+	if (Settings == TC_Normalmap)
+	{
+		Texture->SRGB = false;
+		Texture->LODGroup = TEXTUREGROUP_WorldNormalMap;
+	}
+	FinishTextureEdit(Texture, bSaveAsset);
+	FModelingResult R;
+	R.bSuccess = true;
+	R.AssetPath = Texture->GetPathName();
+	R.Message = FString::Printf(TEXT("Imported %s as %s (%dx%d, %s, sRGB %s)"), *FPaths::GetCleanFilename(FilePath), *R.AssetPath, Texture->GetSizeX(), Texture->GetSizeY(), *Compression, bSRGB ? TEXT("on") : TEXT("off"));
+	return R;
+}
+
+FModelingResult UModelingService::CreateNoiseTexture(const FString& AssetPath, int32 Width, int32 Height, float Scale, int32 Octaves, float Persistence, int32 Seed, bool bSaveAsset)
+{
+	if (!AssetPath.StartsWith(TEXT("/"))) { return Fail(-1, FString::Printf(TEXT("AssetPath must be a content path like /Game/Textures/T_Name (got '%s')"), *AssetPath)); }
+	const int32 W = FMath::Clamp(Width, 4, 8192), H = FMath::Clamp(Height, 4, 8192);
+	const int32 NumOctaves = FMath::Clamp(Octaves, 1, 10);
+	const float Cells = FMath::Max(1.f, Scale);
+	FRandomStream Random(Seed);
+	const FVector2D Offset(Random.FRandRange(0.f, 1000.f), Random.FRandRange(0.f, 1000.f));
+
+	TArray<uint8> Pixels;
+	Pixels.SetNumUninitialized(W * H * 4);
+	for (int32 Y = 0; Y < H; ++Y)
+	{
+		for (int32 X = 0; X < W; ++X)
+		{
+			float Value = 0.f, Amplitude = 1.f, Total = 0.f, Frequency = Cells;
+			for (int32 O = 0; O < NumOctaves; ++O)
+			{
+				Value += Amplitude * TileableNoise(static_cast<float>(X) / W, static_cast<float>(Y) / H, Frequency, Offset * (O + 1));
+				Total += Amplitude;
+				Amplitude *= Persistence;
+				Frequency *= 2.f;
+			}
+			const uint8 Gray = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt((0.5f + 0.5f * Value / Total) * 255.f), 0, 255));
+			uint8* P = &Pixels[(Y * W + X) * 4];
+			P[0] = Gray; P[1] = Gray; P[2] = Gray; P[3] = 255;
+		}
+	}
+
+	UTexture2D* Texture = UEditorAssetLibrary::DoesAssetExist(AssetPath) ? LoadAssetAs<UTexture2D>(AssetPath) : nullptr;
+	if (!Texture)
+	{
+		if (UEditorAssetLibrary::DoesAssetExist(AssetPath)) { return Fail(-1, FString::Printf(TEXT("%s exists and is not a Texture2D"), *AssetPath)); }
+		UPackage* Package = CreatePackage(*AssetPath);
+		Texture = NewObject<UTexture2D>(Package, *FPackageName::GetLongPackageAssetName(AssetPath), RF_Public | RF_Standalone);
+		FAssetRegistryModule::AssetCreated(Texture);
+	}
+	Texture->Source.Init(W, H, 1, 1, TSF_BGRA8, Pixels.GetData());
+	Texture->SRGB = false;
+	Texture->CompressionSettings = TC_Grayscale;
+	FinishTextureEdit(Texture, bSaveAsset);
+	FModelingResult R;
+	R.bSuccess = true;
+	R.AssetPath = Texture->GetPathName();
+	R.Message = FString::Printf(TEXT("Noise texture %dx%d (%d octaves, %.0f cells, seed %d) at %s"), W, H, NumOctaves, Cells, Seed, *R.AssetPath);
+	return R;
+}
+
+FModelingResult UModelingService::DrawOnTexture(const FString& AssetPath, const FString& Shape, const TArray<FVector2D>& Points, FLinearColor Color, float ThicknessPx, float SpacingPx, bool bSaveAsset)
+{
+	UTexture2D* Texture = LoadAssetAs<UTexture2D>(AssetPath);
+	if (!Texture) { return Fail(-1, FString::Printf(TEXT("Texture2D not found: %s"), *AssetPath)); }
+	FTextureSource& Source = Texture->Source;
+	if (!Source.IsValid()) { return Fail(-1, FString::Printf(TEXT("%s has no editable source data"), *AssetPath)); }
+	const ETextureSourceFormat Format = Source.GetFormat();
+	if (Format != TSF_BGRA8 && Format != TSF_G8)
+	{
+		return Fail(-1, FString::Printf(TEXT("%s is not an 8-bit texture (BGRA8 or G8); draw into an imported PNG or a create_noise_texture result"), *AssetPath));
+	}
+	const FString Kind = Shape.TrimStartAndEnd();
+	const bool bLine = Kind.Equals(TEXT("Line"), ESearchCase::IgnoreCase), bDots = Kind.Equals(TEXT("Dots"), ESearchCase::IgnoreCase),
+		bRect = Kind.Equals(TEXT("Rect"), ESearchCase::IgnoreCase), bFill = Kind.Equals(TEXT("Fill"), ESearchCase::IgnoreCase);
+	if (!bLine && !bDots && !bRect && !bFill) { return Fail(-1, FString::Printf(TEXT("Unknown shape '%s' (use Line, Dots, Rect, Fill)"), *Shape)); }
+	if ((bLine || bDots) && Points.Num() < 2) { return Fail(-1, TEXT("Line and Dots need at least 2 points")); }
+	if (bRect && Points.Num() < 2) { return Fail(-1, TEXT("Rect needs 2 points (opposite corners)")); }
+
+	const int32 W = static_cast<int32>(Source.GetSizeX()), H = static_cast<int32>(Source.GetSizeY());
+	const FColor Pixel = Color.ToFColor(Texture->SRGB);
+	const uint8 Gray = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(0.299f * Pixel.R + 0.587f * Pixel.G + 0.114f * Pixel.B), 0, 255));
+	uint8* Data = Source.LockMip(0, 0, 0);
+	if (!Data) { return Fail(-1, FString::Printf(TEXT("Could not lock %s for writing"), *AssetPath)); }
+	int64 Painted = 0;
+	auto Plot = [&](int32 X, int32 Y)
+	{
+		if (X < 0 || Y < 0 || X >= W || Y >= H) { return; }
+		if (Format == TSF_BGRA8)
+		{
+			uint8* P = Data + (static_cast<int64>(Y) * W + X) * 4;
+			P[0] = Pixel.B; P[1] = Pixel.G; P[2] = Pixel.R; P[3] = Pixel.A;
+		}
+		else
+		{
+			Data[static_cast<int64>(Y) * W + X] = Gray;
+		}
+		++Painted;
+	};
+	auto Disc = [&](const FVector2D& Center, float Radius)
+	{
+		const float R = FMath::Max(0.5f, Radius);
+		for (int32 Y = FMath::FloorToInt(Center.Y - R); Y <= FMath::CeilToInt(Center.Y + R); ++Y)
+		{
+			for (int32 X = FMath::FloorToInt(Center.X - R); X <= FMath::CeilToInt(Center.X + R); ++X)
+			{
+				if (FVector2D::DistSquared(FVector2D(X + 0.5f, Y + 0.5f), Center) <= R * R) { Plot(X, Y); }
+			}
+		}
+	};
+	auto ToPixels = [&](const FVector2D& UV) { return FVector2D(UV.X * W, UV.Y * H); };
+
+	if (bFill)
+	{
+		for (int32 Y = 0; Y < H; ++Y) { for (int32 X = 0; X < W; ++X) { Plot(X, Y); } }
+	}
+	else if (bRect)
+	{
+		const FVector2D A = ToPixels(Points[0]), B = ToPixels(Points[1]);
+		for (int32 Y = FMath::FloorToInt(FMath::Min(A.Y, B.Y)); Y < FMath::CeilToInt(FMath::Max(A.Y, B.Y)); ++Y)
+		{
+			for (int32 X = FMath::FloorToInt(FMath::Min(A.X, B.X)); X < FMath::CeilToInt(FMath::Max(A.X, B.X)); ++X) { Plot(X, Y); }
+		}
+	}
+	else
+	{
+		const float Radius = FMath::Max(0.5f, ThicknessPx * 0.5f);
+		const float Step = bDots ? FMath::Max(1.f, SpacingPx) : 0.5f;
+		float Carry = 0.f;   // distance already travelled since the last stamp, carried across segments
+		bool bFirst = true;
+		for (int32 i = 0; i + 1 < Points.Num(); ++i)
+		{
+			const FVector2D A = ToPixels(Points[i]), B = ToPixels(Points[i + 1]);
+			const float Length = FVector2D::Distance(A, B);
+			if (Length < KINDA_SMALL_NUMBER) { continue; }
+			const FVector2D Dir = (B - A) / Length;
+			float T = bFirst ? 0.f : Step - Carry;
+			bFirst = false;
+			for (; T <= Length; T += Step) { Disc(A + Dir * T, Radius); }
+			Carry = Length - (T - Step);
+		}
+		if (bLine) { Disc(ToPixels(Points.Last()), Radius); }
+	}
+	Source.UnlockMip(0, 0, 0);
+	FinishTextureEdit(Texture, bSaveAsset);
+	FModelingResult R;
+	R.bSuccess = true;
+	R.AssetPath = Texture->GetPathName();
+	R.Message = FString::Printf(TEXT("Drew %s on %s (%lld pixel writes)"), *Kind, *AssetPath, Painted);
+	return R;
+}
+
+// =========================================================================
+// Surface detail helpers
+// =========================================================================
+
+FModelingResult UModelingService::AppendMeshAtTransforms(int32 Handle, int32 OtherHandle, const TArray<FTransform>& Transforms)
+{
+	UDynamicMesh* Mesh = FindMesh(Handle);
+	if (!Mesh) { return NoMesh(Handle); }
+	UDynamicMesh* Other = FindMesh(OtherHandle);
+	if (!Other) { return NoMesh(OtherHandle); }
+	if (Handle == OtherHandle) { return Fail(Handle, TEXT("A mesh cannot be stamped into itself - copy_mesh it first")); }
+	if (Transforms.Num() == 0) { return Fail(Handle, TEXT("Transforms is empty")); }
+	UGeometryScriptDebug* Debug = NewDebug();
+	for (const FTransform& T : Transforms)
+	{
+		UGeometryScriptLibrary_MeshBasicEditFunctions::AppendMesh(Mesh, Other, T, true, FGeometryScriptAppendMeshOptions(), Debug);
+	}
+	return Finish(Handle, Mesh, Debug, FString::Printf(TEXT("Stamped handle %d at %d transform(s)"), OtherHandle, Transforms.Num()));
+}
+
+FModelingResult UModelingService::AppendMeshAlongPolyline(int32 Handle, int32 OtherHandle, const TArray<FVector>& Points, float Spacing, FVector UpVector, float Scale)
+{
+	if (Points.Num() < 2) { return Fail(Handle, TEXT("Points needs at least 2 positions")); }
+	if (Spacing <= 0.f) { return Fail(Handle, TEXT("Spacing must be positive")); }
+	const FVector Up = UpVector.IsNearlyZero() ? FVector::UpVector : UpVector.GetSafeNormal();
+	TArray<FTransform> Transforms;
+	float Carry = 0.f;
+	bool bFirst = true;
+	for (int32 i = 0; i + 1 < Points.Num(); ++i)
+	{
+		const float Length = static_cast<float>(FVector::Distance(Points[i], Points[i + 1]));
+		if (Length < KINDA_SMALL_NUMBER) { continue; }
+		const FVector Dir = (Points[i + 1] - Points[i]) / Length;
+		const FQuat Rotation = FRotationMatrix::MakeFromXZ(Dir, Up).ToQuat();
+		float T = bFirst ? 0.f : Spacing - Carry;
+		bFirst = false;
+		for (; T <= Length + KINDA_SMALL_NUMBER; T += Spacing)
+		{
+			Transforms.Add(FTransform(Rotation, Points[i] + Dir * T, FVector(Scale)));
+		}
+		Carry = Length - (T - Spacing);
+	}
+	if (Transforms.Num() == 0) { return Fail(Handle, TEXT("Polyline is shorter than one Spacing")); }
+	FModelingResult R = AppendMeshAtTransforms(Handle, OtherHandle, Transforms);
+	if (R.bSuccess) { R.Message = FString::Printf(TEXT("Stamped handle %d %d time(s) along a %d-point polyline every %.1f"), OtherHandle, Transforms.Num(), Points.Num(), Spacing); }
+	return R;
+}
+
+FModelingResult UModelingService::CutGrooveAlongPolyline(int32 Handle, const TArray<FVector>& Points, float Width, float Depth, FVector UpVector)
+{
+	UDynamicMesh* Mesh = FindMesh(Handle);
+	if (!Mesh) { return NoMesh(Handle); }
+	if (Points.Num() < 2) { return Fail(Handle, TEXT("Points needs at least 2 positions")); }
+	if (Width <= 0.f || Depth <= 0.f) { return Fail(Handle, TEXT("Width and Depth must be positive")); }
+	const FVector Up = UpVector.IsNearlyZero() ? FVector::UpVector : UpVector.GetSafeNormal();
+
+	// One frame per point, X along the path (averaged at interior corners), Z along Up; the profile lives in the frame's YZ plane.
+	TArray<FTransform> Frames;
+	for (int32 i = 0; i < Points.Num(); ++i)
+	{
+		FVector Dir = FVector::ZeroVector;
+		if (i > 0) { Dir += (Points[i] - Points[i - 1]).GetSafeNormal(); }
+		if (i + 1 < Points.Num()) { Dir += (Points[i + 1] - Points[i]).GetSafeNormal(); }
+		if (Dir.IsNearlyZero()) { continue; }
+		Frames.Add(FTransform(FRotationMatrix::MakeFromXZ(Dir.GetSafeNormal(), Up).ToQuat(), Points[i]));
+	}
+	if (Frames.Num() < 2) { return Fail(Handle, TEXT("Polyline has fewer than 2 distinct points")); }
+	const TArray<FVector2D> Profile = { FVector2D(-Width * 0.5, -Depth), FVector2D(Width * 0.5, -Depth), FVector2D(Width * 0.5, Depth), FVector2D(-Width * 0.5, Depth) };
+
+	int32 ToolHandle = -1;
+	UDynamicMesh* Tool = NewSessionMesh(ToolHandle);
+	UGeometryScriptDebug* Debug = NewDebug();
+	UGeometryScriptLibrary_MeshPrimitiveFunctions::AppendSweepPolygon(Tool, PrimitiveOptions(0), FTransform::Identity, Profile, Frames, false, true, 1.f, 1.f, 0.f, 1.f, Debug);
+	float Area = 0.f, Volume = 0.f;
+	UGeometryScriptLibrary_MeshQueryFunctions::GetMeshVolumeArea(Tool, Area, Volume);
+	if (Volume < 0.f) { UGeometryScriptLibrary_MeshNormalsFunctions::FlipNormals(Tool, Debug); }
+	FModelingResult R = Boolean(Handle, ToolHandle, TEXT("Subtract"), FTransform::Identity, true, true);
+	ReleaseMesh(ToolHandle);
+	if (R.bSuccess) { R.Message = FString::Printf(TEXT("Cut a %.1f x %.1f groove along a %d-point polyline"), Width, Depth, Points.Num()); }
 	return R;
 }

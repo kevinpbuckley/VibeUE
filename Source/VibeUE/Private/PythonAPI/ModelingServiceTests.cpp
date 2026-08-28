@@ -8,6 +8,10 @@
 #include "EditorAssetLibrary.h"
 #include "Animation/Skeleton.h"
 #include "AssetCompilingManager.h"
+#include "HAL/FileManager.h"
+#include "ImageUtils.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 #include "Editor.h"
 #include "GameFramework/Actor.h"
 #include "Subsystems/EditorActorSubsystem.h"
@@ -457,6 +461,103 @@ bool FVibeModelingRiggingTest::RunTest(const FString&)
 	TestTrue(TEXT("set materials"), UModelingService::SetAssetMaterials(MeshPath, TEXT("/Engine/BasicShapes/BasicShapeMaterial"), false).bSuccess);
 	TestFalse(TEXT("missing material rejected"), UModelingService::SetAssetMaterials(MeshPath, TEXT("/Game/Developers/NoSuchMaterial"), false).bSuccess);
 	TestFalse(TEXT("skeletal save without weights rejected"), UModelingService::SaveMeshToSkeletalMesh(MakeBox(), FString(kModelingTestDir) + TEXT("/SK_NoWeights"), TEXT(""), true, false).bSuccess);
+	FAssetCompilingManager::Get().FinishAllCompilation();
+	UModelingService::ReleaseAllMeshes();
+	TestTrue(TEXT("test folder removed"), UEditorAssetLibrary::DeleteDirectory(kModelingTestDir));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeModelingUVsTexturingTest, "VibeUE.Modeling.UVsTexturing", kModelingTestFlags)
+bool FVibeModelingUVsTexturingTest::RunTest(const FString&)
+{
+	FScopedModelingSession Session;
+	const FString Dir = kModelingTestDir;
+
+	// --- UV control on a two-material box: one polygroup per face, conformal unwrap, pack, verify
+	const int32 H = MakeBox(100.f);
+	UModelingService::SelectByNormalAngle(H, TEXT("top"), FVector::UpVector, 5.f);
+	UModelingService::SetMaterialID(H, TEXT("top"), 1);
+	TestTrue(TEXT("polygroups by angle"), UModelingService::ComputePolygroups(H, TEXT("Angle"), 15.f, 1).bSuccess);
+	const FModelingResult Group = UModelingService::SetPolygroup(H, TEXT("top"), -1);
+	TestTrue(FString::Printf(TEXT("set_polygroup: %s"), *Group.Message), Group.bSuccess);
+	const FModelingResult Unwrap = UModelingService::RecomputeUVs(H, 0, TEXT("Polygroups"), TEXT("SpectralConformal"));
+	TestTrue(FString::Printf(TEXT("recompute_uvs: %s"), *Unwrap.Message), Unwrap.bSuccess);
+	TestTrue(TEXT("repack"), UModelingService::LayoutUV(H, 0, TEXT("Repack"), TEXT(""), 512).bSuccess);
+	FModelingUVStats Stats = UModelingService::GetUVStats(H, 0, 256);
+	TestTrue(FString::Printf(TEXT("uv stats: %s"), *Stats.Message), Stats.bSuccess);
+	TestEqual(TEXT("one island per face"), Stats.NumIslands, 6);
+	TestEqual(TEXT("no unset triangles"), Stats.NumUnsetTriangles, 0);
+	TestTrue(TEXT("packed islands do not overlap"), Stats.OverlapFraction < 0.01f);
+	TestTrue(TEXT("packed islands cover the square"), Stats.Coverage > 0.05f);
+	TestTrue(TEXT("texel density reported"), Stats.TexelsPerCmAt1K > 0.f);
+	TestTrue(TEXT("transform_uv"), UModelingService::TransformUV(H, 0, TEXT("top"), FVector2D(0.05, 0), FVector2D(1, 1), 0.f).bSuccess);
+	TestTrue(TEXT("pack per material"), UModelingService::PackUVPerMaterial(H, 0, 512).bSuccess);
+	Stats = UModelingService::GetUVStats(H, 0, 256);
+	TestTrue(TEXT("per-material packs overlap each other by design"), Stats.OverlapFraction > 0.f);
+	FVector2D UV;
+	TestTrue(TEXT("world_to_uv finds the top face"), UModelingService::WorldToUV(H, FVector(0, 0, 100), 0, UV));
+	TestTrue(TEXT("uv inside the square"), UV.X >= -0.01 && UV.X <= 1.01 && UV.Y >= -0.01 && UV.Y <= 1.01);
+	TestFalse(TEXT("bad island source rejected"), UModelingService::RecomputeUVs(H, 0, TEXT("Vibes")).bSuccess);
+	TestFalse(TEXT("bad layout type rejected"), UModelingService::LayoutUV(H, 0, TEXT("Sideways")).bSuccess);
+	TestFalse(TEXT("missing uv layer rejected"), UModelingService::TransformUV(H, 7, TEXT(""), FVector2D::ZeroVector, FVector2D(1, 1)).bSuccess);
+
+	// --- Bakes: masks from vertex colours / material ids, the UV shell wireframe, height
+	UModelingService::SetVertexColor(H, TEXT(""), FLinearColor::Red);
+	const FModelingBakeResult Masks = UModelingService::BakeTextures(H, H, TEXT("VertexColor,MaterialID,UVShell,Height"), 64, Dir, TEXT("UVTest"));
+	TestTrue(FString::Printf(TEXT("mask bakes: %s"), *Masks.Message), Masks.bSuccess);
+	TestEqual(TEXT("four mask textures"), Masks.TexturePaths.Num(), 4);
+
+	// --- Image tools: noise, drawing, import, texture transfer
+	const FString NoisePath = Dir + TEXT("/T_Noise");
+	const FModelingResult Noise = UModelingService::CreateNoiseTexture(NoisePath, 64, 64, 4.f, 3, 0.5f, 7, false);
+	TestTrue(FString::Printf(TEXT("noise: %s"), *Noise.Message), Noise.bSuccess);
+	TestTrue(TEXT("noise asset exists"), UEditorAssetLibrary::DoesAssetExist(NoisePath));
+	TestTrue(TEXT("draw line"), UModelingService::DrawOnTexture(NoisePath, TEXT("Line"), { FVector2D(0.1, 0.1), FVector2D(0.9, 0.9) }, FLinearColor::White, 3.f, 8.f, false).bSuccess);
+	TestTrue(TEXT("draw dots"), UModelingService::DrawOnTexture(NoisePath, TEXT("Dots"), { FVector2D(0.1, 0.9), FVector2D(0.9, 0.1) }, FLinearColor::Black, 2.f, 6.f, false).bSuccess);
+	TestTrue(TEXT("draw rect"), UModelingService::DrawOnTexture(NoisePath, TEXT("Rect"), { FVector2D(0.2, 0.2), FVector2D(0.4, 0.4) }, FLinearColor::Gray, 1.f, 1.f, false).bSuccess);
+	TestFalse(TEXT("unknown shape rejected"), UModelingService::DrawOnTexture(NoisePath, TEXT("Spiral"), {}, FLinearColor::White).bSuccess);
+	TestFalse(TEXT("draw on missing texture rejected"), UModelingService::DrawOnTexture(Dir + TEXT("/T_Nope"), TEXT("Fill"), {}, FLinearColor::White).bSuccess);
+
+	const FString PngPath = FPaths::ProjectSavedDir() / TEXT("VibeUEModelingTest.png");
+	{
+		TArray<FColor> Pixels;
+		Pixels.Init(FColor(200, 40, 40, 255), 8 * 8);
+		TArray64<uint8> Png;
+		FImageUtils::PNGCompressImageArray(8, 8, Pixels, Png);
+		TestTrue(TEXT("test png written"), FFileHelper::SaveArrayToFile(Png, *PngPath));
+	}
+	const FModelingResult Imported = UModelingService::ImportTexture(PngPath, Dir + TEXT("/T_Imported"), false, TEXT("Masks"), false);
+	TestTrue(FString::Printf(TEXT("import: %s"), *Imported.Message), Imported.bSuccess);
+	TestTrue(TEXT("imported asset exists"), UEditorAssetLibrary::DoesAssetExist(Dir + TEXT("/T_Imported")));
+	TestFalse(TEXT("missing file rejected"), UModelingService::ImportTexture(PngPath + TEXT(".missing"), Dir + TEXT("/T_Nope"), false).bSuccess);
+	TestFalse(TEXT("bad compression rejected"), UModelingService::ImportTexture(PngPath, Dir + TEXT("/T_Nope"), false, TEXT("Crunchy")).bSuccess);
+
+	const FModelingBakeResult Transfer = UModelingService::BakeTextureTransfer(H, H, NoisePath, 64, Dir, TEXT("Xfer"));
+	TestTrue(FString::Printf(TEXT("texture transfer: %s"), *Transfer.Message), Transfer.bSuccess);
+	const FModelingBakeResult MultiTransfer = UModelingService::BakeTextureTransfer(H, H, NoisePath + TEXT(",") + Dir + TEXT("/T_Imported"), 64, Dir, TEXT("Xfer2"));
+	TestTrue(FString::Printf(TEXT("multi-texture transfer: %s"), *MultiTransfer.Message), MultiTransfer.bSuccess);
+	TestFalse(TEXT("missing source texture rejected"), UModelingService::BakeTextureTransfer(H, H, Dir + TEXT("/T_Nope"), 64, Dir, TEXT("X")).bSuccess);
+
+	// --- Surface detail: stamps and grooves
+	const int32 Rivet = MakeSphere(2.f);
+	const int32 RivetTris = UModelingService::GetMeshInfo(Rivet).TriangleCount;
+	const int32 Before = UModelingService::GetMeshInfo(H).TriangleCount;
+	TestTrue(TEXT("stamp at transforms"), UModelingService::AppendMeshAtTransforms(H, Rivet, { FTransform(FVector(-30, 0, 100)), FTransform(FVector(0, 0, 100)), FTransform(FVector(30, 0, 100)) }).bSuccess);
+	TestEqual(TEXT("three stamps added"), UModelingService::GetMeshInfo(H).TriangleCount, Before + 3 * RivetTris);
+	const FModelingResult Row = UModelingService::AppendMeshAlongPolyline(H, Rivet, { FVector(-40, 20, 100), FVector(40, 20, 100) }, 20.f);
+	TestTrue(FString::Printf(TEXT("stamp along polyline: %s"), *Row.Message), Row.bSuccess);
+	TestEqual(TEXT("five stamps along 80 cm at 20 cm"), UModelingService::GetMeshInfo(H).TriangleCount, Before + 8 * RivetTris);
+	TestFalse(TEXT("self stamp rejected"), UModelingService::AppendMeshAtTransforms(H, H, { FTransform::Identity }).bSuccess);
+	const int32 Slab = MakeBox(100.f);
+	const int32 SlabBefore = UModelingService::GetMeshInfo(Slab).TriangleCount;
+	const FModelingResult Groove = UModelingService::CutGrooveAlongPolyline(Slab, { FVector(-60, -30, 100), FVector(0, -30, 100), FVector(60, 0, 100) }, 2.f, 1.f);
+	TestTrue(FString::Printf(TEXT("groove: %s"), *Groove.Message), Groove.bSuccess);
+	const FModelingMeshInfo SlabInfo = UModelingService::GetMeshInfo(Slab);
+	TestTrue(TEXT("groove added geometry"), SlabInfo.TriangleCount > SlabBefore);
+	TestTrue(TEXT("grooved slab still closed"), SlabInfo.bIsClosed);
+	TestFalse(TEXT("groove needs two points"), UModelingService::CutGrooveAlongPolyline(Slab, { FVector::ZeroVector }, 2.f, 1.f).bSuccess);
+
+	IFileManager::Get().Delete(*PngPath);
 	FAssetCompilingManager::Get().FinishAllCompilation();
 	UModelingService::ReleaseAllMeshes();
 	TestTrue(TEXT("test folder removed"), UEditorAssetLibrary::DeleteDirectory(kModelingTestDir));

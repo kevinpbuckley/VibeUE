@@ -178,6 +178,51 @@ struct FModelingBakeResult
 	TArray<FString> TexturePaths;
 };
 
+/** Health of a UV layer (GetUVStats): what an unwrap looks like before you bake or paint on it. */
+USTRUCT(BlueprintType)
+struct FModelingUVStats
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	bool bSuccess = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	FString Message;
+
+	/** Connected UV islands (shells). */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	int32 NumIslands = 0;
+
+	/** Triangles with no UVs assigned in this layer. */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	int32 NumUnsetTriangles = 0;
+
+	/** Fraction of the 0-1 square covered by at least one island. */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	float Coverage = 0.f;
+
+	/** Fraction of covered texels claimed by two or more islands (0 = no overlaps). */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	float OverlapFraction = 0.f;
+
+	/** Texels per centimetre at a 1024 texture (multiply by resolution/1024). */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	float TexelsPerCmAt1K = 0.f;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	float MeshArea = 0.f;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	float UVArea = 0.f;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	FVector2D UVBoundsMin = FVector2D::ZeroVector;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	FVector2D UVBoundsMax = FVector2D::ZeroVector;
+};
+
 /** One bone for CreateBones. Transform is in mesh space (the space the vertices are in); an empty ParentName makes it the root. */
 USTRUCT(BlueprintType)
 struct FModelingBoneDef
@@ -734,4 +779,77 @@ public:
 	/** Bones on the mesh with their reference poses and influenced-vertex counts — check a rig before saving it. */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "List Bones"))
 	static TArray<FModelingBoneInfo> ListBones(int32 Handle);
+
+	// =====================================================================
+	// UV control: islands you define, layouts you can verify
+	// =====================================================================
+
+	/** Give every triangle of a selection one polygroup: GroupID >= 0 sets that id, -1 allocates a new group. Polygroups are the island source for RecomputeUVs("Polygroups") and PatchBuilder. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Set Polygroup"))
+	static FModelingResult SetPolygroup(int32 Handle, const FString& SelectionName, int32 GroupID = -1);
+
+	/** Flatten each island with a conformal unwrap. IslandSource: "Polygroups" (one island per group — define them with SetPolygroup / ComputePolygroups) or "UVIslands" (re-flatten the existing islands). Method: "SpectralConformal" (default), "Conformal", "ExpMap". */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Recompute UVs", ScriptName = "recompute_uvs;recompute_u_vs"))
+	static FModelingResult RecomputeUVs(int32 Handle, int32 UVLayer = 0, const FString& IslandSource = TEXT("Polygroups"), const FString& Method = TEXT("SpectralConformal"),
+		const FString& SelectionName = TEXT(""), bool bAlignIslandsWithAxes = true);
+
+	/** Move / scale / rotate the UVs of a selection ("" = all) in UV space: scale and rotation are about Origin (0.5,0.5 = texture centre). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Transform UV", ScriptName = "transform_uv;transform_uv"))
+	static FModelingResult TransformUV(int32 Handle, int32 UVLayer, const FString& SelectionName, FVector2D Translation, FVector2D Scale, float RotationDeg = 0.f, FVector2D Origin = FVector2D(0.5, 0.5));
+
+	/** LayoutType: "Repack" (pack islands into 0-1 for TextureResolution), "Stack" (all islands on top of each other), "Normalize" (scale to unit texel density), "Transform" (Scale + Translation). Works on a selection's islands. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Layout UV", ScriptName = "layout_uv;layout_uv"))
+	static FModelingResult LayoutUV(int32 Handle, int32 UVLayer = 0, const FString& LayoutType = TEXT("Repack"), const FString& SelectionName = TEXT(""), int32 TextureResolution = 2048,
+		float Scale = 1.f, FVector2D Translation = FVector2D::ZeroVector);
+
+	/** Pack the islands of each material ID into their own full 0-1 range so every material slot gets its own texture set at full resolution. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Pack UV Per Material", ScriptName = "pack_uv_per_material;pack_uv_per_material"))
+	static FModelingResult PackUVPerMaterial(int32 Handle, int32 UVLayer = 0, int32 TextureResolution = 2048);
+
+	/** Islands, coverage, overlap and texel density of a UV layer — check an unwrap before baking or painting. GridResolution is the raster used for coverage/overlap. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Get UV Stats", ScriptName = "get_uv_stats;get_uv_stats"))
+	static FModelingUVStats GetUVStats(int32 Handle, int32 UVLayer = 0, int32 GridResolution = 512);
+
+	/** UV coordinate of the surface point nearest to a mesh-space position (where a marking lands on the texture). Returns false when the mesh has no UVs there. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "World To UV", ScriptName = "world_to_uv;world_to_uv"))
+	static bool WorldToUV(int32 Handle, FVector Point, int32 UVLayer, FVector2D& OutUV);
+
+	// =====================================================================
+	// More bakes and image tools
+	// =====================================================================
+
+	/** Transfer textures from SourceHandle's UVs onto TargetHandle's: one path = a plain texture bake, several (comma-separated, in source material-ID order) = a multi-texture bake. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Bake Texture Transfer"))
+	static FModelingBakeResult BakeTextureTransfer(int32 TargetHandle, int32 SourceHandle, const FString& SourceTexturePaths, int32 Resolution, const FString& OutputFolder,
+		const FString& BaseName, int32 TargetUVLayer = 0, int32 SourceUVLayer = 0, int32 SamplesPerPixel = 1);
+
+	/** Import an image file (png, jpg, tga, exr, ...) as a Texture2D asset. Compression: "Default", "Normalmap", "Masks", "Grayscale", "HDR". */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Import Texture"))
+	static FModelingResult ImportTexture(const FString& FilePath, const FString& AssetPath, bool bSRGB = true, const FString& Compression = TEXT("Default"), bool bSaveAsset = true);
+
+	/** Tileable fractal (Perlin fBm) grayscale texture — grunge, wear masks, height detail. Scale is the number of noise cells across the image. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Create Noise Texture"))
+	static FModelingResult CreateNoiseTexture(const FString& AssetPath, int32 Width = 1024, int32 Height = 1024, float Scale = 8.f, int32 Octaves = 4, float Persistence = 0.5f,
+		int32 Seed = 0, bool bSaveAsset = true);
+
+	/** Draw into an existing 8-bit texture in UV space (0-1, V down). Shape: "Line" (polyline through Points), "Dots" (discs every SpacingPx along the polyline), "Rect" (Points[0]..Points[1] filled), "Fill" (whole texture). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Draw On Texture"))
+	static FModelingResult DrawOnTexture(const FString& AssetPath, const FString& Shape, const TArray<FVector2D>& Points, FLinearColor Color, float ThicknessPx = 2.f,
+		float SpacingPx = 8.f, bool bSaveAsset = true);
+
+	// =====================================================================
+	// Surface detail helpers
+	// =====================================================================
+
+	/** Stamp another session mesh at every transform (pair with SampleSurfacePoints for scattered rivets, bolts, fasteners). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Append Mesh At Transforms"))
+	static FModelingResult AppendMeshAtTransforms(int32 Handle, int32 OtherHandle, const TArray<FTransform>& Transforms);
+
+	/** Stamp another session mesh every Spacing along a polyline, X axis along the line and Z along UpVector — rivet rows, fastener lines, light strips. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Append Mesh Along Polyline"))
+	static FModelingResult AppendMeshAlongPolyline(int32 Handle, int32 OtherHandle, const TArray<FVector>& Points, float Spacing = 10.f, FVector UpVector = FVector::UpVector, float Scale = 1.f);
+
+	/** Cut a rectangular groove (Width across, Depth into the surface along -UpVector, and as far out along +UpVector) following a polyline — recessed panel lines and seams. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Cut Groove Along Polyline"))
+	static FModelingResult CutGrooveAlongPolyline(int32 Handle, const TArray<FVector>& Points, float Width = 1.f, float Depth = 1.f, FVector UpVector = FVector::UpVector);
 };

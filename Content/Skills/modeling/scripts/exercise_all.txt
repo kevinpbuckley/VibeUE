@@ -188,6 +188,37 @@ call("save_mesh_to_skeletal_mesh", rg, sk_path, "", True, False)
 assert unreal.EditorAssetLibrary.does_asset_exist(sk_path + "_Skeleton"), "skeleton should be created next to the mesh"
 call("set_asset_materials", sk_path, "/Engine/BasicShapes/BasicShapeMaterial", False)
 
+# --- UV control: polygroup islands, conformal unwrap, packing, verification
+uv = call("create_mesh").handle
+call("append_box", uv, T(), 100, 100, 100)
+call("select_by_normal_angle", uv, "top", unreal.Vector(0, 0, 1), 5.0)
+call("set_material_id", uv, "top", 1)
+call("compute_polygroups", uv, "Angle", 15.0, 1)
+call("set_polygroup", uv, "top", -1)
+call("recompute_uvs", uv, 0, "Polygroups", "SpectralConformal", "", True)
+call("layout_uv", uv, 0, "Repack", "", 512, 1.0, unreal.Vector2D(0, 0))
+st = call("get_uv_stats", uv, 0, 256)
+assert st.success and st.num_islands == 6 and st.overlap_fraction < 0.01, (st.num_islands, st.overlap_fraction)
+call("transform_uv", uv, 0, "top", unreal.Vector2D(0.05, 0.0), unreal.Vector2D(1, 1), 0.0, unreal.Vector2D(0.5, 0.5))
+call("pack_uv_per_material", uv, 0, 512)
+assert call("world_to_uv", uv, unreal.Vector(0, 0, 100), 0) is not None, "world_to_uv should find the top face"
+
+# --- bakes and image tools
+call("set_vertex_color", uv, "", unreal.LinearColor(1, 0, 0, 1))
+bk = call("bake_textures", uv, uv, "VertexColor,MaterialID,UVShell,Height", 64, ROOT, "UVEx", 0, 1); assert len(bk.texture_paths) == 4, bk.message
+call("create_noise_texture", ROOT + "/T_ExNoise", 64, 64, 4.0, 3, 0.5, 3, False)
+call("draw_on_texture", ROOT + "/T_ExNoise", "Line", [unreal.Vector2D(0.1, 0.1), unreal.Vector2D(0.9, 0.9)], unreal.LinearColor(1, 1, 1, 1), 3.0, 8.0, False)
+call("draw_on_texture", ROOT + "/T_ExNoise", "Dots", [unreal.Vector2D(0.1, 0.9), unreal.Vector2D(0.9, 0.1)], unreal.LinearColor(0, 0, 0, 1), 2.0, 6.0, False)
+xf = call("bake_texture_transfer", uv, uv, ROOT + "/T_ExNoise", 64, ROOT, "UVEx", 0, 0, 1); assert xf.texture_paths, xf.message
+call("import_texture", unreal.Paths.engine_content_dir() + "Slate/Checkerboard.png", ROOT + "/T_ExImported", False, "Masks", False)
+
+# --- surface detail: rivet stamps and a panel-line groove
+rv = call("create_mesh").handle
+call("append_sphere", rv, T(), 2.0, 4, 6)
+call("append_mesh_at_transforms", uv, rv, [T(unreal.Vector(-30, 0, 100)), T(unreal.Vector(0, 0, 100)), T(unreal.Vector(30, 0, 100))])
+call("append_mesh_along_polyline", uv, rv, [unreal.Vector(-40, 20, 100), unreal.Vector(40, 20, 100)], 20.0, unreal.Vector(0, 0, 1), 1.0)
+call("cut_groove_along_polyline", uv, [unreal.Vector(-60, -30, 100), unreal.Vector(60, -30, 100)], 2.0, 1.0, unreal.Vector(0, 0, 1))
+
 # --- skeletal (only when the project has a skeletal mesh)
 ar = unreal.AssetRegistryHelpers.get_asset_registry()
 skms = ar.get_assets_by_class(unreal.TopLevelAssetPath("/Script/Engine", "SkeletalMesh"), False)
@@ -213,7 +244,7 @@ if unreal.EditorAssetLibrary.does_directory_exist(ROOT):
 
 # --- coverage
 public = {n for n in dir(svc) if not n.startswith("_") and callable(getattr(svc, n)) and n not in dir(unreal.ToolsetDefinition)}
-public -= {"set_lo_ds"}   # Python alias of set_lods (ScriptName), not a separate function
+public -= {"set_lo_ds", "recompute_u_vs"}   # Python aliases from ScriptName (set_lods, recompute_uvs), not separate functions
 missed = sorted(public - CALLED)
 print("called %d/%d functions; failed %d" % (len(CALLED & public), len(public), len(FAILED)))
 for f in FAILED:

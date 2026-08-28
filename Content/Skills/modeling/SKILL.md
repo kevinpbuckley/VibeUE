@@ -85,17 +85,17 @@ framed on the actor. A successful call is not proof the shape is right.
 | Area | Functions |
 |---|---|
 | Session | `create_mesh()`, `load_mesh_from_static_mesh(path, lod=0)`, `load_mesh_from_skeletal_mesh(path, lod=0)`, `load_mesh_from_actor(label)`, `copy_mesh(handle)`, `release_mesh(handle)`, `release_all_meshes()`, `list_meshes()`, `get_mesh_info(handle)` |
-| Primitives (append into a handle) | `append_box`, `append_sphere`, `append_sphere_box`, `append_cylinder`, `append_cone`, `append_capsule`, `append_torus`, `append_rectangle`, `append_disc`, `append_stairs`, `append_curved_stairs`, `append_extrude_polygon(handle, transform, points2d, height)`, `append_revolve_polygon(handle, transform, points2d, radius, steps, degrees)`, `append_sweep_polyline(handle, transform, profile2d, path_transforms)` (open tube — prefer the next one for solids), `append_loft(handle, transform, closed_profile2d, frames)` (capped, always outward; frame scale = chord), `append_mesh(handle, other_handle, transform)` |
-| Booleans | `boolean(target, tool, "Union|Subtract|Intersection", tool_transform)`, `self_union`, `plane_cut(handle, plane_transform, fill_holes)`, `mirror(handle, plane_transform, weld)` |
+| Primitives (append into a handle) | `append_box`, `append_sphere`, `append_sphere_box`, `append_cylinder`, `append_cone`, `append_capsule`, `append_torus`, `append_rectangle`, `append_disc`, `append_stairs`, `append_curved_stairs`, `append_extrude_polygon(handle, transform, points2d, height)`, `append_revolve_polygon(handle, transform, points2d, radius, steps, degrees)`, `append_sweep_polyline(handle, transform, profile2d, path_transforms)` (open tube — prefer the next one for solids), `append_loft(handle, transform, closed_profile2d, frames)` (capped, always outward; frame scale = chord), `append_mesh(handle, other_handle, transform)`, `append_mesh_at_transforms(handle, other, [transforms])`, `append_mesh_along_polyline(handle, other, points, spacing, up)` |
+| Booleans | `boolean(target, tool, "Union|Subtract|Intersection", tool_transform)`, `self_union`, `plane_cut(handle, plane_transform, fill_holes)`, `mirror(handle, plane_transform, weld)`, `cut_groove_along_polyline(handle, points, width, depth, up)` |
 | Selections | `select_all(handle, name)`, `select_by_normal_angle(handle, name, normal, max_angle_deg)`, `select_in_box(handle, name, box_min, box_max)`, `select_in_sphere(handle, name, center, radius)`, `select_by_material_id(handle, name, material_id)`, `select_by_polygroup(handle, name, group_id)`, `select_connected(handle, name, point)` (whole connected piece nearest the point), `expand_contract_selection(handle, name, new_name, iterations, contract)`, `invert_selection(handle, name, new_name)`, `selection_count(handle, name)`, `selection_bounds(handle, name)` → `(min, max)` (Python drops the bool; an empty selection gives zero vectors), `clear_selections(handle)` |
 | Poly edit on selections | `extrude_faces(handle, sel, distance, direction)`, `offset_faces(handle, sel, distance)`, `inset_faces(handle, sel, distance)`, `outset_faces(handle, sel, distance)`, `delete_faces(handle, sel)`, `translate_selection(handle, sel, delta)`, `bevel_polygroups(handle, distance, subdivisions)`, `offset_mesh(handle, distance)`, `shell_mesh(handle, thickness)` |
 | Mesh | `remesh(handle, target_triangles, edge_length=0)`, `simplify_to_triangle_count(handle, n)`, `simplify_to_vertex_count(handle, n)`, `simplify_to_tolerance(handle, tolerance)`, `simplify_planar(handle)` (lossless, coplanar only), `subdivide(handle, level, "PN|Uniform|CatmullClark|Loop")`, `smooth(handle, sel, iterations, alpha)`, `fill_holes(handle)`, `weld_edges(handle, tolerance)`, `repair(handle)` (degenerates + small components), `remove_hidden_triangles(handle)`, `split_by_components(handle)` → new handles |
 | Queries, sampling, hulls | `ray_cast(handle, origin, direction)` / `nearest_point(handle, point)` → `{found, position, triangle_id, distance}`, `is_point_inside(handle, point)`, `sample_surface_points(handle, radius, max)` → transforms for scattering, `convex_hull(handle)`, `convex_decomposition(handle, num_hulls)`, `swept_hull(handle, frame)` → NEW handles, `measure_distance(a, b)` → max/mean/rms (verify LODs and simplifications) |
 | Deform | `bend(handle, orientation, angle, extent)`, `twist(...)`, `flare(handle, orientation, percent_x, percent_y, extent)`, `noise(handle, sel, magnitude, frequency, seed)`, `displace_from_texture(handle, sel, texture_path, magnitude, uv_layer)` |
 | Voxel | `voxel_solidify(handle, grid_resolution)`, `voxel_morphology(handle, "Dilate|Contract|Open|Close", distance, grid_resolution)` |
-| UVs / normals / groups / materials / colors | `auto_uv(handle, "XAtlas|PatchBuilder", uv_layer)`, `project_uv(handle, "Planar|Box|Cylinder", transform, uv_layer, sel)`, `repack_uv(handle, uv_layer, resolution)`, `set_num_uv_layers`, `recompute_normals(handle, hard_angle_deg)`, `flip_normals`, `ensure_outward(handle)` (flip if the enclosed volume is negative), `compute_polygroups(handle, "Angle|UVIslands|Components|Polygons", crease_angle)`, `set_material_id(handle, sel, id)`, `remap_material_id(handle, from, to)`, `set_vertex_color(handle, sel, color)` |
+| UVs / normals / groups / materials / colors | `auto_uv(handle, "XAtlas|PatchBuilder", uv_layer)`, `project_uv(handle, "Planar|Box|Cylinder", transform, uv_layer, sel)`, `repack_uv(handle, uv_layer, resolution)`, `set_num_uv_layers`, `recompute_normals(handle, hard_angle_deg)`, `flip_normals`, `ensure_outward(handle)` (flip if the enclosed volume is negative), `compute_polygroups(handle, "Angle|UVIslands|Components|Polygons", crease_angle)`, `set_material_id(handle, sel, id)`, `remap_material_id(handle, from, to)`, `set_vertex_color(handle, sel, color)`, `set_polygroup(handle, sel, group_id=-1)`, `recompute_uvs(handle, uv_layer, "Polygroups|UVIslands", "SpectralConformal|Conformal|ExpMap", sel)`, `transform_uv(handle, uv_layer, sel, translation, scale, rotation_deg, origin)`, `layout_uv(handle, uv_layer, "Repack|Stack|Normalize|Transform", sel, resolution)`, `pack_uv_per_material(handle, uv_layer, resolution)`, `get_uv_stats(handle, uv_layer)` → islands/coverage/overlap/texel density, `world_to_uv(handle, point, uv_layer)` |
 | Transform | `transform_mesh(handle, transform)`, `translate_mesh`, `rotate_mesh`, `scale_mesh`, `recenter_mesh(handle, "Bounds|Base")` |
-| Assets | `save_mesh_to_static_mesh(handle, path, replace_existing, enable_collision, enable_nanite)`, `save_mesh_to_skeletal_mesh(handle, path, skeleton_path="")` ("" creates `<path>_Skeleton` from the mesh bones), `set_asset_materials(asset_path, "/Game/M_A,/Game/M_B")`, `transfer_bone_weights(handle, source_skeletal_mesh_path)`, `smooth_bone_weights(handle, skeleton_path)`, `prune_bone_weights(handle, "bone,bone")`, `create_bones(handle, [ModelingBoneDef(name, parent_name, transform)])`, `bind_selection_to_bone(handle, sel, bone, weight=1)`, `list_bones(handle)` → per-bone vertex counts, `generate_collision(asset_path, "MinVolumeShapes|ConvexHulls|AlignedBoxes|OrientedBoxes|MinimalSpheres|Capsules|SweptHulls", max_hulls)`, `set_lods(asset_path, [percent_triangles...])`, `bake_textures(target_handle, source_handle, "TangentNormal,AmbientOcclusion,Curvature,ObjectNormal,Position", resolution, out_folder, base_name)`, `spawn_static_mesh_actor(asset_path, transform, label)`; `load_mesh_from_actor` also reads skeletal / dynamic mesh actors |
+| Assets | `save_mesh_to_static_mesh(handle, path, replace_existing, enable_collision, enable_nanite)`, `save_mesh_to_skeletal_mesh(handle, path, skeleton_path="")` ("" creates `<path>_Skeleton` from the mesh bones), `set_asset_materials(asset_path, "/Game/M_A,/Game/M_B")`, `transfer_bone_weights(handle, source_skeletal_mesh_path)`, `smooth_bone_weights(handle, skeleton_path)`, `prune_bone_weights(handle, "bone,bone")`, `create_bones(handle, [ModelingBoneDef(name, parent_name, transform)])`, `bind_selection_to_bone(handle, sel, bone, weight=1)`, `list_bones(handle)` → per-bone vertex counts, `generate_collision(asset_path, "MinVolumeShapes|ConvexHulls|AlignedBoxes|OrientedBoxes|MinimalSpheres|Capsules|SweptHulls", max_hulls)`, `set_lods(asset_path, [percent_triangles...])`, `bake_textures(target_handle, source_handle, "TangentNormal,AmbientOcclusion,Curvature,ObjectNormal,Position,VertexColor,MaterialID,UVShell,Height", resolution, out_folder, base_name)`, `bake_texture_transfer(target, source, "T_A,T_B", resolution, out_folder, base_name)`, `import_texture(file, asset_path, srgb, "Default|Normalmap|Masks|Grayscale|HDR")`, `create_noise_texture(asset_path, w, h, cells, octaves)`, `draw_on_texture(asset_path, "Line|Dots|Rect|Fill", uv_points, color, thickness_px, spacing_px)`, `spawn_static_mesh_actor(asset_path, transform, label)`; `load_mesh_from_actor` also reads skeletal / dynamic mesh actors |
 
 ## GeometryScript coverage
 
@@ -210,3 +210,39 @@ svc.create_bones(h, [
 Animate the result like any skeletal mesh — an AnimSequence keyed on the control bones (see the
 `animation` skill), a Control Rig, or `SetBoneRotationByName` on a PoseableMeshComponent for a quick
 check in a level.
+
+## Texturing pipeline (UVs you control, masks you can make, pixels you can draw)
+
+Auto-unwraps (`auto_uv`) are fine for baking AO, useless for markings: hundreds of seams and uneven
+texel density. For anything an artist would paint, build the islands yourself and verify them.
+
+1. **Define islands.** Assign a polygroup per panel/region: `compute_polygroups(h, "Angle", 30)` for
+   hard-surface parts, then override with selections — `select_in_box` / `select_by_normal_angle` /
+   `select_connected` + `set_polygroup(h, sel, -1)` (a new group) so a wing top, a fuselage side or a
+   whole rudder is one island.
+2. **Unwrap** each island conformally: `recompute_uvs(h, 0, "Polygroups", "SpectralConformal")`. Big
+   round shapes (fuselage) can instead take `project_uv(h, "Cylinder", transform, 0, sel)`.
+3. **Pack** — `layout_uv(h, 0, "Repack", "", 4096)` for one texture set, or
+   `pack_uv_per_material(h, 0, 4096)` so every material slot (fuselage / wings / details) fills its own
+   0–1 range and gets its own 4K.
+4. **Verify** with `get_uv_stats(h)`: islands, coverage, `overlap_fraction` (must be ~0 unless you
+   packed per material), `num_unset_triangles` (must be 0) and `texels_per_cm_at_1k`. Fix before
+   baking. `world_to_uv(h, point)` tells you where a spot on the mesh lands on the texture.
+5. **Masks without painting.** Select regions on the mesh, `set_vertex_color(h, sel, color)` per
+   channel (R walkways, G stripes, B dirt…) and bake with `bake_textures(h, h, "VertexColor", …)`.
+   `"MaterialID"` bakes a per-slot mask for free; `"UVShell"` draws the island outlines — panel lines
+   when islands are panels; `"Height"` and the normals/AO/curvature bakes remain.
+6. **Pixels.** `create_noise_texture(path, 2048, 2048, cells, octaves)` for tileable grunge/wear;
+   `draw_on_texture(path, "Line|Dots|Rect|Fill", uv_points, color, thickness_px, spacing_px)` to draw
+   rivet rows, stripes and blocks straight into an 8-bit texture in UV space (use `world_to_uv` to
+   place them); `import_texture(file, path, srgb, "Default|Normalmap|Masks|Grayscale")` for anything
+   made elsewhere (a PolyHaven PBR set downloaded with `urllib` in the same Python script works).
+   `bake_texture_transfer(target, source, "T_A,T_B", …)` re-projects textures from one unwrap onto
+   another (after re-unwrapping, or from a detail mesh).
+7. **Geometry detail for normal maps.** Build it on a copy: `append_mesh_along_polyline(h, rivet, points,
+   spacing)` for fastener rows, `append_mesh_at_transforms(h, bolt, sample_surface_points(...))` for
+   scatter, `cut_groove_along_polyline(h, points, width, depth)` for recessed panel lines — then
+   `bake_textures(game_mesh, detail_mesh, "TangentNormal,AmbientOcclusion", 4096, …)`.
+
+Crisp markings (roundels, numbers) are still best as decals: `set_num_uv_layers(h, 2)` +
+`project_uv(h, "Planar", transform, 1, sel)` gives a clamped UV1 the material samples a decal through.

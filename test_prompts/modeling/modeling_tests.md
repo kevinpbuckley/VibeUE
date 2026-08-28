@@ -254,3 +254,21 @@ Delete the `ModelingTestCrate` actor, delete everything under `/Game/Developers/
 **Prompt:** "Build a simple tail fin with a rudder: a fin slab, a through-slot cut along the hinge line so the rear third is a separate piece. Create a `root` bone and a `rudder` bone whose X axis runs along the hinge, bind the rudder piece to it, confirm with `list_bones` that the rudder bone owns exactly the rudder's vertices, and save it as `/Game/Developers/Test/SK_Fin` with a new skeleton."
 
 **Expected:** `boolean` Subtract for the slot → `select_connected` on a point in the rudder → `create_bones` (root, rudder) → `bind_selection_to_bone` → `list_bones` showing two bones with non-zero counts → `save_mesh_to_skeletal_mesh(..., "", ...)` producing `SK_Fin` and `SK_Fin_Skeleton`.
+
+## Prompt 15.1 — controlled unwrap
+
+**Prompt:** "Unwrap `/Game/Props/SM_Crate` for hand painting: one UV island per face, no overlaps, packed for a 2K texture. Report island count, coverage and texel density before and after."
+
+**Expected:** `compute_polygroups("Angle")` (or `set_polygroup` per face) → `recompute_uvs(…, "Polygroups")` → `layout_uv("Repack", 2048)` → `get_uv_stats` twice with the numbers quoted; `overlap_fraction` ≈ 0 and `num_unset_triangles` = 0 at the end.
+
+## Prompt 15.2 — masks and markings
+
+**Prompt:** "Make a walkway mask for the wing tops of `SM_F17_Fighter` (red channel), a dirt mask for everything below the wing plane (green), and draw a 6-pixel dashed stripe along the fuselage spine into a new 2K texture. Save the textures under `/Game/Mesh/Vehicles`."
+
+**Expected:** selections by normal / box → `set_vertex_color` per channel → `bake_textures(…, "VertexColor", 2048, …)`; `create_noise_texture` or an existing 8-bit texture + `world_to_uv` for the spine points + `draw_on_texture("Dots", …, spacing_px)`.
+
+## Prompt 15.3 — detail normal map
+
+**Prompt:** "Add a rivet row every 8 cm along both wing leading edges and a 1 cm recessed panel line around the canopy on a detail copy of the fighter, then bake a 4K tangent normal map and AO from it onto the game mesh."
+
+**Expected:** `copy_mesh` → small sphere/cylinder handle for the rivet → `append_mesh_along_polyline` per leading edge → `cut_groove_along_polyline` around the canopy → `bake_textures(game, detail, "TangentNormal,AmbientOcclusion", 4096, …)`; the game mesh itself is untouched.
