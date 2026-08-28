@@ -137,6 +137,13 @@ public class VibeUE : ModuleRules
 				"MetasoundGraphCore",     // For core MetaSound graph types
 				"MeshDescription",        // For FMeshDescription / TVertexInstanceAttributesRef (UV editing)
 				"StaticMeshDescription",  // For FStaticMeshAttributes / FStaticMeshOperations / FUVMapParameters
+				"GeometryCore",           // ModelingService: FDynamicMesh3 + attribute sets behind UDynamicMesh
+				"GeometryFramework",      // ModelingService: UDynamicMesh / UDynamicMeshPool session meshes
+				"DynamicMesh",            // ModelingService: mesh operator types used by GeometryScript
+				"GeometryScriptingCore",  // ModelingService: the Modeling Mode operators (primitives, booleans, remesh, UV, bake, collision, ...)
+				"GeometryScriptingEditor",// ModelingService: create StaticMesh / SkeletalMesh / Texture2D assets, SubD
+				"StaticMeshEditor",       // ModelingService: UStaticMeshEditorSubsystem (LOD chain generation)
+				"SkeletalMeshDescription",// ModelingService: FSkeletalMeshAttributesShared (bone-weight transfer options)
 				"ToolsetRegistry",        // UE 5.8 native AI toolset registry — exposes services as AICallable tools on Epic's MCP endpoint
 				"ModelContextProtocol",   // UE 5.8 native MCP server — VibeUE's dynamic tools are bridged onto Epic's endpoint
 				"AIModule",               // UBehaviorTree, UBlackboardData, UBTNode, blackboard key types

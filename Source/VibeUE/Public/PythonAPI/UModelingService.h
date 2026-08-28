@@ -1,0 +1,502 @@
+// Copyright Buckley Builds LLC 2026 All Rights Reserved.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "ToolsetRegistry/ToolsetDefinition.h"
+#include "UModelingService.generated.h"
+
+class UDynamicMesh;
+
+/**
+ * Outcome of a modeling operation. Handle echoes the mesh the call acted on (or the one it
+ * created), TriangleCount / VertexCount describe that mesh afterwards, AssetPath is set by the
+ * asset-writing calls.
+ */
+USTRUCT(BlueprintType)
+struct FModelingResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	bool bSuccess = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	FString Message;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	int32 Handle = -1;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	int32 TriangleCount = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	int32 VertexCount = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	FString AssetPath;
+};
+
+/** Diagnostic snapshot of a session mesh — read it between stages instead of trusting a green result. */
+USTRUCT(BlueprintType)
+struct FModelingMeshInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	bool bSuccess = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	FString Message;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	int32 Handle = -1;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	int32 TriangleCount = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	int32 VertexCount = 0;
+
+	/** Watertight (no open border edges). Booleans and voxel ops want this true. */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	bool bIsClosed = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	int32 OpenBorderEdges = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	int32 ConnectedComponents = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	FVector BoundsMin = FVector::ZeroVector;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	FVector BoundsMax = FVector::ZeroVector;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	float SurfaceArea = 0.f;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	float Volume = 0.f;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	int32 NumUVLayers = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	bool bHasVertexColors = false;
+
+	/** Distinct material IDs in use (empty when the mesh has no material attribute). */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	TArray<int32> MaterialIDs;
+
+	/** Named selections currently stored on this handle. */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	TArray<FString> Selections;
+};
+
+USTRUCT(BlueprintType)
+struct FModelingSplitResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	bool bSuccess = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	FString Message;
+
+	/** One new session handle per connected component, largest first. */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	TArray<int32> Handles;
+};
+
+USTRUCT(BlueprintType)
+struct FModelingBakeResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	bool bSuccess = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	FString Message;
+
+	/** Saved Texture2D asset paths, in the order of the requested bake types. */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	TArray<FString> TexturePaths;
+};
+
+/**
+ * Programmatic mesh modeling — the operator half of Unreal's Modeling Mode, driven without a
+ * viewport. Meshes live in an in-editor session as integer handles wrapping a UDynamicMesh:
+ * create or load one, chain operations on it, save it as a StaticMesh / SkeletalMesh asset,
+ * release it. Operations that act on part of a mesh take a named selection made on the same
+ * handle (pass "" for the whole mesh). Everything is built on GeometryScript, so the long tail
+ * is one call away: GetDynamicMesh(handle) hands the UDynamicMesh to any
+ * unreal.GeometryScript_* function in the same Python script.
+ *
+ * Python: unreal.ModelingService.<snake_case>(...). See the `modeling` skill for the workflow.
+ */
+UCLASS(BlueprintType)
+class VIBEUE_API UModelingService : public UToolsetDefinition
+{
+	GENERATED_BODY()
+
+public:
+	// =====================================================================
+	// Session
+	// =====================================================================
+
+	/** Create an empty session mesh. Result.Handle is the new handle. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Create Mesh"))
+	static FModelingResult CreateMesh();
+
+	/** Load a StaticMesh asset's LOD into a new session mesh (materials become material IDs by section). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Load Mesh From Static Mesh"))
+	static FModelingResult LoadMeshFromStaticMesh(const FString& AssetPath, int32 LODIndex = 0);
+
+	/** Load a SkeletalMesh asset's LOD (with bone weights) into a new session mesh. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Load Mesh From Skeletal Mesh"))
+	static FModelingResult LoadMeshFromSkeletalMesh(const FString& AssetPath, int32 LODIndex = 0);
+
+	/** Load the static mesh of a level actor (by label) into a new session mesh; bWorldSpace bakes the actor transform in. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Load Mesh From Actor"))
+	static FModelingResult LoadMeshFromActor(const FString& ActorLabel, bool bWorldSpace = false, int32 LODIndex = 0);
+
+	/** Duplicate a session mesh into a new handle. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Copy Mesh"))
+	static FModelingResult CopyMesh(int32 Handle);
+
+	/** Free one session mesh (and its selections). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Release Mesh"))
+	static bool ReleaseMesh(int32 Handle);
+
+	/** Free every session mesh. Returns how many were released. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Release All Meshes"))
+	static int32 ReleaseAllMeshes();
+
+	/** Handles currently alive in the session. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "List Meshes"))
+	static TArray<int32> ListMeshes();
+
+	/** Counts, bounds, closedness, components, UV layers, material IDs, stored selections. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Get Mesh Info"))
+	static FModelingMeshInfo GetMeshInfo(int32 Handle);
+
+	/** The UDynamicMesh behind a handle, for direct use with unreal.GeometryScript_* libraries (Python only). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (DisplayName = "Get Dynamic Mesh"))
+	static UDynamicMesh* GetDynamicMesh(int32 Handle);
+
+	// =====================================================================
+	// Primitives (appended into an existing handle; Transform places them)
+	// =====================================================================
+
+	/** Origin: "Base" (sits on Z=0) or "Center". Steps subdivide the faces. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Append Box"))
+	static FModelingResult AppendBox(int32 Handle, FTransform Transform, float DimensionX = 100.f, float DimensionY = 100.f, float DimensionZ = 100.f,
+		int32 StepsX = 0, int32 StepsY = 0, int32 StepsZ = 0, const FString& Origin = TEXT("Base"), int32 MaterialID = 0);
+
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Append Sphere"))
+	static FModelingResult AppendSphere(int32 Handle, FTransform Transform, float Radius = 50.f, int32 StepsPhi = 10, int32 StepsTheta = 16,
+		const FString& Origin = TEXT("Center"), int32 MaterialID = 0);
+
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Append Cylinder"))
+	static FModelingResult AppendCylinder(int32 Handle, FTransform Transform, float Radius = 50.f, float Height = 100.f, int32 RadialSteps = 12,
+		int32 HeightSteps = 0, bool bCapped = true, const FString& Origin = TEXT("Base"), int32 MaterialID = 0);
+
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Append Cone"))
+	static FModelingResult AppendCone(int32 Handle, FTransform Transform, float BaseRadius = 50.f, float TopRadius = 5.f, float Height = 100.f,
+		int32 RadialSteps = 12, int32 HeightSteps = 4, bool bCapped = true, const FString& Origin = TEXT("Base"), int32 MaterialID = 0);
+
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Append Capsule"))
+	static FModelingResult AppendCapsule(int32 Handle, FTransform Transform, float Radius = 30.f, float LineLength = 75.f, int32 HemisphereSteps = 5,
+		int32 CircleSteps = 8, const FString& Origin = TEXT("Base"), int32 MaterialID = 0);
+
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Append Torus"))
+	static FModelingResult AppendTorus(int32 Handle, FTransform Transform, float MajorRadius = 50.f, float MinorRadius = 25.f, int32 MajorSteps = 16,
+		int32 MinorSteps = 8, const FString& Origin = TEXT("Base"), int32 MaterialID = 0);
+
+	/** Flat rectangle in the XY plane. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Append Rectangle"))
+	static FModelingResult AppendRectangle(int32 Handle, FTransform Transform, float DimensionX = 100.f, float DimensionY = 100.f, int32 StepsWidth = 0,
+		int32 StepsHeight = 0, int32 MaterialID = 0);
+
+	/** Flat disc / ring / arc in the XY plane. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Append Disc"))
+	static FModelingResult AppendDisc(int32 Handle, FTransform Transform, float Radius = 50.f, int32 AngleSteps = 16, int32 SpokeSteps = 0,
+		float StartAngle = 0.f, float EndAngle = 360.f, float HoleRadius = 0.f, int32 MaterialID = 0);
+
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Append Stairs"))
+	static FModelingResult AppendStairs(int32 Handle, FTransform Transform, float StepWidth = 100.f, float StepHeight = 20.f, float StepDepth = 30.f,
+		int32 NumSteps = 8, bool bFloating = false, int32 MaterialID = 0);
+
+	/** Extrude a closed 2D polygon (XY, counter-clockwise) along +Z. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Append Extrude Polygon"))
+	static FModelingResult AppendExtrudePolygon(int32 Handle, FTransform Transform, const TArray<FVector2D>& PolygonPoints, float Height = 100.f,
+		int32 HeightSteps = 0, bool bCapped = true, const FString& Origin = TEXT("Base"), int32 MaterialID = 0);
+
+	/** Revolve a 2D profile (X = radius offset, Y = height) around the Z axis: lathe shapes, rings, vases. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Append Revolve Polygon"))
+	static FModelingResult AppendRevolvePolygon(int32 Handle, FTransform Transform, const TArray<FVector2D>& ProfilePoints, float Radius = 100.f,
+		int32 Steps = 16, float RevolveDegrees = 360.f, int32 MaterialID = 0);
+
+	/** Append another session mesh (transformed) into this one — no boolean, just merged geometry. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Append Mesh"))
+	static FModelingResult AppendMesh(int32 Handle, int32 OtherHandle, FTransform Transform);
+
+	// =====================================================================
+	// Booleans
+	// =====================================================================
+
+	/** Operation: "Union", "Subtract", "Intersection". ToolTransform places the tool mesh relative to the target. Both should be closed. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Boolean"))
+	static FModelingResult Boolean(int32 TargetHandle, int32 ToolHandle, const FString& Operation, FTransform ToolTransform,
+		bool bFillHoles = true, bool bSimplifyOutput = true);
+
+	/** Union a mesh with itself — merges overlapping kitbash pieces into one shell. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Self Union"))
+	static FModelingResult SelfUnion(int32 Handle, bool bFillHoles = true, bool bTrimFlaps = true);
+
+	/** Cut away everything on the +Z side of CutFrame (its Z axis is the plane normal). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Plane Cut"))
+	static FModelingResult PlaneCut(int32 Handle, FTransform CutFrame, bool bFillHoles = true, bool bFlipCutSide = false);
+
+	/** Mirror across MirrorFrame's XY plane (optionally cutting the source side first and welding the seam). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Mirror"))
+	static FModelingResult Mirror(int32 Handle, FTransform MirrorFrame, bool bApplyPlaneCut = true, bool bWeldAlongPlane = true, bool bFlipCutSide = false);
+
+	// =====================================================================
+	// Selections (named, stored per handle; "" means the whole mesh)
+	// =====================================================================
+
+	/** SelectionType: "Triangles" (default), "Vertices", "Edges", "Polygroups". Returns the element count. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Select All"))
+	static int32 SelectAll(int32 Handle, const FString& SelectionName, const FString& SelectionType = TEXT("Triangles"));
+
+	/** Triangles whose normal is within MaxAngleDeg of Normal (e.g. (0,0,1) + 5 = the top faces). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Select By Normal Angle"))
+	static int32 SelectByNormalAngle(int32 Handle, const FString& SelectionName, FVector Normal, float MaxAngleDeg = 1.f, bool bInvert = false);
+
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Select In Box"))
+	static int32 SelectInBox(int32 Handle, const FString& SelectionName, FVector BoxMin, FVector BoxMax, bool bInvert = false);
+
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Select In Sphere"))
+	static int32 SelectInSphere(int32 Handle, const FString& SelectionName, FVector Center, float Radius = 100.f, bool bInvert = false);
+
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Select By Material ID"))
+	static int32 SelectByMaterialID(int32 Handle, const FString& SelectionName, int32 MaterialID);
+
+	/** Grow (or shrink with bContract) a selection by N rings of neighbours; stores it under NewSelectionName. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Expand Contract Selection"))
+	static int32 ExpandContractSelection(int32 Handle, const FString& SelectionName, const FString& NewSelectionName, int32 Iterations = 1, bool bContract = false);
+
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Invert Selection"))
+	static int32 InvertSelection(int32 Handle, const FString& SelectionName, const FString& NewSelectionName);
+
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Selection Count"))
+	static int32 SelectionCount(int32 Handle, const FString& SelectionName);
+
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Clear Selections"))
+	static bool ClearSelections(int32 Handle);
+
+	// =====================================================================
+	// Poly-edit operations (Modeling Mode's PolyEdit / Offset / Bevel)
+	// =====================================================================
+
+	/** Extrude selected faces. Zero Direction = along each face's average normal; otherwise a fixed world direction. Negative distance recesses. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Extrude Faces"))
+	static FModelingResult ExtrudeFaces(int32 Handle, const FString& SelectionName, float Distance = 10.f, FVector Direction = FVector::ZeroVector);
+
+	/** Offset selected faces along their normals (parallel face offset). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Offset Faces"))
+	static FModelingResult OffsetFaces(int32 Handle, const FString& SelectionName, float Distance = 10.f);
+
+	/** Inset selected faces (panel lines, frames). Softness rounds the inset boundary. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Inset Faces"))
+	static FModelingResult InsetFaces(int32 Handle, const FString& SelectionName, float Distance = 5.f, float Softness = 0.f);
+
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Outset Faces"))
+	static FModelingResult OutsetFaces(int32 Handle, const FString& SelectionName, float Distance = 5.f, float Softness = 0.f);
+
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Delete Faces"))
+	static FModelingResult DeleteFaces(int32 Handle, const FString& SelectionName);
+
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Translate Selection"))
+	static FModelingResult TranslateSelection(int32 Handle, const FString& SelectionName, FVector Delta);
+
+	/** Bevel the edges between polygroups (run ComputePolygroups first on imported meshes). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Bevel Polygroups"))
+	static FModelingResult BevelPolygroups(int32 Handle, float Distance = 1.f, int32 Subdivisions = 0, float RoundWeight = 1.f);
+
+	/** Offset the whole surface along its normals (inflate / deflate). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Offset Mesh"))
+	static FModelingResult OffsetMesh(int32 Handle, float Distance = 1.f);
+
+	/** Turn an open surface into a solid shell of the given thickness. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Shell Mesh"))
+	static FModelingResult ShellMesh(int32 Handle, float Thickness = 1.f);
+
+	// =====================================================================
+	// Mesh processing
+	// =====================================================================
+
+	/** Uniform remesh to a triangle count, or to an edge length when EdgeLength > 0. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Remesh"))
+	static FModelingResult Remesh(int32 Handle, int32 TargetTriangleCount = 5000, float EdgeLength = 0.f, bool bReprojectToInput = true);
+
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Simplify To Triangle Count"))
+	static FModelingResult SimplifyToTriangleCount(int32 Handle, int32 TriangleCount, bool bAllowSeamCollapse = true);
+
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Simplify To Tolerance"))
+	static FModelingResult SimplifyToTolerance(int32 Handle, float Tolerance = 0.5f, bool bAllowSeamCollapse = true);
+
+	/** Method: "PN" (curved, smooth normals), "Uniform" (flat split), "CatmullClark" (polygroup SubD), "Loop" (triangle SubD). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Subdivide"))
+	static FModelingResult Subdivide(int32 Handle, int32 Level = 1, const FString& Method = TEXT("PN"));
+
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Smooth"))
+	static FModelingResult Smooth(int32 Handle, const FString& SelectionName, int32 Iterations = 5, float Alpha = 0.2f);
+
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Fill Holes"))
+	static FModelingResult FillHoles(int32 Handle);
+
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Weld Edges"))
+	static FModelingResult WeldEdges(int32 Handle, float Tolerance = 0.001f);
+
+	/** Repair degenerate triangles, drop tiny floating pieces, compact — the standard cleanup after imports and booleans. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Repair"))
+	static FModelingResult Repair(int32 Handle, float MinComponentVolume = 0.0001f, int32 MinComponentTriangles = 1);
+
+	/** Remove triangles that cannot be seen from outside (kitbash interiors). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Remove Hidden Triangles"))
+	static FModelingResult RemoveHiddenTriangles(int32 Handle);
+
+	/** Split into connected components, each becoming a new session handle. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Split By Components"))
+	static FModelingSplitResult SplitByComponents(int32 Handle);
+
+	// =====================================================================
+	// Deformation
+	// =====================================================================
+
+	/** Bend around the frame's Y axis by Angle degrees within Extent of its origin. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Bend"))
+	static FModelingResult Bend(int32 Handle, FTransform Orientation, float AngleDeg = 45.f, float Extent = 50.f, bool bBidirectional = true);
+
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Twist"))
+	static FModelingResult Twist(int32 Handle, FTransform Orientation, float AngleDeg = 45.f, float Extent = 50.f, bool bBidirectional = true);
+
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Flare"))
+	static FModelingResult Flare(int32 Handle, FTransform Orientation, float PercentX = 20.f, float PercentY = 20.f, float Extent = 50.f);
+
+	/** Perlin displacement along normals (rock, damage, organic wobble). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Noise"))
+	static FModelingResult Noise(int32 Handle, const FString& SelectionName, float Magnitude = 5.f, float Frequency = 0.25f, int32 RandomSeed = 0);
+
+	/** Displace along normals by a texture sampled through a UV layer (height maps). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Displace From Texture"))
+	static FModelingResult DisplaceFromTexture(int32 Handle, const FString& SelectionName, const FString& TexturePath, float Magnitude = 10.f, int32 UVLayer = 0);
+
+	// =====================================================================
+	// Voxel operations
+	// =====================================================================
+
+	/** Rebuild as a watertight voxel-derived surface (fixes any topology; loses UVs). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Voxel Solidify"))
+	static FModelingResult VoxelSolidify(int32 Handle, int32 GridResolution = 64, float WindingThreshold = 0.5f);
+
+	/** Operation: "Dilate", "Contract", "Open", "Close" by Distance (Close welds nearby pieces, Open removes thin bits). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Voxel Morphology"))
+	static FModelingResult VoxelMorphology(int32 Handle, const FString& Operation, float Distance = 5.f, int32 GridResolution = 64);
+
+	// =====================================================================
+	// UVs, normals, groups, materials, colors
+	// =====================================================================
+
+	/** Method: "XAtlas" (general unwrap) or "PatchBuilder" (hard-surface, respects groups). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Auto UV"))
+	static FModelingResult AutoUV(int32 Handle, const FString& Method = TEXT("XAtlas"), int32 UVLayer = 0);
+
+	/** Method: "Planar", "Box", "Cylinder"; the transform positions/scales the projector. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Project UV"))
+	static FModelingResult ProjectUV(int32 Handle, const FString& Method, FTransform ProjectorTransform, int32 UVLayer = 0, const FString& SelectionName = TEXT(""));
+
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Repack UV"))
+	static FModelingResult RepackUV(int32 Handle, int32 UVLayer = 0, int32 TextureResolution = 1024);
+
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Set Num UV Layers"))
+	static FModelingResult SetNumUVLayers(int32 Handle, int32 NumLayers);
+
+	/** HardAngleDeg < 0 = fully smooth; otherwise edges sharper than the angle get split normals. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Recompute Normals"))
+	static FModelingResult RecomputeNormals(int32 Handle, float HardAngleDeg = 30.f);
+
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Flip Normals"))
+	static FModelingResult FlipNormals(int32 Handle);
+
+	/** Assign polygroups by crease angle (needed by BevelPolygroups / PatchBuilder on imported meshes). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Compute Polygroups"))
+	static FModelingResult ComputePolygroups(int32 Handle, float CreaseAngleDeg = 15.f, int32 MinGroupSize = 2);
+
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Set Material ID"))
+	static FModelingResult SetMaterialID(int32 Handle, const FString& SelectionName, int32 MaterialID);
+
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Set Vertex Color"))
+	static FModelingResult SetVertexColor(int32 Handle, const FString& SelectionName, FLinearColor Color);
+
+	// =====================================================================
+	// Transform
+	// =====================================================================
+
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Transform Mesh"))
+	static FModelingResult TransformMesh(int32 Handle, FTransform Transform);
+
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Translate Mesh"))
+	static FModelingResult TranslateMesh(int32 Handle, FVector Translation);
+
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Rotate Mesh"))
+	static FModelingResult RotateMesh(int32 Handle, FRotator Rotation, FVector Origin = FVector::ZeroVector);
+
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Scale Mesh"))
+	static FModelingResult ScaleMesh(int32 Handle, FVector Scale, FVector Origin = FVector::ZeroVector);
+
+	/** Mode: "Bounds" (bounds center to origin) or "Base" (XY center to origin, bottom to Z=0). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Recenter Mesh"))
+	static FModelingResult RecenterMesh(int32 Handle, const FString& Mode = TEXT("Base"));
+
+	// =====================================================================
+	// Assets, collision, LODs, baking, placement
+	// =====================================================================
+
+	/** Write the mesh to a StaticMesh asset (created, or LOD0 replaced when it exists and bReplaceExisting). Saves the package. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Save Mesh To Static Mesh"))
+	static FModelingResult SaveMeshToStaticMesh(int32 Handle, const FString& AssetPath, bool bReplaceExisting = true, bool bEnableCollision = true,
+		bool bEnableNanite = false, bool bSaveAsset = true);
+
+	/** Write the mesh (with its bone weights) to a SkeletalMesh asset bound to SkeletonPath. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Save Mesh To Skeletal Mesh"))
+	static FModelingResult SaveMeshToSkeletalMesh(int32 Handle, const FString& AssetPath, const FString& SkeletonPath, bool bReplaceExisting = true, bool bSaveAsset = true);
+
+	/** Copy skin weights from a SkeletalMesh asset onto this mesh by closest surface point (re-skin a modified body). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Transfer Bone Weights"))
+	static FModelingResult TransferBoneWeights(int32 Handle, const FString& SourceSkeletalMeshPath, int32 SourceLODIndex = 0);
+
+	/** Method: "MinVolumeShapes", "ConvexHulls", "AlignedBoxes", "OrientedBoxes", "MinimalSpheres", "Capsules", "SweptHulls". Acts on the asset. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Generate Collision"))
+	static FModelingResult GenerateCollision(const FString& AssetPath, const FString& Method = TEXT("MinVolumeShapes"), int32 MaxConvexHulls = 1,
+		int32 ConvexHullTargetFaceCount = 25, bool bSaveAsset = true);
+
+	/** Rebuild the asset's LOD chain: one entry per LOD as a fraction of LOD0 triangles (LOD0 first, e.g. [1.0, 0.5, 0.25]). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Set LODs", ScriptName = "set_lods;set_lo_ds"))
+	static FModelingResult SetLODs(const FString& AssetPath, const TArray<float>& PercentTrianglesPerLOD, bool bAutoComputeScreenSize = true, bool bSaveAsset = true);
+
+	/** Bake maps from SourceHandle onto TargetHandle's UVs. BakeTypes: comma list of "TangentNormal", "ObjectNormal", "AmbientOcclusion", "Curvature", "Position", "BentNormal". Resolution 16..8192 (power of two). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Bake Textures"))
+	static FModelingBakeResult BakeTextures(int32 TargetHandle, int32 SourceHandle, const FString& BakeTypes, int32 Resolution, const FString& OutputFolder,
+		const FString& BaseName, int32 TargetUVLayer = 0, int32 SamplesPerPixel = 1);
+
+	/** Place a StaticMesh asset in the current level as a StaticMeshActor. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Spawn Static Mesh Actor"))
+	static FModelingResult SpawnStaticMeshActor(const FString& AssetPath, FTransform Transform, const FString& ActorLabel = TEXT(""));
+};

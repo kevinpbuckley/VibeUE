@@ -50,6 +50,10 @@
 			"Enabled": true
 		},
 		{
+			"Name": "GeometryScripting",
+			"Enabled": true
+		},
+		{
 			"Name": "ModelViewViewModel",
 			"Enabled": true
 		},

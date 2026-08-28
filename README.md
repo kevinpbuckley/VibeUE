@@ -36,6 +36,10 @@ your editor through Unreal's standard MCP endpoint.
 Unreal 5.8 ships its own AI toolsets (Blueprints, materials, actors, assets, meshes, data tables, …).
 VibeUE **complements** them — it focuses on the domains and depth the engine doesn't cover:
 
+- **Mesh modeling** — the operator half of Modeling Mode without a viewport: `ModelingService`
+  builds meshes from primitives, booleans, extrude/inset/bevel on selections, remesh/simplify/
+  subdivide, deform and voxel ops, auto-UV, normals, repair, then saves StaticMesh/SkeletalMesh
+  assets with collision, LODs, and baked maps. Kitbash and block out props in-engine, no Blender.
 - **Terrain & world** — Landscape sculpting/heightmaps/splines, landscape auto-materials + RVT,
   Foliage, procedural FPS **Map Blockout**, and **real-world terrain** (heightmaps + water from GPS).
 - **Audio** — MetaSound and SoundCue graph authoring.
