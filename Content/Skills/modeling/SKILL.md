@@ -132,6 +132,13 @@ can pass to any `unreal.GeometryScript_*` library function in the same script.
   (they are in memory), but assets go through the editor and `TransactionService` checkpoints apply.
 - **Verify with evidence.** `get_mesh_info` after each stage (triangle/vertex counts, bounds, closed),
   and a viewport capture once it is in the level.
+- **Swept surfaces can come out inside-out.** After `append_sweep_polyline` + `fill_holes`, check
+  `get_mesh_info(h).volume`; a negative volume means the normals face inward and `self_union` /
+  `boolean` will silently discard the part as negative space. Call `flip_normals(h)` first. Sweep
+  frame semantics: with frame rotation yaw 90 the profile's X runs along world -X from the frame
+  position and its Y along world Z; put the profile scale (e.g. a wing chord) in the frame's Scale.
+- **XAtlas needs a compact mesh.** `fill_holes` and boolean cuts leave id gaps; `auto_uv` compacts
+  automatically from 2.2, older builds need `unreal.GeometryScript_MeshRepair.compact_mesh(svc.get_dynamic_mesh(h))` first.
 - **Budget triangles.** Voxel ops and PN tessellation explode counts; follow them with
   `simplify_to_triangle_count`. Keep props under ~20k tris unless Nanite is on.
 
