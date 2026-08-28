@@ -180,7 +180,7 @@ namespace
 		if (!Debug) { return false; }
 		for (const FGeometryScriptDebugMessage& M : Debug->Messages)
 		{
-			if (M.MessageType == EGeometryScriptDebugMessageType::ErrorMessage) { return true; }
+			if (M.MessageType == EGeometryScriptDebugMessageType::ErrorMessage || M.Message.ToString().Contains(TEXT("cannot be run"))) { return true; }
 		}
 		return false;
 	}
@@ -1296,6 +1296,8 @@ FModelingResult UModelingService::AutoUV(int32 Handle, const FString& Method, in
 	UDynamicMesh* Mesh = FindMesh(Handle);
 	if (!Mesh) { return NoMesh(Handle); }
 	UGeometryScriptDebug* Debug = NewDebug();
+	// Booleans, deletes, and cuts leave id gaps; XAtlas refuses a non-compact mesh, so compact first.
+	UGeometryScriptLibrary_MeshRepairFunctions::CompactMesh(Mesh, Debug);
 	if (GetMeshInfo(Handle).NumUVLayers <= UVLayer)
 	{
 		UGeometryScriptLibrary_MeshUVFunctions::SetNumUVSets(Mesh, UVLayer + 1, Debug);
