@@ -111,6 +111,57 @@ struct FModelingSplitResult
 	TArray<int32> Handles;
 };
 
+/** A point found on a mesh surface by RayCast / NearestPoint. */
+USTRUCT(BlueprintType)
+struct FModelingSurfacePoint
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	bool bFound = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	FVector Position = FVector::ZeroVector;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	int32 TriangleID = -1;
+
+	/** Ray parameter (distance along the ray) for RayCast; distance from the query point for NearestPoint. */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	float Distance = 0.f;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	FVector BaryCoords = FVector::ZeroVector;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	FString Message;
+};
+
+/** Surface-to-surface distances between two session meshes (MeasureDistance). */
+USTRUCT(BlueprintType)
+struct FModelingDistanceReport
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	bool bSuccess = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	FString Message;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	float MaxDistance = 0.f;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	float MinDistance = 0.f;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	float AverageDistance = 0.f;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	float RootMeanSquareDeviation = 0.f;
+};
+
 USTRUCT(BlueprintType)
 struct FModelingBakeResult
 {
@@ -435,9 +486,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Flip Normals"))
 	static FModelingResult FlipNormals(int32 Handle);
 
-	/** Assign polygroups by crease angle (needed by BevelPolygroups / PatchBuilder on imported meshes). */
+	/** Assign polygroups. Method: "Angle" (crease angle), "UVIslands", "Components", "Polygons" (detect quads/planar polygons). Needed by BevelPolygroups / PatchBuilder / SelectByPolygroup on imported meshes. */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Compute Polygroups"))
-	static FModelingResult ComputePolygroups(int32 Handle, float CreaseAngleDeg = 15.f, int32 MinGroupSize = 2);
+	static FModelingResult ComputePolygroups(int32 Handle, const FString& Method = TEXT("Angle"), float CreaseAngleDeg = 15.f, int32 MinGroupSize = 2);
+
+	/** Move every triangle with FromMaterialID to ToMaterialID. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Remap Material ID"))
+	static FModelingResult RemapMaterialID(int32 Handle, int32 FromMaterialID, int32 ToMaterialID);
 
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Set Material ID"))
 	static FModelingResult SetMaterialID(int32 Handle, const FString& SelectionName, int32 MaterialID);
@@ -499,4 +554,93 @@ public:
 	/** Place a StaticMesh asset in the current level as a StaticMeshActor. */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Spawn Static Mesh Actor"))
 	static FModelingResult SpawnStaticMeshActor(const FString& AssetPath, FTransform Transform, const FString& ActorLabel = TEXT(""));
+
+	// =====================================================================
+	// More primitives
+	// =====================================================================
+
+	/** Spiral / curved staircase around the +Z axis. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Append Curved Stairs"))
+	static FModelingResult AppendCurvedStairs(int32 Handle, FTransform Transform, float StepWidth = 100.f, float StepHeight = 20.f, float InnerRadius = 150.f,
+		float CurveAngle = 90.f, int32 NumSteps = 8, bool bFloating = false, int32 MaterialID = 0);
+
+	/** Sphere built from a subdivided cube (even quads — better for booleans and UVs than a lat-long sphere). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Append Sphere Box"))
+	static FModelingResult AppendSphereBox(int32 Handle, FTransform Transform, float Radius = 50.f, int32 Steps = 6, const FString& Origin = TEXT("Center"), int32 MaterialID = 0);
+
+	/** Sweep a 2D profile (XY, open polyline) along a path of transforms: pipes, rails, cables, trim. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Append Sweep Polyline"))
+	static FModelingResult AppendSweepPolyline(int32 Handle, FTransform Transform, const TArray<FVector2D>& ProfilePoints, const TArray<FTransform>& SweepPath,
+		bool bLoop = false, float StartScale = 1.f, float EndScale = 1.f, int32 MaterialID = 0);
+
+	// =====================================================================
+	// More simplification
+	// =====================================================================
+
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Simplify To Vertex Count"))
+	static FModelingResult SimplifyToVertexCount(int32 Handle, int32 VertexCount, bool bAllowSeamCollapse = true);
+
+	/** Collapse coplanar triangles only — lossless cleanup for boolean / voxel output. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Simplify Planar"))
+	static FModelingResult SimplifyPlanar(int32 Handle, float AngleThresholdDeg = 0.001f);
+
+	// =====================================================================
+	// Spatial queries and sampling
+	// =====================================================================
+
+	/** First hit of a ray against the mesh (MaxDistance 0 = unlimited). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Ray Cast"))
+	static FModelingSurfacePoint RayCast(int32 Handle, FVector Origin, FVector Direction, float MaxDistance = 0.f);
+
+	/** Closest point on the surface to a query point (MaxDistance 0 = unlimited). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Nearest Point"))
+	static FModelingSurfacePoint NearestPoint(int32 Handle, FVector Point, float MaxDistance = 0.f);
+
+	/** Winding-number containment test — the mesh should be closed. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Is Point Inside"))
+	static bool IsPointInside(int32 Handle, FVector Point);
+
+	/** Poisson-disc samples on the surface (position + surface-aligned rotation), for scattering props/foliage/decals. MaxSamples 0 = no cap. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Sample Surface Points"))
+	static TArray<FTransform> SampleSurfacePoints(int32 Handle, float SamplingRadius = 10.f, int32 MaxSamples = 0);
+
+	/** Bounding box of a selection. Returns false when the selection is empty. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Selection Bounds"))
+	static bool SelectionBounds(int32 Handle, const FString& SelectionName, FVector& OutMin, FVector& OutMax);
+
+	/** Select every triangle in one polygroup (see ComputePolygroups / GetMeshInfo). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Select By Polygroup"))
+	static int32 SelectByPolygroup(int32 Handle, const FString& SelectionName, int32 PolygroupID);
+
+	// =====================================================================
+	// Hulls and comparison
+	// =====================================================================
+
+	/** Convex hull of the mesh as a NEW handle (SimplifyToFaceCount 0 = exact). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Convex Hull"))
+	static FModelingResult ConvexHull(int32 Handle, int32 SimplifyToFaceCount = 0);
+
+	/** Approximate the mesh with NumHulls convex pieces, returned merged as a NEW handle (collision proxies, blockout simplification). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Convex Decomposition"))
+	static FModelingResult ConvexDecomposition(int32 Handle, int32 NumHulls = 2);
+
+	/** Hull swept along ProjectionFrame's Z axis (2D outline extruded through the mesh) as a NEW handle. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Swept Hull"))
+	static FModelingResult SweptHull(int32 Handle, FTransform ProjectionFrame);
+
+	/** Surface distances between two meshes — verify a LOD / simplified copy against its source. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Measure Distance"))
+	static FModelingDistanceReport MeasureDistance(int32 HandleA, int32 HandleB);
+
+	// =====================================================================
+	// More skeletal
+	// =====================================================================
+
+	/** Recompute smooth skin weights against a skeleton after transfer or edits. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Smooth Bone Weights"))
+	static FModelingResult SmoothBoneWeights(int32 Handle, const FString& SkeletonPath, float Stiffness = 0.2f, int32 MaxInfluences = 5);
+
+	/** Remove bones (comma-separated names) from the skin weights, renormalizing the rest. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Prune Bone Weights"))
+	static FModelingResult PruneBoneWeights(int32 Handle, const FString& BoneNames);
 };

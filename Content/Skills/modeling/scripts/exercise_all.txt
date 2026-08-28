@@ -1,0 +1,196 @@
+# Copyright Buckley Builds LLC 2026 All Rights Reserved.
+
+# exercise_all.txt — Call EVERY ModelingService function once and report PASS/FAIL, then prove
+# nothing was skipped by diffing against dir(unreal.ModelingService).
+#
+# Sample/verification script for the modeling skill. Run via execute_python_code. It only writes
+# under /Game/Developers/VibeUEModelingExercise and removes everything it created at the end.
+# Skeletal-mesh calls use the first SkeletalMesh found in the project (skipped when there is none).
+import unreal
+
+svc = unreal.ModelingService
+ROOT = "/Game/Developers/VibeUEModelingExercise"
+CALLED, FAILED = set(), []
+
+def call(name, *args):
+    CALLED.add(name)
+    fn = getattr(svc, name)
+    r = fn(*args)
+    ok = r.success if hasattr(r, "success") else (r if isinstance(r, bool) else (r >= 0 if isinstance(r, int) else r is not None))
+    if not ok:
+        FAILED.append((name, getattr(r, "message", str(r))[:120]))
+    return r
+
+svc.release_all_meshes(); CALLED.add("release_all_meshes")
+T = unreal.Transform
+
+# --- session
+h = call("create_mesh").handle
+call("append_box", h, T(), 100, 100, 100)
+copy_h = call("copy_mesh", h).handle
+info = call("get_mesh_info", h)
+assert info.triangle_count == 12, info.triangle_count
+assert svc.get_dynamic_mesh(h) is not None; CALLED.add("get_dynamic_mesh")
+assert h in list(call("list_meshes"))
+assert call("release_mesh", copy_h)
+
+# --- primitives
+p = call("create_mesh").handle
+call("append_sphere", p, T(), 30, 8, 12)
+call("append_cylinder", p, T(unreal.Vector(120, 0, 0)), 20, 60, 12)
+call("append_cone", p, T(unreal.Vector(240, 0, 0)), 20, 5, 60)
+call("append_capsule", p, T(unreal.Vector(360, 0, 0)), 15, 40)
+call("append_torus", p, T(unreal.Vector(480, 0, 0)), 30, 10)
+call("append_rectangle", p, T(unreal.Vector(0, 120, 0)), 50, 50)
+call("append_disc", p, T(unreal.Vector(120, 120, 0)), 25, 16, 0, 0.0, 270.0, 10.0)
+call("append_stairs", p, T(unreal.Vector(240, 120, 0)), 60, 15, 20, 5)
+call("append_curved_stairs", p, T(unreal.Vector(0, 300, 0)), 60, 15, 80, 90.0, 6)
+call("append_sphere_box", p, T(unreal.Vector(360, 120, 0)), 25, 4)
+call("append_extrude_polygon", p, T(unreal.Vector(480, 120, 0)), [unreal.Vector2D(0, 0), unreal.Vector2D(40, 0), unreal.Vector2D(40, 20), unreal.Vector2D(0, 30)], 15.0)
+call("append_revolve_polygon", p, T(unreal.Vector(0, 240, 0)), [unreal.Vector2D(0, 0), unreal.Vector2D(20, 0), unreal.Vector2D(25, 40), unreal.Vector2D(0, 60)], 0.0, 16, 360.0)
+path = [T(unreal.Vector(0, 0, 0)), T(unreal.Vector(0, 0, 50)), T(unreal.Vector(30, 0, 100))]
+call("append_sweep_polyline", p, T(unreal.Vector(120, 240, 0)), [unreal.Vector2D(-4, 0), unreal.Vector2D(0, 4), unreal.Vector2D(4, 0)], path)
+call("append_mesh", h, p, T(unreal.Vector(0, 0, 200)))
+
+# --- booleans
+a = call("create_mesh").handle; call("append_box", a, T(), 100, 100, 100)
+b = call("create_mesh").handle; call("append_sphere", b, T(unreal.Vector(50, 50, 50)), 40, 10, 16)
+call("boolean", a, b, "Subtract", T())
+call("self_union", a)
+call("plane_cut", a, T(unreal.Vector(0, 0, 80)), True)
+call("mirror", a, T(unreal.Vector(0, 0, 0), unreal.Rotator(0, 0, 90)), True, True)
+
+# --- selections + poly edit
+c = call("create_mesh").handle; call("append_box", c, T(), 100, 100, 100)
+assert call("select_all", c, "all") == 12
+assert call("select_by_normal_angle", c, "top", unreal.Vector(0, 0, 1), 5.0) == 2
+assert call("select_in_box", c, "lower", unreal.Vector(-60, -60, -1), unreal.Vector(60, 60, 30)) > 0
+assert call("select_in_sphere", c, "corner", unreal.Vector(50, 50, 100), 150.0) > 0   # every vertex of a face triangle must be inside
+call("compute_polygroups", c, "Angle", 15.0)
+assert call("select_by_polygroup", c, "group0", 1) >= 0
+call("expand_contract_selection", c, "top", "top_grown", 1, False)
+call("invert_selection", c, "top", "not_top")
+assert call("selection_count", c, "top") == 2
+mn, mx = svc.selection_bounds(c, "top"); CALLED.add("selection_bounds"); assert mx.z > 99, mx   # Python drops the bool; empty selection -> zero vectors
+call("inset_faces", c, "top", 5.0)
+call("select_by_normal_angle", c, "top", unreal.Vector(0, 0, 1), 5.0)
+call("extrude_faces", c, "top", -3.0)
+call("select_by_normal_angle", c, "top", unreal.Vector(0, 0, 1), 5.0)
+call("outset_faces", c, "top", 2.0)
+call("select_by_normal_angle", c, "side", unreal.Vector(1, 0, 0), 5.0)
+call("offset_faces", c, "side", 2.0)
+assert not svc.translate_selection(c, "side", unreal.Vector(1, 0, 0)).success, "stale selection must be refused after offset_faces changed topology"
+call("select_by_normal_angle", c, "side", unreal.Vector(1, 0, 0), 5.0)
+call("translate_selection", c, "side", unreal.Vector(1, 0, 0))
+call("set_material_id", c, "side", 3)
+assert call("select_by_material_id", c, "mat3", 3) > 0
+call("remap_material_id", c, 3, 1)
+call("set_vertex_color", c, "side", unreal.LinearColor(0, 1, 0, 1))
+call("set_vertex_color", c, "", unreal.LinearColor(1, 1, 1, 1))
+call("compute_polygroups", c, "Angle", 15.0)
+call("bevel_polygroups", c, 0.5)
+call("select_by_normal_angle", c, "bottom", unreal.Vector(0, 0, -1), 5.0)
+call("delete_faces", c, "bottom")
+call("fill_holes", c)
+assert call("clear_selections", c)
+d = call("create_mesh").handle; call("append_rectangle", d, T(), 50, 50)
+call("shell_mesh", d, 2.0)
+call("offset_mesh", d, 1.0)
+
+# --- mesh ops
+m = call("create_mesh").handle; call("append_sphere", m, T(), 40, 16, 24)
+call("noise", m, "", 2.0, 0.1, 3)
+call("remesh", m, 1500)
+call("simplify_to_triangle_count", m, 600)
+call("simplify_to_vertex_count", m, 250)
+call("simplify_to_tolerance", m, 0.5)
+call("subdivide", m, 1, "PN"); call("subdivide", m, 1, "Uniform"); call("subdivide", m, 1, "Loop")
+q = call("create_mesh").handle; call("append_box", q, T(), 50, 50, 50); call("compute_polygroups", q, "Polygons"); call("subdivide", q, 1, "CatmullClark")
+call("simplify_planar", q, 0.01)
+call("smooth", m, "", 2, 0.2)
+call("weld_edges", m, 0.001)
+call("repair", m)
+call("remove_hidden_triangles", m)
+sp = call("split_by_components", h); assert sp.handles
+call("compute_polygroups", m, "UVIslands"); call("compute_polygroups", m, "Components")
+
+# --- deform + voxel
+v = call("create_mesh").handle; call("append_cylinder", v, T(), 20, 100, 12, 8)
+call("bend", v, T(unreal.Vector(0, 0, 50)), 30.0, 50.0)
+call("twist", v, T(unreal.Vector(0, 0, 50)), 30.0, 50.0)
+call("flare", v, T(unreal.Vector(0, 0, 50)), 20.0, 20.0, 50.0)
+call("voxel_solidify", v, 32)
+call("voxel_morphology", v, "Close", 2.0, 32)
+tex = ar_tex = unreal.AssetRegistryHelpers.get_asset_registry().get_assets_by_class(unreal.TopLevelAssetPath("/Script/Engine", "Texture2D"), False)
+if tex:
+    dp = call("create_mesh").handle; call("append_rectangle", dp, T(), 100, 100, 8, 8); call("auto_uv", dp, "XAtlas", 0)
+    call("displace_from_texture", dp, "", tex[0].get_asset().get_path_name(), 5.0, 0)
+else:
+    CALLED.add("displace_from_texture"); print("SKIPPED (no Texture2D in project): displace_from_texture")
+
+# --- UVs / normals / transform
+u = call("create_mesh").handle; call("append_box", u, T(), 60, 60, 60)
+call("set_num_uv_layers", u, 2)
+call("auto_uv", u, "XAtlas", 0); call("auto_uv", u, "PatchBuilder", 1)
+call("project_uv", u, "Planar", T(), 0, ""); call("project_uv", u, "Box", T(), 0, ""); call("project_uv", u, "Cylinder", T(), 1, "")
+call("repack_uv", u, 0, 512)
+call("recompute_normals", u, 30.0); call("recompute_normals", u, -1.0); call("flip_normals", u); call("flip_normals", u)
+call("transform_mesh", u, T(unreal.Vector(10, 0, 0))); call("translate_mesh", u, unreal.Vector(-10, 0, 0))
+call("rotate_mesh", u, unreal.Rotator(0, 45, 0), unreal.Vector()); call("scale_mesh", u, unreal.Vector(1, 1, 2), unreal.Vector())
+call("recenter_mesh", u, "Bounds"); call("recenter_mesh", u, "Base")
+
+# --- queries / sampling / hulls / comparison
+s = call("create_mesh").handle; call("append_sphere", s, T(), 50, 12, 18)
+hit = call("ray_cast", s, unreal.Vector(-200, 0, 0), unreal.Vector(1, 0, 0), 0.0); assert hit.found and abs(hit.position.x + 50) < 2, hit.position
+near = call("nearest_point", s, unreal.Vector(0, 0, 120), 0.0); assert near.found and abs(near.position.z - 50) < 2
+assert svc.is_point_inside(s, unreal.Vector(0, 0, 0)) and not svc.is_point_inside(s, unreal.Vector(0, 0, 500)); CALLED.add("is_point_inside")
+pts = call("sample_surface_points", s, 15.0, 0); assert len(pts) > 20, len(pts)
+hull = call("convex_hull", s, 0); assert hull.triangle_count > 0
+dec = call("convex_decomposition", a, 2); assert dec.triangle_count > 0
+sw = call("swept_hull", s, T()); assert sw.triangle_count > 0
+rep = call("measure_distance", s, hull.handle); assert rep.success and rep.max_distance < 5.0, rep.message
+
+# --- assets
+sm_path = ROOT + "/SM_Exercise"
+r = call("save_mesh_to_static_mesh", c, sm_path, True, True, False, True); assert r.asset_path
+call("save_mesh_to_static_mesh", c, sm_path, True, True, False, True)   # replace path
+lh = call("load_mesh_from_static_mesh", sm_path, 0).handle
+call("generate_collision", sm_path, "ConvexHulls", 2)
+call("set_lods", sm_path, [1.0, 0.5])
+sp_r = call("spawn_static_mesh_actor", sm_path, T(unreal.Vector(0, 0, -5000)), "VibeUEModelingExerciseActor")
+ah = call("load_mesh_from_actor", "VibeUEModelingExerciseActor", True, 0).handle
+bake = call("bake_textures", u, s, "TangentNormal,AmbientOcclusion", 64, ROOT, "Exercise", 0, 1); assert bake.texture_paths
+
+# --- skeletal (only when the project has a skeletal mesh)
+ar = unreal.AssetRegistryHelpers.get_asset_registry()
+skms = ar.get_assets_by_class(unreal.TopLevelAssetPath("/Script/Engine", "SkeletalMesh"), False)
+if skms:
+    skm = skms[0].get_asset(); skel = skm.skeleton
+    kh = call("load_mesh_from_skeletal_mesh", skm.get_path_name(), 0).handle
+    call("transfer_bone_weights", kh, skm.get_path_name(), 0)
+    call("smooth_bone_weights", kh, skel.get_path_name(), 0.2, 4)
+    call("prune_bone_weights", kh, str(skel.get_editor_property("reference_skeleton").get_editor_property("raw_ref_bone_info")[0].get_editor_property("name")) if False else "root")
+    call("save_mesh_to_skeletal_mesh", kh, ROOT + "/SK_Exercise", skel.get_path_name(), True, False)
+else:
+    for n in ("load_mesh_from_skeletal_mesh", "transfer_bone_weights", "smooth_bone_weights", "prune_bone_weights", "save_mesh_to_skeletal_mesh"):
+        CALLED.add(n); print("SKIPPED (no SkeletalMesh in project):", n)
+
+# --- cleanup
+eas = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+for actor in eas.get_all_level_actors():
+    if actor.get_actor_label() == "VibeUEModelingExerciseActor":
+        eas.destroy_actor(actor)
+svc.release_all_meshes()
+if unreal.EditorAssetLibrary.does_directory_exist(ROOT):
+    unreal.EditorAssetLibrary.delete_directory(ROOT)
+
+# --- coverage
+public = {n for n in dir(svc) if not n.startswith("_") and callable(getattr(svc, n)) and n not in dir(unreal.ToolsetDefinition)}
+public -= {"set_lo_ds"}   # Python alias of set_lods (ScriptName), not a separate function
+missed = sorted(public - CALLED)
+print("called %d/%d functions; failed %d" % (len(CALLED & public), len(public), len(FAILED)))
+for f in FAILED:
+    print("  FAIL", f)
+if missed:
+    print("  NOT CALLED:", missed)
+print("RESULT:", "PASS" if not FAILED and not missed else "FAIL")

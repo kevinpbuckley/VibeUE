@@ -33,6 +33,13 @@
 #include "GeometryScript/CollisionFunctions.h"
 #include "GeometryScript/CreateNewAssetUtilityFunctions.h"
 #include "GeometryScript/OpenSubdivUtilityFunctions.h"
+#include "GeometryScript/MeshSpatialFunctions.h"
+#include "GeometryScript/MeshSamplingFunctions.h"
+#include "GeometryScript/ContainmentFunctions.h"
+#include "GeometryScript/MeshComparisonFunctions.h"
+#include "GeometryScript/MeshSelectionQueryFunctions.h"
+#include "GeometryScript/SceneUtilityFunctions.h"
+#include "Components/MeshComponent.h"
 
 #include "Animation/Skeleton.h"
 #include "Components/StaticMeshComponent.h"
@@ -59,10 +66,18 @@ using namespace UE::Geometry;
 
 namespace
 {
+	/** A named selection plus the mesh counts it was made against, so a stale one can be refused. */
+	struct FStoredSelection
+	{
+		FGeometryScriptMeshSelection Selection;
+		int32 TriangleCount = 0;
+		int32 VertexCount = 0;
+	};
+
 	struct FModelingSession
 	{
 		TMap<int32, TStrongObjectPtr<UDynamicMesh>> Meshes;
-		TMap<int32, TMap<FString, FGeometryScriptMeshSelection>> Selections;
+		TMap<int32, TMap<FString, FStoredSelection>> Selections;
 		int32 NextHandle = 1;
 		bool bExitHooked = false;
 
@@ -225,10 +240,39 @@ namespace
 
 	void StoreSelection(int32 Handle, const FString& Name, const FGeometryScriptMeshSelection& Selection)
 	{
-		Session().Selections.FindOrAdd(Handle).Add(Name, Selection);
+		FStoredSelection Stored;
+		Stored.Selection = Selection;
+		Stored.TriangleCount = TriCount(FindMesh(Handle));
+		Stored.VertexCount = VertCount(FindMesh(Handle));
+		Session().Selections.FindOrAdd(Handle).Add(Name, Stored);
 	}
 
-	/** "" resolves to the whole mesh as a triangle selection. */
+	/** Every element id the selection references must still exist — GeometryScript asserts on stale ids instead of failing. */
+	bool SelectionIsValidForMesh(UDynamicMesh* Mesh, const FGeometryScriptMeshSelection& Selection)
+	{
+		FGeometryScriptIndexList IndexList;
+		EGeometryScriptIndexType ResultType = EGeometryScriptIndexType::Any;
+		UGeometryScriptLibrary_MeshSelectionFunctions::ConvertMeshSelectionToIndexList(Mesh, Selection, IndexList, ResultType, EGeometryScriptIndexType::Any);
+		if (!IndexList.List.IsValid() || ResultType == EGeometryScriptIndexType::PolygroupID || ResultType == EGeometryScriptIndexType::Any)
+		{
+			return true;
+		}
+		bool bValid = true;
+		Mesh->ProcessMesh([&](const FDynamicMesh3& M)
+		{
+			for (const int32 Id : *IndexList.List)
+			{
+				const bool bExists =
+					ResultType == EGeometryScriptIndexType::Triangle ? M.IsTriangle(Id) :
+					ResultType == EGeometryScriptIndexType::Vertex ? M.IsVertex(Id) :
+					ResultType == EGeometryScriptIndexType::Edge ? M.IsEdge(Id) : true;
+				if (!bExists) { bValid = false; return; }
+			}
+		});
+		return bValid;
+	}
+
+	/** "" resolves to the whole mesh as a triangle selection; a named selection must predate no topology change. */
 	bool ResolveSelection(int32 Handle, const FString& Name, UDynamicMesh* Mesh, FGeometryScriptMeshSelection& Out, FString& Error)
 	{
 		if (Name.IsEmpty())
@@ -236,14 +280,22 @@ namespace
 			UGeometryScriptLibrary_MeshSelectionFunctions::CreateSelectAllMeshSelection(Mesh, Out, EGeometryScriptMeshSelectionType::Triangles);
 			return true;
 		}
-		const TMap<FString, FGeometryScriptMeshSelection>* PerMesh = Session().Selections.Find(Handle);
-		const FGeometryScriptMeshSelection* Found = PerMesh ? PerMesh->Find(Name) : nullptr;
+		const TMap<FString, FStoredSelection>* PerMesh = Session().Selections.Find(Handle);
+		const FStoredSelection* Found = PerMesh ? PerMesh->Find(Name) : nullptr;
 		if (!Found)
 		{
 			Error = FString::Printf(TEXT("No selection named '%s' on handle %d (make one with select_all / select_by_normal_angle / select_in_box / ...)"), *Name, Handle);
 			return false;
 		}
-		Out = *Found;
+		const int32 Tris = TriCount(Mesh);
+		const int32 Verts = VertCount(Mesh);
+		if (Tris != Found->TriangleCount || Verts != Found->VertexCount || !SelectionIsValidForMesh(Mesh, Found->Selection))
+		{
+			Error = FString::Printf(TEXT("Selection '%s' is stale: handle %d changed since it was made (%d -> %d triangles). Re-run the select_* call after any op that changes topology."),
+				*Name, Handle, Found->TriangleCount, Tris);
+			return false;
+		}
+		Out = Found->Selection;
 		return true;
 	}
 
@@ -266,6 +318,11 @@ namespace
 	template <typename T>
 	T* LoadAssetAs(const FString& AssetPath)
 	{
+		// DoesAssetExist first: LoadAsset logs an error for a missing path, which agents (and automation) read as a failure of their own.
+		if (AssetPath.IsEmpty() || !UEditorAssetLibrary::DoesAssetExist(AssetPath))
+		{
+			return nullptr;
+		}
 		return Cast<T>(UEditorAssetLibrary::LoadAsset(AssetPath));
 	}
 
@@ -370,28 +427,47 @@ FModelingResult UModelingService::LoadMeshFromActor(const FString& ActorLabel, b
 	{
 		return Fail(-1, FString::Printf(TEXT("No level actor labeled '%s'"), *ActorLabel));
 	}
-	UStaticMeshComponent* Component = Actor->FindComponentByClass<UStaticMeshComponent>();
-	UStaticMesh* StaticMesh = Component ? Component->GetStaticMesh() : nullptr;
-	if (!StaticMesh)
-	{
-		return Fail(-1, FString::Printf(TEXT("Actor '%s' has no StaticMeshComponent with a mesh"), *ActorLabel));
-	}
+	UStaticMeshComponent* StaticComponent = Actor->FindComponentByClass<UStaticMeshComponent>();
+	UStaticMesh* StaticMesh = StaticComponent ? StaticComponent->GetStaticMesh() : nullptr;
 	int32 Handle = -1;
 	UDynamicMesh* Mesh = NewSessionMesh(Handle);
 	UGeometryScriptDebug* Debug = NewDebug();
-	if (!CopyFromStaticMesh(StaticMesh, Mesh, LODIndex, Debug))
+	if (StaticMesh)
+	{
+		if (!CopyFromStaticMesh(StaticMesh, Mesh, LODIndex, Debug))
+		{
+			ReleaseMesh(Handle);
+			return Fail(-1, FString::Printf(TEXT("Could not read %s: %s"), *StaticMesh->GetPathName(), *DebugText(Debug)));
+		}
+		if (bWorldSpace)
+		{
+			UGeometryScriptLibrary_MeshTransformFunctions::TransformMesh(Mesh, StaticComponent->GetComponentTransform(), true, Debug);
+		}
+		FModelingResult R = Ok(Handle, Mesh, FString::Printf(TEXT("Loaded %s from actor '%s'%s"), *StaticMesh->GetPathName(), *ActorLabel,
+			bWorldSpace ? TEXT(" in world space") : TEXT(" in asset space")));
+		R.AssetPath = StaticMesh->GetPathName();
+		return R;
+	}
+
+	// Anything else that renders a mesh (skeletal mesh, dynamic mesh, instanced components): copy its render geometry.
+	UMeshComponent* MeshComponent = Actor->FindComponentByClass<UMeshComponent>();
+	if (!MeshComponent)
 	{
 		ReleaseMesh(Handle);
-		return Fail(-1, FString::Printf(TEXT("Could not read %s: %s"), *StaticMesh->GetPathName(), *DebugText(Debug)));
+		return Fail(-1, FString::Printf(TEXT("Actor '%s' has no mesh component"), *ActorLabel));
 	}
-	if (bWorldSpace)
+	FGeometryScriptCopyMeshFromComponentOptions Options;
+	Options.RequestedLOD.LODIndex = LODIndex;
+	FTransform LocalToWorld;
+	EGeometryScriptOutcomePins Outcome = EGeometryScriptOutcomePins::Failure;
+	UGeometryScriptLibrary_SceneUtilityFunctions::CopyMeshFromComponent(MeshComponent, Mesh, Options, bWorldSpace, LocalToWorld, Outcome, Debug);
+	if (Outcome != EGeometryScriptOutcomePins::Success)
 	{
-		UGeometryScriptLibrary_MeshTransformFunctions::TransformMesh(Mesh, Component->GetComponentTransform(), true, Debug);
+		ReleaseMesh(Handle);
+		return Fail(-1, FString::Printf(TEXT("Could not copy geometry from '%s' (%s): %s"), *ActorLabel, *MeshComponent->GetClass()->GetName(), *DebugText(Debug)));
 	}
-	FModelingResult R = Ok(Handle, Mesh, FString::Printf(TEXT("Loaded %s from actor '%s'%s"), *StaticMesh->GetPathName(), *ActorLabel,
-		bWorldSpace ? TEXT(" in world space") : TEXT(" in asset space")));
-	R.AssetPath = StaticMesh->GetPathName();
-	return R;
+	return Ok(Handle, Mesh, FString::Printf(TEXT("Loaded %s geometry from actor '%s'%s"), *MeshComponent->GetClass()->GetName(), *ActorLabel,
+		bWorldSpace ? TEXT(" in world space") : TEXT(" in component space")));
 }
 
 FModelingResult UModelingService::CopyMesh(int32 Handle)
@@ -466,7 +542,7 @@ FModelingMeshInfo UModelingService::GetMeshInfo(int32 Handle)
 			}
 		}
 	});
-	if (const TMap<FString, FGeometryScriptMeshSelection>* PerMesh = Session().Selections.Find(Handle))
+	if (const TMap<FString, FStoredSelection>* PerMesh = Session().Selections.Find(Handle))
 	{
 		PerMesh->GetKeys(Info.Selections);
 	}
@@ -1319,13 +1395,43 @@ FModelingResult UModelingService::FlipNormals(int32 Handle)
 	return Finish(Handle, Mesh, Debug, TEXT("Flipped normals"));
 }
 
-FModelingResult UModelingService::ComputePolygroups(int32 Handle, float CreaseAngleDeg, int32 MinGroupSize)
+FModelingResult UModelingService::ComputePolygroups(int32 Handle, const FString& Method, float CreaseAngleDeg, int32 MinGroupSize)
 {
 	UDynamicMesh* Mesh = FindMesh(Handle);
 	if (!Mesh) { return NoMesh(Handle); }
 	UGeometryScriptDebug* Debug = NewDebug();
-	UGeometryScriptLibrary_MeshPolygroupFunctions::ComputePolygroupsFromAngleThreshold(Mesh, FGeometryScriptGroupLayer(), CreaseAngleDeg, MinGroupSize, Debug);
-	return Finish(Handle, Mesh, Debug, FString::Printf(TEXT("Computed polygroups (crease %.1f degrees)"), CreaseAngleDeg));
+	const FGeometryScriptGroupLayer Layer;
+	if (Method.Equals(TEXT("Angle"), ESearchCase::IgnoreCase))
+	{
+		UGeometryScriptLibrary_MeshPolygroupFunctions::ComputePolygroupsFromAngleThreshold(Mesh, Layer, CreaseAngleDeg, MinGroupSize, Debug);
+	}
+	else if (Method.Equals(TEXT("UVIslands"), ESearchCase::IgnoreCase))
+	{
+		UGeometryScriptLibrary_MeshPolygroupFunctions::ConvertUVIslandsToPolygroups(Mesh, Layer, 0, Debug);
+	}
+	else if (Method.Equals(TEXT("Components"), ESearchCase::IgnoreCase))
+	{
+		UGeometryScriptLibrary_MeshPolygroupFunctions::ConvertComponentsToPolygroups(Mesh, Layer, Debug);
+	}
+	else if (Method.Equals(TEXT("Polygons"), ESearchCase::IgnoreCase))
+	{
+		UGeometryScriptLibrary_MeshPolygroupFunctions::ComputePolygroupsFromPolygonDetection(Mesh, Layer, true, false, 1.0, 1.0, 1, Debug);
+	}
+	else
+	{
+		return Fail(Handle, FString::Printf(TEXT("Unknown polygroup method '%s' (use Angle, UVIslands, Components, Polygons)"), *Method));
+	}
+	return Finish(Handle, Mesh, Debug, FString::Printf(TEXT("Computed polygroups (%s)"), *Method));
+}
+
+FModelingResult UModelingService::RemapMaterialID(int32 Handle, int32 FromMaterialID, int32 ToMaterialID)
+{
+	UDynamicMesh* Mesh = FindMesh(Handle);
+	if (!Mesh) { return NoMesh(Handle); }
+	UGeometryScriptDebug* Debug = NewDebug();
+	UGeometryScriptLibrary_MeshMaterialFunctions::EnableMaterialIDs(Mesh, Debug);
+	UGeometryScriptLibrary_MeshMaterialFunctions::RemapMaterialIDs(Mesh, FromMaterialID, ToMaterialID, Debug);
+	return Finish(Handle, Mesh, Debug, FString::Printf(TEXT("Remapped material %d -> %d"), FromMaterialID, ToMaterialID));
 }
 
 FModelingResult UModelingService::SetMaterialID(int32 Handle, const FString& SelectionName, int32 MaterialID)
@@ -1625,6 +1731,8 @@ FModelingBakeResult UModelingService::BakeTextures(int32 TargetHandle, int32 Sou
 	}
 
 	UGeometryScriptDebug* Debug = NewDebug();
+	// The baker samples through the target's tangent frame; session meshes rarely carry tangents yet.
+	UGeometryScriptLibrary_MeshNormalsFunctions::ComputeTangents(Target, FGeometryScriptTangentsOptions(), Debug);
 	const TArray<UTexture2D*> Textures = UGeometryScriptLibrary_MeshBakeFunctions::BakeTexture(Target, FTransform::Identity, TargetOptions,
 		Source, FTransform::Identity, SourceOptions, Types, BakeOptions, Debug);
 	if (DebugHasErrors(Debug) || Textures.Num() != Types.Num())
@@ -1671,4 +1779,301 @@ FModelingResult UModelingService::SpawnStaticMeshActor(const FString& AssetPath,
 	R.AssetPath = AssetPath;
 	R.Message = FString::Printf(TEXT("Spawned '%s' (%s) at %s"), *Actor->GetActorLabel(), *Actor->GetPathName(), *Transform.GetLocation().ToCompactString());
 	return R;
+}
+
+// =========================================================================
+// More primitives
+// =========================================================================
+
+FModelingResult UModelingService::AppendCurvedStairs(int32 Handle, FTransform Transform, float StepWidth, float StepHeight, float InnerRadius,
+	float CurveAngle, int32 NumSteps, bool bFloating, int32 MaterialID)
+{
+	UDynamicMesh* Mesh = FindMesh(Handle);
+	if (!Mesh) { return NoMesh(Handle); }
+	UGeometryScriptDebug* Debug = NewDebug();
+	UGeometryScriptLibrary_MeshPrimitiveFunctions::AppendCurvedStairs(Mesh, PrimitiveOptions(MaterialID), Transform, StepWidth, StepHeight, InnerRadius,
+		CurveAngle, NumSteps, bFloating, Debug);
+	return Finish(Handle, Mesh, Debug, TEXT("Appended curved stairs"));
+}
+
+FModelingResult UModelingService::AppendSphereBox(int32 Handle, FTransform Transform, float Radius, int32 Steps, const FString& Origin, int32 MaterialID)
+{
+	UDynamicMesh* Mesh = FindMesh(Handle);
+	if (!Mesh) { return NoMesh(Handle); }
+	EGeometryScriptPrimitiveOriginMode OriginMode; FString Error;
+	if (!ParseOrigin(Origin, OriginMode, Error)) { return Fail(Handle, Error); }
+	UGeometryScriptDebug* Debug = NewDebug();
+	const int32 S = FMath::Clamp(Steps, 1, 64);
+	UGeometryScriptLibrary_MeshPrimitiveFunctions::AppendSphereBox(Mesh, PrimitiveOptions(MaterialID), Transform, Radius, S, S, S, OriginMode, Debug);
+	return Finish(Handle, Mesh, Debug, TEXT("Appended sphere box"));
+}
+
+FModelingResult UModelingService::AppendSweepPolyline(int32 Handle, FTransform Transform, const TArray<FVector2D>& ProfilePoints, const TArray<FTransform>& SweepPath,
+	bool bLoop, float StartScale, float EndScale, int32 MaterialID)
+{
+	UDynamicMesh* Mesh = FindMesh(Handle);
+	if (!Mesh) { return NoMesh(Handle); }
+	if (ProfilePoints.Num() < 2) { return Fail(Handle, TEXT("ProfilePoints needs at least 2 points")); }
+	if (SweepPath.Num() < 2) { return Fail(Handle, TEXT("SweepPath needs at least 2 transforms")); }
+	UGeometryScriptDebug* Debug = NewDebug();
+	const TArray<float> NoTexParams;
+	UGeometryScriptLibrary_MeshPrimitiveFunctions::AppendSweepPolyline(Mesh, PrimitiveOptions(MaterialID), Transform, ProfilePoints, SweepPath,
+		NoTexParams, NoTexParams, bLoop, StartScale, EndScale, 0.f, 1.f, Debug);
+	return Finish(Handle, Mesh, Debug, FString::Printf(TEXT("Appended sweep (%d profile points along %d path frames)"), ProfilePoints.Num(), SweepPath.Num()));
+}
+
+// =========================================================================
+// More simplification
+// =========================================================================
+
+FModelingResult UModelingService::SimplifyToVertexCount(int32 Handle, int32 VertexCount, bool bAllowSeamCollapse)
+{
+	UDynamicMesh* Mesh = FindMesh(Handle);
+	if (!Mesh) { return NoMesh(Handle); }
+	FGeometryScriptSimplifyMeshOptions Options;
+	Options.bAllowSeamCollapse = bAllowSeamCollapse;
+	UGeometryScriptDebug* Debug = NewDebug();
+	UGeometryScriptLibrary_MeshSimplifyFunctions::ApplySimplifyToVertexCount(Mesh, FMath::Max(4, VertexCount), Options, Debug);
+	return Finish(Handle, Mesh, Debug, FString::Printf(TEXT("Simplified toward %d vertices"), VertexCount));
+}
+
+FModelingResult UModelingService::SimplifyPlanar(int32 Handle, float AngleThresholdDeg)
+{
+	UDynamicMesh* Mesh = FindMesh(Handle);
+	if (!Mesh) { return NoMesh(Handle); }
+	FGeometryScriptPlanarSimplifyOptions Options;
+	Options.AngleThreshold = AngleThresholdDeg;
+	UGeometryScriptDebug* Debug = NewDebug();
+	const int32 Before = TriCount(Mesh);
+	UGeometryScriptLibrary_MeshSimplifyFunctions::ApplySimplifyToPlanar(Mesh, Options, Debug);
+	return Finish(Handle, Mesh, Debug, FString::Printf(TEXT("Planar simplify (%d -> %d triangles)"), Before, TriCount(Mesh)));
+}
+
+// =========================================================================
+// Spatial queries and sampling
+// =========================================================================
+
+FModelingSurfacePoint UModelingService::RayCast(int32 Handle, FVector Origin, FVector Direction, float MaxDistance)
+{
+	FModelingSurfacePoint Result;
+	UDynamicMesh* Mesh = FindMesh(Handle);
+	if (!Mesh) { Result.Message = NoMesh(Handle).Message; return Result; }
+	if (Direction.IsNearlyZero()) { Result.Message = TEXT("Direction must be non-zero"); return Result; }
+	UGeometryScriptDebug* Debug = NewDebug();
+	FGeometryScriptDynamicMeshBVH BVH;
+	UGeometryScriptLibrary_MeshSpatial::BuildBVHForMesh(Mesh, BVH, Debug);
+	FGeometryScriptSpatialQueryOptions Options;
+	Options.MaxDistance = MaxDistance;
+	FGeometryScriptRayHitResult Hit;
+	EGeometryScriptSearchOutcomePins Outcome = EGeometryScriptSearchOutcomePins::NotFound;
+	UGeometryScriptLibrary_MeshSpatial::FindNearestRayIntersectionWithMesh(Mesh, BVH, Origin, Direction.GetSafeNormal(), Options, Hit, Outcome, Debug);
+	Result.bFound = Outcome == EGeometryScriptSearchOutcomePins::Found && Hit.bHit;
+	Result.Position = Hit.HitPosition;
+	Result.TriangleID = Hit.HitTriangleID;
+	Result.Distance = Hit.RayParameter;
+	Result.BaryCoords = Hit.HitBaryCoords;
+	Result.Message = Result.bFound ? TEXT("Hit") : (DebugText(Debug).IsEmpty() ? TEXT("No hit") : DebugText(Debug));
+	return Result;
+}
+
+FModelingSurfacePoint UModelingService::NearestPoint(int32 Handle, FVector Point, float MaxDistance)
+{
+	FModelingSurfacePoint Result;
+	UDynamicMesh* Mesh = FindMesh(Handle);
+	if (!Mesh) { Result.Message = NoMesh(Handle).Message; return Result; }
+	UGeometryScriptDebug* Debug = NewDebug();
+	FGeometryScriptDynamicMeshBVH BVH;
+	UGeometryScriptLibrary_MeshSpatial::BuildBVHForMesh(Mesh, BVH, Debug);
+	FGeometryScriptSpatialQueryOptions Options;
+	Options.MaxDistance = MaxDistance;
+	FGeometryScriptTrianglePoint Nearest;
+	EGeometryScriptSearchOutcomePins Outcome = EGeometryScriptSearchOutcomePins::NotFound;
+	UGeometryScriptLibrary_MeshSpatial::FindNearestPointOnMesh(Mesh, BVH, Point, Options, Nearest, Outcome, Debug);
+	Result.bFound = Outcome == EGeometryScriptSearchOutcomePins::Found && Nearest.bValid;
+	Result.Position = Nearest.Position;
+	Result.TriangleID = Nearest.TriangleID;
+	Result.Distance = Result.bFound ? static_cast<float>(FVector::Distance(Point, Nearest.Position)) : 0.f;
+	Result.BaryCoords = Nearest.BaryCoords;
+	Result.Message = Result.bFound ? TEXT("Found") : (DebugText(Debug).IsEmpty() ? TEXT("Nothing within MaxDistance") : DebugText(Debug));
+	return Result;
+}
+
+bool UModelingService::IsPointInside(int32 Handle, FVector Point)
+{
+	UDynamicMesh* Mesh = FindMesh(Handle);
+	if (!Mesh) { return false; }
+	UGeometryScriptDebug* Debug = NewDebug();
+	FGeometryScriptDynamicMeshBVH BVH;
+	UGeometryScriptLibrary_MeshSpatial::BuildBVHForMesh(Mesh, BVH, Debug);
+	FGeometryScriptSpatialQueryOptions Options;
+	bool bInside = false;
+	EGeometryScriptContainmentOutcomePins Outcome = EGeometryScriptContainmentOutcomePins::Outside;
+	UGeometryScriptLibrary_MeshSpatial::IsPointInsideMesh(Mesh, BVH, Point, Options, bInside, Outcome, Debug);
+	return bInside;
+}
+
+TArray<FTransform> UModelingService::SampleSurfacePoints(int32 Handle, float SamplingRadius, int32 MaxSamples)
+{
+	TArray<FTransform> Samples;
+	UDynamicMesh* Mesh = FindMesh(Handle);
+	if (!Mesh) { return Samples; }
+	FGeometryScriptMeshPointSamplingOptions Options;
+	Options.SamplingRadius = FMath::Max(0.01f, SamplingRadius);
+	Options.MaxNumSamples = FMath::Max(0, MaxSamples);
+	FGeometryScriptIndexList TriangleIDs;
+	UGeometryScriptDebug* Debug = NewDebug();
+	UGeometryScriptLibrary_MeshSamplingFunctions::ComputePointSampling(Mesh, Options, Samples, TriangleIDs, Debug);
+	return Samples;
+}
+
+bool UModelingService::SelectionBounds(int32 Handle, const FString& SelectionName, FVector& OutMin, FVector& OutMax)
+{
+	OutMin = OutMax = FVector::ZeroVector;
+	UDynamicMesh* Mesh = FindMesh(Handle);
+	if (!Mesh) { return false; }
+	FGeometryScriptMeshSelection Selection; FString Error;
+	if (!ResolveSelection(Handle, SelectionName, Mesh, Selection, Error)) { return false; }
+	FBox Bounds(ForceInit);
+	bool bEmpty = true;
+	UGeometryScriptDebug* Debug = NewDebug();
+	UGeometryScriptLibrary_MeshSelectionQueryFunctions::GetMeshSelectionBoundingBox(Mesh, Selection, Bounds, bEmpty, Debug);
+	if (bEmpty) { return false; }
+	OutMin = Bounds.Min;
+	OutMax = Bounds.Max;
+	return true;
+}
+
+int32 UModelingService::SelectByPolygroup(int32 Handle, const FString& SelectionName, int32 PolygroupID)
+{
+	UDynamicMesh* Mesh = FindMesh(Handle);
+	if (!Mesh || SelectionName.IsEmpty()) { return -1; }
+	FGeometryScriptMeshSelection Selection;
+	UGeometryScriptLibrary_MeshSelectionFunctions::SelectMeshElementsByPolygroup(Mesh, FGeometryScriptGroupLayer(), PolygroupID, Selection, EGeometryScriptMeshSelectionType::Triangles);
+	StoreSelection(Handle, SelectionName, Selection);
+	return Selection.GetNumSelected();
+}
+
+// =========================================================================
+// Hulls and comparison
+// =========================================================================
+
+namespace
+{
+	/**
+	 * Booleans, deletes, and cuts leave gaps in the vertex/triangle id space. The containment
+	 * algorithms index by id and assert on a non-compact mesh, so hull operations run on a
+	 * compacted scratch copy of the source (the session mesh itself is left untouched).
+	 */
+	UDynamicMesh* CompactedCopy(UDynamicMesh* Source, UGeometryScriptDebug* Debug)
+	{
+		UDynamicMesh* Scratch = NewScratchMesh();
+		UDynamicMesh* Out = nullptr;
+		UGeometryScriptLibrary_MeshDecompositionFunctions::CopyMeshToMesh(Source, Scratch, Out, Debug);
+		UGeometryScriptLibrary_MeshRepairFunctions::CompactMesh(Scratch, Debug);
+		return Scratch;
+	}
+}
+
+FModelingResult UModelingService::ConvexHull(int32 Handle, int32 SimplifyToFaceCount)
+{
+	UDynamicMesh* Mesh = FindMesh(Handle);
+	if (!Mesh) { return NoMesh(Handle); }
+	UGeometryScriptDebug* Debug = NewDebug();
+	UDynamicMesh* Source = CompactedCopy(Mesh, Debug);
+	int32 NewHandle = -1;
+	UDynamicMesh* Hull = NewSessionMesh(NewHandle);
+	UDynamicMesh* Out = nullptr;
+	FGeometryScriptMeshSelection All;
+	UGeometryScriptLibrary_MeshSelectionFunctions::CreateSelectAllMeshSelection(Source, All, EGeometryScriptMeshSelectionType::Triangles);
+	FGeometryScriptConvexHullOptions Options;
+	Options.SimplifyToFaceCount = FMath::Max(0, SimplifyToFaceCount);
+	UGeometryScriptLibrary_ContainmentFunctions::ComputeMeshConvexHull(Source, Hull, Out, All, Options, Debug);
+	return Finish(NewHandle, Hull, Debug, FString::Printf(TEXT("Convex hull of handle %d"), Handle));
+}
+
+FModelingResult UModelingService::ConvexDecomposition(int32 Handle, int32 NumHulls)
+{
+	UDynamicMesh* Mesh = FindMesh(Handle);
+	if (!Mesh) { return NoMesh(Handle); }
+	UGeometryScriptDebug* Debug = NewDebug();
+	UDynamicMesh* Source = CompactedCopy(Mesh, Debug);
+	int32 NewHandle = -1;
+	UDynamicMesh* Hulls = NewSessionMesh(NewHandle);
+	UDynamicMesh* Out = nullptr;
+	FGeometryScriptConvexDecompositionOptions Options;
+	Options.NumHulls = FMath::Clamp(NumHulls, 1, 64);
+	UGeometryScriptLibrary_ContainmentFunctions::ComputeMeshConvexDecomposition(Source, Hulls, Out, Options, Debug);
+	return Finish(NewHandle, Hulls, Debug, FString::Printf(TEXT("Convex decomposition of handle %d into %d hulls"), Handle, NumHulls));
+}
+
+FModelingResult UModelingService::SweptHull(int32 Handle, FTransform ProjectionFrame)
+{
+	UDynamicMesh* Mesh = FindMesh(Handle);
+	if (!Mesh) { return NoMesh(Handle); }
+	UGeometryScriptDebug* Debug = NewDebug();
+	UDynamicMesh* Source = CompactedCopy(Mesh, Debug);
+	int32 NewHandle = -1;
+	UDynamicMesh* Hull = NewSessionMesh(NewHandle);
+	UDynamicMesh* Out = nullptr;
+	FGeometryScriptSweptHullOptions Options;
+	UGeometryScriptLibrary_ContainmentFunctions::ComputeMeshSweptHull(Source, Hull, Out, ProjectionFrame, Options, Debug);
+	return Finish(NewHandle, Hull, Debug, FString::Printf(TEXT("Swept hull of handle %d"), Handle));
+}
+
+FModelingDistanceReport UModelingService::MeasureDistance(int32 HandleA, int32 HandleB)
+{
+	FModelingDistanceReport Report;
+	UDynamicMesh* A = FindMesh(HandleA);
+	if (!A) { Report.Message = NoMesh(HandleA).Message; return Report; }
+	UDynamicMesh* B = FindMesh(HandleB);
+	if (!B) { Report.Message = NoMesh(HandleB).Message; return Report; }
+	FGeometryScriptMeasureMeshDistanceOptions Options;
+	double MaxD = 0, MinD = 0, AvgD = 0, Rms = 0;
+	UGeometryScriptDebug* Debug = NewDebug();
+	UGeometryScriptLibrary_MeshComparisonFunctions::MeasureDistancesBetweenMeshes(A, B, Options, MaxD, MinD, AvgD, Rms, Debug);
+	if (DebugHasErrors(Debug)) { Report.Message = DebugText(Debug); return Report; }
+	Report.bSuccess = true;
+	Report.MaxDistance = static_cast<float>(MaxD);
+	Report.MinDistance = static_cast<float>(MinD);
+	Report.AverageDistance = static_cast<float>(AvgD);
+	Report.RootMeanSquareDeviation = static_cast<float>(Rms);
+	Report.Message = FString::Printf(TEXT("max %.3f, mean %.3f, rms %.3f"), MaxD, AvgD, Rms);
+	return Report;
+}
+
+// =========================================================================
+// More skeletal
+// =========================================================================
+
+FModelingResult UModelingService::SmoothBoneWeights(int32 Handle, const FString& SkeletonPath, float Stiffness, int32 MaxInfluences)
+{
+	UDynamicMesh* Mesh = FindMesh(Handle);
+	if (!Mesh) { return NoMesh(Handle); }
+	USkeleton* Skeleton = LoadAssetAs<USkeleton>(SkeletonPath);
+	if (!Skeleton) { return Fail(Handle, FString::Printf(TEXT("Skeleton not found: %s"), *SkeletonPath)); }
+	FGeometryScriptSmoothBoneWeightsOptions Options;
+	Options.Stiffness = Stiffness;
+	Options.MaxInfluences = FMath::Clamp(MaxInfluences, 1, 12);
+	UGeometryScriptDebug* Debug = NewDebug();
+	UGeometryScriptLibrary_MeshBoneWeightFunctions::ComputeSmoothBoneWeights(Mesh, Skeleton, Options, FGeometryScriptBoneWeightProfile(), Debug);
+	return Finish(Handle, Mesh, Debug, FString::Printf(TEXT("Smoothed bone weights against %s"), *SkeletonPath));
+}
+
+FModelingResult UModelingService::PruneBoneWeights(int32 Handle, const FString& BoneNames)
+{
+	UDynamicMesh* Mesh = FindMesh(Handle);
+	if (!Mesh) { return NoMesh(Handle); }
+	TArray<FString> Names;
+	BoneNames.ParseIntoArray(Names, TEXT(","), true);
+	TArray<FName> Bones;
+	for (FString& Name : Names)
+	{
+		Name.TrimStartAndEndInline();
+		if (!Name.IsEmpty()) { Bones.Add(FName(*Name)); }
+	}
+	if (Bones.Num() == 0) { return Fail(Handle, TEXT("BoneNames must list at least one bone (comma-separated)")); }
+	FGeometryScriptPruneBoneWeightsOptions Options;
+	UGeometryScriptDebug* Debug = NewDebug();
+	UGeometryScriptLibrary_MeshBoneWeightFunctions::PruneBoneWeights(Mesh, Bones, Options, FGeometryScriptBoneWeightProfile(), Debug);
+	return Finish(Handle, Mesh, Debug, FString::Printf(TEXT("Pruned %d bone(s) from skin weights"), Bones.Num()));
 }
