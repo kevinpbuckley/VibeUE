@@ -178,6 +178,51 @@ struct FModelingBakeResult
 	TArray<FString> TexturePaths;
 };
 
+/** One bone for CreateBones. Transform is in mesh space (the space the vertices are in); an empty ParentName makes it the root. */
+USTRUCT(BlueprintType)
+struct FModelingBoneDef
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	FString Name;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	FString ParentName;
+
+	/** Bone frame in mesh space. Point its X axis along a hinge line and the control surface deflects by rolling the bone. */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	FTransform Transform;
+};
+
+/** A bone on a session mesh: hierarchy, reference pose, and how many vertices it influences. */
+USTRUCT(BlueprintType)
+struct FModelingBoneInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	int32 Index = -1;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	FString Name;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	FString ParentName;
+
+	/** Reference pose relative to the parent bone. */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	FTransform LocalTransform;
+
+	/** Reference pose in mesh space. */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	FTransform MeshTransform;
+
+	/** Vertices carrying a non-zero weight on this bone. */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Modeling")
+	int32 InfluencedVertices = 0;
+};
+
 /**
  * Programmatic mesh modeling — the operator half of Unreal's Modeling Mode, driven without a
  * viewport. Meshes live in an in-editor session as integer handles wrapping a UDynamicMesh:
@@ -529,9 +574,17 @@ public:
 	static FModelingResult SaveMeshToStaticMesh(int32 Handle, const FString& AssetPath, bool bReplaceExisting = true, bool bEnableCollision = true,
 		bool bEnableNanite = false, bool bSaveAsset = true);
 
-	/** Write the mesh (with its bone weights) to a SkeletalMesh asset bound to SkeletonPath. */
+	/**
+	 * Write the mesh (with its bone weights) to a SkeletalMesh asset. SkeletonPath "" creates a new Skeleton asset at
+	 * <AssetPath>_Skeleton from the bones on the mesh (CreateBones); an existing skeleton is bound as-is. One material slot
+	 * is made per material ID — assign materials afterwards with SetAssetMaterials.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Save Mesh To Skeletal Mesh"))
-	static FModelingResult SaveMeshToSkeletalMesh(int32 Handle, const FString& AssetPath, const FString& SkeletonPath, bool bReplaceExisting = true, bool bSaveAsset = true);
+	static FModelingResult SaveMeshToSkeletalMesh(int32 Handle, const FString& AssetPath, const FString& SkeletonPath = TEXT(""), bool bReplaceExisting = true, bool bSaveAsset = true);
+
+	/** Assign material slots on a StaticMesh or SkeletalMesh asset: comma-separated material asset paths, in slot order. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Set Asset Materials"))
+	static FModelingResult SetAssetMaterials(const FString& AssetPath, const FString& MaterialPaths, bool bSaveAsset = true);
 
 	/** Copy skin weights from a SkeletalMesh asset onto this mesh by closest surface point (re-skin a modified body). */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Transfer Bone Weights"))
@@ -568,7 +621,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Append Sphere Box"))
 	static FModelingResult AppendSphereBox(int32 Handle, FTransform Transform, float Radius = 50.f, int32 Steps = 6, const FString& Origin = TEXT("Center"), int32 MaterialID = 0);
 
-	/** Sweep a 2D profile (XY, open polyline) along a path of transforms: pipes, rails, cables, trim. */
+	/** Sweep an OPEN 2D polyline along a path of transforms: rails, trim, ribbons, gutters. The profile lies in each frame's local YZ plane and is scaled by the frame's scale; bLoop closes the PATH (last frame back to the first), not the profile. For closed, capped solids use AppendLoft. */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Append Sweep Polyline"))
 	static FModelingResult AppendSweepPolyline(int32 Handle, FTransform Transform, const TArray<FVector2D>& ProfilePoints, const TArray<FTransform>& SweepPath,
 		bool bLoop = false, float StartScale = 1.f, float EndScale = 1.f, int32 MaterialID = 0);
@@ -643,4 +696,42 @@ public:
 	/** Remove bones (comma-separated names) from the skin weights, renormalizing the rest. */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Prune Bone Weights"))
 	static FModelingResult PruneBoneWeights(int32 Handle, const FString& BoneNames);
+
+	// =====================================================================
+	// Lofts, orientation, connected pieces
+	// =====================================================================
+
+	/**
+	 * Solid made by sweeping a closed 2D profile through a list of frames and capping both ends — wings, fins, hulls,
+	 * tapered beams. The profile lies in each frame's local YZ plane (profile X along the frame's Y axis, profile Y along
+	 * its Z axis) and is multiplied by the frame's scale, so chord and taper go in Frames[i].Scale. A wing running out
+	 * along +Y with its chord toward -X: root and tip frames with rotation (roll 0, pitch 0, yaw 90). The result is always
+	 * closed and outward-facing regardless of the winding the sweep produced.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Append Loft"))
+	static FModelingResult AppendLoft(int32 Handle, FTransform Transform, const TArray<FVector2D>& ProfilePoints, const TArray<FTransform>& Frames, int32 MaterialID = 0);
+
+	/** Flip the mesh when its enclosed volume is negative (normals facing inward). Run on any closed part before booleans — an inside-out part is silently discarded by SelfUnion. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Ensure Outward"))
+	static FModelingResult EnsureOutward(int32 Handle);
+
+	/** Select the whole connected piece of geometry nearest to Point — a control surface isolated by slot cuts, a bolt on a plate. Returns the triangle count. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Select Connected"))
+	static int32 SelectConnected(int32 Handle, const FString& SelectionName, FVector Point);
+
+	// =====================================================================
+	// Rigging: bones and skin weights authored on the mesh itself
+	// =====================================================================
+
+	/** Replace the mesh's bone hierarchy. The first bone is the root; every other bone names a parent listed before it. Every vertex starts bound to the root. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Create Bones"))
+	static FModelingResult CreateBones(int32 Handle, const TArray<FModelingBoneDef>& Bones);
+
+	/** Bind the vertices of a selection ("" = all) to a bone. Weight 1 replaces their weights; a lower weight blends with what is there. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "Bind Selection To Bone"))
+	static FModelingResult BindSelectionToBone(int32 Handle, const FString& SelectionName, const FString& BoneName, float Weight = 1.f);
+
+	/** Bones on the mesh with their reference poses and influenced-vertex counts — check a rig before saving it. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Modeling", meta = (AICallable, DisplayName = "List Bones"))
+	static TArray<FModelingBoneInfo> ListBones(int32 Handle);
 };

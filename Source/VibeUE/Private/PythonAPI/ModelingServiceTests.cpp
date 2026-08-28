@@ -6,6 +6,8 @@
 
 #include "PythonAPI/UModelingService.h"
 #include "EditorAssetLibrary.h"
+#include "Animation/Skeleton.h"
+#include "AssetCompilingManager.h"
 #include "Editor.h"
 #include "GameFramework/Actor.h"
 #include "Subsystems/EditorActorSubsystem.h"
@@ -362,6 +364,7 @@ bool FVibeModelingAssetsTest::RunTest(const FString&)
 			}
 		}
 	}
+	FAssetCompilingManager::Get().FinishAllCompilation();
 	UModelingService::ReleaseAllMeshes();
 	TestTrue(TEXT("test folder removed"), UEditorAssetLibrary::DeleteDirectory(kModelingTestDir));
 	return true;
@@ -384,6 +387,79 @@ bool FVibeModelingErrorsTest::RunTest(const FString&)
 	TestFalse(TEXT("empty bone list rejected"), UModelingService::PruneBoneWeights(H, TEXT(" , ")).bSuccess);
 	TestEqual(TEXT("selection on unknown handle"), UModelingService::SelectAll(4242, TEXT("x")), -1);
 	TestFalse(TEXT("ray cast on unknown handle"), UModelingService::RayCast(4242, FVector::ZeroVector, FVector::UpVector).bFound);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeModelingRiggingTest, "VibeUE.Modeling.LoftsRigging", kModelingTestFlags)
+bool FVibeModelingRiggingTest::RunTest(const FString&)
+{
+	FScopedModelingSession Session;
+
+	// Loft: a tapered wing section must come out closed and outward-facing whatever the sweep's winding.
+	const int32 Wing = UModelingService::CreateMesh().Handle;
+	const TArray<FVector2D> Profile = { FVector2D(0, 0), FVector2D(0.3, 0.06), FVector2D(0.7, 0.04), FVector2D(1, 0), FVector2D(0.7, -0.04), FVector2D(0.3, -0.06) };
+	const TArray<FTransform> Frames = {
+		FTransform(FRotator(0, 90, 0), FVector(0, 0, 0), FVector(200)),
+		FTransform(FRotator(0, 90, 0), FVector(-50, 400, 0), FVector(100)) };
+	const FModelingResult Loft = UModelingService::AppendLoft(Wing, FTransform::Identity, Profile, Frames);
+	TestTrue(FString::Printf(TEXT("loft: %s"), *Loft.Message), Loft.bSuccess);
+	const FModelingMeshInfo WingInfo = UModelingService::GetMeshInfo(Wing);
+	TestTrue(TEXT("loft is closed"), WingInfo.bIsClosed);
+	TestTrue(TEXT("loft faces outward"), WingInfo.Volume > 0.f);
+	TestTrue(TEXT("loft spans the frames"), WingInfo.BoundsMax.Y > 390.0 && WingInfo.BoundsMin.X < -150.0);
+	UModelingService::FlipNormals(Wing);
+	TestTrue(TEXT("flipped volume is negative"), UModelingService::GetMeshInfo(Wing).Volume < 0.f);
+	TestTrue(TEXT("ensure_outward flips"), UModelingService::EnsureOutward(Wing).Message.Contains(TEXT("Flipped")));
+	TestTrue(TEXT("volume positive again"), UModelingService::GetMeshInfo(Wing).Volume > 0.f);
+	TestTrue(TEXT("ensure_outward is idempotent"), UModelingService::EnsureOutward(Wing).Message.Contains(TEXT("Already")));
+	TestFalse(TEXT("open profile rejected"), UModelingService::AppendLoft(Wing, FTransform::Identity, { FVector2D(0, 0), FVector2D(1, 0) }, Frames).bSuccess);
+
+	// Rig: a body box and a separate flap box, the flap bound to its own bone.
+	const int32 H = MakeBox(100.f);
+	UModelingService::AppendBox(H, FTransform(FVector(0, 200, 0)), 50.f, 50.f, 50.f);
+	TestEqual(TEXT("two components"), UModelingService::GetMeshInfo(H).ConnectedComponents, 2);
+	TestEqual(TEXT("select_connected grabs the flap"), UModelingService::SelectConnected(H, TEXT("flap"), FVector(0, 200, 25)), 12);
+	TestEqual(TEXT("select_connected grabs the body"), UModelingService::SelectConnected(H, TEXT("body"), FVector(0, 0, 50)), 12);
+
+	FModelingBoneDef Root;
+	Root.Name = TEXT("root");
+	FModelingBoneDef Flap;
+	Flap.Name = TEXT("flap");
+	Flap.ParentName = TEXT("root");
+	Flap.Transform = FTransform(FVector(0, 175, 0));
+	const FModelingResult Rig = UModelingService::CreateBones(H, { Root, Flap });
+	TestTrue(FString::Printf(TEXT("create_bones: %s"), *Rig.Message), Rig.bSuccess);
+	TestTrue(TEXT("bind flap"), UModelingService::BindSelectionToBone(H, TEXT("flap"), TEXT("flap"), 1.f).bSuccess);
+	const TArray<FModelingBoneInfo> Bones = UModelingService::ListBones(H);
+	TestEqual(TEXT("two bones"), Bones.Num(), 2);
+	if (Bones.Num() == 2)
+	{
+		TestEqual(TEXT("root influences the body"), Bones[0].InfluencedVertices, 8);
+		TestEqual(TEXT("flap influences the flap"), Bones[1].InfluencedVertices, 8);
+		TestEqual(TEXT("flap parent"), Bones[1].ParentName, FString(TEXT("root")));
+		TestTrue(TEXT("flap mesh-space pose"), Bones[1].MeshTransform.GetLocation().Equals(FVector(0, 175, 0), 0.01));
+	}
+	TestFalse(TEXT("unknown bone rejected"), UModelingService::BindSelectionToBone(H, TEXT("flap"), TEXT("nope")).bSuccess);
+	TestFalse(TEXT("child before parent rejected"), UModelingService::CreateBones(Wing, { Flap, Root }).bSuccess);
+	TestFalse(TEXT("stale selection rejected"), UModelingService::BindSelectionToBone(Wing, TEXT("missing"), TEXT("root")).bSuccess);
+
+	// Save as a skeletal mesh with a freshly created skeleton, assign materials, then clean up.
+	const FString MeshPath = FString(kModelingTestDir) + TEXT("/SK_ModelingRig");
+	const FModelingResult Saved = UModelingService::SaveMeshToSkeletalMesh(H, MeshPath, TEXT(""), true, false);
+	TestTrue(FString::Printf(TEXT("save skeletal: %s"), *Saved.Message), Saved.bSuccess);
+	TestTrue(TEXT("skeletal mesh asset exists"), UEditorAssetLibrary::DoesAssetExist(MeshPath));
+	TestTrue(TEXT("skeleton asset created"), UEditorAssetLibrary::DoesAssetExist(MeshPath + TEXT("_Skeleton")));
+	if (USkeleton* Skeleton = Cast<USkeleton>(UEditorAssetLibrary::LoadAsset(MeshPath + TEXT("_Skeleton"))))
+	{
+		TestEqual(TEXT("skeleton has both bones"), Skeleton->GetReferenceSkeleton().GetRawBoneNum(), 2);
+		TestEqual(TEXT("flap bone in skeleton"), Skeleton->GetReferenceSkeleton().FindRawBoneIndex(TEXT("flap")), 1);
+	}
+	TestTrue(TEXT("set materials"), UModelingService::SetAssetMaterials(MeshPath, TEXT("/Engine/BasicShapes/BasicShapeMaterial"), false).bSuccess);
+	TestFalse(TEXT("missing material rejected"), UModelingService::SetAssetMaterials(MeshPath, TEXT("/Game/Developers/NoSuchMaterial"), false).bSuccess);
+	TestFalse(TEXT("skeletal save without weights rejected"), UModelingService::SaveMeshToSkeletalMesh(MakeBox(), FString(kModelingTestDir) + TEXT("/SK_NoWeights"), TEXT(""), true, false).bSuccess);
+	FAssetCompilingManager::Get().FinishAllCompilation();
+	UModelingService::ReleaseAllMeshes();
+	TestTrue(TEXT("test folder removed"), UEditorAssetLibrary::DeleteDirectory(kModelingTestDir));
 	return true;
 }
 

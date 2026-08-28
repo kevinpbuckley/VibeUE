@@ -161,6 +161,33 @@ sp_r = call("spawn_static_mesh_actor", sm_path, T(unreal.Vector(0, 0, -5000)), "
 ah = call("load_mesh_from_actor", "VibeUEModelingExerciseActor", True, 0).handle
 bake = call("bake_textures", u, s, "TangentNormal,AmbientOcclusion", 64, ROOT, "Exercise", 0, 1); assert bake.texture_paths
 
+# --- lofts, orientation, connected pieces
+lf = call("create_mesh").handle
+profile = [unreal.Vector2D(x, y) for x, y in ((0, 0), (0.3, 0.06), (0.7, 0.04), (1, 0), (0.7, -0.04), (0.3, -0.06))]
+frames = [unreal.Transform(unreal.Vector(0, 0, 0), unreal.Rotator(0, 0, 90), unreal.Vector(200, 200, 200)),
+          unreal.Transform(unreal.Vector(-50, 400, 0), unreal.Rotator(0, 0, 90), unreal.Vector(100, 100, 100))]
+call("append_loft", lf, T(), profile, frames, 0)
+assert svc.get_mesh_info(lf).is_closed and svc.get_mesh_info(lf).volume > 0, "loft must be closed and outward"
+call("flip_normals", lf)
+call("ensure_outward", lf); assert svc.get_mesh_info(lf).volume > 0, "ensure_outward must flip an inside-out mesh"
+call("append_box", lf, T(unreal.Vector(0, -300, 0)), 50, 50, 50)
+assert call("select_connected", lf, "piece", unreal.Vector(0, -300, 25)) == 12
+
+# --- rigging: bones authored on the mesh, saved with a freshly created skeleton
+rg = call("create_mesh").handle
+call("append_box", rg, T(), 100, 100, 100)
+call("append_box", rg, T(unreal.Vector(0, 200, 0)), 50, 50, 50)
+call("select_connected", rg, "flap", unreal.Vector(0, 200, 25))
+B = unreal.ModelingBoneDef
+call("create_bones", rg, [B(name="root"), B(name="flap", parent_name="root", transform=T(unreal.Vector(0, 175, 0)))])
+call("bind_selection_to_bone", rg, "flap", "flap", 1.0)
+bones = call("list_bones", rg)
+assert len(bones) == 2 and bones[1].influenced_vertices == 8, [(str(b.name), b.influenced_vertices) for b in bones]
+sk_path = ROOT + "/SK_ExerciseRig"
+call("save_mesh_to_skeletal_mesh", rg, sk_path, "", True, False)
+assert unreal.EditorAssetLibrary.does_asset_exist(sk_path + "_Skeleton"), "skeleton should be created next to the mesh"
+call("set_asset_materials", sk_path, "/Engine/BasicShapes/BasicShapeMaterial", False)
+
 # --- skeletal (only when the project has a skeletal mesh)
 ar = unreal.AssetRegistryHelpers.get_asset_registry()
 skms = ar.get_assets_by_class(unreal.TopLevelAssetPath("/Script/Engine", "SkeletalMesh"), False)

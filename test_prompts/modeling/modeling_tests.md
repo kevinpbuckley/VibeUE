@@ -242,3 +242,15 @@ Try `inset_faces` with a selection name that does not exist and confirm the erro
 
 ## Prompt 13.1
 Delete the `ModelingTestCrate` actor, delete everything under `/Game/Developers/VibeUEModelingTests`, and release all modeling handles. Confirm `list_meshes` is empty.
+
+## Prompt 14.1 — lofted wing
+
+**Prompt:** "Loft a tapered wing section: a symmetric airfoil profile, root chord 300 at the origin, tip chord 120 four metres out along +Y and swept back 80 cm. Prove it is closed and faces outward, then save it as `/Game/Developers/Test/SM_LoftWing`."
+
+**Expected:** `append_loft` with two frames (yaw 90, scale = chord); `get_mesh_info` shows `is_closed` and a positive volume; a saved static mesh. No manual `fill_holes` / `flip_normals` needed.
+
+## Prompt 14.2 — rigged rudder
+
+**Prompt:** "Build a simple tail fin with a rudder: a fin slab, a through-slot cut along the hinge line so the rear third is a separate piece. Create a `root` bone and a `rudder` bone whose X axis runs along the hinge, bind the rudder piece to it, confirm with `list_bones` that the rudder bone owns exactly the rudder's vertices, and save it as `/Game/Developers/Test/SK_Fin` with a new skeleton."
+
+**Expected:** `boolean` Subtract for the slot → `select_connected` on a point in the rudder → `create_bones` (root, rudder) → `bind_selection_to_bone` → `list_bones` showing two bones with non-zero counts → `save_mesh_to_skeletal_mesh(..., "", ...)` producing `SK_Fin` and `SK_Fin_Skeleton`.

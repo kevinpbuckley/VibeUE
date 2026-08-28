@@ -85,17 +85,17 @@ framed on the actor. A successful call is not proof the shape is right.
 | Area | Functions |
 |---|---|
 | Session | `create_mesh()`, `load_mesh_from_static_mesh(path, lod=0)`, `load_mesh_from_skeletal_mesh(path, lod=0)`, `load_mesh_from_actor(label)`, `copy_mesh(handle)`, `release_mesh(handle)`, `release_all_meshes()`, `list_meshes()`, `get_mesh_info(handle)` |
-| Primitives (append into a handle) | `append_box`, `append_sphere`, `append_sphere_box`, `append_cylinder`, `append_cone`, `append_capsule`, `append_torus`, `append_rectangle`, `append_disc`, `append_stairs`, `append_curved_stairs`, `append_extrude_polygon(handle, transform, points2d, height)`, `append_revolve_polygon(handle, transform, points2d, radius, steps, degrees)`, `append_sweep_polyline(handle, transform, profile2d, path_transforms)`, `append_mesh(handle, other_handle, transform)` |
+| Primitives (append into a handle) | `append_box`, `append_sphere`, `append_sphere_box`, `append_cylinder`, `append_cone`, `append_capsule`, `append_torus`, `append_rectangle`, `append_disc`, `append_stairs`, `append_curved_stairs`, `append_extrude_polygon(handle, transform, points2d, height)`, `append_revolve_polygon(handle, transform, points2d, radius, steps, degrees)`, `append_sweep_polyline(handle, transform, profile2d, path_transforms)` (open tube — prefer the next one for solids), `append_loft(handle, transform, closed_profile2d, frames)` (capped, always outward; frame scale = chord), `append_mesh(handle, other_handle, transform)` |
 | Booleans | `boolean(target, tool, "Union|Subtract|Intersection", tool_transform)`, `self_union`, `plane_cut(handle, plane_transform, fill_holes)`, `mirror(handle, plane_transform, weld)` |
-| Selections | `select_all(handle, name)`, `select_by_normal_angle(handle, name, normal, max_angle_deg)`, `select_in_box(handle, name, box_min, box_max)`, `select_in_sphere(handle, name, center, radius)`, `select_by_material_id(handle, name, material_id)`, `select_by_polygroup(handle, name, group_id)`, `expand_contract_selection(handle, name, new_name, iterations, contract)`, `invert_selection(handle, name, new_name)`, `selection_count(handle, name)`, `selection_bounds(handle, name)` → `(min, max)` (Python drops the bool; an empty selection gives zero vectors), `clear_selections(handle)` |
+| Selections | `select_all(handle, name)`, `select_by_normal_angle(handle, name, normal, max_angle_deg)`, `select_in_box(handle, name, box_min, box_max)`, `select_in_sphere(handle, name, center, radius)`, `select_by_material_id(handle, name, material_id)`, `select_by_polygroup(handle, name, group_id)`, `select_connected(handle, name, point)` (whole connected piece nearest the point), `expand_contract_selection(handle, name, new_name, iterations, contract)`, `invert_selection(handle, name, new_name)`, `selection_count(handle, name)`, `selection_bounds(handle, name)` → `(min, max)` (Python drops the bool; an empty selection gives zero vectors), `clear_selections(handle)` |
 | Poly edit on selections | `extrude_faces(handle, sel, distance, direction)`, `offset_faces(handle, sel, distance)`, `inset_faces(handle, sel, distance)`, `outset_faces(handle, sel, distance)`, `delete_faces(handle, sel)`, `translate_selection(handle, sel, delta)`, `bevel_polygroups(handle, distance, subdivisions)`, `offset_mesh(handle, distance)`, `shell_mesh(handle, thickness)` |
 | Mesh | `remesh(handle, target_triangles, edge_length=0)`, `simplify_to_triangle_count(handle, n)`, `simplify_to_vertex_count(handle, n)`, `simplify_to_tolerance(handle, tolerance)`, `simplify_planar(handle)` (lossless, coplanar only), `subdivide(handle, level, "PN|Uniform|CatmullClark|Loop")`, `smooth(handle, sel, iterations, alpha)`, `fill_holes(handle)`, `weld_edges(handle, tolerance)`, `repair(handle)` (degenerates + small components), `remove_hidden_triangles(handle)`, `split_by_components(handle)` → new handles |
 | Queries, sampling, hulls | `ray_cast(handle, origin, direction)` / `nearest_point(handle, point)` → `{found, position, triangle_id, distance}`, `is_point_inside(handle, point)`, `sample_surface_points(handle, radius, max)` → transforms for scattering, `convex_hull(handle)`, `convex_decomposition(handle, num_hulls)`, `swept_hull(handle, frame)` → NEW handles, `measure_distance(a, b)` → max/mean/rms (verify LODs and simplifications) |
 | Deform | `bend(handle, orientation, angle, extent)`, `twist(...)`, `flare(handle, orientation, percent_x, percent_y, extent)`, `noise(handle, sel, magnitude, frequency, seed)`, `displace_from_texture(handle, sel, texture_path, magnitude, uv_layer)` |
 | Voxel | `voxel_solidify(handle, grid_resolution)`, `voxel_morphology(handle, "Dilate|Contract|Open|Close", distance, grid_resolution)` |
-| UVs / normals / groups / materials / colors | `auto_uv(handle, "XAtlas|PatchBuilder", uv_layer)`, `project_uv(handle, "Planar|Box|Cylinder", transform, uv_layer, sel)`, `repack_uv(handle, uv_layer, resolution)`, `set_num_uv_layers`, `recompute_normals(handle, hard_angle_deg)`, `flip_normals`, `compute_polygroups(handle, "Angle|UVIslands|Components|Polygons", crease_angle)`, `set_material_id(handle, sel, id)`, `remap_material_id(handle, from, to)`, `set_vertex_color(handle, sel, color)` |
+| UVs / normals / groups / materials / colors | `auto_uv(handle, "XAtlas|PatchBuilder", uv_layer)`, `project_uv(handle, "Planar|Box|Cylinder", transform, uv_layer, sel)`, `repack_uv(handle, uv_layer, resolution)`, `set_num_uv_layers`, `recompute_normals(handle, hard_angle_deg)`, `flip_normals`, `ensure_outward(handle)` (flip if the enclosed volume is negative), `compute_polygroups(handle, "Angle|UVIslands|Components|Polygons", crease_angle)`, `set_material_id(handle, sel, id)`, `remap_material_id(handle, from, to)`, `set_vertex_color(handle, sel, color)` |
 | Transform | `transform_mesh(handle, transform)`, `translate_mesh`, `rotate_mesh`, `scale_mesh`, `recenter_mesh(handle, "Bounds|Base")` |
-| Assets | `save_mesh_to_static_mesh(handle, path, replace_existing, enable_collision, enable_nanite)`, `save_mesh_to_skeletal_mesh(handle, path, skeleton_path)`, `transfer_bone_weights(handle, source_skeletal_mesh_path)`, `smooth_bone_weights(handle, skeleton_path)`, `prune_bone_weights(handle, "bone,bone")`, `generate_collision(asset_path, "MinVolumeShapes|ConvexHulls|AlignedBoxes|OrientedBoxes|MinimalSpheres|Capsules|SweptHulls", max_hulls)`, `set_lods(asset_path, [percent_triangles...])`, `bake_textures(target_handle, source_handle, "TangentNormal,AmbientOcclusion,Curvature,ObjectNormal,Position", resolution, out_folder, base_name)`, `spawn_static_mesh_actor(asset_path, transform, label)`; `load_mesh_from_actor` also reads skeletal / dynamic mesh actors |
+| Assets | `save_mesh_to_static_mesh(handle, path, replace_existing, enable_collision, enable_nanite)`, `save_mesh_to_skeletal_mesh(handle, path, skeleton_path="")` ("" creates `<path>_Skeleton` from the mesh bones), `set_asset_materials(asset_path, "/Game/M_A,/Game/M_B")`, `transfer_bone_weights(handle, source_skeletal_mesh_path)`, `smooth_bone_weights(handle, skeleton_path)`, `prune_bone_weights(handle, "bone,bone")`, `create_bones(handle, [ModelingBoneDef(name, parent_name, transform)])`, `bind_selection_to_bone(handle, sel, bone, weight=1)`, `list_bones(handle)` → per-bone vertex counts, `generate_collision(asset_path, "MinVolumeShapes|ConvexHulls|AlignedBoxes|OrientedBoxes|MinimalSpheres|Capsules|SweptHulls", max_hulls)`, `set_lods(asset_path, [percent_triangles...])`, `bake_textures(target_handle, source_handle, "TangentNormal,AmbientOcclusion,Curvature,ObjectNormal,Position", resolution, out_folder, base_name)`, `spawn_static_mesh_actor(asset_path, transform, label)`; `load_mesh_from_actor` also reads skeletal / dynamic mesh actors |
 
 ## GeometryScript coverage
 
@@ -154,3 +154,59 @@ can pass to any `unreal.GeometryScript_*` library function in the same script.
 - `FModelingResult`: `success`, `message`, `handle`, `triangle_count`, `vertex_count`, `asset_path`.
 - `FModelingMeshInfo` (`get_mesh_info`): `handle`, `triangle_count`, `vertex_count`, `is_closed`, `open_border_edges`, `connected_components`, `bounds_min`, `bounds_max`, `surface_area`, `volume`, `num_uv_layers`, `has_vertex_colors`, `material_ids`.
 - `FModelingSplitResult` (`split_by_components`): `success`, `handles`.
+
+## Lofted solids (wings, fins, hulls)
+
+`append_loft(h, transform, profile, frames, material_id)` sweeps a **closed** 2D profile through a list of
+frames, caps both ends, and guarantees an outward-facing closed solid (it checks the enclosed volume and
+flips when the sweep came out inside-out). Frame semantics:
+
+- The profile lies in each frame's local **YZ** plane: profile X runs along the frame's Y axis, profile Y
+  along its Z axis.
+- The frame's **scale** multiplies the profile — put the chord (or radius) there, per frame, for taper.
+- Frames are positioned along the path; two frames make a straight tapered section.
+
+A wing running out along +Y with its chord toward −X and 6 % thickness:
+
+```python
+airfoil = [unreal.Vector2D(x, y) for x, y in ((0,0),(0.05,0.03),(0.3,0.06),(0.7,0.04),(1,0),(0.7,-0.03),(0.3,-0.04),(0.05,-0.02))]
+frames = [unreal.Transform(unreal.Vector(880, 100, 0), unreal.Rotator(0, 0, 90), unreal.Vector(480, 480, 480)),   # root: LE at x=880, chord 480
+          unreal.Transform(unreal.Vector(600, 640, 0), unreal.Rotator(0, 0, 90), unreal.Vector(160, 160, 160))]   # tip
+svc.append_loft(h, unreal.Transform(), airfoil, frames, 0)
+```
+
+`ensure_outward(h)` does the same volume check on any closed part you built another way (revolves, raw
+sweeps) — run it before `self_union`, which silently discards inside-out parts as negative space.
+
+## Rigging control surfaces (rudders, flaps, canopies, turrets)
+
+Bones and skin weights are authored straight on the session mesh; saving with an empty skeleton path
+creates the Skeleton asset for you.
+
+1. **Isolate each moving piece** as its own connected component: cut a through-slot along the hinge line
+   and at both ends (`boolean` Subtract with thin boxes), so the flap is no longer attached to the wing.
+2. **Grab it** with `select_connected(h, "flap_L", point_on_the_flap)` — no radius to tune, it takes the
+   whole piece nearest the point. `selection_bounds` then gives you the hinge line (the piece's forward edge).
+3. **Define the hierarchy** with `create_bones(h, [ModelingBoneDef, ...])`: the first bone is the root,
+   every other one names a parent listed earlier. Transforms are in mesh space; point each bone's **X
+   axis along its hinge** so the surface deflects by rolling the bone (a swept hinge just needs the
+   right yaw). Everything starts bound to the root.
+4. **Bind** each piece: `bind_selection_to_bone(h, "flap_L", "flap_L", 1.0)`.
+5. **Verify** with `list_bones(h)` — every control bone should report the vertex count of its piece and
+   the root the rest; a bone with 0 vertices means the selection missed.
+6. **Save**: `save_mesh_to_skeletal_mesh(h, "/Game/Vehicles/SK_Jet", "", True, True)` creates
+   `SK_Jet` plus `SK_Jet_Skeleton`; then `set_asset_materials("/Game/Vehicles/SK_Jet", "/Game/M_Paint,/Game/M_Glass")`
+   fills the material slots (one slot per material ID).
+
+```python
+B = unreal.ModelingBoneDef
+hinge_yaw = 0.0   # yaw of the hinge line in the XY plane
+svc.create_bones(h, [
+    B(name="root"),
+    B(name="flap_L", parent_name="root", transform=unreal.Transform(unreal.Vector(534, 100, 0), unreal.Rotator(0, 0, 90 + hinge_yaw), unreal.Vector(1, 1, 1))),
+])
+```
+
+Animate the result like any skeletal mesh — an AnimSequence keyed on the control bones (see the
+`animation` skill), a Control Rig, or `SetBoneRotationByName` on a PoseableMeshComponent for a quick
+check in a level.

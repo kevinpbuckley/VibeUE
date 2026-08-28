@@ -55,6 +55,12 @@
 #include "Subsystems/EditorActorSubsystem.h"
 #include "UObject/Package.h"
 #include "UObject/StrongObjectPtr.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "DynamicMesh/DynamicBoneAttribute.h"
+#include "DynamicMesh/DynamicVertexSkinWeightsAttribute.h"
+#include "Engine/SkinnedAssetCommon.h"
+#include "Materials/Material.h"
+#include "SkeletalMeshAttributes.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogVibeModeling, Log, All);
 
@@ -1583,14 +1589,63 @@ FModelingResult UModelingService::SaveMeshToSkeletalMesh(int32 Handle, const FSt
 	UDynamicMesh* Mesh = FindMesh(Handle);
 	if (!Mesh) { return NoMesh(Handle); }
 	if (TriCount(Mesh) == 0) { return Fail(Handle, TEXT("Mesh is empty; nothing to save")); }
-	USkeleton* Skeleton = LoadAssetAs<USkeleton>(SkeletonPath);
-	if (!Skeleton) { return Fail(Handle, FString::Printf(TEXT("Skeleton not found: %s"), *SkeletonPath)); }
+	if (!AssetPath.StartsWith(TEXT("/"))) { return Fail(Handle, FString::Printf(TEXT("AssetPath must be a full package path like /Game/Folder/SK_Name (got '%s')"), *AssetPath)); }
+
+	bool bMeshHasBones = false;
+	bool bMeshHasWeights = false;
+	int32 MaxMaterialID = 0;
+	Mesh->ProcessMesh([&](const FDynamicMesh3& M)
+	{
+		if (!M.HasAttributes()) { return; }
+		bMeshHasBones = M.Attributes()->HasBones();
+		bMeshHasWeights = M.Attributes()->GetSkinWeightsAttributes().Num() > 0;
+		if (M.Attributes()->HasMaterialID())
+		{
+			const FDynamicMeshMaterialAttribute* MaterialIDs = M.Attributes()->GetMaterialID();
+			for (const int32 Tid : M.TriangleIndicesItr()) { MaxMaterialID = FMath::Max(MaxMaterialID, MaterialIDs->GetValue(Tid)); }
+		}
+	});
+	if (!bMeshHasWeights)
+	{
+		return Fail(Handle, TEXT("Mesh has no skin weights: run create_bones + bind_selection_to_bone (or transfer_bone_weights from a skeletal mesh) first"));
+	}
+
+	const bool bExists = UEditorAssetLibrary::DoesAssetExist(AssetPath);
+	USkeleton* Skeleton = nullptr;
+	FString SkeletonNote;
+	if (!SkeletonPath.IsEmpty())
+	{
+		Skeleton = LoadAssetAs<USkeleton>(SkeletonPath);
+		if (!Skeleton) { return Fail(Handle, FString::Printf(TEXT("Skeleton not found: %s"), *SkeletonPath)); }
+	}
+	else if (!bExists)
+	{
+		if (!bMeshHasBones)
+		{
+			return Fail(Handle, TEXT("No SkeletonPath and the mesh has no bones: pass an existing skeleton, or define bones with create_bones so one can be created"));
+		}
+		// Create an empty Skeleton next to the mesh; CreateSkeletalMeshAsset merges the mesh's bones into it.
+		const FString NewSkeletonPath = AssetPath + TEXT("_Skeleton");
+		if (UEditorAssetLibrary::DoesAssetExist(NewSkeletonPath))
+		{
+			Skeleton = LoadAssetAs<USkeleton>(NewSkeletonPath);
+			if (!Skeleton) { return Fail(Handle, FString::Printf(TEXT("%s exists but is not a Skeleton"), *NewSkeletonPath)); }
+		}
+		else
+		{
+			UPackage* Package = CreatePackage(*NewSkeletonPath);
+			Skeleton = NewObject<USkeleton>(Package, *FPackageName::GetLongPackageAssetName(NewSkeletonPath), RF_Public | RF_Standalone);
+			FAssetRegistryModule::AssetCreated(Skeleton);
+			Package->MarkPackageDirty();
+		}
+		SkeletonNote = FString::Printf(TEXT(" with skeleton %s"), *NewSkeletonPath);
+	}
 
 	UGeometryScriptDebug* Debug = NewDebug();
 	EGeometryScriptOutcomePins Outcome = EGeometryScriptOutcomePins::Failure;
 	USkeletalMesh* SkeletalMesh = nullptr;
 	FString What;
-	if (UEditorAssetLibrary::DoesAssetExist(AssetPath))
+	if (bExists)
 	{
 		SkeletalMesh = LoadAssetAs<USkeletalMesh>(AssetPath);
 		if (!SkeletalMesh) { return Fail(Handle, FString::Printf(TEXT("%s exists but is not a SkeletalMesh"), *AssetPath)); }
@@ -1604,14 +1659,26 @@ FModelingResult UModelingService::SaveMeshToSkeletalMesh(int32 Handle, const FSt
 	else
 	{
 		FGeometryScriptCreateNewSkeletalMeshAssetOptions Options;
+		// Bones authored on the mesh (create_bones, or copied from a source skeletal mesh) define the reference skeleton.
+		Options.bUseMeshBoneProportions = bMeshHasBones;
+		// One slot per material ID so multi-material meshes keep their sections; set_asset_materials fills them in.
+		for (int32 i = 0; i <= MaxMaterialID; ++i)
+		{
+			Options.Materials.Add(*FString::Printf(TEXT("Slot%d"), i), UMaterial::GetDefaultMaterial(MD_Surface));
+		}
 		SkeletalMesh = UGeometryScriptLibrary_CreateNewAssetFunctions::CreateNewSkeletalMeshAssetFromMesh(Mesh, Skeleton, AssetPath, Options, Outcome, Debug);
-		What = FString::Printf(TEXT("Created %s"), *AssetPath);
+		if (SkeletalMesh && Skeleton && !Skeleton->GetPreviewMesh())
+		{
+			Skeleton->SetPreviewMesh(SkeletalMesh);
+		}
+		What = FString::Printf(TEXT("Created %s%s (%d material slot(s))"), *AssetPath, *SkeletonNote, MaxMaterialID + 1);
 	}
 	if (Outcome != EGeometryScriptOutcomePins::Success || !SkeletalMesh)
 	{
 		return Fail(Handle, FString::Printf(TEXT("Saving to %s failed: %s"), *AssetPath, *DebugText(Debug)));
 	}
 	SaveIf(bSaveAsset, SkeletalMesh->GetPathName());
+	if (Skeleton) { SaveIf(bSaveAsset, Skeleton->GetPathName()); }
 	FModelingResult R = Ok(Handle, Mesh, What);
 	R.AssetPath = SkeletalMesh->GetPathName();
 	return R;
@@ -1755,6 +1822,7 @@ FModelingBakeResult UModelingService::BakeTextures(int32 TargetHandle, int32 Sou
 			Result.Message = FString::Printf(TEXT("Could not save %s: %s"), *AssetPath, *DebugText(Debug));
 			return Result;
 		}
+		Saved->BlockOnAnyAsyncBuild();   // the texture compiles asynchronously; finish it so a save or delete right after cannot race it
 		UEditorAssetLibrary::SaveAsset(Saved->GetPathName(), false);
 		Result.TexturePaths.Add(Saved->GetPathName());
 	}
@@ -2078,4 +2146,326 @@ FModelingResult UModelingService::PruneBoneWeights(int32 Handle, const FString& 
 	UGeometryScriptDebug* Debug = NewDebug();
 	UGeometryScriptLibrary_MeshBoneWeightFunctions::PruneBoneWeights(Mesh, Bones, Options, FGeometryScriptBoneWeightProfile(), Debug);
 	return Finish(Handle, Mesh, Debug, FString::Printf(TEXT("Pruned %d bone(s) from skin weights"), Bones.Num()));
+}
+
+// =========================================================================
+// Lofts, orientation, connected pieces
+// =========================================================================
+
+FModelingResult UModelingService::EnsureOutward(int32 Handle)
+{
+	UDynamicMesh* Mesh = FindMesh(Handle);
+	if (!Mesh) { return NoMesh(Handle); }
+	float Area = 0.f, Volume = 0.f;
+	UGeometryScriptLibrary_MeshQueryFunctions::GetMeshVolumeArea(Mesh, Area, Volume);
+	if (Volume >= 0.f)
+	{
+		return Ok(Handle, Mesh, FString::Printf(TEXT("Already outward-facing (volume %.1f)"), Volume));
+	}
+	UGeometryScriptDebug* Debug = NewDebug();
+	UGeometryScriptLibrary_MeshNormalsFunctions::FlipNormals(Mesh, Debug);
+	return Finish(Handle, Mesh, Debug, FString::Printf(TEXT("Flipped an inward-facing mesh (volume was %.1f)"), Volume));
+}
+
+FModelingResult UModelingService::AppendLoft(int32 Handle, FTransform Transform, const TArray<FVector2D>& ProfilePoints, const TArray<FTransform>& Frames, int32 MaterialID)
+{
+	UDynamicMesh* Mesh = FindMesh(Handle);
+	if (!Mesh) { return NoMesh(Handle); }
+	if (ProfilePoints.Num() < 3) { return Fail(Handle, TEXT("ProfilePoints needs at least 3 points (a closed profile)")); }
+	if (Frames.Num() < 2) { return Fail(Handle, TEXT("Frames needs at least 2 transforms")); }
+	UGeometryScriptDebug* Debug = NewDebug();
+
+	// Closed-polygon sweep with caps, built in scratch so the orientation fix can only touch the new part.
+	// The generator maps profile X to each frame's Y axis and profile Y to its Z axis, scaled by the frame's Y/Z scale.
+	UDynamicMesh* Part = NewScratchMesh();
+	UGeometryScriptLibrary_MeshPrimitiveFunctions::AppendSweepPolygon(Part, PrimitiveOptions(MaterialID), Transform, ProfilePoints, Frames,
+		false, true, 1.f, 1.f, 0.f, 1.f, Debug);
+	float Area = 0.f, Volume = 0.f;
+	UGeometryScriptLibrary_MeshQueryFunctions::GetMeshVolumeArea(Part, Area, Volume);
+	if (Volume < 0.f)
+	{
+		UGeometryScriptLibrary_MeshNormalsFunctions::FlipNormals(Part, Debug);
+	}
+	UGeometryScriptLibrary_MeshBasicEditFunctions::AppendMesh(Mesh, Part, FTransform::Identity, false, FGeometryScriptAppendMeshOptions(), Debug);
+	return Finish(Handle, Mesh, Debug, FString::Printf(TEXT("Appended loft (%d-point profile through %d frames%s)"),
+		ProfilePoints.Num(), Frames.Num(), Volume < 0.f ? TEXT(", flipped outward") : TEXT("")));
+}
+
+int32 UModelingService::SelectConnected(int32 Handle, const FString& SelectionName, FVector Point)
+{
+	UDynamicMesh* Mesh = FindMesh(Handle);
+	if (!Mesh || SelectionName.IsEmpty()) { return -1; }
+	UGeometryScriptDebug* Debug = NewDebug();
+	FGeometryScriptDynamicMeshBVH BVH;
+	UGeometryScriptLibrary_MeshSpatial::BuildBVHForMesh(Mesh, BVH, Debug);
+	FGeometryScriptTrianglePoint Nearest;
+	EGeometryScriptSearchOutcomePins Outcome = EGeometryScriptSearchOutcomePins::NotFound;
+	UGeometryScriptLibrary_MeshSpatial::FindNearestPointOnMesh(Mesh, BVH, Point, FGeometryScriptSpatialQueryOptions(), Nearest, Outcome, Debug);
+	FGeometryScriptMeshSelection Selection;
+	if (Outcome == EGeometryScriptSearchOutcomePins::Found && Nearest.bValid)
+	{
+		FGeometryScriptMeshSelection Seed;
+		UGeometryScriptLibrary_MeshSelectionFunctions::ConvertIndexArrayToMeshSelection(Mesh, TArray<int32>{ Nearest.TriangleID }, EGeometryScriptMeshSelectionType::Triangles, Seed);
+		UGeometryScriptLibrary_MeshSelectionFunctions::ExpandMeshSelectionToConnected(Mesh, Seed, Selection, EGeometryScriptTopologyConnectionType::Geometric);
+	}
+	StoreSelection(Handle, SelectionName, Selection);
+	return Selection.GetNumSelected();
+}
+
+// =========================================================================
+// Rigging: bones and skin weights authored on the mesh
+// =========================================================================
+
+namespace
+{
+	using FSkinWeights = FDynamicMeshVertexSkinWeightsAttribute;
+	using UE::AnimationCore::FBoneWeight;
+	using UE::AnimationCore::FBoneWeights;
+
+	/** Mesh-space reference pose of every bone (poses are stored relative to the parent, parents precede children). */
+	TArray<FTransform> BoneMeshTransforms(const FDynamicMeshAttributeSet* Attributes)
+	{
+		TArray<FTransform> Out;
+		const int32 Num = Attributes->GetNumBones();
+		Out.SetNum(Num);
+		for (int32 i = 0; i < Num; ++i)
+		{
+			const int32 Parent = Attributes->GetBoneParentIndices()->GetValue(i);
+			const FTransform& Local = Attributes->GetBonePoses()->GetValue(i);
+			Out[i] = (Parent >= 0 && Parent < i) ? Local * Out[Parent] : Local;
+		}
+		return Out;
+	}
+
+	int32 FindBoneIndexByName(const FDynamicMeshAttributeSet* Attributes, const FName Name)
+	{
+		for (int32 i = 0; i < Attributes->GetNumBones(); ++i)
+		{
+			if (Attributes->GetBoneNames()->GetValue(i) == Name) { return i; }
+		}
+		return INDEX_NONE;
+	}
+
+	FSkinWeights* DefaultSkinWeights(FDynamicMesh3& M)
+	{
+		return M.HasAttributes() ? M.Attributes()->GetSkinWeightsAttribute(FSkeletalMeshAttributes::DefaultSkinWeightProfileName) : nullptr;
+	}
+}
+
+FModelingResult UModelingService::CreateBones(int32 Handle, const TArray<FModelingBoneDef>& Bones)
+{
+	UDynamicMesh* Mesh = FindMesh(Handle);
+	if (!Mesh) { return NoMesh(Handle); }
+	if (Bones.Num() == 0) { return Fail(Handle, TEXT("Bones is empty: pass at least a root bone")); }
+
+	TMap<FName, int32> IndexByName;
+	TArray<FName> Names;
+	TArray<int32> ParentIndices;
+	for (int32 i = 0; i < Bones.Num(); ++i)
+	{
+		const FName Name(*Bones[i].Name.TrimStartAndEnd());
+		if (Name.IsNone()) { return Fail(Handle, FString::Printf(TEXT("Bone %d has no name"), i)); }
+		if (IndexByName.Contains(Name)) { return Fail(Handle, FString::Printf(TEXT("Duplicate bone name '%s'"), *Name.ToString())); }
+		const FString ParentName = Bones[i].ParentName.TrimStartAndEnd();
+		int32 Parent = INDEX_NONE;
+		if (i == 0)
+		{
+			if (!ParentName.IsEmpty() && ParentName != TEXT("None"))
+			{
+				return Fail(Handle, FString::Printf(TEXT("The first bone ('%s') is the root and cannot have a parent"), *Name.ToString()));
+			}
+		}
+		else
+		{
+			const int32* Found = ParentName.IsEmpty() ? nullptr : IndexByName.Find(FName(*ParentName));
+			if (!Found)
+			{
+				return Fail(Handle, FString::Printf(TEXT("Bone '%s' needs a parent listed before it (got '%s'); only the first bone is a root"), *Name.ToString(), *ParentName));
+			}
+			Parent = *Found;
+		}
+		IndexByName.Add(Name, i);
+		Names.Add(Name);
+		ParentIndices.Add(Parent);
+	}
+
+	Mesh->EditMesh([&](FDynamicMesh3& M)
+	{
+		M.EnableAttributes();
+		FDynamicMeshAttributeSet* Attributes = M.Attributes();
+		Attributes->DisableBones();
+		Attributes->EnableBones(Bones.Num());
+		TArray<FTransform> MeshSpace;
+		for (int32 i = 0; i < Bones.Num(); ++i)
+		{
+			const FTransform& World = Bones[i].Transform;
+			MeshSpace.Add(World);
+			const int32 Parent = ParentIndices[i];
+			Attributes->GetBoneNames()->SetValue(i, Names[i]);
+			Attributes->GetBoneParentIndices()->SetValue(i, Parent);
+			Attributes->GetBonePoses()->SetValue(i, Parent >= 0 ? World.GetRelativeTransform(MeshSpace[Parent]) : World);
+		}
+	});
+
+	// A fresh default profile with everything on the root, so the mesh is a valid skeletal mesh immediately.
+	bool bProfileExisted = false;
+	UGeometryScriptLibrary_MeshBoneWeightFunctions::MeshCreateBoneWeights(Mesh, bProfileExisted, true, FGeometryScriptBoneWeightProfile());
+	UGeometryScriptDebug* Debug = NewDebug();
+	UGeometryScriptLibrary_MeshBoneWeightFunctions::SetAllVertexBoneWeights(Mesh, TArray<FGeometryScriptBoneWeight>{ FGeometryScriptBoneWeight(0, 1.f) }, FGeometryScriptBoneWeightProfile(), Debug);
+	return Finish(Handle, Mesh, Debug, FString::Printf(TEXT("Created %d bone(s) rooted at '%s'; every vertex bound to the root (bind_selection_to_bone to assign pieces)"), Bones.Num(), *Names[0].ToString()));
+}
+
+FModelingResult UModelingService::BindSelectionToBone(int32 Handle, const FString& SelectionName, const FString& BoneName, float Weight)
+{
+	UDynamicMesh* Mesh = FindMesh(Handle);
+	if (!Mesh) { return NoMesh(Handle); }
+	FGeometryScriptMeshSelection Selection;
+	FString Error;
+	if (!ResolveSelection(Handle, SelectionName, Mesh, Selection, Error)) { return Fail(Handle, Error); }
+
+	int32 NumBones = 0;
+	int32 BoneIndex = INDEX_NONE;
+	const FName Bone(*BoneName.TrimStartAndEnd());
+	Mesh->ProcessMesh([&](const FDynamicMesh3& M)
+	{
+		if (M.HasAttributes() && M.Attributes()->HasBones())
+		{
+			NumBones = M.Attributes()->GetNumBones();
+			BoneIndex = FindBoneIndexByName(M.Attributes(), Bone);
+		}
+	});
+	if (NumBones == 0) { return Fail(Handle, TEXT("Mesh has no bones: run create_bones first (or load a skeletal mesh)")); }
+	if (BoneIndex == INDEX_NONE) { return Fail(Handle, FString::Printf(TEXT("No bone named '%s' (see list_bones)"), *BoneName)); }
+
+	bool bProfileExisted = false;
+	UGeometryScriptLibrary_MeshBoneWeightFunctions::MeshCreateBoneWeights(Mesh, bProfileExisted, false, FGeometryScriptBoneWeightProfile());
+
+	FGeometryScriptIndexList Vertices;
+	EGeometryScriptIndexType ResultType = EGeometryScriptIndexType::Any;
+	UGeometryScriptLibrary_MeshSelectionFunctions::ConvertMeshSelectionToIndexList(Mesh, Selection, Vertices, ResultType, EGeometryScriptIndexType::Vertex);
+	if (!Vertices.List.IsValid() || ResultType != EGeometryScriptIndexType::Vertex)
+	{
+		return Fail(Handle, FString::Printf(TEXT("Selection '%s' could not be converted to vertices"), *SelectionName));
+	}
+
+	const float W = FMath::Clamp(Weight, 0.f, 1.f);
+	int32 Count = 0;
+	Mesh->EditMesh([&](FDynamicMesh3& M)
+	{
+		FSkinWeights* Skin = DefaultSkinWeights(M);
+		if (!Skin) { return; }
+		for (const int32 Vid : *Vertices.List)
+		{
+			if (!M.IsVertex(Vid)) { continue; }
+			TArray<FBoneWeight> NewWeights;
+			if (W < 1.f)
+			{
+				FBoneWeights Existing;
+				Skin->GetValue(Vid, Existing);
+				for (int32 k = 0; k < Existing.Num(); ++k)
+				{
+					const FBoneWeight& Old = Existing[k];
+					if (Old.GetBoneIndex() != BoneIndex && Old.GetWeight() > 0.f)
+					{
+						NewWeights.Add(FBoneWeight(Old.GetBoneIndex(), Old.GetWeight() * (1.f - W)));
+					}
+				}
+			}
+			NewWeights.Add(FBoneWeight(static_cast<FBoneIndexType>(BoneIndex), W));
+			Skin->SetValue(Vid, FBoneWeights::Create(NewWeights));
+			++Count;
+		}
+	});
+	return Ok(Handle, Mesh, FString::Printf(TEXT("Bound %d vertices to '%s' (weight %.2f)"), Count, *Bone.ToString(), W));
+}
+
+TArray<FModelingBoneInfo> UModelingService::ListBones(int32 Handle)
+{
+	TArray<FModelingBoneInfo> Out;
+	UDynamicMesh* Mesh = FindMesh(Handle);
+	if (!Mesh) { return Out; }
+	Mesh->ProcessMesh([&Out](const FDynamicMesh3& M)
+	{
+		if (!M.HasAttributes() || !M.Attributes()->HasBones()) { return; }
+		const FDynamicMeshAttributeSet* Attributes = M.Attributes();
+		const TArray<FTransform> MeshSpace = BoneMeshTransforms(Attributes);
+		Out.SetNum(Attributes->GetNumBones());
+		for (int32 i = 0; i < Out.Num(); ++i)
+		{
+			const int32 Parent = Attributes->GetBoneParentIndices()->GetValue(i);
+			Out[i].Index = i;
+			Out[i].Name = Attributes->GetBoneNames()->GetValue(i).ToString();
+			Out[i].ParentName = (Parent >= 0 && Parent < Out.Num()) ? Attributes->GetBoneNames()->GetValue(Parent).ToString() : FString();
+			Out[i].LocalTransform = Attributes->GetBonePoses()->GetValue(i);
+			Out[i].MeshTransform = MeshSpace[i];
+		}
+		if (const FSkinWeights* Skin = Attributes->GetSkinWeightsAttribute(FSkeletalMeshAttributes::DefaultSkinWeightProfileName))
+		{
+			FBoneWeights Weights;
+			for (const int32 Vid : M.VertexIndicesItr())
+			{
+				Skin->GetValue(Vid, Weights);
+				for (int32 k = 0; k < Weights.Num(); ++k)
+				{
+					const int32 BoneIndex = Weights[k].GetBoneIndex();
+					if (Weights[k].GetWeight() > 0.f && BoneIndex < Out.Num()) { ++Out[BoneIndex].InfluencedVertices; }
+				}
+			}
+		}
+	});
+	return Out;
+}
+
+FModelingResult UModelingService::SetAssetMaterials(const FString& AssetPath, const FString& MaterialPaths, bool bSaveAsset)
+{
+	TArray<FString> Paths;
+	MaterialPaths.ParseIntoArray(Paths, TEXT(","), true);
+	TArray<UMaterialInterface*> Materials;
+	for (FString& Path : Paths)
+	{
+		Path.TrimStartAndEndInline();
+		if (Path.IsEmpty()) { continue; }
+		UMaterialInterface* Material = LoadAssetAs<UMaterialInterface>(Path);
+		if (!Material) { return Fail(-1, FString::Printf(TEXT("Material not found: %s"), *Path)); }
+		Materials.Add(Material);
+	}
+	if (Materials.Num() == 0) { return Fail(-1, TEXT("MaterialPaths must list at least one material asset path (comma-separated, in slot order)")); }
+
+	UObject* Asset = UEditorAssetLibrary::DoesAssetExist(AssetPath) ? UEditorAssetLibrary::LoadAsset(AssetPath) : nullptr;
+	if (UStaticMesh* StaticMesh = Cast<UStaticMesh>(Asset))
+	{
+		TArray<FStaticMaterial> Slots = StaticMesh->GetStaticMaterials();
+		Slots.SetNum(FMath::Max(Slots.Num(), Materials.Num()));
+		for (int32 i = 0; i < Materials.Num(); ++i)
+		{
+			Slots[i].MaterialInterface = Materials[i];
+			if (Slots[i].MaterialSlotName.IsNone()) { Slots[i].MaterialSlotName = *FString::Printf(TEXT("Slot%d"), i); }
+		}
+		StaticMesh->SetStaticMaterials(Slots);
+		StaticMesh->MarkPackageDirty();
+		StaticMesh->PostEditChange();
+	}
+	else if (USkeletalMesh* SkeletalMesh = Cast<USkeletalMesh>(Asset))
+	{
+		TArray<FSkeletalMaterial> Slots = SkeletalMesh->GetMaterials();
+		Slots.SetNum(FMath::Max(Slots.Num(), Materials.Num()));
+		for (int32 i = 0; i < Materials.Num(); ++i)
+		{
+			Slots[i].MaterialInterface = Materials[i];
+			if (Slots[i].MaterialSlotName.IsNone()) { Slots[i].MaterialSlotName = *FString::Printf(TEXT("Slot%d"), i); }
+		}
+		SkeletalMesh->SetMaterials(Slots);
+		SkeletalMesh->MarkPackageDirty();
+		SkeletalMesh->PostEditChange();
+	}
+	else
+	{
+		return Fail(-1, FString::Printf(TEXT("%s is not a StaticMesh or SkeletalMesh asset"), *AssetPath));
+	}
+	SaveIf(bSaveAsset, AssetPath);
+	FModelingResult R;
+	R.bSuccess = true;
+	R.AssetPath = AssetPath;
+	R.Message = FString::Printf(TEXT("Assigned %d material slot(s) on %s"), Materials.Num(), *AssetPath);
+	return R;
 }
