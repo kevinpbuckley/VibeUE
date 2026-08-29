@@ -89,9 +89,11 @@ public:
 	 * @param OutError          - Receives a human-readable error message on failure
 	 * @return True when Unreal's registered reimport handler completed successfully
 	 *
-	 * Python signature:
-	 *   success, source_file, error = unreal.AssetDiscoveryService.reimport_asset(
+	 * Python usage (Unreal maps a false bool plus out parameters to None):
+	 *   result = unreal.AssetDiscoveryService.reimport_asset(
 	 *       "/Game/Characters/SKM_Player", "D:/Source/SKM_Player.fbx")
+	 *   if result is not None:
+	 *       source_file, error = result
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable, CPP_Default_NewSourcePath = ""), Category = "VibeUE|Assets")
 	static bool ReimportAsset(
