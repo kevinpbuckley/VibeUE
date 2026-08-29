@@ -8,6 +8,7 @@
 #include "Editor.h"
 #include "AssetToolsModule.h"
 #include "IAssetTools.h"
+#include "EditorFramework/AssetImportData.h"
 #include "Engine/Texture2D.h"
 #include "HAL/PlatformFileManager.h"
 #include "ContentBrowserModule.h"
@@ -16,6 +17,7 @@
 #include "Misc/Paths.h"
 #include "Misc/FileHelper.h"
 #include "Factories/TextureFactory.h"
+#include "EditorReimportHandler.h"
 #include "UObject/Package.h"
 
 // ========== Texture Operations ==========
@@ -155,6 +157,120 @@ FString UAssetDiscoveryService::ImportAsset(
 
 	UE_LOG(LogTemp, Log, TEXT("UAssetDiscoveryService::ImportAsset: imported '%s' -> '%s'"), *SourceFilePath, *NewObj->GetPathName());
 	return NewObj->GetPathName();
+}
+
+bool UAssetDiscoveryService::ReimportAsset(
+	const FString& AssetPath,
+	const FString& NewSourcePath,
+	FString& OutSourceFileUsed,
+	FString& OutError)
+{
+	OutSourceFileUsed.Empty();
+	OutError.Empty();
+
+	if (AssetPath.IsEmpty())
+	{
+		OutError = TEXT("AssetPath is required");
+		return false;
+	}
+
+	if (!UEditorAssetLibrary::DoesAssetExist(AssetPath))
+	{
+		OutError = FString::Printf(TEXT("Asset was not found: %s"), *AssetPath);
+		return false;
+	}
+
+	UObject* Asset = UEditorAssetLibrary::LoadAsset(AssetPath);
+	if (!Asset)
+	{
+		OutError = FString::Printf(TEXT("Asset was not found or could not be loaded: %s"), *AssetPath);
+		return false;
+	}
+
+	FReimportManager* ReimportManager = FReimportManager::Instance();
+	if (!ReimportManager)
+	{
+		OutError = TEXT("Unreal's reimport manager is unavailable");
+		return false;
+	}
+
+	FString ReplacementSource;
+	if (!NewSourcePath.IsEmpty())
+	{
+		ReplacementSource = FPaths::ConvertRelativePathToFull(NewSourcePath);
+		FPaths::NormalizeFilename(ReplacementSource);
+		if (!FPaths::FileExists(ReplacementSource))
+		{
+			OutError = FString::Printf(TEXT("New source file does not exist: %s"), *ReplacementSource);
+			return false;
+		}
+
+		// Let the registered handler update the correct import-data representation. This
+		// works for both Interchange and legacy factories without asset-type branching.
+		ReimportManager->UpdateReimportPath(Asset, ReplacementSource, INDEX_NONE);
+	}
+
+	TArray<FString> SourceFiles;
+	if (!ReimportManager->CanReimport(Asset, &SourceFiles))
+	{
+		OutError = FString::Printf(
+			TEXT("No registered reimport handler supports asset '%s'%s"),
+			*AssetPath,
+			ReplacementSource.IsEmpty() ? TEXT("") : TEXT(" with the supplied source file"));
+		return false;
+	}
+
+	if (SourceFiles.IsEmpty())
+	{
+		OutError = FString::Printf(TEXT("Asset has no stored source file: %s"), *AssetPath);
+		return false;
+	}
+
+	// Report the selected source even when validation or the handler later fails. This makes
+	// failure responses actionable, especially for assets whose stored source has moved.
+	OutSourceFileUsed = ReplacementSource.IsEmpty()
+		? UAssetImportData::ResolveImportFilename(SourceFiles[0], Asset->GetOutermost())
+		: ReplacementSource;
+	FPaths::NormalizeFilename(OutSourceFileUsed);
+
+	for (const FString& SourceFile : SourceFiles)
+	{
+		if (SourceFile.IsEmpty())
+		{
+			OutError = FString::Printf(TEXT("Asset has an empty stored source file: %s"), *AssetPath);
+			return false;
+		}
+		FString ResolvedSourceFile = UAssetImportData::ResolveImportFilename(SourceFile, Asset->GetOutermost());
+		FPaths::NormalizeFilename(ResolvedSourceFile);
+		if (!FPaths::FileExists(ResolvedSourceFile))
+		{
+			OutError = FString::Printf(TEXT("Stored source file does not exist: %s"), *ResolvedSourceFile);
+			return false;
+		}
+	}
+
+	const bool bReimported = ReimportManager->Reimport(
+		Asset,
+		/*bAskForNewFileIfMissing=*/ false,
+		/*bShowNotification=*/ false,
+		/*PreferredReimportFile=*/ TEXT(""),
+		/*SpecifiedReimportHandler=*/ nullptr,
+		/*SourceFileIndex=*/ INDEX_NONE,
+		/*bForceNewFile=*/ false,
+		/*bAutomated=*/ true);
+
+	if (!bReimported)
+	{
+		OutError = FString::Printf(
+			TEXT("Reimport failed for asset '%s' using source file '%s'. See the Unreal log for handler details."),
+			*AssetPath,
+			*OutSourceFileUsed);
+		return false;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("UAssetDiscoveryService::ReimportAsset: reimported '%s' from '%s'"),
+		*AssetPath, *OutSourceFileUsed);
+	return true;
 }
 
 bool UAssetDiscoveryService::ExportTexture(const FString& AssetPath, const FString& ExportFilePath)

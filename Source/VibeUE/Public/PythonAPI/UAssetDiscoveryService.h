@@ -77,6 +77,30 @@ public:
 		FString& OutError);
 
 	/**
+	 * Reimport an existing asset through the same handler used by Content Browser Reimport.
+	 *
+	 * Supports both Interchange and legacy factory imports. When NewSourcePath is supplied,
+	 * the registered reimport handler is asked to retarget the asset before reimporting it.
+	 * The operation is automated and never opens a missing-file picker or notification.
+	 *
+	 * @param AssetPath         - Content path or object path of the asset to reimport
+	 * @param NewSourcePath     - Optional replacement source file; empty uses the stored source
+	 * @param OutSourceFileUsed - Receives the resolved source file selected for reimport
+	 * @param OutError          - Receives a human-readable error message on failure
+	 * @return True when Unreal's registered reimport handler completed successfully
+	 *
+	 * Python signature:
+	 *   success, source_file, error = unreal.AssetDiscoveryService.reimport_asset(
+	 *       "/Game/Characters/SKM_Player", "D:/Source/SKM_Player.fbx")
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable, CPP_Default_NewSourcePath = ""), Category = "VibeUE|Assets")
+	static bool ReimportAsset(
+		const FString& AssetPath,
+		const FString& NewSourcePath,
+		FString& OutSourceFileUsed,
+		FString& OutError);
+
+	/**
 	 * Export a texture to the file system for external analysis.
 	 *
 	 * @param AssetPath - Path to the texture asset
