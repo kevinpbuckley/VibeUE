@@ -12,12 +12,13 @@ public class VibeUE : ModuleRules
 		IWYUSupport = IWYUSupport.None;
 		// Disable unity builds to ensure each file compiles independently
 		bUseUnity = false;
-		// Treat warnings as errors for THIS module only (adds /WX for our .cpp files,
-		// not the host project or other plugins). This promotes deprecation warnings
-		// such as C4996 to hard errors so UE-version-compat issues (e.g. deprecated
-		// engine APIs) fail the build here instead of surfacing only on contributors'
-		// clean installs. See PR #438.
-		bWarningsAsErrors = true;
+		// Do not add blanket /WX to this module. Engine patch releases can introduce
+		// deprecation warnings in engine headers included by VibeUE, and /WX turns
+		// those upstream C4996 diagnostics into plugin build failures. UnrealBuildTool
+		// still applies its curated warning-as-error policy; deprecations remain visible
+		// as warnings so supported-engine CI can identify VibeUE-owned API migrations.
+		// See issues #491 and #569.
+		bWarningsAsErrors = false;
 
 		// FabService (issue #517) talks to fab.com via the signed-in Epic account's EOS auth token,
 		// reusing the login the editor/launcher already holds. EOSSDK provides the SDK headers and the
