@@ -403,6 +403,104 @@ Returned by `validate_state_machine()`.
 
 ---
 
+## Driving bones directly — skeletal controls, no state machine
+
+Not every AnimBP is a state machine. A spinning rotor, a windmill sail, a turret yaw, a rudder that
+follows a variable — all are a **pose piped through Modify Bone nodes**, which is a different graph
+shape and has its own traps.
+
+The chain is always: a pose source → **Local To Component** → one Modify Bone per bone →
+**Component To Local** → Output. Skeletal controls only operate in component space, and
+`connect_anim_nodes` does **not** insert the space conversions for you.
+
+```python
+import unreal
+AG, BS = unreal.AnimGraphService, unreal.BlueprintService
+PATH, G = "/Game/ABP_Windmill", "AnimGraph"
+
+REF = "SPAWN AnimGraphNode_LocalRefPose|Local Space Ref Pose"   # no sequence needed
+L2C = "SPAWN AnimGraphNode_LocalToComponentSpace|Local To Component"
+C2L = "SPAWN AnimGraphNode_ComponentToLocalSpace|Component To Local"
+
+ref = BS.create_node_by_key(PATH, G, REF, -900, -80)
+l2c = BS.create_node_by_key(PATH, G, L2C, -640, -80)
+AG.connect_anim_nodes(PATH, G, ref, "Pose", l2c, "LocalPose")
+
+mb = AG.add_modify_bone_node(PATH, G, "sails", -340, -80)
+AG.connect_anim_nodes(PATH, G, l2c, "ComponentPose", mb, "ComponentPose")
+getter = BS.create_node_by_key(PATH, G, "SPAWN K2Node_VariableGet|Get SailRotation", -400, 200)
+BS.connect_nodes(PATH, G, getter, "SailRotation", mb, "Rotation")
+
+c2l = BS.create_node_by_key(PATH, G, C2L, 0, -80)
+AG.connect_anim_nodes(PATH, G, mb, "Pose", c2l, "ComponentPose")
+AG.connect_to_output_pose(PATH, G, c2l, "Pose")
+```
+
+Pin names to remember: `LocalPose` in / `ComponentPose` out on Local To Component; `ComponentPose`
+in / `Pose` out on Modify Bone and Component To Local.
+
+### ⚠️ Modify Bone ignores its Rotation pin until you set the mode
+
+`add_modify_bone_node` creates the node with `rotation_mode`, `translation_mode` and `scale_mode` all
+set to **Ignore**. You can connect the Rotation pin, compile clean, and see *absolutely nothing move* —
+there is no warning. Set the mode on the node's inner `node` struct after creating it:
+
+```python
+for i in range(0, 12):
+    o = unreal.find_object(None, f"{PATH}.{name}:{G}.AnimGraphNode_ModifyBone_{i}")
+    if not o:
+        continue
+    n = o.get_editor_property("node")
+    n.set_editor_property("rotation_mode", unreal.BoneModificationMode.BMM_ADDITIVE)
+    n.set_editor_property("rotation_space", unreal.BoneControlSpace.BCS_COMPONENT_SPACE)
+    n.set_editor_property("translation_mode", unreal.BoneModificationMode.BMM_IGNORE)
+    n.set_editor_property("scale_mode", unreal.BoneModificationMode.BMM_IGNORE)
+    o.set_editor_property("node", n)      # write the struct back, or the change is lost
+```
+
+`BMM_ADDITIVE` and `BMM_REPLACE` behave identically when the bone is at identity in the ref pose.
+
+### ⚠️ Variable getter names differ between BP variables and C++ properties
+
+`create_node_by_key` needs the spawner key, which embeds the node's **display name**, and the two
+kinds of variable are spelled differently:
+
+| Variable lives on | Display name | Spawner key |
+|---|---|---|
+| The AnimBP itself (`add_member_variable`) | `Get SailRotation` | `SPAWN K2Node_VariableGet\|Get SailRotation` |
+| A C++ `UAnimInstance` subclass | `Get Sail Rotation` (spaced) | `SPAWN K2Node_VariableGet\|Get Sail Rotation` |
+
+Never hard-code either — `discover_nodes(PATH, "SailRotation", "", 20)` and match on `display_name`,
+which works for both.
+
+### Continuous motion without an animation asset
+
+Put the accumulator in the AnimBP's **EventGraph** on `Event Blueprint Update Animation` (its
+`DeltaTimeX` pin), write a float, and convert it to the Rotator the Modify Bone reads:
+
+```
+DeltaTimeX ─┐
+            ├─ float * float ─ float * float ─┐        (RPM → deg/sec is × 6)
+SpinRPM ────┘                    6.0 ─────────┤
+                                              ├─ float + float ─→ SET SailAngle
+SailAngle (get) ──────────────────────────────┘
+SailAngle (get) ─→ MakeRotator(Roll=) ─→ SET SailRotation
+```
+
+Float maths nodes are `FUNC KismetMathLibrary::Multiply_DoubleDouble` and `::Add_DoubleDouble`
+(display names `float * float` / `float + float`) — Blueprint "float" is a double in UE5.
+`MakeRotator` is `FUNC KismetMathLibrary::MakeRotator` with pins `Roll`, `Pitch`, `Yaw`.
+
+Verify it is actually running rather than trusting the compile: in PIE read the variable off the live
+instance, twice, in **separate** `execute_python_code` calls (see the pie-testing skill — Python
+blocks the game thread, so a sampling loop inside one call returns the same value every time).
+
+```python
+comp = actor.get_components_by_class(unreal.SkeletalMeshComponent)[0]
+ai = comp.get_anim_instance()
+print(ai.get_editor_property("SailAngle"), comp.get_socket_rotation("sails").roll)
+```
+
 ## Common Patterns
 
 ### Check if Asset is AnimBP

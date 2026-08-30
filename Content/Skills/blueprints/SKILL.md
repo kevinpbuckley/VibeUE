@@ -36,6 +36,30 @@ related_skills:
 
 ## Critical Rules
 
+### ⚠️ Components added with `add_component` are NOT on the CDO
+
+`add_component` creates a **SCS node template**, not an instance on the class default object. So the
+obvious way to configure it silently does nothing — `get_components_by_class` on the CDO returns an
+empty list and the loop body never runs:
+
+```python
+# WRONG - prints [], the mesh is never assigned, and nothing errors
+cdo = unreal.get_default_object(bp.generated_class())
+for c in cdo.get_components_by_class(unreal.SkeletalMeshComponent):
+    c.set_editor_property("skeletal_mesh_asset", mesh)
+
+# CORRECT - go through the service, which edits the SCS template
+BS.set_component_property(BP, "Windmill", "SkeletalMeshAsset", "/Game/X/SK_Windmill.SK_Windmill")
+BS.set_component_property(BP, "Windmill", "AnimationMode", "AnimationBlueprint")
+BS.set_component_property(BP, "Windmill", "AnimClass", "/Game/X/ABP_Windmill.ABP_Windmill_C")
+```
+
+Values are strings: an asset takes its **object path** (`/Game/X/SK.SK`), a class takes the
+`_C` path, an enum takes the entry name. Read back with `get_component_property` to confirm — it
+returns the resolved object, e.g.
+`/Script/Engine.SkeletalMesh'/Game/X/SK_Windmill.SK_Windmill'`. Components that come from the
+**parent C++ class** *are* on the CDO and can be set directly; only SCS-added ones need the service.
+
 ### Level Blueprints: pass the MAP path
 
 Every `unreal.BlueprintService.*` function that takes a `blueprint_path` also accepts a **map/world
