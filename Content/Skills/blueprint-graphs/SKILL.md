@@ -35,6 +35,24 @@ related_skills:
 
 ## Critical Rules
 
+### ⚠️ Nothing works during Play-In-Editor — and it fails SILENTLY
+
+Every `BlueprintService` method resolves its target through `LoadBlueprint()`, which fails while PIE
+is running. You get no error. You get an **empty array**, **`False`**, or an **empty-string node id**
+— which reads exactly like "that node type doesn't exist" or "that spawner key is wrong". It is very
+easy to spend a long time debugging a correct call that was only ever blocked by PIE.
+
+```python
+les = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
+if les.is_in_play_in_editor():
+    raise RuntimeError("Stop PIE first - BlueprintService returns empty results during play")
+```
+
+**Check this FIRST when any call returns nothing unexpectedly**, before doubting a spawner key, a
+search term, or a graph name. The tell: `unreal.EditorAssetLibrary.does_asset_exist(bp_path)` also
+returns `False` for an asset you know exists. Asset writes during PIE are unsafe anyway — stop PIE,
+then re-run.
+
 ### ⚠️ Method Name Gotchas
 
 | WRONG | CORRECT |
@@ -501,6 +519,19 @@ node = unreal.BlueprintService.create_node_by_key(bp, "EventGraph", key, 400, 20
 OWN functions (your custom functions, callable on self) plus the full parent hierarchy and library
 functions. The returned `spawner_key` (`"FUNC <Class>::<Func>"`) feeds straight into
 `create_node_by_key` — this is how you add a **self-call** node deterministically.
+
+> ⚠️ **Leave `category` empty unless you are echoing a category you saw in a result.** It is a
+> substring match against the node's *menu* category, which is `"Self Functions"`, `"Parent: Actor"`,
+> or the editor's own menu path — **not** a topic word. Passing something reasonable-looking like
+> `"Math"` silently filters out everything and returns zero results, which looks identical to "no
+> such node exists". Search first with `category=""`, then read `.category` off the hits.
+
+> ⚠️ **Search the exact display name, not a fragment.** Results fill in order (self → parents →
+> action database) and stop at `max_results`, so a short common fragment gets crowded out before the
+> node you want is reached. `discover_nodes(bp, "Sin", "", 500)` returns 500 rows and **none** of
+> them is `Sin (Radians)`; `discover_nodes(bp, "Sin (Radians)", "", 20)` finds it immediately as
+> `FUNC KismetMathLibrary::Sin`. If a search comes back without an obvious node, make the term
+> **more** specific rather than raising the cap.
 
 #### Full node coverage — every action-menu node, not just functions/events
 
