@@ -19,6 +19,8 @@
 #include "Factories/TextureFactory.h"
 #include "EditorReimportHandler.h"
 #include "UObject/Package.h"
+#include "ObjectTools.h"
+#include "UObject/ReferencerFinder.h"
 
 // ========== Texture Operations ==========
 
@@ -381,4 +383,90 @@ bool UAssetDiscoveryService::IsAssetOpen(const FString& AssetPath)
 
 	UE_LOG(LogTemp, Log, TEXT("UAssetDiscoveryService::IsAssetOpen: %s is %s"), *AssetPath, bIsOpen ? TEXT("open") : TEXT("closed"));
 	return bIsOpen;
+}
+
+bool UAssetDiscoveryService::DeleteAssetUnattended(const FString& AssetPath, bool bForceEvenIfReferenced, TArray<FString>& OutReferencers, FString& OutError)
+{
+	OutReferencers.Reset();
+	OutError.Reset();
+	if (AssetPath.IsEmpty())
+	{
+		OutError = TEXT("AssetPath is empty");
+		return false;
+	}
+	if (!UEditorAssetLibrary::DoesAssetExist(AssetPath))
+	{
+		OutError = FString::Printf(TEXT("Asset not found: %s"), *AssetPath);
+		return false;
+	}
+
+	// Who points at it (the question the modal dialog would have asked the human)
+	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+	const FString PackageName = FPackageName::ObjectPathToPackageName(AssetPath);
+	TArray<FName> ReferencerNames;
+	AssetRegistryModule.Get().GetReferencers(FName(*PackageName), ReferencerNames);
+	for (const FName& Referencer : ReferencerNames)
+	{
+		const FString ReferencerString = Referencer.ToString();
+		if (ReferencerString != PackageName && !ReferencerString.StartsWith(TEXT("/Temp/")) && !ReferencerString.StartsWith(TEXT("/Engine/Transient")))
+		{
+			OutReferencers.Add(ReferencerString);
+		}
+	}
+	UObject* Asset = UEditorAssetLibrary::LoadAsset(AssetPath);
+	if (!Asset)
+	{
+		OutError = FString::Printf(TEXT("Failed to load asset: %s"), *AssetPath);
+		return false;
+	}
+
+	// The registry lags a freshly saved referencer (a montage built on this clip seconds ago is
+	// not in its dependency map yet), so also ask memory: every loaded asset package that holds
+	// a pointer to this object counts. Transient / compiled-in outers are the Python wrapper and
+	// the editor itself, not references worth refusing over.
+	const TArray<UObject*> Referencees = { Asset };
+	for (UObject* Referencer : FReferencerFinder::GetAllReferencers(Referencees, nullptr))
+	{
+		UPackage* Package = Referencer ? Referencer->GetOutermost() : nullptr;
+		if (!Package || Package == Asset->GetOutermost() || Package == GetTransientPackage() || Package->HasAnyPackageFlags(PKG_CompiledIn))
+		{
+			continue;
+		}
+		const FString ReferencerPackage = Package->GetName();
+		if (ReferencerPackage.StartsWith(TEXT("/Game/")) || ReferencerPackage.StartsWith(TEXT("/Engine/")) || FPackageName::IsValidLongPackageName(ReferencerPackage))
+		{
+			if (!ReferencerPackage.StartsWith(TEXT("/Temp/")) && !ReferencerPackage.StartsWith(TEXT("/Engine/Transient")))
+			{
+				OutReferencers.AddUnique(ReferencerPackage);
+			}
+		}
+	}
+	if (OutReferencers.Num() > 0 && !bForceEvenIfReferenced)
+	{
+		OutError = FString::Printf(TEXT("%s is referenced by %d asset(s); pass bForceEvenIfReferenced to delete anyway and clear the references"), *AssetPath, OutReferencers.Num());
+		return false;
+	}
+	// Close any editor showing it first, or the delete is refused
+	if (GEditor)
+	{
+		if (UAssetEditorSubsystem* AssetEditors = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>())
+		{
+			AssetEditors->CloseAllEditorsForAsset(Asset);
+		}
+	}
+
+	TArray<UObject*> Objects;
+	Objects.Add(Asset);
+	// Always the force path, with no confirmation: the asset-registry check above is the real
+	// "is anything on disk pointing at it" gate. The plain DeleteObjects refuses (returns 0, or
+	// would ask) over IN-MEMORY references — the Python variable that just created or loaded the
+	// asset is enough — which is exactly the case an unattended session is always in.
+	const int32 Deleted = ObjectTools::ForceDeleteObjects(Objects, /*bShowConfirmation*/ false);
+	if (Deleted <= 0)
+	{
+		OutError = FString::Printf(TEXT("Force delete of %s returned 0 (is it open in an editor, or a Blueprint still loaded this session? see the asset-management skill)"), *AssetPath);
+		return false;
+	}
+	UE_LOG(LogTemp, Log, TEXT("UAssetDiscoveryService::DeleteAssetUnattended: deleted %s (%d referencer(s) cleared)"), *AssetPath, OutReferencers.Num());
+	return true;
 }

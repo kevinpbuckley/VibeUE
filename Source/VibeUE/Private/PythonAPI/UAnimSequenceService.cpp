@@ -33,6 +33,7 @@
 #include "IImageWrapperModule.h"
 #include "Modules/ModuleManager.h"
 #include "Utils/VibeUEPaths.h"
+#include "ObjectTools.h"
 
 // ============================================================================
 // PRIVATE HELPERS
@@ -760,18 +761,21 @@ FString UAnimSequenceService::CreateAnimSequence(
 		TArray<FQuat4f> RotationalKeys;
 		TArray<FVector3f> ScalingKeys;
 
-		// For proper animation, we need keys for every frame
-		// Interpolate between the provided keyframes
-		PositionalKeys.SetNum(NumFrames);
-		RotationalKeys.SetNum(NumFrames);
-		ScalingKeys.SetNum(NumFrames);
+		// The data model wants one key per frame BOUNDARY: NumFrames + 1 keys (frame 0 .. NumFrames).
+		// Handing it NumFrames keys made SetBoneTrackKeys reject every track, which left a saved
+		// asset with a track and no keys — the caller got a path back and an animation that
+		// reported no animated bones and a frame count of -1.
+		const int32 NumKeys = NumFrames + 1;
+		PositionalKeys.SetNum(NumKeys);
+		RotationalKeys.SetNum(NumKeys);
+		ScalingKeys.SetNum(NumKeys);
 
 		// Sort keyframes by time
 		TArray<FAnimKeyframe> SortedKeyframes = TrackData.Keyframes;
 		SortedKeyframes.Sort([](const FAnimKeyframe& A, const FAnimKeyframe& B) { return A.Time < B.Time; });
 
-		// Interpolate keyframes to fill all frames
-		for (int32 FrameIdx = 0; FrameIdx < NumFrames; ++FrameIdx)
+		// Interpolate keyframes to fill every key
+		for (int32 FrameIdx = 0; FrameIdx < NumKeys; ++FrameIdx)
 		{
 			float FrameTime = (float)FrameIdx / FrameRate;
 
@@ -834,6 +838,17 @@ FString UAnimSequenceService::CreateAnimSequence(
 	// Close bracket to finalize all changes
 	Controller.CloseBracket();
 
+	// Tracks were requested but none took: do not leave an empty animation on disk behind a
+	// success path. Delete the fresh (unreferenced) asset without any dialog and fail loudly.
+	if (BoneTracks.Num() > 0 && TracksAdded == 0)
+	{
+		UE_LOG(LogTemp, Error, TEXT("UAnimSequenceService::CreateAnimSequence: no bone track accepted its keys (%d requested) - discarding %s"), BoneTracks.Num(), *FullPath);
+		TArray<UObject*> Discard;
+		Discard.Add(NewAnimSeq);
+		ObjectTools::ForceDeleteObjects(Discard, /*bShowConfirmation*/ false);
+		return FString();
+	}
+
 	// Mark as modified and save
 	NewAnimSeq->MarkPackageDirty();
 	if (!UEditorAssetLibrary::SaveAsset(FullPath))
@@ -842,7 +857,7 @@ FString UAnimSequenceService::CreateAnimSequence(
 		return FString();
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("UAnimSequenceService::CreateAnimSequence: Created animation: %s with %d bone tracks"), *FullPath, TracksAdded);
+	UE_LOG(LogTemp, Log, TEXT("UAnimSequenceService::CreateAnimSequence: Created animation: %s with %d bone tracks (%d keys each)"), *FullPath, TracksAdded, NumFrames + 1);
 	return FullPath;
 }
 
