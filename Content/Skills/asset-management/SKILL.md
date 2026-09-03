@@ -63,6 +63,25 @@ names = unreal.DataTableFunctionLibrary.get_data_table_row_names(dt)   # row key
 
 ## Critical Rules
 
+### ⚠️ `delete_asset` on a REFERENCED asset opens a modal dialog that wedges an unattended editor
+
+`EditorAssetLibrary.delete_asset` asks "this asset is referenced, force delete?" through a modal
+window when anything points at the asset (a data asset holding the montage you are replacing, a
+Blueprint default, a level). Nobody answers it from MCP: the game thread stalls (308 s observed),
+every later call hangs, and the process has to be force-killed with the files removed from disk.
+Use the plugin's dialog-free delete instead:
+
+```python
+# Refuses when referenced and tells you who (returns None on refusal -> read the out params):
+result = unreal.AssetDiscoveryService.delete_asset_unattended("/Game/Anim/AM_Old", False)
+# Delete anyway and null every reference (what the dialog's Force Delete does):
+result = unreal.AssetDiscoveryService.delete_asset_unattended("/Game/Anim/AM_Old", True)
+```
+
+A `False` return maps to `None` in Python; the `(referencers, error)` tuple comes back on success
+too, so you always see what pointed at the asset. Prefer creating the replacement under a NEW name
+and repointing references over force-deleting.
+
 ### ⚠️ Never `delete_asset` a Blueprint you loaded or compiled this session
 
 `EditorAssetLibrary.delete_asset` on a Blueprint (Anim Blueprints especially) that is still loaded —
@@ -111,7 +130,7 @@ if asset:
 |-----------|-----|
 | Search / find / list assets | engine **`AssetTools`** toolset via `call_tool`, or `unreal.AssetRegistryHelpers.get_asset_registry()` |
 | Load / save / save-all | `unreal.EditorAssetLibrary.load_asset` / `save_asset` / `save_directory`, or `AssetTools` |
-| Move / rename / duplicate / delete | `unreal.EditorAssetLibrary.rename_asset` (move), `duplicate_asset`, `delete_asset`, or `AssetTools` |
+| Move / rename / duplicate / delete | `unreal.EditorAssetLibrary.rename_asset` (move), `duplicate_asset`, `delete_asset` (unreferenced only — see the modal warning above), or `AssetTools`; `unreal.AssetDiscoveryService.delete_asset_unattended` for anything that may be referenced |
 | Existence check | `unreal.EditorAssetLibrary.does_asset_exist(path)` |
 | Referencers / dependencies | `unreal.AssetRegistryHelpers.get_asset_registry().get_referencers(...)` |
 | Open an asset / list ALL open editors | Epic `EditorAppToolset` via `call_tool` (see below) |

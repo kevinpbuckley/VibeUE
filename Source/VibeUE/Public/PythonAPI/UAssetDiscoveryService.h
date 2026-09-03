@@ -95,6 +95,32 @@ public:
 	 *   if result is not None:
 	 *       source_file, error = result
 	 */
+	/**
+	 * Delete an asset with NO dialog, for unattended agent sessions. The engine's
+	 * EditorAssetLibrary.delete_asset pops a modal "asset is referenced" dialog when anything
+	 * points at the asset, and an MCP-driven editor cannot answer it: the game thread stalls
+	 * until someone force-kills the process. This function never asks. With
+	 * bForceEvenIfReferenced it force-deletes and nulls every reference (the same thing the
+	 * dialog's Force Delete button does); without it, a referenced asset is refused and the
+	 * referencers are returned so the caller can decide.
+	 *
+	 * @param AssetPath              - Package path of the asset (/Game/Folder/Asset)
+	 * @param bForceEvenIfReferenced - True: delete anyway and clear references; false: refuse if referenced
+	 * @param OutReferencers         - Package paths that referenced the asset (filled on refusal AND on force)
+	 * @param OutError               - Human-readable reason when the delete did not happen
+	 * @return True when the asset is gone
+	 *
+	 * Python usage:
+	 *   result = unreal.AssetDiscoveryService.delete_asset_unattended("/Game/Anim/AS_Temp", True)
+	 *   if result is not None: referencers, error = result   # a false return maps to None
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable, CPP_Default_bForceEvenIfReferenced = "false"), Category = "VibeUE|Assets")
+	static bool DeleteAssetUnattended(
+		const FString& AssetPath,
+		bool bForceEvenIfReferenced,
+		TArray<FString>& OutReferencers,
+		FString& OutError);
+
 	UFUNCTION(BlueprintCallable, meta = (AICallable, CPP_Default_NewSourcePath = ""), Category = "VibeUE|Assets")
 	static bool ReimportAsset(
 		const FString& AssetPath,
