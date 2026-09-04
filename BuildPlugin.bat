@@ -25,23 +25,11 @@ REM Get plugin directory (where this script is located)
 set "PLUGIN_DIR=%~dp0"
 set "PLUGIN_DIR=%PLUGIN_DIR:~0,-1%"
 
-REM Check if UE path was provided as parameter
-set "UE_PATH="
-if not "%~1"=="" (
-    echo Checking provided Unreal Engine path...
-    if exist "%~1\Engine\Build\BatchFiles\RunUAT.bat" (
-        set "UE_PATH=%~1"
-        echo Using provided UE path: !UE_PATH!
-        goto :ue_found
-    ) else (
-        echo WARNING: Provided path is not a valid Unreal Engine installation.
-        echo Expected to find: %~1\Engine\Build\BatchFiles\RunUAT.bat
-        echo Falling back to automatic detection...
-        echo.
-    )
-)
-
 REM Find .uplugin file
+REM NOTE: this must run BEFORE the UE path check below. When an engine path is
+REM passed as %1, that check ends in "goto :ue_found", which jumps past this
+REM block. UPLUGIN_PATH then stays empty and RunUAT is invoked as "-Plugin=",
+REM failing with: System.ArgumentException: The path is empty. (Parameter 'path')
 set "UPLUGIN_PATH="
 for %%F in ("%PLUGIN_DIR%\*.uplugin") do (
     set "UPLUGIN_PATH=%%F"
@@ -57,6 +45,22 @@ exit /b 1
 :uplugin_found
 for %%F in ("%UPLUGIN_PATH%") do set "PLUGIN_NAME=%%~nF"
 echo Found plugin: %PLUGIN_NAME%
+
+REM Check if UE path was provided as parameter
+set "UE_PATH="
+if not "%~1"=="" (
+    echo Checking provided Unreal Engine path...
+    if exist "%~1\Engine\Build\BatchFiles\RunUAT.bat" (
+        set "UE_PATH=%~1"
+        echo Using provided UE path: !UE_PATH!
+        goto :ue_found
+    ) else (
+        echo WARNING: Provided path is not a valid Unreal Engine installation.
+        echo Expected to find: %~1\Engine\Build\BatchFiles\RunUAT.bat
+        echo Falling back to automatic detection...
+        echo.
+    )
+)
 
 REM Search for Unreal Engine installation using registry (standard method)
 echo Searching for Unreal Engine installation...
