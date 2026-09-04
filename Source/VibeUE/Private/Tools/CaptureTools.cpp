@@ -41,6 +41,32 @@ namespace
 		return Out;
 	}
 
+	// A minimized window has no valid Slate paint state: TakeScreenshot against it usually
+	// fails gracefully but can null-deref inside Slate (two EXCEPTION_ACCESS_VIOLATION
+	// editor crashes with all-Slate callstacks while an automation client drove a
+	// minimized editor, 2026-09-01). Refuse with an actionable error instead — callers
+	// can restore the window (ShowWindow/AppActivate) and retry.
+	bool EnsureWindowCapturable(const TSharedPtr<SWindow>& Window, FString& OutError)
+	{
+		if (!Window.IsValid())
+		{
+			OutError = TEXT("No window found for the capture target.");
+			return false;
+		}
+		if (Window->IsWindowMinimized())
+		{
+			OutError = TEXT("The editor window is minimized — Slate cannot capture a minimized window (and may crash trying). Restore the window (e.g. ShowWindow/AppActivate from the client) and retry.");
+			return false;
+		}
+		const FVector2D WindowSize = Window->GetSizeInScreen();
+		if (WindowSize.X < 1.0f || WindowSize.Y < 1.0f)
+		{
+			OutError = TEXT("The editor window has zero size — nothing to capture.");
+			return false;
+		}
+		return true;
+	}
+
 	bool CaptureGameViewport(TArray<FColor>& OutPixels, FIntPoint& OutSize, FString& OutError)
 	{
 		if (!GEngine || !GEngine->GameViewport)
@@ -52,6 +78,10 @@ namespace
 		if (!ViewportWidget.IsValid() || !FSlateApplication::IsInitialized())
 		{
 			OutError = TEXT("Game viewport widget unavailable.");
+			return false;
+		}
+		if (!EnsureWindowCapturable(FSlateApplication::Get().FindWidgetWindow(ViewportWidget.ToSharedRef()), OutError))
+		{
 			return false;
 		}
 		FIntVector Size;
@@ -80,6 +110,10 @@ namespace
 		if (!Window.IsValid())
 		{
 			OutError = TEXT("No editor window available to capture.");
+			return false;
+		}
+		if (!EnsureWindowCapturable(Window, OutError))
+		{
 			return false;
 		}
 		FIntVector Size;

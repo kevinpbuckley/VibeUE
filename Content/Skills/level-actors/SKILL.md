@@ -26,6 +26,36 @@ unreal_classes:
 
 ## Critical Rules
 
+### ⚠️ `unreal.Rotator(a, b, c)` is `(roll, pitch, yaw)` — always pass by keyword
+
+Python's `FRotator` constructor takes **roll, pitch, yaw** (X, Y, Z), *not* the C++
+`FRotator(Pitch, Yaw, Roll)` order. Passing a yaw positionally lands it in **pitch**, and nothing
+warns you — the call succeeds and the actor is simply wrong:
+
+```python
+# WRONG - pitches the actor onto its nose; yaw stays 0
+actor.set_actor_rotation(unreal.Rotator(0.0, yaw, 0.0), False)
+
+# CORRECT
+actor.set_actor_rotation(unreal.Rotator(roll=0.0, pitch=0.0, yaw=yaw), False)
+```
+
+Observed failures from this exact mistake: a row of enemies rolled 180° and pitched instead of
+turned to face the player, a spawned sofa upside down, and a DirectionalLight aimed at the sky so
+every viewport capture came back black. It applies equally to
+`spawn_actor_from_class(cls, location, rotation)` and `spawn_actor_from_object`.
+
+**Verify, don't assume** — read it back (`r = actor.get_actor_rotation(); r.roll/r.pitch/r.yaw`) or
+check `get_actor_bounds`: a mesh that should sit on the floor and reports a negative Z range got
+flipped. A "look at this point" camera or actor rotation is:
+
+```python
+d = target - location
+rot = unreal.Rotator(roll=0.0,
+                     pitch=math.degrees(math.atan2(d.z, math.hypot(d.x, d.y))),
+                     yaw=math.degrees(math.atan2(d.y, d.x)))
+```
+
 ### � Creating a "Basic" Level Requires `new_level_from_template`, NOT `new_level`
 
 When the user asks to **create a new level** (especially "Basic", "Default", or with a sky/floor), **always** use `new_level_from_template`:

@@ -171,7 +171,7 @@ Use `AnimSequenceService` for animation sequence operations.
 # Create static animation from reference pose
 anim_path = AnimSequenceService.create_from_pose(skeleton_path, anim_name, save_path, duration) -> str
 
-# Create animation with custom keyframes
+# Create animation with custom keyframes ("" = failed; an empty clip is never left behind)
 anim_path = AnimSequenceService.create_anim_sequence(skeleton_path, anim_name, save_path, duration, frame_rate, bone_tracks) -> str
 
 # Get reference pose keyframe for a bone

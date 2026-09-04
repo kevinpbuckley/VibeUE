@@ -154,6 +154,17 @@ unreal.PerformanceService.set_background_throttling(True)    # after
 
 ## Gotchas
 
+- **Python blocks the game thread, so you cannot sample a value over time in one call.** A loop with `time.sleep()` between reads returns the *same* number every iteration — the world never ticks while your script holds the thread. This makes a working animation look frozen and a stuck one look identical to a healthy one. Take each sample in a **separate** `execute_python_code` call and compare across them:
+
+  ```python
+  # WRONG - three identical readings, proves nothing
+  for i in range(3):
+      print(ai.get_editor_property("SailAngle")); time.sleep(0.4)
+
+  # CORRECT - one reading per call; the elapsed wall-clock between calls is real tick time
+  print(ai.get_editor_property("SailAngle"))
+  ```
+  Convert the difference into the engineering unit you expect and check it: 306° → 709° across ~8 s is 48°/s, which is exactly the 8 RPM that was configured — that is a pass, "the number changed" is not.
 - **PIE start is asynchronous.** `StartPIE` returns immediately after `RequestPlaySession` is queued. The world isn't actually playing until the editor processes the request on its next tick. If you need to act inside the running world, give it a tick or poll `IsPIERunning`.
 - **Already-running is treated as success.** `StartPIE` succeeds if a PIE session already exists — it does NOT restart. Stop first if you need a fresh session.
 - **`StopPIE` tears down the world** via `RequestEndPlayMap`. Spawned PIE widget instances should be removed with `WidgetService.remove_widget_from_pie(handle)` before stopping.

@@ -57,6 +57,26 @@ keywords:
 
 ## Critical Rules
 
+### ⚠️ A black capture usually means no lighting, not a broken mesh
+
+The most common cause of an all-black (or blown-out white) capture is the **level**, not the camera
+and not the asset you just built. Two things to check before you start debugging geometry:
+
+1. **A level made with `new_level()` has no lighting at all** — no sun, no sky, no atmosphere. Use
+   `new_level_from_template(path, "/Engine/Maps/Templates/Template_Default")` instead (see the
+   `level-actors` skill). If you must light an empty level by hand you need a DirectionalLight that
+   genuinely points **down** — `unreal.Rotator(roll=0, pitch=-48, yaw=125)`, and note the argument
+   order is (roll, pitch, yaw), so a positionally-passed pitch aims the sun at the sky and the scene
+   stays black — plus a SkyLight with `real_time_capture`, and a SkyAtmosphere.
+2. **Auto-exposure lies about colour.** With adaptation on, a dark material renders near-white and a
+   bright one renders grey, so you cannot judge a material from a capture. Add an unbound
+   PostProcessVolume with `auto_exposure_method = AEM_MANUAL`; then `auto_exposure_bias` is a
+   brightness stop — **higher is brighter**, and the usable window is narrow (0 was pitch black and
+   13.5 blown out in one scene; 7.5 was correct). Tune it by capturing, not by reasoning.
+
+Keep the volume out of frame (move it far below the set) — an unbound volume still applies globally
+but its bounds box draws in the editor viewport.
+
 ### ⚠️ Valid View Types for `set_viewport_type`
 
 Only these exact strings are accepted (case-insensitive):
