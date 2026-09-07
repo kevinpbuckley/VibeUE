@@ -6969,9 +6969,7 @@ FStateTreeCompileResult UStateTreeService::CompileStateTree(const FString& Asset
 
 #if WITH_EDITORONLY_DATA
 	FStateTreeCompilerLog Log;
-	FStateTreeCompiler Compiler(Log);
-
-	const bool bSuccess = Compiler.Compile(*StateTree);
+	const bool bSuccess = UStateTreeEditingSubsystem::CompileStateTree(StateTree, Log);
 	Result.bSuccess = bSuccess;
 
 	// Extract messages from log via tokenized messages
