@@ -439,6 +439,12 @@ AG.connect_to_output_pose(PATH, G, c2l, "Pose")
 Pin names to remember: `LocalPose` in / `ComponentPose` out on Local To Component; `ComponentPose`
 in / `Pose` out on Modify Bone and Component To Local.
 
+- **Reconnecting a pose input replaces the old link.** Pose inputs are 1:1, so `connect_anim_nodes`
+  (and `connect_to_output_pose`) to an already-wired single-link input now breaks the existing link
+  and wires the new source in its place — no need to `disconnect_anim_node(node, "Pose")` first — and
+  returns `False` (logging a Warning with the schema's reason) when the schema refuses. Previously it
+  stacked an illegal second link that compiled the AnimBP to `BS_ERROR` with an **empty error list**.
+
 ### ⚠️ Modify Bone ignores its Rotation pin until you set the mode
 
 `add_modify_bone_node` creates the node with `rotation_mode`, `translation_mode` and `scale_mode` all

@@ -1017,13 +1017,20 @@ public:
 	 * Connect two animation nodes via their pose pins.
 	 * This is the AnimGraph equivalent of connecting exec/data pins in EventGraph.
 	 *
+	 * The connection is routed through the graph schema. Pose inputs (and other
+	 * single-link struct pins) are 1:1, so if the target input pin is already wired,
+	 * the existing link is REPLACED rather than stacked - you no longer need to call
+	 * disconnect_anim_node first. Returns False (logging the schema's reason as a
+	 * Warning) if the schema refuses the connection, instead of silently creating an
+	 * illegal double link that compiles the Anim Blueprint to BS_ERROR.
+	 *
 	 * @param AnimBlueprintPath - Full path to the Animation Blueprint
 	 * @param GraphName - Name of the graph
 	 * @param SourceNodeId - GUID of the source node
 	 * @param SourcePinName - Name of the output pose pin (default "Pose")
 	 * @param TargetNodeId - GUID of the target node
 	 * @param TargetPinName - Name of the input pose pin (default "Pose")
-	 * @return True if successful
+	 * @return True if the connection was made (or already present); False if refused
 	 *
 	 * Example:
 	 *   # Connect sequence player to output pose
