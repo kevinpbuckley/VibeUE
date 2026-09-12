@@ -55,6 +55,11 @@ struct FBlueprintGraphInfo
 	/** Number of nodes in this graph (cheap to compute, useful as a sanity signal) */
 	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
 	int32 NodeCount = 0;
+
+	/** Full object path of the graph (Graph->GetPathName()) — unique even when several graphs
+	 *  share a GraphName. Pass it back to any GraphName parameter to disambiguate duplicates. */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	FString GraphPath;
 };
 
 /**
@@ -548,6 +553,12 @@ struct FBlueprintPinInfo
 
 	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
 	FString DefaultValue;
+
+	/** Object/class default value as an object path; empty when the pin holds no object/class
+	 *  default. Populated for PC_Object/PC_Class/PC_SoftObject/PC_SoftClass pins so get_node_pins
+	 *  can report class/object references that the string-only DefaultValue does not capture. */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	FString DefaultObject;
 };
 
 /**
