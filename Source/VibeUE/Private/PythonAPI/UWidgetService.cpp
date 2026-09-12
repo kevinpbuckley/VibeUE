@@ -797,6 +797,43 @@ namespace
 		return Property->ImportText_Direct(*PropertyValue, ValuePtr, Object, PPF_None) != nullptr;
 	}
 
+	// A text widget's ColorAndOpacity is an FSlateColor: a bare "(R=..,G=..,B=..,A=..)" fed to
+	// ImportText_Direct matches no member and is a lenient no-op that still reports success — so the
+	// colour silently never lands. Parse the linear tuple and assign FSlateColor(Linear) reflectively
+	// (verified by readback); if the text is instead a fully-qualified FSlateColor tuple
+	// ("(SpecifiedColor=(...),ColorUseRule=UseColor_Specified)") fall back to a strict text import.
+	// Returns false when a non-empty colour did not land. (VibeUE A4)
+	bool TrySetSlateColorProperty(UObject* Object, const FString& PropertyName, const FString& ColorText)
+	{
+		if (!Object || ColorText.IsEmpty())
+		{
+			return false;
+		}
+
+		FStructProperty* StructProp = FindFProperty<FStructProperty>(Object->GetClass(), *PropertyName);
+		if (!StructProp || StructProp->Struct != FSlateColor::StaticStruct())
+		{
+			return false;
+		}
+
+		FSlateColor* ColorPtr = StructProp->ContainerPtrToValuePtr<FSlateColor>(Object);
+		if (!ColorPtr)
+		{
+			return false;
+		}
+
+		FLinearColor Linear;
+		if (ParseLinearColor(ColorText, Linear))
+		{
+			*ColorPtr = FSlateColor(Linear);
+			// Verify by readback rather than by return value.
+			return ColorPtr->GetSpecifiedColor().Equals(Linear);
+		}
+
+		// Fully-qualified FSlateColor tuple: let the struct's own importer handle it.
+		return StructProp->ImportText_Direct(*ColorText, ColorPtr, Object, PPF_None) != nullptr;
+	}
+
 	// UMG "optional override" values (USizeBox::WidthOverride/HeightOverride/MinDesiredWidth/…,
 	// UImage aspect-ratio overrides, etc.) are inert unless their companion bOverride_<Name> bool
 	// is also set — that bool is the "checkbox" the UMG designer ticks for you. Writing only the
@@ -2237,12 +2274,27 @@ bool UWidgetService::SetFont(
 	Resolved.TargetObject->Modify();
 	Widget->Modify();
 
-	TrySetPropertyText(Widget, TEXT("ColorAndOpacity"), FontInfo.Color);
+	bool bColorsApplied = true;
+
+	// ColorAndOpacity is an FSlateColor — the plain-text setter no-ops on it, so route through the
+	// FSlateColor-aware setter and fail loudly if a provided colour did not land.
+	if (!FontInfo.Color.IsEmpty() && !TrySetSlateColorProperty(Widget, TEXT("ColorAndOpacity"), FontInfo.Color))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::SetFont: Failed to apply ColorAndOpacity '%s' on widget '%s' — pass an FSlateColor tuple, e.g. \"(R=..,G=..,B=..,A=..)\" (UMG colours are LINEAR)."), *FontInfo.Color, *ComponentName);
+		bColorsApplied = false;
+	}
+
 	TrySetPropertyText(Widget, TEXT("ShadowOffset"), FontInfo.ShadowOffset);
-	TrySetPropertyText(Widget, TEXT("ShadowColorAndOpacity"), FontInfo.ShadowColor);
+
+	// ShadowColorAndOpacity is an FLinearColor, so a strict text import lands directly; still verify.
+	if (!FontInfo.ShadowColor.IsEmpty() && !TrySetPropertyText(Widget, TEXT("ShadowColorAndOpacity"), FontInfo.ShadowColor))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::SetFont: Failed to apply ShadowColorAndOpacity '%s' on widget '%s' — pass an FLinearColor tuple, e.g. \"(R=..,G=..,B=..,A=..)\"."), *FontInfo.ShadowColor, *ComponentName);
+		bColorsApplied = false;
+	}
 
 	MarkWidgetBlueprintModified(WidgetBP);
-	return true;
+	return bColorsApplied;
 }
 
 FWidgetFontInfo UWidgetService::GetFont(
@@ -2737,6 +2789,12 @@ FWidgetPreviewResult UWidgetService::CapturePreview(
 	}
 
 	TSharedRef<SWidget> SlateWidget = WidgetInstance->TakeWidget();
+	// Gamma must be applied exactly once. CreateTargetFor(..., /*bUseGammaCorrection*/ true) makes
+	// an sRGB render target (IsSRGB() == true, so ExportRenderTarget2DAsPNG writes a true sRGB PNG);
+	// pair it with a LINEAR-space renderer (FWidgetRenderer(false)) that emits linear pixels for the
+	// target to sRGB-encode on write. The old code used a gamma-space renderer (FWidgetRenderer(true))
+	// AND an sRGB target, encoding every colour twice. This mirrors the engine's UMG thumbnail path
+	// (FWidgetBlueprintEditorUtils::DrawSWidgetInRenderTargetInternal): linear renderer + sRGB target.
 	UTextureRenderTarget2D* RenderTarget = FWidgetRenderer::CreateTargetFor(FVector2D(Width, Height), TF_Bilinear, true);
 	if (!RenderTarget)
 	{
@@ -2744,9 +2802,12 @@ FWidgetPreviewResult UWidgetService::CapturePreview(
 		return Result;
 	}
 
-	FWidgetRenderer* WidgetRenderer = new FWidgetRenderer(true);
-	WidgetRenderer->SetIsPrepassNeeded(false);
-	WidgetRenderer->DrawWidget(RenderTarget, SlateWidget, FVector2D(Width, Height), 0.0f);
+	FWidgetRenderer* WidgetRenderer = new FWidgetRenderer(false);
+	// Leave the desired-size prepass enabled (the FWidgetRenderer default) so Overlay-centred and
+	// otherwise-aligned content is laid out against real widget sizes rather than zero; the old
+	// SetIsPrepassNeeded(false) skipped that pass and drew centred content bottom-aligned. A
+	// non-zero DeltaTime lets first-frame layout settle, matching the engine thumbnail renderer.
+	WidgetRenderer->DrawWidget(RenderTarget, SlateWidget, FVector2D(Width, Height), 0.1f);
 	BeginCleanup(WidgetRenderer);
 
 	const FString OutputDir = FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("WidgetPreviews")));

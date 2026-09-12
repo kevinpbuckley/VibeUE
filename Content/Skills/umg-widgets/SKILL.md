@@ -105,6 +105,10 @@ examples in `scripts/apply_font.txt` and `scripts/apply_brush.txt`.
 > via `set_font` with a `WidgetFontInfo`. Don't trust the `True/False` return of `set_property` on
 > nested struct sub-fields — read it back to confirm.
 
+> ✅ **`set_font` colour is now applied** (`ColorAndOpacity` is an `FSlateColor`; the old path
+> silently no-op'd a bare `(R=,G=,B=,A=)` tuple). Pass a LINEAR tuple, e.g. `(R=0.035,G=0.002,B=0.002,A=1)`;
+> `set_font` returns **False** and logs a Warning if a supplied colour did not land, so trust the return.
+
 > ⚠️ **`get_font` readback quirk (issue #470):** the struct-typed string fields `color`,
 > `shadow_color`, and `shadow_offset` come back as **two concatenated representations** glued
 > together, e.g. `shadow_offset == "(X=0.0,Y=0.0)(X=1.000000,Y=1.000000)"`. The *trailing*
@@ -129,6 +133,8 @@ then the track, then keyframes. (Runnable: `scripts/create_animation.txt`.)
 ### 🚨 Preview vs PIE — different purposes
 
 - `capture_preview` renders an editor-side PNG without starting gameplay — use for appearance checks.
+  It now renders with a single gamma pass (an sRGB PNG matching the designer, no more double-gamma) and
+  a layout prepass (Overlay-centred content is centred, not bottom-aligned).
 - `start_pie` + `spawn_widget_in_pie` are for runtime state / live property reads — use only when you
   need a live instance.
 

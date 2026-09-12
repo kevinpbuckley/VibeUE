@@ -80,6 +80,8 @@ Returned in `WidgetComponentSnapshot.properties` and by `list_properties()`.
 ## WidgetFontInfo
 
 Used by `set_font` / returned by `get_font`. `set_font(widget_path, component_name, font_info, property_name="Font")`.
+`color` is applied to the widget's `ColorAndOpacity` (an `FSlateColor`): pass a LINEAR tuple like
+`(R=0.035,G=0.002,B=0.002,A=1)`; `set_font` returns **False** (and logs a Warning) if a supplied colour did not land.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -121,7 +123,9 @@ Returned by `list_animations()`.
 ## WidgetPreviewResult
 
 Returned by `capture_preview(widget_path, width=1920, height=1080)` — note: **no output-path
-argument**; the PNG is written to `<project>/Saved/WidgetPreviews/<WidgetName>.png`.
+argument**; the PNG is written to `<project>/Saved/WidgetPreviews/<WidgetName>.png`. The PNG now
+renders with a single gamma pass (sRGB, matching the designer) and a layout prepass (centred content
+is centred, not bottom-aligned).
 
 | Field | Type | Description |
 |-------|------|-------------|
