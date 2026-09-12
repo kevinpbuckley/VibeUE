@@ -607,9 +607,18 @@ public:
 	 * Send a key event to the running PIE game viewport through Slate (no OS focus, no SendKeys).
 	 * Slate focus is moved to the game viewport first, so this works with the editor unfocused.
 	 *
+	 * Requires Play In Editor, not Simulate In Editor: a Simulate session has no player game viewport,
+	 * so the synthesized events would be dropped — it is rejected with SIMULATE_NOT_PLAY instead.
+	 *
+	 * handled_down / handled_up report whether a Slate widget CONSUMED the event, not whether the key
+	 * reached the player. A key the game reads by polling (WasInputKeyJustPressed) registers with
+	 * handled_down=false because nothing on the input stack consumes it; confirm delivery from game
+	 * state, not from these flags.
+	 *
 	 * @param KeyName - FKey name, e.g. "SpaceBar", "W", "LeftMouseButton" (see get_available_keys)
 	 * @param EventType - "tap" (down then up, default), "down", or "up"
 	 * @return JSON: {success, key, event, handled_down, handled_up} or {success:false, error_code, error_message}
+	 *         error_code: PIE_NOT_RUNNING, SIMULATE_NOT_PLAY, NO_SLATE, UNKNOWN_KEY, BAD_EVENT
 	 *
 	 * Example:
 	 *   unreal.InputService.inject_key("SpaceBar")            # tap space in PIE
