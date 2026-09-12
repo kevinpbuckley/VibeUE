@@ -104,6 +104,13 @@ public:
 	 * dialog's Force Delete button does); without it, a referenced asset is refused and the
 	 * referencers are returned so the caller can decide.
 	 *
+	 * Even with bForceEvenIfReferenced, the delete is REFUSED (never prompts) when the object is
+	 * still held in memory by something force-delete cannot null — a native GCObject root, a
+	 * transient object, or a Python module-level global that created or loaded it. Those are
+	 * returned in OutReferencers with an OutError telling the caller to release the globals
+	 * (del them, then unreal.SystemLibrary.collect_garbage()) and retry. Only on-disk asset
+	 * references, which force-delete can clear, are pushed through.
+	 *
 	 * @param AssetPath              - Package path of the asset (/Game/Folder/Asset)
 	 * @param bForceEvenIfReferenced - True: delete anyway and clear references; false: refuse if referenced
 	 * @param OutReferencers         - Package paths that referenced the asset (filled on refusal AND on force)

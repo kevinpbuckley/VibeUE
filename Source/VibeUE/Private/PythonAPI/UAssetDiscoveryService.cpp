@@ -21,6 +21,8 @@
 #include "UObject/Package.h"
 #include "ObjectTools.h"
 #include "UObject/ReferencerFinder.h"
+#include "UObject/GarbageCollection.h"
+#include "UObject/UObjectGlobals.h"
 
 // ========== Texture Operations ==========
 
@@ -452,6 +454,72 @@ bool UAssetDiscoveryService::DeleteAssetUnattended(const FString& AssetPath, boo
 		if (UAssetEditorSubsystem* AssetEditors = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>())
 		{
 			AssetEditors->CloseAllEditorsForAsset(Asset);
+		}
+	}
+
+	// A13: emulate the in-memory reference check the engine runs inside ForceDeleteObjects ->
+	// DeleteSingleObject (ObjectTools.cpp:3493-3524, the "{0} is in use." FMessageDialog). Force-delete
+	// nulls references held through reflected UPROPERTYs on OTHER on-disk assets, but it cannot clear a
+	// native reference: a Python module-level global rooting the object shows up as a GCObjectReferencer
+	// (root), which survives ForceReplaceReferences. DeleteSingleObject then re-checks, still finds the
+	// object referenced, and pops a modal dialog that stalled the game thread 6+ minutes (observed
+	// 2026-09-09). Refuse before we ever reach the engine delete, and name the referencers.
+	//
+	// Collect first so a global that was already del'd but not yet swept does not cause a false refusal;
+	// the asset carries RF_Standalone (a GARBAGE_COLLECTION_KEEPFLAGS flag), so it survives the sweep.
+	CollectGarbage(GARBAGE_COLLECTION_KEEPFLAGS);
+	if (!IsValid(Asset))
+	{
+		OutError = FString::Printf(TEXT("Asset %s was garbage-collected before deletion could proceed"), *AssetPath);
+		return false;
+	}
+	{
+		FReferencerInformationList MemRefs;
+		bool bIsReferenced = false;
+		bool bIsReferencedByUndo = false;
+		ObjectTools::GatherObjectReferencersForDeletion(Asset, bIsReferenced, bIsReferencedByUndo, &MemRefs, /*bRequireReferencingProperties*/ true);
+
+		TArray<FString> BlockingInMemory;
+		for (const FReferencerInformation& Info : MemRefs.ExternalReferences)
+		{
+			UObject* Referencer = Info.Referencer;
+			if (!Referencer)
+			{
+				continue;
+			}
+			// A referencer that lives in a real on-disk asset package is one ForceReplaceReferences can
+			// null, so force-delete handles it (it is already reported in OutReferencers above). Anything
+			// else — a transient or compiled-in object, a native GCObject root, a Python-held global —
+			// cannot be nulled and is exactly what makes the engine pop its "is in use" dialog.
+			UPackage* Package = Referencer->GetOutermost();
+			const FString PackageNameStr = Package ? Package->GetName() : FString();
+			const bool bIsOnDiskAsset =
+				Package
+				&& Package != Asset->GetOutermost()
+				&& Package != GetTransientPackage()
+				&& !Package->HasAnyPackageFlags(PKG_CompiledIn)
+				&& !PackageNameStr.StartsWith(TEXT("/Temp/"))
+				&& !PackageNameStr.StartsWith(TEXT("/Engine/Transient"))
+				&& (PackageNameStr.StartsWith(TEXT("/Game/")) || PackageNameStr.StartsWith(TEXT("/Engine/")) || FPackageName::IsValidLongPackageName(PackageNameStr));
+			if (!bIsOnDiskAsset)
+			{
+				BlockingInMemory.AddUnique(Referencer->GetFullName());
+			}
+		}
+
+		if (BlockingInMemory.Num() > 0)
+		{
+			for (const FString& Ref : BlockingInMemory)
+			{
+				OutReferencers.AddUnique(Ref);
+			}
+			OutError = FString::Printf(
+				TEXT("%s is held in memory by %d non-asset referencer(s) that force-delete cannot clear (e.g. %s). ")
+				TEXT("Deleting now would pop the engine's modal 'is in use' dialog and stall the editor. Release any ")
+				TEXT("Python globals holding this object (del them, then unreal.SystemLibrary.collect_garbage()) and retry."),
+				*AssetPath, BlockingInMemory.Num(), *BlockingInMemory[0]);
+			UE_LOG(LogTemp, Warning, TEXT("UAssetDiscoveryService::DeleteAssetUnattended: %s"), *OutError);
+			return false;
 		}
 	}
 

@@ -82,6 +82,15 @@ A `False` return maps to `None` in Python; the `(referencers, error)` tuple come
 too, so you always see what pointed at the asset. Prefer creating the replacement under a NEW name
 and repointing references over force-deleting.
 
+**Even `delete_asset_unattended(path, True)` refuses a rooted in-memory object — it never prompts.**
+If the object is still held in memory by something force-delete cannot null (a native GCObject
+root, a transient object, or a Python module-level global that created or loaded the asset earlier
+this session), the call returns `None` with the blocking referencers in `out_referencers` and an
+`out_error` explaining it, instead of popping the engine's "is in use" dialog (which stalled the
+editor 6+ minutes). The fix is what the error says: release the Python globals holding it —
+`del my_var`, then `unreal.SystemLibrary.collect_garbage()` — and retry. Only on-disk asset
+references (which force-delete can clear) are pushed through.
+
 ### ⚠️ Never `delete_asset` a Blueprint you loaded or compiled this session
 
 `EditorAssetLibrary.delete_asset` on a Blueprint (Anim Blueprints especially) that is still loaded —
