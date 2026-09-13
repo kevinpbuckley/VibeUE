@@ -72,24 +72,32 @@ every later call hangs, and the process has to be force-killed with the files re
 Use the plugin's dialog-free delete instead:
 
 ```python
-# Refuses when referenced and tells you who (returns None on refusal -> read the out params):
+# Refuses when referenced and tells you who:
 result = unreal.AssetDiscoveryService.delete_asset_unattended("/Game/Anim/AM_Old", False)
 # Delete anyway and null every reference (what the dialog's Force Delete does):
 result = unreal.AssetDiscoveryService.delete_asset_unattended("/Game/Anim/AM_Old", True)
+if not result.b_success:
+    print(result.error_message)     # why it did not happen
+    print(result.referencers)       # what pointed at the asset
 ```
 
-A `False` return maps to `None` in Python; the `(referencers, error)` tuple comes back on success
-too, so you always see what pointed at the asset. Prefer creating the replacement under a NEW name
-and repointing references over force-deleting.
+The call returns an `FUnattendedDeleteResult` struct — `result.b_success`, `result.referencers`,
+`result.error_message` — so the reason ALWAYS survives, even on a refusal. (It used to return a
+bool with out-params, and Python maps a `False` return to `None`, which silently dropped the reason;
+that is fixed.) `result.referencers` is filled on a refusal AND on a forced delete, so you always see
+what pointed at the asset. Prefer creating the replacement under a NEW name and repointing references
+over force-deleting.
 
 **Even `delete_asset_unattended(path, True)` refuses a rooted in-memory object — it never prompts.**
 If the object is still held in memory by something force-delete cannot null (a native GCObject
 root, a transient object, or a Python module-level global that created or loaded the asset earlier
-this session), the call returns `None` with the blocking referencers in `out_referencers` and an
-`out_error` explaining it, instead of popping the engine's "is in use" dialog (which stalled the
-editor 6+ minutes). The fix is what the error says: release the Python globals holding it —
-`del my_var`, then `unreal.SystemLibrary.collect_garbage()` — and retry. Only on-disk asset
-references (which force-delete can clear) are pushed through.
+this session), the call returns `b_success == False` with the blocking referencers in
+`result.referencers` and `result.error_message` explaining it, instead of popping the engine's "is
+in use" dialog (which stalled the editor 6+ minutes). The fix is what the error says: release the
+Python globals holding it — `del my_var`, then `unreal.SystemLibrary.collect_garbage()` — and retry.
+Only on-disk asset references (which force-delete can clear) are pushed through. A Blueprint asset is
+NOT falsely blocked by the editor's own Blueprint-palette node spawners: the call clears them the
+same way the engine's own delete does before it checks.
 
 ### ⚠️ Never `delete_asset` a Blueprint you loaded or compiled this session
 

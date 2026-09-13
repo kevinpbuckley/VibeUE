@@ -23,6 +23,10 @@
 #include "UObject/ReferencerFinder.h"
 #include "UObject/GarbageCollection.h"
 #include "UObject/UObjectGlobals.h"
+#include "BlueprintActionDatabase.h"   // A13 false-refusal fix: clear transient node spawners like the engine's own delete path
+#include "BlueprintNodeSpawner.h"      // A13: classify a straggler UBlueprintNodeSpawner referencer as non-blocking
+#include "BlueprintAssetHandler.h"     // A13: engine fallback for a non-Blueprint asset that still owns a UBlueprint
+#include "Engine/Blueprint.h"          // A13: complete UBlueprint type for the UBlueprint* -> UObject* base conversion above
 
 // ========== Texture Operations ==========
 
@@ -387,19 +391,18 @@ bool UAssetDiscoveryService::IsAssetOpen(const FString& AssetPath)
 	return bIsOpen;
 }
 
-bool UAssetDiscoveryService::DeleteAssetUnattended(const FString& AssetPath, bool bForceEvenIfReferenced, TArray<FString>& OutReferencers, FString& OutError)
+FUnattendedDeleteResult UAssetDiscoveryService::DeleteAssetUnattended(const FString& AssetPath, bool bForceEvenIfReferenced)
 {
-	OutReferencers.Reset();
-	OutError.Reset();
+	FUnattendedDeleteResult Result;
 	if (AssetPath.IsEmpty())
 	{
-		OutError = TEXT("AssetPath is empty");
-		return false;
+		Result.ErrorMessage = TEXT("AssetPath is empty");
+		return Result;
 	}
 	if (!UEditorAssetLibrary::DoesAssetExist(AssetPath))
 	{
-		OutError = FString::Printf(TEXT("Asset not found: %s"), *AssetPath);
-		return false;
+		Result.ErrorMessage = FString::Printf(TEXT("Asset not found: %s"), *AssetPath);
+		return Result;
 	}
 
 	// Who points at it (the question the modal dialog would have asked the human)
@@ -412,14 +415,14 @@ bool UAssetDiscoveryService::DeleteAssetUnattended(const FString& AssetPath, boo
 		const FString ReferencerString = Referencer.ToString();
 		if (ReferencerString != PackageName && !ReferencerString.StartsWith(TEXT("/Temp/")) && !ReferencerString.StartsWith(TEXT("/Engine/Transient")))
 		{
-			OutReferencers.Add(ReferencerString);
+			Result.Referencers.Add(ReferencerString);
 		}
 	}
 	UObject* Asset = UEditorAssetLibrary::LoadAsset(AssetPath);
 	if (!Asset)
 	{
-		OutError = FString::Printf(TEXT("Failed to load asset: %s"), *AssetPath);
-		return false;
+		Result.ErrorMessage = FString::Printf(TEXT("Failed to load asset: %s"), *AssetPath);
+		return Result;
 	}
 
 	// The registry lags a freshly saved referencer (a montage built on this clip seconds ago is
@@ -439,14 +442,14 @@ bool UAssetDiscoveryService::DeleteAssetUnattended(const FString& AssetPath, boo
 		{
 			if (!ReferencerPackage.StartsWith(TEXT("/Temp/")) && !ReferencerPackage.StartsWith(TEXT("/Engine/Transient")))
 			{
-				OutReferencers.AddUnique(ReferencerPackage);
+				Result.Referencers.AddUnique(ReferencerPackage);
 			}
 		}
 	}
-	if (OutReferencers.Num() > 0 && !bForceEvenIfReferenced)
+	if (Result.Referencers.Num() > 0 && !bForceEvenIfReferenced)
 	{
-		OutError = FString::Printf(TEXT("%s is referenced by %d asset(s); pass bForceEvenIfReferenced to delete anyway and clear the references"), *AssetPath, OutReferencers.Num());
-		return false;
+		Result.ErrorMessage = FString::Printf(TEXT("%s is referenced by %d asset(s); pass bForceEvenIfReferenced to delete anyway and clear the references"), *AssetPath, Result.Referencers.Num());
+		return Result;
 	}
 	// Close any editor showing it first, or the delete is refused
 	if (GEditor)
@@ -456,6 +459,49 @@ bool UAssetDiscoveryService::DeleteAssetUnattended(const FString& AssetPath, boo
 			AssetEditors->CloseAllEditorsForAsset(Asset);
 		}
 	}
+
+	// A13 follow-up: mirror what the engine's own delete does BEFORE its in-memory referencer check.
+	// FBlueprintActionDatabase roots a set of transient UBlueprintNodeSpawner objects (variable /
+	// function / event spawners) for every loaded Blueprint, kept alive by its AddReferencedObjects
+	// (BlueprintActionDatabase.cpp:1221-1238). Those spawners hold a pointer back to the Blueprint, so
+	// GatherObjectReferencersForDeletion would report them and we would refuse a perfectly deletable
+	// Blueprint. Inside ObjectTools::ForceDeleteObjects the engine avoids exactly this: it broadcasts
+	// FEditorDelegates::OnAssetsPreDelete (ObjectTools.cpp:3978) *before* DeleteSingleObject's gather
+	// (ObjectTools.cpp:3500), and FBlueprintActionDatabase::OnAssetsPendingDelete
+	// (BlueprintActionDatabase.cpp:985-1014) responds by calling ClearAssetActions on the deleting
+	// object. ClearAssetActions(UBlueprint) drops the single entry that holds BOTH the blueprint-graph
+	// spawners and the skeleton-class member spawners (RefreshAssetActions:1656-1660). We do the same
+	// here, then let the CollectGarbage below actually reap the now-unreferenced spawners before we
+	// gather. On a refusal we rebuild the entry so the editor's palette is left intact.
+	bool bClearedActionDatabase = false;
+	if (FBlueprintActionDatabase* ActionDatabase = FBlueprintActionDatabase::TryGet())
+	{
+		bClearedActionDatabase = ActionDatabase->ClearAssetActions(Asset);
+		if (!bClearedActionDatabase)
+		{
+			// A non-Blueprint asset can still own a Blueprint (matches the engine's own fallback branch,
+			// BlueprintActionDatabase.cpp:1006-1013).
+			if (const IBlueprintAssetHandler* Handler = FBlueprintAssetHandler::Get().FindHandler(Asset->GetClass()))
+			{
+				if (UBlueprint* OwnedBlueprint = Handler->RetrieveBlueprint(Asset))
+				{
+					bClearedActionDatabase = ActionDatabase->ClearAssetActions(OwnedBlueprint);
+				}
+			}
+		}
+	}
+	// Rebuild the action-database entry we cleared, so refusing the delete does not leave the loaded
+	// Blueprint's palette actions empty until its next compile/reload.
+	auto RestoreActionDatabase = [&]()
+	{
+		if (bClearedActionDatabase && IsValid(Asset))
+		{
+			if (FBlueprintActionDatabase* ActionDatabase = FBlueprintActionDatabase::TryGet())
+			{
+				ActionDatabase->RefreshAssetActions(Asset);
+			}
+		}
+	};
 
 	// A13: emulate the in-memory reference check the engine runs inside ForceDeleteObjects ->
 	// DeleteSingleObject (ObjectTools.cpp:3493-3524, the "{0} is in use." FMessageDialog). Force-delete
@@ -470,8 +516,9 @@ bool UAssetDiscoveryService::DeleteAssetUnattended(const FString& AssetPath, boo
 	CollectGarbage(GARBAGE_COLLECTION_KEEPFLAGS);
 	if (!IsValid(Asset))
 	{
-		OutError = FString::Printf(TEXT("Asset %s was garbage-collected before deletion could proceed"), *AssetPath);
-		return false;
+		// The asset itself was reaped, so there is no action-database entry left to restore.
+		Result.ErrorMessage = FString::Printf(TEXT("Asset %s was garbage-collected before deletion could proceed"), *AssetPath);
+		return Result;
 	}
 	{
 		FReferencerInformationList MemRefs;
@@ -488,7 +535,7 @@ bool UAssetDiscoveryService::DeleteAssetUnattended(const FString& AssetPath, boo
 				continue;
 			}
 			// A referencer that lives in a real on-disk asset package is one ForceReplaceReferences can
-			// null, so force-delete handles it (it is already reported in OutReferencers above). Anything
+			// null, so force-delete handles it (it is already reported in Result.Referencers above). Anything
 			// else — a transient or compiled-in object, a native GCObject root, a Python-held global —
 			// cannot be nulled and is exactly what makes the engine pop its "is in use" dialog.
 			UPackage* Package = Referencer->GetOutermost();
@@ -501,7 +548,19 @@ bool UAssetDiscoveryService::DeleteAssetUnattended(const FString& AssetPath, boo
 				&& !PackageNameStr.StartsWith(TEXT("/Temp/"))
 				&& !PackageNameStr.StartsWith(TEXT("/Engine/Transient"))
 				&& (PackageNameStr.StartsWith(TEXT("/Game/")) || PackageNameStr.StartsWith(TEXT("/Engine/")) || FPackageName::IsValidLongPackageName(PackageNameStr));
-			if (!bIsOnDiskAsset)
+
+			// Belt-and-suspenders for the fix above: a UBlueprintNodeSpawner still living in the transient
+			// package is one the engine's own delete path clears (the OnAssetsPreDelete -> ClearAssetActions
+			// we mirrored) and force-delete's GC then reaps — the action database is the only thing rooting
+			// it. So a straggler that survived our clear+GC (e.g. a spawner for a DIFFERENT loaded Blueprint
+			// that transitively points here) is not a real block. Everything else that is not an on-disk
+			// asset — a native GCObject root, a Python module-level global — force-delete cannot null and
+			// still blocks; we deliberately do NOT blanket-allow all transient objects.
+			const bool bIsEngineClearedSpawner =
+				Referencer->IsA<UBlueprintNodeSpawner>()
+				&& PackageNameStr.StartsWith(TEXT("/Engine/Transient"));
+
+			if (!bIsOnDiskAsset && !bIsEngineClearedSpawner)
 			{
 				BlockingInMemory.AddUnique(Referencer->GetFullName());
 			}
@@ -511,15 +570,16 @@ bool UAssetDiscoveryService::DeleteAssetUnattended(const FString& AssetPath, boo
 		{
 			for (const FString& Ref : BlockingInMemory)
 			{
-				OutReferencers.AddUnique(Ref);
+				Result.Referencers.AddUnique(Ref);
 			}
-			OutError = FString::Printf(
+			Result.ErrorMessage = FString::Printf(
 				TEXT("%s is held in memory by %d non-asset referencer(s) that force-delete cannot clear (e.g. %s). ")
 				TEXT("Deleting now would pop the engine's modal 'is in use' dialog and stall the editor. Release any ")
 				TEXT("Python globals holding this object (del them, then unreal.SystemLibrary.collect_garbage()) and retry."),
 				*AssetPath, BlockingInMemory.Num(), *BlockingInMemory[0]);
-			UE_LOG(LogTemp, Warning, TEXT("UAssetDiscoveryService::DeleteAssetUnattended: %s"), *OutError);
-			return false;
+			UE_LOG(LogTemp, Warning, TEXT("UAssetDiscoveryService::DeleteAssetUnattended: %s"), *Result.ErrorMessage);
+			RestoreActionDatabase();
+			return Result;
 		}
 	}
 
@@ -532,9 +592,11 @@ bool UAssetDiscoveryService::DeleteAssetUnattended(const FString& AssetPath, boo
 	const int32 Deleted = ObjectTools::ForceDeleteObjects(Objects, /*bShowConfirmation*/ false);
 	if (Deleted <= 0)
 	{
-		OutError = FString::Printf(TEXT("Force delete of %s returned 0 (is it open in an editor, or a Blueprint still loaded this session? see the asset-management skill)"), *AssetPath);
-		return false;
+		Result.ErrorMessage = FString::Printf(TEXT("Force delete of %s returned 0 (is it open in an editor, or a Blueprint still loaded this session? see the asset-management skill)"), *AssetPath);
+		RestoreActionDatabase();
+		return Result;
 	}
-	UE_LOG(LogTemp, Log, TEXT("UAssetDiscoveryService::DeleteAssetUnattended: deleted %s (%d referencer(s) cleared)"), *AssetPath, OutReferencers.Num());
-	return true;
+	UE_LOG(LogTemp, Log, TEXT("UAssetDiscoveryService::DeleteAssetUnattended: deleted %s (%d referencer(s) cleared)"), *AssetPath, Result.Referencers.Num());
+	Result.bSuccess = true;
+	return Result;
 }

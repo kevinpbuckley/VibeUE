@@ -8,6 +8,31 @@
 #include "UAssetDiscoveryService.generated.h"
 
 /**
+ * Result of DeleteAssetUnattended.
+ *
+ * The function used to return bool with OutReferencers/OutError out-params, and Python maps a
+ * false bool return to None, which dropped the referencers AND the reason on every refusal — the
+ * exact information the caller needs to recover. A struct return always survives to Python.
+ */
+USTRUCT(BlueprintType)
+struct FUnattendedDeleteResult
+{
+	GENERATED_BODY()
+
+	/** True only when the asset is gone. */
+	UPROPERTY(BlueprintReadWrite, Category = "Assets")
+	bool bSuccess = false;
+
+	/** Package paths / object names that referenced the asset (filled on refusal AND on a forced delete). */
+	UPROPERTY(BlueprintReadWrite, Category = "Assets")
+	TArray<FString> Referencers;
+
+	/** Human-readable reason when the delete did not happen; empty on success. */
+	UPROPERTY(BlueprintReadWrite, Category = "Assets")
+	FString ErrorMessage;
+};
+
+/**
  * Asset import/export and Content Browser service exposed directly to Python.
  *
  * Asset search and general CRUD are provided by the engine's AssetTools toolset.
@@ -104,29 +129,33 @@ public:
 	 * dialog's Force Delete button does); without it, a referenced asset is refused and the
 	 * referencers are returned so the caller can decide.
 	 *
+	 * Before that check, this mirrors the engine's own delete path: ObjectTools::ForceDeleteObjects
+	 * broadcasts FEditorDelegates::OnAssetsPreDelete (ObjectTools.cpp:3978) before its in-memory
+	 * referencer gather (DeleteSingleObject, ObjectTools.cpp:3500), and FBlueprintActionDatabase
+	 * clears its transient UBlueprintNodeSpawner objects for the deleting asset in response
+	 * (BlueprintActionDatabase.cpp:985-1014). We clear those the same way and collect garbage first,
+	 * so the action database's own node spawners are never mistaken for a blocking native reference.
+	 *
 	 * Even with bForceEvenIfReferenced, the delete is REFUSED (never prompts) when the object is
 	 * still held in memory by something force-delete cannot null — a native GCObject root, a
 	 * transient object, or a Python module-level global that created or loaded it. Those are
-	 * returned in OutReferencers with an OutError telling the caller to release the globals
+	 * returned in Referencers with an ErrorMessage telling the caller to release the globals
 	 * (del them, then unreal.SystemLibrary.collect_garbage()) and retry. Only on-disk asset
 	 * references, which force-delete can clear, are pushed through.
 	 *
 	 * @param AssetPath              - Package path of the asset (/Game/Folder/Asset)
 	 * @param bForceEvenIfReferenced - True: delete anyway and clear references; false: refuse if referenced
-	 * @param OutReferencers         - Package paths that referenced the asset (filled on refusal AND on force)
-	 * @param OutError               - Human-readable reason when the delete did not happen
-	 * @return True when the asset is gone
+	 * @return FUnattendedDeleteResult: bSuccess, Referencers (filled on refusal AND on force), ErrorMessage
 	 *
-	 * Python usage:
+	 * Python usage (the result struct always comes back, so the reason survives a refusal):
 	 *   result = unreal.AssetDiscoveryService.delete_asset_unattended("/Game/Anim/AS_Temp", True)
-	 *   if result is not None: referencers, error = result   # a false return maps to None
+	 *   if not result.b_success:
+	 *       print(result.error_message, result.referencers)
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable, CPP_Default_bForceEvenIfReferenced = "false"), Category = "VibeUE|Assets")
-	static bool DeleteAssetUnattended(
+	static FUnattendedDeleteResult DeleteAssetUnattended(
 		const FString& AssetPath,
-		bool bForceEvenIfReferenced,
-		TArray<FString>& OutReferencers,
-		FString& OutError);
+		bool bForceEvenIfReferenced);
 
 	UFUNCTION(BlueprintCallable, meta = (AICallable, CPP_Default_NewSourcePath = ""), Category = "VibeUE|Assets")
 	static bool ReimportAsset(
