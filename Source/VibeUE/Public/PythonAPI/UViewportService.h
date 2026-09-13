@@ -78,6 +78,44 @@ struct FViewportInfo
 };
 
 /**
+ * Result of ViewportService.capture_scene() — a scene-capture screenshot written to a PNG.
+ *
+ * Python access:
+ *   res = unreal.ViewportService.capture_scene(location, rotation, 1024, 1024, "C:/tmp/shot.png")
+ *   if res.b_success: print(res.output_path, res.file_size_bytes)
+ *
+ * Properties:
+ * - b_success (bool): True if the PNG was written.
+ * - output_path (str): Absolute path of the PNG that was written (empty on failure).
+ * - width / height (int): Pixel dimensions of the captured image.
+ * - file_size_bytes (int): Size of the written PNG on disk (0 on failure).
+ * - error_message (str): Reason on failure (empty on success).
+ */
+USTRUCT(BlueprintType)
+struct FSceneCaptureResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Viewport")
+	bool bSuccess = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Viewport")
+	FString OutputPath;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Viewport")
+	int32 Width = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Viewport")
+	int32 Height = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Viewport")
+	int64 FileSizeBytes = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Viewport")
+	FString ErrorMessage;
+};
+
+/**
  * Viewport Service - Python API for controlling the Unreal Editor level viewport.
  *
  * Provides access to all viewport camera options from the perspective dropdown menu:
@@ -341,6 +379,57 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
 	static FString GetViewportLayout();
+
+	// =================================================================
+	// Scene Capture (works while the editor is backgrounded)
+	// =================================================================
+
+	/**
+	 * Capture the editor world from an arbitrary camera to a PNG, synchronously.
+	 *
+	 * Unlike CaptureViewport / CaptureEditorImage, this does NOT depend on the level
+	 * viewport pumping frames: it spawns a transient ASceneCapture2D, renders one frame
+	 * with CaptureScene(), reads the pixels back and writes the PNG in-call. It therefore
+	 * works when the editor is minimised or backgrounded (the case CaptureViewport returns
+	 * a stale frame for), and is the reliable path for scripted minimaps and top-down maps.
+	 *
+	 * Facts baked in (measured for this workflow — see the viewport skill):
+	 * - CaptureSource is SCS_FinalColorLDR, which yields alpha 255. SCS_BaseColor writes
+	 *   alpha 0, producing PNGs that render as a blank white page in most viewers.
+	 * - The render target is RTF_RGBA8. The default float format (RTF_RGBA16f) writes
+	 *   non-PNG bytes. The exported pixels are forced opaque (A=255) regardless.
+	 * - A backgrounded editor has no converged auto-exposure, so an auto-exposed capture
+	 *   comes out black. Pass ExposureBias != 0 to force AEM_Manual with that bias; the
+	 *   measured working range for this project is ~10-14.
+	 *
+	 * @param Location - World location of the capture camera.
+	 * @param Rotation - World rotation of the capture camera. For a north-up top-down
+	 *        minimap, use an orthographic capture (OrthoWidth > 0) with pitch=-90, yaw=-90,
+	 *        roll=0.
+	 * @param Width - Output width in pixels (1..8192).
+	 * @param Height - Output height in pixels (1..8192).
+	 * @param OutputPngPath - Where to write the PNG. Absolute paths are used as-is; a
+	 *        relative path lands under <Project>/Saved/VibeUE/Captures. A missing ".png"
+	 *        extension is appended.
+	 * @param OrthoWidth - 0 (default) = perspective projection using FOV. > 0 = orthographic
+	 *        projection with this world-space width (for a minimap, pass the map size in uu).
+	 * @param FOV - Horizontal field of view in degrees for perspective mode (ignored when
+	 *        OrthoWidth > 0). Default 90.
+	 * @param ExposureBias - 0 (default) = keep the capture's automatic exposure. Non-zero =
+	 *        force manual exposure (AEM_Manual) at this bias; use ~10-14 for a backgrounded
+	 *        editor, which otherwise captures black.
+	 * @return FSceneCaptureResult with bSuccess, OutputPath, Width/Height, FileSizeBytes, ErrorMessage.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
+	static FSceneCaptureResult CaptureScene(
+		FVector Location,
+		FRotator Rotation,
+		int32 Width,
+		int32 Height,
+		const FString& OutputPngPath,
+		float OrthoWidth = 0.0f,
+		float FOV = 90.0f,
+		float ExposureBias = 0.0f);
 
 private:
 	/** Helper: get the active FLevelEditorViewportClient, or nullptr */

@@ -20,6 +20,17 @@
 #endif
 #include "LevelViewportActions.h"
 #include "EditorViewportClient.h"
+// capture_scene (issue B4): synchronous SceneCapture2D → PNG that works while backgrounded
+#include "Engine/SceneCapture2D.h"
+#include "Components/SceneCaptureComponent2D.h"
+#include "Engine/TextureRenderTarget2D.h"
+#include "Kismet/KismetRenderingLibrary.h"
+#include "TextureResource.h"
+#include "RenderingThread.h"
+#include "ImageUtils.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "HAL/FileManager.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogViewportService, Log, All);
 
@@ -512,5 +523,192 @@ PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	}
 PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
+	return Result;
+}
+
+// =================================================================
+// Scene Capture (works while the editor is backgrounded)
+// =================================================================
+
+FSceneCaptureResult UViewportService::CaptureScene(
+	FVector Location,
+	FRotator Rotation,
+	int32 Width,
+	int32 Height,
+	const FString& OutputPngPath,
+	float OrthoWidth,
+	float FOV,
+	float ExposureBias)
+{
+	FSceneCaptureResult Result;
+
+	// --- Argument / environment validation (refusals: Warning) ---
+	if (!GEditor)
+	{
+		Result.ErrorMessage = TEXT("CaptureScene: no GEditor (running headless?).");
+		UE_LOG(LogViewportService, Warning, TEXT("%s"), *Result.ErrorMessage);
+		return Result;
+	}
+
+	UWorld* World = GEditor->GetEditorWorldContext().World();
+	if (!World)
+	{
+		Result.ErrorMessage = TEXT("CaptureScene: no editor world available.");
+		UE_LOG(LogViewportService, Warning, TEXT("%s"), *Result.ErrorMessage);
+		return Result;
+	}
+
+	if (Width <= 0 || Height <= 0 || Width > 8192 || Height > 8192)
+	{
+		Result.ErrorMessage = FString::Printf(
+			TEXT("CaptureScene: invalid dimensions %dx%d (each must be 1..8192)."), Width, Height);
+		UE_LOG(LogViewportService, Warning, TEXT("%s"), *Result.ErrorMessage);
+		return Result;
+	}
+
+	if (OutputPngPath.TrimStartAndEnd().IsEmpty())
+	{
+		Result.ErrorMessage = TEXT("CaptureScene: OutputPngPath is empty.");
+		UE_LOG(LogViewportService, Warning, TEXT("%s"), *Result.ErrorMessage);
+		return Result;
+	}
+
+	// Resolve output path: relative → <Project>/Saved/VibeUE/Captures; ensure .png extension.
+	FString OutPath = OutputPngPath.TrimStartAndEnd();
+	FPaths::NormalizeFilename(OutPath);
+	if (FPaths::IsRelative(OutPath))
+	{
+		OutPath = FPaths::Combine(
+			FPaths::ProjectSavedDir(), TEXT("VibeUE"), TEXT("Captures"), OutPath);
+	}
+	if (!OutPath.EndsWith(TEXT(".png"), ESearchCase::IgnoreCase))
+	{
+		OutPath += TEXT(".png");
+	}
+
+	// --- Render target: RTF_RGBA8 (the RTF_RGBA16f default writes non-PNG bytes) ---
+	UTextureRenderTarget2D* RenderTarget = UKismetRenderingLibrary::CreateRenderTarget2D(
+		World, Width, Height, RTF_RGBA8, FLinearColor::Black, /*bAutoGenerateMipMaps=*/false, /*bSupportUAVs=*/false);
+	if (!RenderTarget)
+	{
+		Result.ErrorMessage = TEXT("CaptureScene: CreateRenderTarget2D returned null.");
+		UE_LOG(LogViewportService, Error, TEXT("%s"), *Result.ErrorMessage);
+		return Result;
+	}
+	// Root the render target so it cannot be GC'd between creation and readback.
+	RenderTarget->AddToRoot();
+
+	// --- Spawn the transient capture actor ---
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.ObjectFlags |= RF_Transient;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	ASceneCapture2D* CaptureActor = World->SpawnActor<ASceneCapture2D>(Location, Rotation, SpawnParams);
+	if (!CaptureActor)
+	{
+		RenderTarget->RemoveFromRoot();
+		Result.ErrorMessage = TEXT("CaptureScene: failed to spawn ASceneCapture2D in the editor world.");
+		UE_LOG(LogViewportService, Error, TEXT("%s"), *Result.ErrorMessage);
+		return Result;
+	}
+
+	USceneCaptureComponent2D* CaptureComp = CaptureActor->GetCaptureComponent2D();
+	if (!CaptureComp)
+	{
+		World->DestroyActor(CaptureActor);
+		RenderTarget->RemoveFromRoot();
+		Result.ErrorMessage = TEXT("CaptureScene: ASceneCapture2D has no capture component.");
+		UE_LOG(LogViewportService, Error, TEXT("%s"), *Result.ErrorMessage);
+		return Result;
+	}
+
+	CaptureComp->bCaptureEveryFrame = false;
+	CaptureComp->bCaptureOnMovement = false;
+	CaptureComp->TextureTarget = RenderTarget;
+	// SCS_FinalColorLDR gives alpha 255; SCS_BaseColor writes alpha 0 (blank-looking PNGs).
+	CaptureComp->CaptureSource = ESceneCaptureSource::SCS_FinalColorLDR;
+
+	if (OrthoWidth > 0.0f)
+	{
+		CaptureComp->ProjectionType = ECameraProjectionMode::Orthographic;
+		CaptureComp->OrthoWidth = OrthoWidth;
+	}
+	else
+	{
+		CaptureComp->ProjectionType = ECameraProjectionMode::Perspective;
+		CaptureComp->FOVAngle = FOV;
+	}
+
+	// A backgrounded editor has no converged eye adaptation, so an auto-exposed capture
+	// comes out black. Only override when the caller asks (ExposureBias != 0); the measured
+	// working range for this project is ~10-14.
+	if (!FMath::IsNearlyZero(ExposureBias))
+	{
+		CaptureComp->PostProcessSettings.bOverride_AutoExposureMethod = true;
+		CaptureComp->PostProcessSettings.AutoExposureMethod = AEM_Manual;
+		CaptureComp->PostProcessSettings.bOverride_AutoExposureBias = true;
+		CaptureComp->PostProcessSettings.AutoExposureBias = ExposureBias;
+	}
+
+	// --- Synchronous render + readback ---
+	CaptureComp->CaptureScene();
+	FlushRenderingCommands();
+
+	TArray<FColor> Pixels;
+	bool bReadOk = false;
+	if (FTextureRenderTargetResource* RTResource = RenderTarget->GameThread_GetRenderTargetResource())
+	{
+		// Default flags: SCS_FinalColorLDR into an RTF_RGBA8 target is already display-encoded
+		// 8-bit BGRA, so a straight read (the pattern UAnimSequenceService uses) is correct.
+		bReadOk = RTResource->ReadPixels(Pixels);
+	}
+
+	// The transient actor has done its job; destroy it before any early return below.
+	World->DestroyActor(CaptureActor);
+
+	if (!bReadOk || Pixels.Num() == 0)
+	{
+		RenderTarget->RemoveFromRoot();
+		Result.ErrorMessage = TEXT("CaptureScene: ReadPixels from the render target returned no data.");
+		UE_LOG(LogViewportService, Error, TEXT("%s"), *Result.ErrorMessage);
+		return Result;
+	}
+
+	// Force opaque: RTF_RGBA8 / final-color captures can leave A=0, which renders as a
+	// blank page in image viewers even though the RGB is a full capture.
+	for (FColor& Px : Pixels)
+	{
+		Px.A = 255;
+	}
+
+	TArray64<uint8> Png;
+	FImageUtils::PNGCompressImageArray(Width, Height, Pixels, Png);
+
+	// The render target is no longer needed; allow it to be GC'd.
+	RenderTarget->RemoveFromRoot();
+
+	if (Png.Num() == 0)
+	{
+		Result.ErrorMessage = TEXT("CaptureScene: PNG encoding produced no data.");
+		UE_LOG(LogViewportService, Error, TEXT("%s"), *Result.ErrorMessage);
+		return Result;
+	}
+
+	IFileManager::Get().MakeDirectory(*FPaths::GetPath(OutPath), /*Tree=*/true);
+	if (!FFileHelper::SaveArrayToFile(TArrayView<const uint8>(Png.GetData(), (int32)Png.Num()), *OutPath))
+	{
+		Result.ErrorMessage = FString::Printf(TEXT("CaptureScene: failed to write PNG to '%s'."), *OutPath);
+		UE_LOG(LogViewportService, Error, TEXT("%s"), *Result.ErrorMessage);
+		return Result;
+	}
+
+	Result.bSuccess = true;
+	Result.OutputPath = OutPath;
+	Result.Width = Width;
+	Result.Height = Height;
+	Result.FileSizeBytes = IFileManager::Get().FileSize(*OutPath);
+	UE_LOG(LogViewportService, Log,
+		TEXT("CaptureScene: wrote %dx%d (%lld bytes, %s) to %s"),
+		Width, Height, Result.FileSizeBytes,
+		OrthoWidth > 0.0f ? TEXT("orthographic") : TEXT("perspective"), *OutPath);
 	return Result;
 }

@@ -162,6 +162,61 @@ result = unreal.LandscapeService.create_landscape(
   parent `ALandscape` and fan updates out to every proxy sharing its landscape GUID. Nothing else
   in your workflow changes.
 
+### 🚨 Save semantics: the dirty list lies — audit with `get_last_landscape_write()` + `git status`
+
+On a **World Partition** landscape the engine's dirtying mode (`LandscapeSettings.LandscapeDirtyingMode`,
+default *In Landscape Mode And User Triggered Changes*) does **not** mark an edit dirty when it is made
+**outside Landscape mode** — and **every** VibeUE/Python edit is outside Landscape mode. The engine
+tracks the touched packages in an internal modified-package list instead of the normal dirty flag. The
+practical consequences, all measured:
+
+- **`import_heightmap` dirties the proxies but does not save them.** You must save explicitly.
+- **A brush / region / semantic op (`flatten_at_location`, `set_height_in_region`, sculpt/smooth/…) can
+  write the proxy `.uasset` files to disk during the edit-layer resolve while the editor's dirty list
+  shows nothing.** One `flatten_at_location` left 49 proxy files modified on disk with an empty dirty
+  list. So the dirty list is **not** a reliable audit of a WP landscape after a brush op.
+- **`git status` is the only fully honest audit** (the modified files live under
+  `Content/__ExternalActors__/...`; restore an unwanted change with the editor closed via
+  `git checkout -- Content/__ExternalActors__/...`).
+
+Two tools make this auditable from Python:
+
+```python
+import unreal
+svc = unreal.LandscapeService
+
+svc.flatten_at_location("Landscape", 0.0, 0.0, 0.0, 250.0)   # any height writer
+
+# What did that write actually touch?
+rep = svc.get_last_landscape_write()
+print(rep.summary)                       # e.g. "49 proxies dirtied; 49 written to disk by the edit-layer flush (mtime changed)"
+print(rep.num_proxies_dirtied, rep.num_written_to_disk, rep.b_any_written_to_disk)
+for p in rep.proxies:
+    print(p.package_name, "dirty:", p.b_dirty_after, "written:", p.b_written_to_disk, p.file_size_bytes)
+```
+
+- **`get_last_landscape_write()`** reports, per proxy package the last write touched: `b_dirty_before` /
+  `b_dirty_after` (the unreliable flag) **and** `b_written_to_disk` — an on-disk **mtime** comparison
+  bracketing the edit-layer resolve, which is the signal you can trust. `num_written_to_disk` /
+  `b_any_written_to_disk` summarise it.
+  - *Caveat:* the mtime probe only sees writes that complete **during the MCP call** (around the
+    synchronous `ForceUpdateLayersContent` resolve). If the engine ever defers the on-disk save to a
+    later editor tick, `b_written_to_disk` reads `false` even though the file changes shortly after —
+    so `git status` remains the final word.
+
+- **`save_landscape(label)`** is the deterministic, explicit save: it collects the parent `ALandscape`
+  package **plus every proxy sharing the landscape GUID** and saves them all through
+  `UEditorLoadingAndSavingUtils::SavePackages(..., only_dirty=False)` — i.e. regardless of the dirty
+  flag. Use it after `import_heightmap` (which never saves), or any time you want a clean, audited flush.
+
+```python
+res = svc.save_landscape("Landscape")
+if res.b_success:
+    print("saved", res.num_requested, "packages:", list(res.saved_packages))
+else:
+    print("save failed:", res.error_message)   # e.g. a read-only / source-controlled file
+```
+
 ### Blocky / faceted flat areas (plains)
 
 Low-res source DEMs upsampled to landscape resolution show planar facets on flat terrain. Fixes,

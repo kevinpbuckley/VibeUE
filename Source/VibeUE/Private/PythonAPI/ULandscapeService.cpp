@@ -32,6 +32,11 @@
 #include "IImageWrapperModule.h"
 #include "Engine/StaticMeshActor.h"
 #include "Components/StaticMeshComponent.h"
+// Write-audit + explicit save (issue B8)
+#include "FileHelpers.h"
+#include "Misc/PackageName.h"
+#include "HAL/FileManager.h"
+#include "UObject/Package.h"
 
 // =================================================================
 // Helper Methods
@@ -144,6 +149,179 @@ static void WriteHeightsToEditLayer(ALandscape* Landscape, ULandscapeInfo* Lands
 	HeightmapAccessor.Flush();
 } // ~FHeightmapAccessor: flushes and releases heightmap texture write lock
 
+// =================================================================
+// Write-audit instrumentation (issue B8)
+//
+// A World Partition landscape uses ELandscapeDirtyingMode (LandscapeSettings, default
+// InLandscapeModeAndUserTriggeredChanges): an edit made outside Landscape mode — every
+// VibeUE/Python edit — is NOT marked dirty on its package (ULandscapeInfo::ModifyObject /
+// MarkObjectDirty add it to the modified-package list instead of calling MarkPackageDirty).
+// So the editor's dirty list can be empty while the proxy packages are still written to disk
+// during the edit-layer resolve. We therefore bracket the resolve with an on-disk mtime probe
+// (IFileManager::GetTimeStamp on the resolved .uasset) so the report tells the truth about what
+// actually reached disk, independent of the dirty flag. git status remains the ground truth.
+// =================================================================
+namespace
+{
+	struct FProxyWriteSnapshot
+	{
+		FString PackageName;
+		FString FilePath;      // resolved .uasset path (may not exist yet)
+		bool bDirtyBefore = false;
+		FDateTime MTimeBefore = FDateTime::MinValue(); // MinValue == file absent
+	};
+
+	static TArray<FProxyWriteSnapshot> GPendingLandscapeWriteSnapshots;
+	static FString GPendingLandscapeLabel;
+	static bool GLandscapeWriteCaptureActive = false;
+	static FLandscapeWriteReport GLastLandscapeWriteReport;
+
+	// Resolve a package's on-disk .uasset filename (empty if it cannot be mapped).
+	static FString ResolvePackageFilename(UPackage* Package)
+	{
+		if (!Package)
+		{
+			return FString();
+		}
+		const FString PackageName = Package->GetName();
+		FString Filename;
+		// Prefer the actual on-disk file if it already exists (returns the real extension).
+		if (FPackageName::DoesPackageExist(PackageName, &Filename))
+		{
+			return Filename;
+		}
+		// Otherwise compute where it WOULD live so a first-time save can still be detected.
+		if (FPackageName::TryConvertLongPackageNameToFilename(
+				PackageName, Filename, FPackageName::GetAssetPackageExtension()))
+		{
+			return Filename;
+		}
+		return FString();
+	}
+}
+
+void ULandscapeService::BeginLandscapeWriteCapture(ALandscapeProxy* Landscape)
+{
+	GPendingLandscapeWriteSnapshots.Reset();
+	GPendingLandscapeLabel.Reset();
+	GLandscapeWriteCaptureActive = false;
+
+	if (!Landscape)
+	{
+		return;
+	}
+	UWorld* World = Landscape->GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	if (ALandscape* Parent = Landscape->GetLandscapeActor())
+	{
+		GPendingLandscapeLabel = Parent->GetActorLabel();
+	}
+	else
+	{
+		GPendingLandscapeLabel = Landscape->GetActorLabel();
+	}
+
+	const FGuid LandscapeGuid = Landscape->GetLandscapeGuid();
+	TSet<UPackage*> Seen;
+	for (TActorIterator<ALandscapeProxy> It(World); It; ++It)
+	{
+		ALandscapeProxy* Proxy = *It;
+		if (!Proxy || Proxy->GetLandscapeGuid() != LandscapeGuid)
+		{
+			continue;
+		}
+		// GetPackage() returns the external-actor package in a WP level — the file that is written.
+		UPackage* Pkg = Proxy->GetPackage();
+		if (!Pkg || Seen.Contains(Pkg))
+		{
+			continue;
+		}
+		Seen.Add(Pkg);
+
+		FProxyWriteSnapshot Snap;
+		Snap.PackageName = Pkg->GetName();
+		Snap.FilePath = ResolvePackageFilename(Pkg);
+		Snap.bDirtyBefore = Pkg->IsDirty();
+		Snap.MTimeBefore = Snap.FilePath.IsEmpty()
+			? FDateTime::MinValue()
+			: IFileManager::Get().GetTimeStamp(*Snap.FilePath);
+		GPendingLandscapeWriteSnapshots.Add(MoveTemp(Snap));
+	}
+
+	GLandscapeWriteCaptureActive = true;
+}
+
+void ULandscapeService::FinalizeLandscapeWriteCapture(ALandscapeProxy* Landscape)
+{
+	if (!GLandscapeWriteCaptureActive)
+	{
+		return;
+	}
+	GLandscapeWriteCaptureActive = false;
+
+	FLandscapeWriteReport Report;
+	Report.bSuccess = true;
+	Report.LandscapeLabel = GPendingLandscapeLabel;
+
+	int32 NumWritten = 0;
+	for (const FProxyWriteSnapshot& Snap : GPendingLandscapeWriteSnapshots)
+	{
+		FLandscapeProxyWriteInfo Info;
+		Info.PackageName = Snap.PackageName;
+		Info.FilePath = Snap.FilePath;
+		Info.bDirtyBefore = Snap.bDirtyBefore;
+
+		UPackage* Pkg = FindPackage(nullptr, *Snap.PackageName);
+		Info.bDirtyAfter = Pkg ? Pkg->IsDirty() : Snap.bDirtyBefore;
+
+		const FDateTime MTimeAfter = Snap.FilePath.IsEmpty()
+			? FDateTime::MinValue()
+			: IFileManager::Get().GetTimeStamp(*Snap.FilePath);
+		Info.FileSizeBytes = Snap.FilePath.IsEmpty()
+			? -1
+			: IFileManager::Get().FileSize(*Snap.FilePath);
+
+		const bool bExistsNow = (MTimeAfter != FDateTime::MinValue());
+		const bool bExistedBefore = (Snap.MTimeBefore != FDateTime::MinValue());
+		// Written during the call if the file newly appeared or its mtime advanced.
+		Info.bWrittenToDisk = bExistsNow && (!bExistedBefore || MTimeAfter > Snap.MTimeBefore);
+		if (Info.bWrittenToDisk)
+		{
+			++NumWritten;
+		}
+
+		Report.Proxies.Add(MoveTemp(Info));
+	}
+
+	Report.NumProxiesDirtied = Report.Proxies.Num();
+	Report.NumWrittenToDisk = NumWritten;
+	Report.bAnyWrittenToDisk = (NumWritten > 0);
+
+	if (NumWritten > 0)
+	{
+		Report.Summary = FString::Printf(
+			TEXT("%d proxies dirtied; %d written to disk by the edit-layer flush (mtime changed)"),
+			Report.NumProxiesDirtied, NumWritten);
+	}
+	else
+	{
+		Report.Summary = FString::Printf(
+			TEXT("%d proxies dirtied; 0 written to disk during the call"),
+			Report.NumProxiesDirtied);
+	}
+
+	GLastLandscapeWriteReport = Report;
+
+	// Informational (Log, never Error): every height writer emits this honest line.
+	UE_LOG(LogTemp, Log, TEXT("Landscape write ['%s']: %s"), *Report.LandscapeLabel, *Report.Summary);
+
+	GPendingLandscapeWriteSnapshots.Reset();
+}
+
 void ULandscapeService::UpdateLandscapeAfterHeightEdit(ALandscapeProxy* Landscape)
 {
 	if (!Landscape)
@@ -156,6 +334,11 @@ void ULandscapeService::UpdateLandscapeAfterHeightEdit(ALandscapeProxy* Landscap
 	{
 		return;
 	}
+
+	// Snapshot the on-disk state of every proxy package sharing this GUID BEFORE the edit-layer
+	// resolve below (ForceUpdateLayersContent), so FinalizeLandscapeWriteCapture can tell whether
+	// the engine wrote them to disk during this call regardless of the dirty flag (issue B8).
+	BeginLandscapeWriteCapture(Landscape);
 
 	// Process any queued edit-layer content update synchronously. RequestLayersContentUpdate
 	// only queues a merge for the next editor tick, so without this, height reads in the same
@@ -203,6 +386,116 @@ void ULandscapeService::UpdateLandscapeAfterHeightEdit(ALandscapeProxy* Landscap
 
 		Proxy->MarkPackageDirty();
 	}
+
+	// Re-probe the proxy packages now that the resolve has run: record dirty state and whether
+	// each .uasset was written to disk during this call, and emit the honest log line (issue B8).
+	FinalizeLandscapeWriteCapture(Landscape);
+}
+
+FLandscapeWriteReport ULandscapeService::GetLastLandscapeWrite()
+{
+	if (!GLastLandscapeWriteReport.bSuccess)
+	{
+		FLandscapeWriteReport Empty;
+		Empty.bSuccess = false;
+		Empty.ErrorMessage = TEXT("No landscape height write has run in this editor session yet.");
+		return Empty;
+	}
+	return GLastLandscapeWriteReport;
+}
+
+FLandscapeSaveResult ULandscapeService::SaveLandscape(const FString& LandscapeNameOrLabel)
+{
+	FLandscapeSaveResult Result;
+	Result.LandscapeLabel = LandscapeNameOrLabel;
+
+	UWorld* World = GetEditorWorld();
+	if (!World)
+	{
+		Result.ErrorMessage = TEXT("SaveLandscape: no editor world available.");
+		UE_LOG(LogTemp, Warning, TEXT("%s"), *Result.ErrorMessage);
+		return Result;
+	}
+
+	// Resolve the landscape GUID from any actor (parent ALandscape or a streaming proxy)
+	// matching the name/label.
+	FGuid TargetGuid;
+	ALandscapeProxy* Matched = nullptr;
+	for (TActorIterator<ALandscapeProxy> It(World); It; ++It)
+	{
+		ALandscapeProxy* Proxy = *It;
+		if (!Proxy)
+		{
+			continue;
+		}
+		if (Proxy->GetActorLabel().Equals(LandscapeNameOrLabel, ESearchCase::IgnoreCase) ||
+			Proxy->GetName().Equals(LandscapeNameOrLabel, ESearchCase::IgnoreCase))
+		{
+			Matched = Proxy;
+			TargetGuid = Proxy->GetLandscapeGuid();
+			break;
+		}
+	}
+
+	if (!Matched)
+	{
+		Result.ErrorMessage = FString::Printf(
+			TEXT("SaveLandscape: no landscape actor named or labelled '%s'."), *LandscapeNameOrLabel);
+		UE_LOG(LogTemp, Warning, TEXT("%s"), *Result.ErrorMessage);
+		return Result;
+	}
+	if (ALandscape* ParentActor = Matched->GetLandscapeActor())
+	{
+		Result.LandscapeLabel = ParentActor->GetActorLabel();
+	}
+
+	// Collect the parent plus every proxy sharing the GUID, de-duplicated by package.
+	TArray<UPackage*> Packages;
+	TSet<UPackage*> Seen;
+	for (TActorIterator<ALandscapeProxy> It(World); It; ++It)
+	{
+		ALandscapeProxy* Proxy = *It;
+		if (!Proxy || Proxy->GetLandscapeGuid() != TargetGuid)
+		{
+			continue;
+		}
+		UPackage* Pkg = Proxy->GetPackage();
+		if (Pkg && !Seen.Contains(Pkg))
+		{
+			Seen.Add(Pkg);
+			Packages.Add(Pkg);
+		}
+	}
+
+	Result.NumRequested = Packages.Num();
+	if (Packages.Num() == 0)
+	{
+		Result.ErrorMessage = TEXT("SaveLandscape: resolved zero packages to save.");
+		UE_LOG(LogTemp, Warning, TEXT("%s"), *Result.ErrorMessage);
+		return Result;
+	}
+
+	// bOnlyDirty=false: save regardless of the (unreliable) dirty flag.
+	const bool bSaved = UEditorLoadingAndSavingUtils::SavePackages(Packages, /*bOnlyDirty=*/false);
+	if (bSaved)
+	{
+		for (UPackage* Pkg : Packages)
+		{
+			Result.SavedPackages.Add(Pkg->GetName());
+		}
+		Result.bSuccess = true;
+		UE_LOG(LogTemp, Log, TEXT("SaveLandscape: saved %d package(s) for landscape '%s'."),
+			Packages.Num(), *Result.LandscapeLabel);
+	}
+	else
+	{
+		Result.ErrorMessage = FString::Printf(
+			TEXT("SaveLandscape: SavePackages reported failure saving %d package(s) for '%s' "
+				 "(e.g. a read-only/source-controlled file)."),
+			Packages.Num(), *Result.LandscapeLabel);
+		UE_LOG(LogTemp, Warning, TEXT("%s"), *Result.ErrorMessage);
+	}
+	return Result;
 }
 
 void ULandscapeService::PopulateLandscapeInfo(ALandscapeProxy* Landscape, FLandscapeInfo_Custom& OutInfo)

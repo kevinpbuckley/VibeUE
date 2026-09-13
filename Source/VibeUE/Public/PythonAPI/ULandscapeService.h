@@ -679,6 +679,123 @@ struct FLineTraceHit
  *   # Apply procedural noise for natural terrain
  *   unreal.LandscapeService.apply_noise("Landscape", 0.0, 0.0, 10000.0, 500.0, 0.005, 42)
  */
+
+/**
+ * Per-proxy record of what the last landscape height write did to one proxy package.
+ * See FLandscapeWriteReport / get_last_landscape_write().
+ */
+USTRUCT(BlueprintType)
+struct FLandscapeProxyWriteInfo
+{
+	GENERATED_BODY()
+
+	/** Long package name of the proxy (or parent landscape) actor package. */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Landscape")
+	FString PackageName;
+
+	/** Absolute .uasset path on disk this package name resolves to (may not exist yet). */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Landscape")
+	FString FilePath;
+
+	/** UPackage::IsDirty() just before the edit-layer resolve. */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Landscape")
+	bool bDirtyBefore = false;
+
+	/** UPackage::IsDirty() just after the edit-layer resolve (the "dirty list" the editor shows). */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Landscape")
+	bool bDirtyAfter = false;
+
+	/**
+	 * True if the .uasset file's on-disk timestamp changed across the write (or the file
+	 * appeared where none existed) — i.e. the engine wrote it to disk during the call even
+	 * though bDirtyAfter may be false. This is the honest signal; the dirty flag is not.
+	 */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Landscape")
+	bool bWrittenToDisk = false;
+
+	/** Size of the on-disk file after the write (bytes), or -1 if it does not exist. */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Landscape")
+	int64 FileSizeBytes = -1;
+};
+
+/**
+ * Honest audit of the last landscape height write (get_last_landscape_write()).
+ *
+ * Populated by every height writer (flatten/sculpt/smooth/set_height_in_region/import/etc.)
+ * via UpdateLandscapeAfterHeightEdit. Because a World Partition landscape uses
+ * ELandscapeDirtyingMode (LandscapeSettings, default InLandscapeModeAndUserTriggeredChanges),
+ * an edit made outside Landscape mode — which is every VibeUE/Python edit — is NOT marked
+ * dirty; it is tracked in the engine's ULandscapeInfo modified-package list instead. So the
+ * editor's dirty list can be EMPTY while the proxy packages were still written to disk during
+ * the resolve. NumWrittenToDisk / bWrittenToDisk (an mtime comparison) is the reliable signal;
+ * git status remains the ground-truth audit.
+ *
+ * Python: rep = unreal.LandscapeService.get_last_landscape_write()
+ */
+USTRUCT(BlueprintType)
+struct FLandscapeWriteReport
+{
+	GENERATED_BODY()
+
+	/** True once at least one landscape write has run this session. */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Landscape")
+	bool bSuccess = false;
+
+	/** Reason the report is empty/invalid (e.g. no write yet). */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Landscape")
+	FString ErrorMessage;
+
+	/** Actor label of the landscape the last write touched. */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Landscape")
+	FString LandscapeLabel;
+
+	/** Number of proxy packages whose components the write touched (the fan-out set). */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Landscape")
+	int32 NumProxiesDirtied = 0;
+
+	/** Number of those packages whose file was written to disk during the call (mtime changed). */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Landscape")
+	int32 NumWrittenToDisk = 0;
+
+	/** True if any package was written to disk during the call. */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Landscape")
+	bool bAnyWrittenToDisk = false;
+
+	/** Human-readable one-line summary (the same text logged by the writer). */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Landscape")
+	FString Summary;
+
+	/** Per-proxy detail. */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Landscape")
+	TArray<FLandscapeProxyWriteInfo> Proxies;
+};
+
+/**
+ * Result of save_landscape(): the packages an explicit landscape save wrote to disk.
+ */
+USTRUCT(BlueprintType)
+struct FLandscapeSaveResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Landscape")
+	bool bSuccess = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Landscape")
+	FString ErrorMessage;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Landscape")
+	FString LandscapeLabel;
+
+	/** Number of packages passed to the save (parent + every proxy sharing the GUID). */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Landscape")
+	int32 NumRequested = 0;
+
+	/** Long package names that were saved. */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Landscape")
+	TArray<FString> SavedPackages;
+};
+
 UCLASS(BlueprintType)
 class VIBEUE_API ULandscapeService : public UToolsetDefinition
 {
@@ -754,6 +871,44 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static bool DeleteLandscape(const FString& LandscapeNameOrLabel);
+
+	// =================================================================
+	// Save / Write Audit (issue B8)
+	// =================================================================
+
+	/**
+	 * Return the honest audit of the LAST landscape height write of this session.
+	 * Maps to action="get_last_landscape_write"
+	 *
+	 * Every height writer (flatten/sculpt/smooth/raise_lower/set_height_in_region/apply_noise/
+	 * import_heightmap/...) records, for each proxy package it touched, whether that package is
+	 * dirty and whether its .uasset file was actually written to disk during the call (an mtime
+	 * comparison). On a World Partition landscape the engine's dirtying mode (see LandscapeSettings)
+	 * does NOT mark Python edits dirty, so the editor's dirty list can be empty while the proxy
+	 * files were still written — use bWrittenToDisk / NumWrittenToDisk, and git status, not the
+	 * dirty flag, to audit what changed.
+	 *
+	 * @return The last write report; bSuccess is false with an ErrorMessage if nothing has run yet.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
+	static FLandscapeWriteReport GetLastLandscapeWrite();
+
+	/**
+	 * Explicitly save a landscape and every proxy that shares its GUID to disk.
+	 * Maps to action="save_landscape"
+	 *
+	 * import_heightmap dirties proxies but does NOT save them; brush/region ops may write proxies
+	 * to disk during the resolve without ever marking them dirty. This is the deterministic way to
+	 * flush a landscape to disk: it collects the parent ALandscape package plus every
+	 * ALandscapeStreamingProxy sharing the landscape GUID and saves them all through
+	 * UEditorLoadingAndSavingUtils::SavePackages(..., bOnlyDirty=false), so it saves regardless of
+	 * the (unreliable) dirty flag.
+	 *
+	 * @param LandscapeNameOrLabel - Name or label of the landscape (parent or any proxy).
+	 * @return FLandscapeSaveResult listing the package names that were saved.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
+	static FLandscapeSaveResult SaveLandscape(const FString& LandscapeNameOrLabel);
 
 	// =================================================================
 	// Heightmap Operations
@@ -2035,4 +2190,10 @@ private:
 	static class ULandscapeInfo* GetLandscapeInfoForActor(class ALandscapeProxy* Landscape);
 	static void PopulateLandscapeInfo(class ALandscapeProxy* Landscape, FLandscapeInfo_Custom& OutInfo);
 	static void UpdateLandscapeAfterHeightEdit(class ALandscapeProxy* Landscape);
+
+	// --- Write-audit instrumentation (issue B8) ---
+	/** Snapshot every proxy package sharing Landscape's GUID (dirty flag + file mtime/size) before a write. */
+	static void BeginLandscapeWriteCapture(class ALandscapeProxy* Landscape);
+	/** Re-check the snapshot after the write, populate GLastLandscapeWriteReport and log the honest line. */
+	static void FinalizeLandscapeWriteCapture(class ALandscapeProxy* Landscape);
 };
