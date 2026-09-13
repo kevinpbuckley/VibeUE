@@ -129,19 +129,36 @@ public:
 	 * dialog's Force Delete button does); without it, a referenced asset is refused and the
 	 * referencers are returned so the caller can decide.
 	 *
-	 * Before that check, this mirrors the engine's own delete path: ObjectTools::ForceDeleteObjects
-	 * broadcasts FEditorDelegates::OnAssetsPreDelete (ObjectTools.cpp:3978) before its in-memory
-	 * referencer gather (DeleteSingleObject, ObjectTools.cpp:3500), and FBlueprintActionDatabase
-	 * clears its transient UBlueprintNodeSpawner objects for the deleting asset in response
-	 * (BlueprintActionDatabase.cpp:985-1014). We clear those the same way and collect garbage first,
-	 * so the action database's own node spawners are never mistaken for a blocking native reference.
+	 * IMPLEMENTATION: this replicates the front half of ObjectTools::ForceDeleteObjects
+	 * (ObjectTools.cpp:3621-4063) to reach the same refusal DECISION without its modal — clear the
+	 * Blueprint action database, OnAssetsCanDelete gate, ForceReplaceReferences(nullptr, ...) to null
+	 * every reflected reference in memory, CollectGarbage, then GatherObjectReferencersForDeletion with
+	 * default flags (the reachability-filtered check DeleteSingleObject runs at :3500). Where the engine
+	 * would pop the modal "is in use" dialog it cannot answer, this refuses and returns the referencer
+	 * names instead. That set is exactly what the dialog would have listed: objects still reachable from a
+	 * GC root after the replace, i.e. NATIVE references force-replace cannot null (the canonical case is
+	 * the UGCObjectReferencer a Python module-level global appears as). A transient helper that holds the
+	 * asset natively but is not itself rooted (e.g. an AnimSequencerController) drops out after the GC and
+	 * does NOT block, exactly as the engine's own delete succeeds on it.
 	 *
-	 * Even with bForceEvenIfReferenced, the delete is REFUSED (never prompts) when the object is
-	 * still held in memory by something force-delete cannot null — a native GCObject root, a
-	 * transient object, or a Python module-level global that created or loaded it. Those are
-	 * returned in Referencers with an ErrorMessage telling the caller to release the globals
-	 * (del them, then unreal.SystemLibrary.collect_garbage()) and retry. Only on-disk asset
-	 * references, which force-delete can clear, are pushed through.
+	 * On success the ACTUAL deletion is handed to the real ObjectTools::ForceDeleteObjects(bShowConfirmation
+	 * =false), so child-Blueprint reparenting, child-redirector/generated-class removal and
+	 * UUserDefinedStruct reinstancing keep full engine fidelity. Its own internal "is in use" check cannot
+	 * reach a dialog (it re-runs the replace before checking, and we already proved nothing rooted refers
+	 * to the asset); the only modal it could still raise is the read-only-package prompt, and only for an
+	 * asset whose .uasset is read-only on disk with source control disabled.
+	 *
+	 * SIDE EFFECT with bForceEvenIfReferenced: the reflected references are nulled (ForceReplaceReferences)
+	 * BEFORE the final reachability check, so if that check then refuses, other in-memory objects are left
+	 * with their references to this asset already nulled — the same state the engine produces before its
+	 * dialog, i.e. what pressing Cancel on that dialog would have left behind. The non-force path is
+	 * unchanged: when an on-disk asset references the target it is refused up front (before any replace),
+	 * so a non-force call never nulls references inside other on-disk assets.
+	 *
+	 * Even with bForceEvenIfReferenced, the delete is REFUSED (never prompts) when the object is still
+	 * reachable from a GC root after the replace — a native GCObject root or a Python module-level global
+	 * that created or loaded it. Those are returned in Referencers with an ErrorMessage telling the caller
+	 * to release the globals (del them, then unreal.SystemLibrary.collect_garbage()) and retry.
 	 *
 	 * @param AssetPath              - Package path of the asset (/Game/Folder/Asset)
 	 * @param bForceEvenIfReferenced - True: delete anyway and clear references; false: refuse if referenced

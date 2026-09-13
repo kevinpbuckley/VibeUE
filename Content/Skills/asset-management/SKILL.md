@@ -89,15 +89,23 @@ what pointed at the asset. Prefer creating the replacement under a NEW name and 
 over force-deleting.
 
 **Even `delete_asset_unattended(path, True)` refuses a rooted in-memory object — it never prompts.**
-If the object is still held in memory by something force-delete cannot null (a native GCObject
-root, a transient object, or a Python module-level global that created or loaded the asset earlier
-this session), the call returns `b_success == False` with the blocking referencers in
-`result.referencers` and `result.error_message` explaining it, instead of popping the engine's "is
-in use" dialog (which stalled the editor 6+ minutes). The fix is what the error says: release the
-Python globals holding it — `del my_var`, then `unreal.SystemLibrary.collect_garbage()` — and retry.
-Only on-disk asset references (which force-delete can clear) are pushed through. A Blueprint asset is
-NOT falsely blocked by the editor's own Blueprint-palette node spawners: the call clears them the
-same way the engine's own delete does before it checks.
+Internally the call replicates the engine's own force delete step for step (clear the Blueprint action
+database, null every reflected reference in memory, collect garbage, then run the engine's
+reachability-filtered referencer check), substituting a refusal for the modal "is in use" dialog it
+cannot answer (that dialog stalled the editor 6+ minutes). So it refuses only when the asset is STILL
+reachable from a GC root after that replace — a native reference force-replace cannot null, in practice
+a Python module-level global (a `UGCObjectReferencer` root) that created or loaded the asset earlier
+this session. When it does, the call returns `b_success == False` with those referencers in
+`result.referencers` and `result.error_message` saying it is "still referenced after force-replace
+(native references)". The fix is what the error says: release the Python globals holding it —
+`del my_var`, then `unreal.SystemLibrary.collect_garbage()` — and retry. Transient editor helpers that
+hold the asset natively but are not themselves rooted (an anim data controller, a Blueprint-palette
+node spawner) do NOT block — the engine's own delete succeeds on them and so does this.
+
+Note: with `True` the reflected references are nulled BEFORE that final check, so a refusal leaves
+other in-memory objects with their references to the asset already nulled (the same state the engine
+produces before its dialog). The non-force path (`False`) is unchanged — it refuses up front when an
+on-disk asset references the target, so it never nulls references inside other on-disk assets.
 
 ### ⚠️ Never `delete_asset` a Blueprint you loaded or compiled this session
 
