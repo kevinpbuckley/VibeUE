@@ -638,13 +638,23 @@ FSceneCaptureResult UViewportService::CaptureScene(
 		CaptureComp->FOVAngle = FOV;
 	}
 
-	// A backgrounded editor has no converged eye adaptation, so an auto-exposed capture
-	// comes out black. Only override when the caller asks (ExposureBias != 0); the measured
-	// working range for this project is ~10-14.
+	// Exposure. ExposureBias == 0 keeps the engine's DEFAULT (automatic) exposure — correct for a
+	// foreground / PIE window. A backgrounded editor has no converged eye adaptation and captures
+	// black on auto, so a non-zero bias switches to a FIXED manual exposure that is DECOUPLED from
+	// the physical camera (AutoExposureApplyPhysicalCameraExposure=false). With the physical camera
+	// left on (the engine default for Manual), the manual white point is the physical-camera EV100
+	// — log2(Fstop^2 * ShutterSpeed * 100 / ISO) ≈ 9.9 stops at the default f/4, 1/60, ISO100 — which
+	// both crushes the capture toward black and makes the bias response unintuitive. With it off the
+	// white point is EV100=0 (LuminanceMax), so the eye-adaptation exposure scale reduces to exactly
+	// pow(2, AutoExposureBias): +1 EV = 2x brighter, negative = darker. (Formula: MiddleGreyExposure-
+	// Compensation = pow(2, AutoExposureBias) and, in Manual, SmoothedExposureScale = 1/WhitePoint;
+	// see PostProcessEyeAdaptation.usf EyeAdaptationCommon and CalculateManualAutoExposure.)
 	if (!FMath::IsNearlyZero(ExposureBias))
 	{
 		CaptureComp->PostProcessSettings.bOverride_AutoExposureMethod = true;
 		CaptureComp->PostProcessSettings.AutoExposureMethod = AEM_Manual;
+		CaptureComp->PostProcessSettings.bOverride_AutoExposureApplyPhysicalCameraExposure = true;
+		CaptureComp->PostProcessSettings.AutoExposureApplyPhysicalCameraExposure = false;
 		CaptureComp->PostProcessSettings.bOverride_AutoExposureBias = true;
 		CaptureComp->PostProcessSettings.AutoExposureBias = ExposureBias;
 	}

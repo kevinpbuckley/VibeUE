@@ -399,8 +399,11 @@ public:
 	 * - The render target is RTF_RGBA8. The default float format (RTF_RGBA16f) writes
 	 *   non-PNG bytes. The exported pixels are forced opaque (A=255) regardless.
 	 * - A backgrounded editor has no converged auto-exposure, so an auto-exposed capture
-	 *   comes out black. Pass ExposureBias != 0 to force AEM_Manual with that bias; the
-	 *   measured working range for this project is ~10-14.
+	 *   comes out black. Pass ExposureBias != 0 to force a FIXED manual exposure decoupled from
+	 *   the physical camera; the final exposure scale is then pow(2, ExposureBias), so positive
+	 *   brightens (+1 EV = 2x) and negative darkens. Small values are usually right — start near
+	 *   0 and raise a stop at a time. (Leaving the physical camera coupled, the engine default for
+	 *   Manual, uses a ~9.9-stop white point that crushes the shot and inverts the bias response.)
 	 *
 	 * @param Location - World location of the capture camera.
 	 * @param Rotation - World rotation of the capture camera. For a north-up top-down
@@ -415,9 +418,11 @@ public:
 	 *        projection with this world-space width (for a minimap, pass the map size in uu).
 	 * @param FOV - Horizontal field of view in degrees for perspective mode (ignored when
 	 *        OrthoWidth > 0). Default 90.
-	 * @param ExposureBias - 0 (default) = keep the capture's automatic exposure. Non-zero =
-	 *        force manual exposure (AEM_Manual) at this bias; use ~10-14 for a backgrounded
-	 *        editor, which otherwise captures black.
+	 * @param ExposureBias - 0 (default) = keep the engine's automatic exposure (correct for a
+	 *        foreground/PIE window). Non-zero = force a FIXED manual exposure decoupled from the
+	 *        physical camera, where this value is a clean EV offset (exposure scale = pow(2,bias)):
+	 *        positive brightens, negative darkens. Use it for a backgrounded editor, which captures
+	 *        black on auto; small values are usually right (start near 0 and raise a stop at a time).
 	 * @return FSceneCaptureResult with bSuccess, OutputPath, Width/Height, FileSizeBytes, ErrorMessage.
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")

@@ -170,7 +170,7 @@ res = unreal.ViewportService.capture_scene(
     unreal.Rotator(pitch=-20, yaw=45, roll=0),  # kwargs — Rotator positional order is (roll,pitch,yaw)
     1280, 720,                                # width, height (px)
     "C:/temp/shot.png",                       # absolute path, or relative → Saved/VibeUE/Captures
-    exposure_bias=12.0)                       # backgrounded editor has no auto-exposure — see below
+    exposure_bias=1.0)                        # 0 = auto (black when hidden); small +EV for a fixed exposure — see below
 if res.b_success:
     print("wrote", res.output_path, res.file_size_bytes, "bytes")
 else:
@@ -186,11 +186,17 @@ else:
   few KB.)
 - **Format.** The render target is `RTF_RGBA8`. The engine default (`RTF_RGBA16f`, a float format)
   writes non-PNG bytes; `capture_scene` never uses it.
-- **Exposure.** A backgrounded editor has **no converged eye adaptation**, so an auto-exposed capture
-  comes out **black**. Pass `exposure_bias` != 0 to force manual exposure (`AEM_Manual`) at that bias.
-  The measured working range for this project is **~10–14**; tune by capturing, not by reasoning. Leave
-  `exposure_bias=0` (default) to keep automatic exposure — fine for a foregrounded/PIE window, black
-  when hidden.
+- **Exposure.** Leave `exposure_bias=0` (default) to keep the engine's **automatic** exposure — fine
+  for a foreground / PIE window, but **black** when the editor is hidden (no converged eye adaptation).
+  A backgrounded editor needs a **fixed** exposure: pass `exposure_bias` != 0 and `capture_scene`
+  switches to a manual exposure **decoupled from the physical camera**, where the value is a clean **EV
+  offset** — the exposure scale is `pow(2, exposure_bias)`, so **positive brightens** (+1 EV = 2× ) and
+  negative darkens. **Small values are usually right — start near 0 and raise a stop at a time**, tuning
+  by capturing.
+  > ⚠️ Do **not** use large biases like 10–14 here. That range came from an earlier build that left the
+  > physical camera coupled to Manual exposure (a ~9.9-stop white point), which crushed the shot toward
+  > black and made larger biases look *darker*. With the physical camera decoupled a bias of ~10+ is
+  > wildly over-exposed.
 - **Cleanup.** The transient capture actor and its render target are destroyed inside the call — no
   stray actors are left in the level.
 
@@ -207,7 +213,7 @@ res = unreal.ViewportService.capture_scene(
     2048, 2048,
     "minimap.png",                                  # → Saved/VibeUE/Captures/minimap.png
     ortho_width=map_size,
-    exposure_bias=12.0)
+    exposure_bias=1.0)   # fixed exposure for a hidden editor; raise a stop at a time if dim
 ```
 
 - `ortho_width > 0` selects **orthographic** projection (and `fov` is ignored); `ortho_width == 0`
