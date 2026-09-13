@@ -18,6 +18,7 @@
 #include "Logging/TokenizedMessage.h"
 #include "K2Node_FunctionEntry.h"
 #include "K2Node_FunctionResult.h"
+#include "K2Node_Variable.h"            // Base of Get/Set nodes — reference counting for RemoveMemberVariable
 #include "K2Node_VariableGet.h"
 #include "K2Node_VariableSet.h"
 #include "K2Node_IfThenElse.h"
@@ -2131,6 +2132,107 @@ bool UBlueprintService::AddMemberVariable(
 	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
 
 	UE_LOG(LogTemp, Log, TEXT("AddMemberVariable: Added variable '%s' of type '%s' to %s"), *VariableName, *VariableType, *BlueprintPath);
+	return true;
+}
+
+bool UBlueprintService::RemoveMemberVariable(
+	const FString& BlueprintPath,
+	const FString& VariableName,
+	bool bForce)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("RemoveMemberVariable: could not load blueprint: %s"), *BlueprintPath);
+		return false;
+	}
+
+	const FName VarFName(*VariableName);
+
+	// A component created through the Simple Construction Script surfaces as a variable too, but it is
+	// NOT in NewVariables — removing it must go through the component API, not this call.
+	if (Blueprint->SimpleConstructionScript)
+	{
+		for (const USCS_Node* Node : Blueprint->SimpleConstructionScript->GetAllNodes())
+		{
+			if (Node && Node->GetVariableName() == VarFName)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("RemoveMemberVariable: '%s' is a component on %s — remove it with the component API (remove_component), not remove_member_variable."), *VariableName, *BlueprintPath);
+				return false;
+			}
+		}
+	}
+
+	// The variable must be a real member variable (present in NewVariables).
+	bool bExists = false;
+	for (const FBPVariableDescription& Var : Blueprint->NewVariables)
+	{
+		if (Var.VarName == VarFName)
+		{
+			bExists = true;
+			break;
+		}
+	}
+	if (!bExists)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("RemoveMemberVariable: variable '%s' not found in %s"), *VariableName, *BlueprintPath);
+		return false;
+	}
+
+	// Count references across ALL graphs: Get/Set nodes for THIS blueprint's own member variable.
+	// Require self-context and non-local scope so a same-named variable on another class (A8) or a
+	// same-named function-local variable is not counted.
+	TArray<UEdGraph*> Graphs;
+	Blueprint->GetAllGraphs(Graphs);
+	int32 TotalRefs = 0;
+	TArray<FString> ReferencingGraphs;
+	for (UEdGraph* Graph : Graphs)
+	{
+		if (!Graph)
+		{
+			continue;
+		}
+		int32 GraphRefs = 0;
+		for (UEdGraphNode* Node : Graph->Nodes)
+		{
+			const UK2Node_Variable* VarNode = Cast<UK2Node_Variable>(Node);
+			if (VarNode
+				&& VarNode->VariableReference.IsSelfContext()
+				&& !VarNode->VariableReference.IsLocalScope()
+				&& VarNode->GetVarName() == VarFName)
+			{
+				++GraphRefs;
+			}
+		}
+		if (GraphRefs > 0)
+		{
+			TotalRefs += GraphRefs;
+			ReferencingGraphs.Add(FString::Printf(TEXT("%s (%d)"), *Graph->GetName(), GraphRefs));
+		}
+	}
+
+	if (TotalRefs > 0 && !bForce)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("RemoveMemberVariable: '%s' is referenced by %d node(s) in %s: %s. Pass force=True to remove the variable and its referencing nodes."),
+			*VariableName, TotalRefs, *BlueprintPath, *FString::Join(ReferencingGraphs, TEXT(", ")));
+		return false;
+	}
+
+	// FBlueprintEditorUtils::RemoveMemberVariable removes the referencing Get/Set nodes as well.
+	FBlueprintEditorUtils::RemoveMemberVariable(Blueprint, VarFName);
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+
+	// Verify by readback — return true only when the variable is actually gone.
+	for (const FBPVariableDescription& Var : Blueprint->NewVariables)
+	{
+		if (Var.VarName == VarFName)
+		{
+			UE_LOG(LogTemp, Error, TEXT("RemoveMemberVariable: '%s' is still present after removal in %s"), *VariableName, *BlueprintPath);
+			return false;
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("RemoveMemberVariable: removed '%s' from %s (%d reference node(s) removed)"), *VariableName, *BlueprintPath, TotalRefs);
 	return true;
 }
 
