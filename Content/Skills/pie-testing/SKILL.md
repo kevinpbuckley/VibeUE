@@ -133,7 +133,12 @@ print(unreal.InputService.inject_key("SpaceBar"))
 ```
 
 Both return JSON with `success` and an `error_code` naming the problem (PIE not running, no player
-controller yet, unknown key, ...).
+controller yet, unknown key, ...). `inject_key` additionally rejects a **Simulate In Editor** session
+with `SIMULATE_NOT_PLAY`: Simulate has no player game viewport, so the Slate key events would be
+dropped. Use `StartPIE` (Play), not Simulate, when driving keys. Its `handled_down` / `handled_up`
+fields report whether a Slate widget *consumed* the event, not whether the key reached the player — a
+key the game polls with `WasInputKeyJustPressed` lands with `handled_down: false`. Verify from game
+state, not from those flags.
 
 ## Seeing the game — `capture_image` (issues #544/#546)
 

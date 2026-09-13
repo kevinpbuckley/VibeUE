@@ -952,6 +952,12 @@ FString UInputService::InjectKey(const FString& KeyName, const FString& EventTyp
 	{
 		return InjectionErrorJson(TEXT("PIE_NOT_RUNNING"), TEXT("PIE is not running — inject_key targets the PIE game viewport."));
 	}
+	// Simulate In Editor also sets PlayWorld, but it has no player game viewport for Slate to focus:
+	// the key events below would be dropped while this still reported success.
+	if (GEditor->IsSimulatingInEditor())
+	{
+		return InjectionErrorJson(TEXT("SIMULATE_NOT_PLAY"), TEXT("The session is Simulate In Editor, which has no player game viewport — inject_key needs Play In Editor. Stop the session and use StartPIE."));
+	}
 	if (!FSlateApplication::IsInitialized())
 	{
 		return InjectionErrorJson(TEXT("NO_SLATE"), TEXT("Slate is not initialized."));
