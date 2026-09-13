@@ -129,36 +129,28 @@ public:
 	 * dialog's Force Delete button does); without it, a referenced asset is refused and the
 	 * referencers are returned so the caller can decide.
 	 *
-	 * IMPLEMENTATION: this replicates the front half of ObjectTools::ForceDeleteObjects
-	 * (ObjectTools.cpp:3621-4063) to reach the same refusal DECISION without its modal — clear the
-	 * Blueprint action database, OnAssetsCanDelete gate, ForceReplaceReferences(nullptr, ...) to null
-	 * every reflected reference in memory, CollectGarbage, then GatherObjectReferencersForDeletion with
-	 * default flags (the reachability-filtered check DeleteSingleObject runs at :3500). Where the engine
-	 * would pop the modal "is in use" dialog it cannot answer, this refuses and returns the referencer
-	 * names instead. That set is exactly what the dialog would have listed: objects still reachable from a
-	 * GC root after the replace, i.e. NATIVE references force-replace cannot null (the canonical case is
-	 * the UGCObjectReferencer a Python module-level global appears as). A transient helper that holds the
-	 * asset natively but is not itself rooted (e.g. an AnimSequencerController) drops out after the GC and
-	 * does NOT block, exactly as the engine's own delete succeeds on it.
+	 * IMPLEMENTATION: the refusal DECISION is a strictly NON-MUTATING, conservative native-root check.
+	 * It clears the Blueprint action database (harmless; mirrors the engine's OnAssetsPreDelete handler),
+	 * collects garbage, then runs ObjectTools::GatherObjectReferencersForDeletion with default flags to
+	 * see who holds the asset — WITHOUT replacing any references first. It refuses ONLY when an external
+	 * referencer is a UGCObjectReferencer: a native GC root holding the asset directly, which in an
+	 * unattended session is a Python module-level global that created or loaded it. That is the one case
+	 * the engine's force delete cannot clear, so it would stall on the modal "is in use" dialog. Every
+	 * other in-memory referencer — on-disk asset references, the action database's transient node
+	 * spawners, transient editor helpers like AnimSequencerController — the engine's own force delete
+	 * clears without prompting, so those are left to it.
+	 *
+	 * The decision does NOT run ForceReplaceReferences: an earlier shape did, and on a refusal it left the
+	 * Blueprint's skeleton/generated classes with a null ClassGeneratedBy, crashing the caller's retry
+	 * ("UBlueprintGeneratedClass::GetAuthoritativeClass: ClassGeneratedBy is null"). So the check only
+	 * looks; it never mutates.
 	 *
 	 * On success the ACTUAL deletion is handed to the real ObjectTools::ForceDeleteObjects(bShowConfirmation
-	 * =false), so child-Blueprint reparenting, child-redirector/generated-class removal and
-	 * UUserDefinedStruct reinstancing keep full engine fidelity. Its own internal "is in use" check cannot
-	 * reach a dialog (it re-runs the replace before checking, and we already proved nothing rooted refers
-	 * to the asset); the only modal it could still raise is the read-only-package prompt, and only for an
-	 * asset whose .uasset is read-only on disk with source control disabled.
-	 *
-	 * SIDE EFFECT with bForceEvenIfReferenced: the reflected references are nulled (ForceReplaceReferences)
-	 * BEFORE the final reachability check, so if that check then refuses, other in-memory objects are left
-	 * with their references to this asset already nulled — the same state the engine produces before its
-	 * dialog, i.e. what pressing Cancel on that dialog would have left behind. The non-force path is
-	 * unchanged: when an on-disk asset references the target it is refused up front (before any replace),
-	 * so a non-force call never nulls references inside other on-disk assets.
-	 *
-	 * Even with bForceEvenIfReferenced, the delete is REFUSED (never prompts) when the object is still
-	 * reachable from a GC root after the replace — a native GCObject root or a Python module-level global
-	 * that created or loaded it. Those are returned in Referencers with an ErrorMessage telling the caller
-	 * to release the globals (del them, then unreal.SystemLibrary.collect_garbage()) and retry.
+	 * =false), exactly as the pre-A13 code did, so child-Blueprint reparenting, child-redirector/
+	 * generated-class removal and UUserDefinedStruct reinstancing keep full engine fidelity. Its own
+	 * internal "is in use" check cannot reach a dialog, because we already confirmed no native root holds
+	 * the asset; the only modal it could still raise is the read-only-package prompt, and only for an asset
+	 * whose .uasset is read-only on disk with source control disabled.
 	 *
 	 * @param AssetPath              - Package path of the asset (/Game/Folder/Asset)
 	 * @param bForceEvenIfReferenced - True: delete anyway and clear references; false: refuse if referenced

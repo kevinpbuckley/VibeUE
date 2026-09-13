@@ -26,6 +26,7 @@
 #include "BlueprintActionDatabase.h"   // A13 false-refusal fix: clear transient node spawners like the engine's own delete path
 #include "BlueprintAssetHandler.h"     // A13: engine fallback for a non-Blueprint asset that still owns a UBlueprint
 #include "Engine/Blueprint.h"          // A13: complete UBlueprint type for the UBlueprint* -> UObject* base conversion above
+#include "UObject/GCObject.h"          // A13: UGCObjectReferencer — the native GC root a Python global appears as (refusal signal)
 
 // ========== Texture Operations ==========
 
@@ -502,122 +503,78 @@ FUnattendedDeleteResult UAssetDiscoveryService::DeleteAssetUnattended(const FStr
 		}
 	};
 
-	// Steps (0)-(7) below replicate the front half of ObjectTools::ForceDeleteObjects
-	// (ObjectTools.cpp:3621-4063) purely to reach the SAME refusal DECISION the engine reaches, without
-	// its modal: where the engine would pop the "is in use" dialog and stall an unattended editor, we
-	// refuse and return the referencer names instead. Guessing which referencers block (the earlier
-	// two-gather / property-count approach) is impossible before the reference replace runs — a transient
-	// helper like AnimSequencerController holds the asset NATIVELY via AddReferencedObjects, which
-	// force-replace cannot null, yet the engine still deletes it because that helper is not reachable from
-	// a GC root once the reflected references are gone. Only replicating the engine's replace -> GC ->
-	// reachability check answers this correctly. Once that check passes, step (6) hands the ACTUAL
-	// deletion to the real ObjectTools::ForceDeleteObjects so all of its asset-type fixups keep full
-	// engine fidelity (see the note there); the replace+GC we already did guarantees its own internal
-	// reference check cannot reach the dialog.
+	// The refusal DECISION must be strictly NON-MUTATING. A previous shape ran ForceReplaceReferences
+	// here to mirror the engine before its check; on a refusal that left the Blueprint's skeleton/generated
+	// classes with a null ClassGeneratedBy, and the caller's retry (after releasing the global) then
+	// crashed: "Fatal error: UBlueprintGeneratedClass::GetAuthoritativeClass: ClassGeneratedBy is null"
+	// (BlueprintGeneratedClass.cpp:686). So we only LOOK before deciding, and never replace.
 	//
-	// (0) OnAssetsCanDelete gate (ForceDeleteObjects:3629-3635) — refuse WITHOUT a dialog if a system
-	//     vetoes the delete (DeleteSingleObject would itself pop that dialog otherwise, at :3462).
-	TArray<UObject*> DeleteObjects;
-	DeleteObjects.Add(Asset);
-	{
-		FCanDeleteAssetResult CanDelete;
-		FEditorDelegates::OnAssetsCanDelete.Broadcast(DeleteObjects, CanDelete);
-		if (!CanDelete.Get())
-		{
-			Result.ErrorMessage = FString::Printf(TEXT("A system vetoed deletion of %s (OnAssetsCanDelete). See the log for details."), *AssetPath);
-			UE_LOG(LogTemp, Warning, TEXT("UAssetDiscoveryService::DeleteAssetUnattended: %s"), *Result.ErrorMessage);
-			RestoreActionDatabase();
-			return Result;
-		}
-	}
-	// (2b) Pre-force-delete hook (ForceDeleteObjects:3688). (Editors were already closed above; the
-	//      action database was already cleared above — that mirrors the OnAssetsPreDelete handler.)
-	FEditorDelegates::OnPreForceDeleteObjects.Broadcast(DeleteObjects);
-
-	// (3) Null every reflected reference to the asset held anywhere in memory, exactly as the engine does
-	//     (ForceDeleteObjects:3957 -> the empty-within-set overload iterates a FThreadSafeObjectIterator
-	//     over ALL objects, ObjectTools.cpp:1365-1371). WARNING: with bForceEvenIfReferenced this mutates
-	//     other in-memory objects — a subsequent refusal leaves them with nulled references, the same
-	//     state the engine's own force delete produces before its (now-replaced) dialog.
-	TArray<UObject*> ObjectsToReplace;
-	ObjectsToReplace.Add(Asset);
-	ObjectTools::ForceReplaceReferences(nullptr, ObjectsToReplace);
-
-	// (4) Collect garbage as the engine does (ForceDeleteObjects:3964). KEEPFLAGS keeps the RF_Standalone
-	//     asset alive; helpers that lost their last reflected reference above are reaped here.
+	// ClearAssetActions above already dropped the transient Blueprint-palette node spawners (harmless —
+	// mirrors the engine's OnAssetsPreDelete handler). Collect garbage the same way the engine does so a
+	// global that was already del'd but not yet swept does not cause a false refusal; the asset carries
+	// RF_Standalone (a GARBAGE_COLLECTION_KEEPFLAGS flag) so it survives the sweep.
 	CollectGarbage(GARBAGE_COLLECTION_KEEPFLAGS);
 	if (!IsValid(Asset))
 	{
-		// The asset itself was reaped (it should not be — RF_Standalone survives the sweep). Nothing to
-		// restore, and nothing left to delete.
 		Result.ErrorMessage = FString::Printf(TEXT("Asset %s was garbage-collected before deletion could proceed"), *AssetPath);
 		return Result;
 	}
 
-	// (7) Give other systems the chance to drop references to the asset (ForceDeleteObjects:3974-3979).
-	FEditorDelegates::OnAssetsPreDelete.Broadcast(DeleteObjects);
-
-	// (5) Run the SAME check DeleteSingleObject runs before it would pop the dialog: the default-flags
-	//     gather (ObjectTools.cpp:3500), which is reachability-filtered (FindObjectsRoots at :411-436) —
-	//     it reports a referencer only if that referencer is itself reachable from a GC root and so
-	//     genuinely keeps the asset alive. After the replace+GC above, a native helper that is no longer
-	//     rooted drops out; a Python module-level global (a UGCObjectReferencer GC root) does not.
+	// Look at who holds the asset WITHOUT mutating anything (default flags, no replace first). The only
+	// referencer that would make the engine's force delete stall on its modal "is in use" dialog is a
+	// NATIVE GC root holding the asset directly — a UGCObjectReferencer, which is what a Python
+	// module-level global manifests as. Everything else the engine's own force delete clears without
+	// prompting: on-disk asset references (it nulls them via ForceReplaceReferences), the action
+	// database's transient node spawners, and transient editor helpers like AnimSequencerController
+	// (unrooted once the reflected refs are gone). Observed in the editor (2026-09-12): the held
+	// duplicated Blueprint listed GCObjectReferencer + 2 node spawners (refuse); after releasing the
+	// Python global it listed only the 2 spawners (deletes fine); an anim sequence listed only its
+	// AnimSequencerController (deletes fine). So the conservative, correct signal is: refuse iff some
+	// external referencer is a UGCObjectReferencer.
 	{
 		FReferencerInformationList Refs;
 		bool bIsReferenced = false;
 		bool bIsReferencedByUndo = false;
 		ObjectTools::GatherObjectReferencersForDeletion(Asset, bIsReferenced, bIsReferencedByUndo, &Refs);
 
-		// Only the undo buffer holds it -> reset the transaction buffer and proceed, exactly as the engine
-		// does (DeleteSingleObject:3502-3506).
-		if (!bIsReferenced && bIsReferencedByUndo && GEditor)
+		TArray<FString> NativeRoots;
+		for (const FReferencerInformation& Info : Refs.ExternalReferences)
 		{
-			GEditor->ResetTransaction(NSLOCTEXT("UnrealEd", "DeleteSelectedItem", "Delete Selected Item"));
+			if (Info.Referencer && Info.Referencer->IsA<UGCObjectReferencer>())
+			{
+				NativeRoots.AddUnique(Info.Referencer->GetFullName());
+			}
 		}
 
-		if (bIsReferenced)
+		if (NativeRoots.Num() > 0)
 		{
-			// This is the exact referencer set the engine's modal dialog (ObjectTools.cpp:3513-3516) would
-			// have shown. Refuse instead of prompting.
-			for (const FReferencerInformation& Info : Refs.ExternalReferences)
+			for (const FString& Ref : NativeRoots)
 			{
-				if (Info.Referencer)
-				{
-					Result.Referencers.AddUnique(Info.Referencer->GetFullName());
-				}
+				Result.Referencers.AddUnique(Ref);
 			}
-			const FString Example = Result.Referencers.Num() > 0 ? Result.Referencers.Last() : Asset->GetFullName();
 			Result.ErrorMessage = FString::Printf(
-				TEXT("%s is still referenced after force-replace (native references) by %d rooted object(s) (e.g. %s). ")
-				TEXT("This is the exact set the engine's modal 'is in use' dialog would have shown; deleting now would ")
-				TEXT("stall the editor. Release any Python globals holding this object (del them, then ")
-				TEXT("unreal.SystemLibrary.collect_garbage()) and retry."),
-				*AssetPath, Result.Referencers.Num(), *Example);
+				TEXT("%s is held by %d native GC root(s) (e.g. %s); in an unattended session that is a Python ")
+				TEXT("module-level global that created or loaded the asset. The engine's force delete would stall ")
+				TEXT("on its modal 'is in use' dialog, so this refuses instead of deleting. Release the Python ")
+				TEXT("globals holding it (del them, then unreal.SystemLibrary.collect_garbage()) and retry."),
+				*AssetPath, NativeRoots.Num(), *NativeRoots.Last());
 			UE_LOG(LogTemp, Warning, TEXT("UAssetDiscoveryService::DeleteAssetUnattended: %s"), *Result.ErrorMessage);
 			RestoreActionDatabase();
 			return Result;
 		}
 	}
 
-	// (6) Nothing reachable from a GC root references the asset — we just proved it with the same
-	//     reachability gather ForceDeleteObjects' internal DeleteSingleObject runs. So hand the actual
-	//     deletion to the real ObjectTools::ForceDeleteObjects (bShowConfirmation=false) rather than a
-	//     bare DeleteSingleObject: only the full path does child-Blueprint reparenting, child-redirector
-	//     and generated-class removal, and UUserDefinedStruct reinstancing (ForceDeleteObjects:3722-3953),
-	//     so a Blueprint/struct asset is deleted with full engine fidelity.
-	//
-	//     Its internal "{0} is in use" reference dialog (DeleteSingleObject:3514) CANNOT fire here:
-	//     ForceDeleteObjects re-runs ForceReplaceReferences(nullptr, ...) before that check, so the
-	//     reachability state is at least as clean as the one we just gathered as not-referenced. The
-	//     OnAssetsCanDelete veto dialogs (ForceDeleteObjects:3633, DeleteSingleObject:3462) are pre-empted
-	//     by our own OnAssetsCanDelete gate above. The remaining modal it CAN still pop is
-	//     MakeReadOnlyPackageWritable (ObjectTools.cpp:3372) — only when the asset's .uasset is read-only
-	//     ON DISK and source control is disabled; unattended temp/generated assets are writable, so it
-	//     does not fire in practice, but a read-only on-disk file is the one case that could still stall.
-	const int32 Deleted = ObjectTools::ForceDeleteObjects(DeleteObjects, /*bShowConfirmation*/ false);
+	// No native root holds it: hand the deletion to the engine's real force delete, exactly as the
+	// pre-A13 code did. ForceDeleteObjects nulls the reflected references itself (on-disk data-asset
+	// pointers etc.), reparents child Blueprints, removes child redirectors / generated classes and
+	// reinstances UUserDefinedStructs, and clears the transient helpers — none of which makes it prompt,
+	// because nothing rooted-and-native holds the asset (we just checked).
+	TArray<UObject*> Objects;
+	Objects.Add(Asset);
+	const int32 Deleted = ObjectTools::ForceDeleteObjects(Objects, /*bShowConfirmation*/ false);
 	if (Deleted <= 0)
 	{
-		Result.ErrorMessage = FString::Printf(TEXT("ForceDeleteObjects returned 0 for %s after force-replace (a read-only on-disk package, or a system veto; see the log)"), *AssetPath);
+		Result.ErrorMessage = FString::Printf(TEXT("ForceDeleteObjects returned 0 for %s (a read-only on-disk package, or a system veto; see the log)"), *AssetPath);
 		UE_LOG(LogTemp, Warning, TEXT("UAssetDiscoveryService::DeleteAssetUnattended: %s"), *Result.ErrorMessage);
 		RestoreActionDatabase();
 		return Result;
