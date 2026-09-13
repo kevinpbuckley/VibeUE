@@ -46,7 +46,7 @@ bool FVibeReadinessSignalPayloadTest::RunTest(const FString&)
 {
 	const FDateTime SessionStart(2026, 8, 3, 10, 0, 0);
 	const FDateTime Created(2026, 8, 3, 10, 0, 42);
-	const FString Payload = FVibeUEReadinessSignal::BuildSignalJson(4242, SessionStart, Created, TEXT("/Game/Maps/TestMap"));
+	const FString Payload = FVibeUEReadinessSignal::BuildSignalJson(4242, SessionStart, Created, TEXT("/Game/Maps/TestMap"), 8000, true);
 
 	// The file is named .json, so it has to parse as JSON — the original implementation wrote an
 	// empty file, which every consumer would have choked on.
@@ -65,6 +65,10 @@ bool FVibeReadinessSignalPayloadTest::RunTest(const FString&)
 	TestFalse(TEXT("pluginVersion is populated"), Root->GetStringField(TEXT("pluginVersion")).IsEmpty());
 	// currentMap lets an agent gate world edits on the loaded level without an editor round-trip.
 	TestEqual(TEXT("currentMap round trips"), Root->GetStringField(TEXT("currentMap")), TEXT("/Game/Maps/TestMap"));
+	// MCP endpoint status (issue B6): the port and listening flag must round-trip for agents that
+	// gate on a live link.
+	TestEqual(TEXT("mcpPort round trips as a number"), static_cast<uint32>(Root->GetNumberField(TEXT("mcpPort"))), 8000u);
+	TestTrue(TEXT("mcpListening round trips"), Root->GetBoolField(TEXT("mcpListening")));
 
 	return true;
 }

@@ -95,6 +95,36 @@ call_tool(toolset="EditorToolset.EditorAppToolset", tool="StartPIE")
 call_tool(toolset="EditorToolset.EditorAppToolset", tool="StopPIE")
 ```
 
+## Net mode from Python — `EngineSettingsService`
+
+`StartPIE` uses the editor's saved PIE settings, so set the net mode BEFORE starting the session.
+`EngineSettingsService` reads and writes `ULevelEditorPlaySettings` directly and persists the
+change, so a dedicated-server PIE gate no longer means quitting the editor to hand-edit
+`EditorPerProjectUserSettings.ini` and relaunching:
+
+```python
+import unreal
+
+# Read the current PIE multiplayer settings
+info = unreal.EngineSettingsService.get_pie_settings()
+print(info.net_mode, info.num_clients, info.run_under_one_process)
+
+# Set dedicated-server PIE: 1 client, all windows in one process
+ok = unreal.EngineSettingsService.set_pie_settings("Client", 1, True)   # returns True only on verified write
+# Verify by readback, never by return value alone
+assert unreal.EngineSettingsService.get_pie_settings().net_mode == "Client"
+```
+
+- `net_mode` maps `EPlayNetMode`: `"Standalone"` | `"ListenServer"` | `"Client"`. **`"Client"` is
+  dedicated-server PIE** — the editor's "Play As Client", where a windowless dedicated server is
+  spawned behind the scenes and PIE instance 0 is that server (`"DedicatedServer"` is accepted as an
+  alias for `"Client"`).
+- `set_pie_settings` refuses an unknown net mode or a `num_clients` outside 1-10 (returns `False`,
+  logs a Warning), and returns `False` if any written value fails to read back.
+- **These are per-USER config, not project config** — they live in
+  `Saved/Config/<Platform>/EditorPerProjectUserSettings.ini` and follow the machine, not the repo.
+  Do not expect a teammate or CI to inherit them; set them from the gate itself.
+
 ## Validating widgets in PIE — `WidgetService`
 
 VibeUE keeps a small set of widget-in-PIE helpers on `unreal.WidgetService` (run them via

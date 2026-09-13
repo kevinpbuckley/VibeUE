@@ -3,6 +3,7 @@
 #include "Utils/VibeUEHealthSignal.h"
 #include "Utils/VibeUEPaths.h"
 #include "Utils/VibeUEReadinessSignal.h"
+#include "Utils/VibeUEMcpStatus.h"
 #include "Containers/Ticker.h"
 #include "HAL/Event.h"
 #include "HAL/FileManager.h"
@@ -23,6 +24,10 @@ namespace
 	constexpr double WriteIntervalSeconds = 5.0;
 
 	std::atomic<double> GLastGameThreadSeconds{ 0.0 };
+	// MCP endpoint snapshot (issue B6), refreshed on the game-thread ticker and read by the background
+	// writer. The module read must stay on the game thread; the writer only touches these atomics.
+	std::atomic<uint32> GMcpPort{ 0 };
+	std::atomic<bool> GMcpListening{ false };
 	std::atomic<bool> GStopRequested{ false };
 	FTSTicker::FDelegateHandle GTickerHandle;
 	TUniquePtr<FThread> GWriterThread;
@@ -44,6 +49,9 @@ namespace
 		Root->SetStringField(TEXT("updatedUtc"), FDateTime::UtcNow().ToIso8601());
 		Root->SetStringField(TEXT("sessionStartUtc"), FVibeUEReadinessSignal::GetSessionStartUtc().ToIso8601());
 		Root->SetNumberField(TEXT("gameThreadStallSeconds"), FMath::RoundToDouble(StallSeconds * 100.0) / 100.0);
+		// MCP endpoint status (issue B6) — snapshot taken on the game-thread ticker below.
+		Root->SetNumberField(TEXT("mcpPort"), static_cast<double>(GMcpPort.load(std::memory_order_relaxed)));
+		Root->SetBoolField(TEXT("mcpListening"), GMcpListening.load(std::memory_order_relaxed));
 
 		FString Payload;
 		const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Payload);
@@ -81,10 +89,34 @@ void FVibeUEHealthSignal::Start()
 	GLastGameThreadSeconds.store(FPlatformTime::Seconds(), std::memory_order_relaxed);
 	GStopRequested.store(false, std::memory_order_relaxed);
 
+	// Seed the MCP snapshot on the game thread so the very first heartbeat (written before the ticker
+	// first fires) reports a real port rather than 0. Start() is called from RegisterToolsets.
+	{
+		uint32 McpPort = 0;
+		bool bMcpListening = false;
+		FVibeUEMcpStatus::Query(McpPort, bMcpListening);
+		GMcpPort.store(McpPort, std::memory_order_relaxed);
+		GMcpListening.store(bMcpListening, std::memory_order_relaxed);
+	}
+
 	GTickerHandle = FTSTicker::GetCoreTicker().AddTicker(TEXT("VibeUEHealthSignal"), 0.0f,
 		[](float) -> bool
 		{
-			GLastGameThreadSeconds.store(FPlatformTime::Seconds(), std::memory_order_relaxed);
+			const double NowSeconds = FPlatformTime::Seconds();
+			GLastGameThreadSeconds.store(NowSeconds, std::memory_order_relaxed);
+
+			// Refresh the MCP snapshot on the game thread (the module read is not thread-safe), at most
+			// every ~2s so the per-frame ticker stays cheap. The background writer reads the atomics.
+			static double LastMcpRefreshSeconds = 0.0;
+			if (NowSeconds - LastMcpRefreshSeconds > 2.0)
+			{
+				LastMcpRefreshSeconds = NowSeconds;
+				uint32 McpPort = 0;
+				bool bMcpListening = false;
+				FVibeUEMcpStatus::Query(McpPort, bMcpListening);
+				GMcpPort.store(McpPort, std::memory_order_relaxed);
+				GMcpListening.store(bMcpListening, std::memory_order_relaxed);
+			}
 			return true;
 		});
 
