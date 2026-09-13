@@ -399,11 +399,12 @@ public:
 	 * - The render target is RTF_RGBA8. The default float format (RTF_RGBA16f) writes
 	 *   non-PNG bytes. The exported pixels are forced opaque (A=255) regardless.
 	 * - A backgrounded editor has no converged auto-exposure, so an auto-exposed capture
-	 *   comes out black. Pass ExposureBias != 0 to force a FIXED manual exposure decoupled from
-	 *   the physical camera; the final exposure scale is then pow(2, ExposureBias), so positive
-	 *   brightens (+1 EV = 2x) and negative darkens. Small values are usually right — start near
-	 *   0 and raise a stop at a time. (Leaving the physical camera coupled, the engine default for
-	 *   Manual, uses a ~9.9-stop white point that crushes the shot and inverts the bias response.)
+	 *   comes out black. Pass ManualEV100 != 0 to force a FIXED manual exposure decoupled from the
+	 *   physical camera, where the value is the manual exposure TARGET in EV100 — exactly like a
+	 *   camera: a HIGHER EV100 assumes a brighter scene and stops down, so the image gets DARKER;
+	 *   a lower (negative) EV100 brightens. Measured on a daylit scene from a backgrounded editor:
+	 *   mean luminance 0->16.4 (auto), +4->4.3, -4->43.8, -8->86.0. A daylit backgrounded scene
+	 *   reads well around -6 to -8; try -4 first for bright scenes.
 	 *
 	 * @param Location - World location of the capture camera.
 	 * @param Rotation - World rotation of the capture camera. For a north-up top-down
@@ -418,11 +419,12 @@ public:
 	 *        projection with this world-space width (for a minimap, pass the map size in uu).
 	 * @param FOV - Horizontal field of view in degrees for perspective mode (ignored when
 	 *        OrthoWidth > 0). Default 90.
-	 * @param ExposureBias - 0 (default) = keep the engine's automatic exposure (correct for a
+	 * @param ManualEV100 - 0 (default) = keep the engine's automatic exposure (correct for a
 	 *        foreground/PIE window). Non-zero = force a FIXED manual exposure decoupled from the
-	 *        physical camera, where this value is a clean EV offset (exposure scale = pow(2,bias)):
-	 *        positive brightens, negative darkens. Use it for a backgrounded editor, which captures
-	 *        black on auto; small values are usually right (start near 0 and raise a stop at a time).
+	 *        physical camera, where this value is the exposure TARGET in EV100: HIGHER is DARKER,
+	 *        lower/negative is brighter (like a camera's metered EV). Use it for a backgrounded
+	 *        editor, which captures black on auto; a daylit scene reads well around -6 to -8, and
+	 *        -4 is a good first try for bright scenes.
 	 * @return FSceneCaptureResult with bSuccess, OutputPath, Width/Height, FileSizeBytes, ErrorMessage.
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
@@ -434,7 +436,7 @@ public:
 		const FString& OutputPngPath,
 		float OrthoWidth = 0.0f,
 		float FOV = 90.0f,
-		float ExposureBias = 0.0f);
+		float ManualEV100 = 0.0f);
 
 private:
 	/** Helper: get the active FLevelEditorViewportClient, or nullptr */

@@ -45,7 +45,7 @@ keywords:
 | `set_camera_speed(speed)` | Set camera movement speed (1-8) |
 | `set_viewport_layout(name)` | Switch viewport layout (single, quad, etc.) |
 | `get_viewport_layout()` | Get current layout name |
-| `capture_scene(location, rotation, width, height, out_png, ortho_width=0, fov=90, exposure_bias=0)` | Synchronous SceneCapture2D → PNG that works while the editor is backgrounded (see below) |
+| `capture_scene(location, rotation, width, height, out_png, ortho_width=0, fov=90, manual_ev100=0)` | Synchronous SceneCapture2D → PNG that works while the editor is backgrounded (see below) |
 
 ---
 
@@ -170,7 +170,7 @@ res = unreal.ViewportService.capture_scene(
     unreal.Rotator(pitch=-20, yaw=45, roll=0),  # kwargs — Rotator positional order is (roll,pitch,yaw)
     1280, 720,                                # width, height (px)
     "C:/temp/shot.png",                       # absolute path, or relative → Saved/VibeUE/Captures
-    exposure_bias=1.0)                        # 0 = auto (black when hidden); small +EV for a fixed exposure — see below
+    manual_ev100=-6.0)                        # 0 = auto (black when hidden); negative EV = brighter fixed exposure — see below
 if res.b_success:
     print("wrote", res.output_path, res.file_size_bytes, "bytes")
 else:
@@ -186,17 +186,20 @@ else:
   few KB.)
 - **Format.** The render target is `RTF_RGBA8`. The engine default (`RTF_RGBA16f`, a float format)
   writes non-PNG bytes; `capture_scene` never uses it.
-- **Exposure.** Leave `exposure_bias=0` (default) to keep the engine's **automatic** exposure — fine
+- **Exposure.** Leave `manual_ev100=0` (default) to keep the engine's **automatic** exposure — fine
   for a foreground / PIE window, but **black** when the editor is hidden (no converged eye adaptation).
-  A backgrounded editor needs a **fixed** exposure: pass `exposure_bias` != 0 and `capture_scene`
-  switches to a manual exposure **decoupled from the physical camera**, where the value is a clean **EV
-  offset** — the exposure scale is `pow(2, exposure_bias)`, so **positive brightens** (+1 EV = 2× ) and
-  negative darkens. **Small values are usually right — start near 0 and raise a stop at a time**, tuning
-  by capturing.
-  > ⚠️ Do **not** use large biases like 10–14 here. That range came from an earlier build that left the
-  > physical camera coupled to Manual exposure (a ~9.9-stop white point), which crushed the shot toward
-  > black and made larger biases look *darker*. With the physical camera decoupled a bias of ~10+ is
-  > wildly over-exposed.
+  A backgrounded editor needs a **fixed** exposure: pass `manual_ev100` != 0 and `capture_scene`
+  switches to a manual exposure **decoupled from the physical camera**, where the value is the exposure
+  **TARGET in EV100** — exactly like a camera's metered EV: **higher EV100 is DARKER** (it assumes a
+  brighter scene and stops down), lower/negative is brighter. Measured on a daylit scene from a
+  backgrounded editor (mean RGB luminance): `0` (auto) → 16.4, `+4` → 4.3, `-4` → 43.8, `-6` → 63.4,
+  `-8` → 86.0. **A daylit backgrounded scene reads well around `-6` to `-8`; try `-4` first for bright
+  scenes.** Tune by capturing.
+  > Note: the engine reads its underlying `AutoExposureBias` as a `pow(2,bias)` exposure *compensation*
+  > (so its docs say "positive brightens"), but in this decoupled-Manual SceneCapture path the observed,
+  > repeatable behaviour is the opposite — higher = darker — so treat `manual_ev100` as a camera EV
+  > target. Do **not** carry over any old "bias ~10–14 to brighten" advice; that was from a build that
+  > left the physical camera coupled, and here a large positive value is near-black.
 - **Cleanup.** The transient capture actor and its render target are destroyed inside the call — no
   stray actors are left in the level.
 
@@ -213,7 +216,7 @@ res = unreal.ViewportService.capture_scene(
     2048, 2048,
     "minimap.png",                                  # → Saved/VibeUE/Captures/minimap.png
     ortho_width=map_size,
-    exposure_bias=1.0)   # fixed exposure for a hidden editor; raise a stop at a time if dim
+    manual_ev100=-6.0)   # fixed exposure for a hidden editor; LOWER (more negative) = brighter
 ```
 
 - `ortho_width > 0` selects **orthographic** projection (and `fov` is ignored); `ortho_width == 0`

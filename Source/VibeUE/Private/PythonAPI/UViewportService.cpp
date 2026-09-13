@@ -538,7 +538,7 @@ FSceneCaptureResult UViewportService::CaptureScene(
 	const FString& OutputPngPath,
 	float OrthoWidth,
 	float FOV,
-	float ExposureBias)
+	float ManualEV100)
 {
 	FSceneCaptureResult Result;
 
@@ -638,25 +638,29 @@ FSceneCaptureResult UViewportService::CaptureScene(
 		CaptureComp->FOVAngle = FOV;
 	}
 
-	// Exposure. ExposureBias == 0 keeps the engine's DEFAULT (automatic) exposure — correct for a
+	// Exposure. ManualEV100 == 0 keeps the engine's DEFAULT (automatic) exposure — correct for a
 	// foreground / PIE window. A backgrounded editor has no converged eye adaptation and captures
-	// black on auto, so a non-zero bias switches to a FIXED manual exposure that is DECOUPLED from
-	// the physical camera (AutoExposureApplyPhysicalCameraExposure=false). With the physical camera
-	// left on (the engine default for Manual), the manual white point is the physical-camera EV100
-	// — log2(Fstop^2 * ShutterSpeed * 100 / ISO) ≈ 9.9 stops at the default f/4, 1/60, ISO100 — which
-	// both crushes the capture toward black and makes the bias response unintuitive. With it off the
-	// white point is EV100=0 (LuminanceMax), so the eye-adaptation exposure scale reduces to exactly
-	// pow(2, AutoExposureBias): +1 EV = 2x brighter, negative = darker. (Formula: MiddleGreyExposure-
-	// Compensation = pow(2, AutoExposureBias) and, in Manual, SmoothedExposureScale = 1/WhitePoint;
-	// see PostProcessEyeAdaptation.usf EyeAdaptationCommon and CalculateManualAutoExposure.)
-	if (!FMath::IsNearlyZero(ExposureBias))
+	// black on auto, so a non-zero value switches to a FIXED manual exposure DECOUPLED from the
+	// physical camera (AutoExposureApplyPhysicalCameraExposure=false, so the exposure does not depend
+	// on the default f/4, 1/60, ISO100 physical settings).
+	//
+	// In this decoupled-Manual path the engine's AutoExposureBias acts as the manual exposure TARGET
+	// in EV100 — exactly like a camera's metered EV: a HIGHER EV100 assumes a brighter scene and stops
+	// down, so the captured image gets DARKER; a lower/negative value brightens. This is the MEASURED
+	// behaviour (rebuilt UE 5.8, daylit scene from a backgrounded editor, mean RGB luminance):
+	//   EV100  0(auto)=16.4  +1=12.2  +2=8.8  +3=6.2  +4=4.3  -1=21.9  -2=28.1  -4=43.8  -6=63.4  -8=86.0
+	// (Note: the engine source reads AutoExposureBias as a pow(2,bias) exposure *compensation* —
+	// PostProcessEyeAdaptation.usf:179/193 — which would predict the opposite sign; the inversion above
+	// is empirical for this SceneCapture Manual path, so we document the measurement, not the formula.)
+	// A daylit backgrounded scene reads well around -6..-8; -4 is a good first try for bright scenes.
+	if (!FMath::IsNearlyZero(ManualEV100))
 	{
 		CaptureComp->PostProcessSettings.bOverride_AutoExposureMethod = true;
 		CaptureComp->PostProcessSettings.AutoExposureMethod = AEM_Manual;
 		CaptureComp->PostProcessSettings.bOverride_AutoExposureApplyPhysicalCameraExposure = true;
 		CaptureComp->PostProcessSettings.AutoExposureApplyPhysicalCameraExposure = false;
 		CaptureComp->PostProcessSettings.bOverride_AutoExposureBias = true;
-		CaptureComp->PostProcessSettings.AutoExposureBias = ExposureBias;
+		CaptureComp->PostProcessSettings.AutoExposureBias = ManualEV100;
 	}
 
 	// --- Synchronous render + readback ---
