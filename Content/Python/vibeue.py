@@ -26,11 +26,14 @@ Also provides (agent helpers for PIE, async tools, and asset GC):
   does not tick mid-script, so it never completes in one call), collect its decoded value next call.
   exec_tool_collect() fires and collects in ONE call: the value if the tool completed synchronously,
   else the pending key to collect_tool_result() later.
-- python_globals_holding() / release_globals() — find and drop the __main__ globals that root an
-  asset (a GCObjectReferencer root), so delete_asset_unattended can proceed.
+- python_globals_holding() / release_globals() — find and drop the execute_python_code script
+  globals that root an asset (a GCObjectReferencer root), so delete_asset_unattended can proceed.
 """
 
+import inspect
 import json
+import os
+import sys
 
 import unreal
 
@@ -344,17 +347,63 @@ def exec_tool_collect(toolset_name, tool_name, args=None, key=None):
 
 
 # --- Asset GC roots held by Python globals ---------------------------------------------------
+#
+# Namespace note: inside execute_python_code, __name__ == "__main__" but globals() is NOT
+# sys.modules["__main__"].__dict__ — the script runs in a SEPARATE dict that persists across calls
+# (which is exactly why a global there keeps rooting an asset). So `import __main__` never sees it.
+# These helpers resolve the CALLER's globals via the call stack AND scan __main__ as a fallback.
+#
+# Self-test (run the two lines below in ONE execute_python_code call, then a THIRD call):
+#   import unreal, vibeue
+#   held = unreal.load_asset("/Game/UI/W_Prompt")            # a script global now roots the asset
+#   print(vibeue.python_globals_holding("/Game/UI/W_Prompt"))  # -> ['held']
+#   # ...next call:
+#   print(vibeue.release_globals(vibeue.python_globals_holding("/Game/UI/W_Prompt")))  # -> ['held']
+
+def _script_namespaces():
+    """The namespace dicts an execute_python_code global might live in, most-relevant first.
+
+    Returns the CALLER's globals (found by walking the stack back past vibeue's own frames — the
+    execute_python_code script namespace, a persistent dict that is not sys.modules['__main__'])
+    followed by sys.modules['__main__'].__dict__ as a fallback, deduplicated by dict identity.
+    """
+    module_ns = globals()
+    namespaces = []
+    seen = set()
+
+    def _add(namespace):
+        if isinstance(namespace, dict) and id(namespace) not in seen:
+            seen.add(id(namespace))
+            namespaces.append(namespace)
+
+    frame = inspect.currentframe()
+    walker = frame.f_back if frame is not None else None
+    try:
+        while walker is not None:
+            if walker.f_globals is not module_ns:
+                _add(walker.f_globals)
+                break
+            walker = walker.f_back
+    finally:
+        del frame
+        del walker
+    try:
+        _add(sys.modules["__main__"].__dict__)
+    except Exception:
+        pass
+    return namespaces
+
 
 def python_globals_holding(asset_or_path):
-    """Names of __main__ globals that reference the given asset (a GCObjectReferencer root).
+    """Names of execute_python_code script globals that reference the given asset (a GC root).
 
     Accepts a loaded unreal.Object or an asset path (either the package form '/Game/Path/Name' or
-    the object form '/Game/Path/Name.Name'). Returns the list of global names whose value is that
-    object, or whose value is any unreal.Object whose get_path_name() matches the given path.
+    the object form '/Game/Path/Name.Name'). Scans the caller's script namespace and __main__ (see
+    _script_namespaces) and returns the names whose value is that object, or is any unreal.Object
+    whose get_path_name() matches the given path — deduplicated across namespaces.
     delete_asset_unattended refuses an asset still held by such a global; feed this list to
     release_globals() to free it.
     """
-    import __main__
     wanted_obj = asset_or_path if isinstance(asset_or_path, unreal.Object) else None
     wanted_paths = set()
     if isinstance(asset_or_path, str):
@@ -369,34 +418,42 @@ def python_globals_holding(asset_or_path):
             pass
 
     hits = []
-    for name, value in list(vars(__main__).items()):
-        if name.startswith("__"):
-            continue
-        if wanted_obj is not None and value is wanted_obj:
-            hits.append(name)
-            continue
-        if isinstance(value, unreal.Object):
-            try:
-                if value.get_path_name() in wanted_paths:
-                    hits.append(name)
-            except Exception:
-                pass
+    seen_names = set()
+    for namespace in _script_namespaces():
+        for name, value in list(namespace.items()):
+            if name.startswith("__") or name in seen_names:
+                continue
+            if wanted_obj is not None and value is wanted_obj:
+                hits.append(name)
+                seen_names.add(name)
+                continue
+            if isinstance(value, unreal.Object):
+                try:
+                    if value.get_path_name() in wanted_paths:
+                        hits.append(name)
+                        seen_names.add(name)
+                except Exception:
+                    pass
     return hits
 
 
-def release_globals(names):
-    """del the named __main__ globals and collect_garbage(), freeing the GC roots they held.
+def release_globals(names, namespace=None):
+    """del the named script globals and collect_garbage(), freeing the GC roots they held.
 
-    Pass the names python_globals_holding() returned. Returns the names actually deleted (a name
-    not present in __main__ is skipped). Run before retrying delete_asset_unattended on an asset it
-    refused as rooted.
+    Pass the names python_globals_holding() returned. Deletes each name from every namespace that
+    holds it (the caller's execute_python_code script namespace and __main__; see
+    _script_namespaces), so a name defined in both is fully released. Pass an explicit `namespace`
+    dict to delete from only that dict instead. Returns the names actually deleted (a name present
+    in none is skipped). Run before retrying delete_asset_unattended on an asset it refused as
+    rooted.
     """
-    import __main__
-    globals_dict = vars(__main__)
+    namespaces = [namespace] if isinstance(namespace, dict) else _script_namespaces()
     released = []
     for name in names:
-        if name in globals_dict:
-            del globals_dict[name]
-            released.append(name)
+        for ns in namespaces:
+            if name in ns:
+                del ns[name]
+                if name not in released:
+                    released.append(name)
     unreal.SystemLibrary.collect_garbage()
     return released

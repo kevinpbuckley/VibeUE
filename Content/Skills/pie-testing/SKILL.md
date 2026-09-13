@@ -200,4 +200,4 @@ unreal.PerformanceService.set_background_throttling(True)    # after
 - A Server RPC invoked from Python runs LOCALLY and is silently dropped; never Start/StopFire a client world's weapon from Python (it crashes the editor). Move a client pawn through its server copy; control rotation is client-owned.
 - `slomo 0.1` stretches a 2 s timer to 20 s of wall time so a transient state survives between calls; restore `slomo 1` after. PIE time restarts each run.
 - Never leave an automation test run queued before starting PIE — it wakes on PIE activity and tears the session down.
-- `__main__` globals persist across `execute_python_code` calls: use them to collect async tool results (`vibeue.exec_tool_async`/`collect_tool_result`), and release PIE object references (`vibeue.release_globals`) before `StopPIE`.
+- Globals in the `execute_python_code` script namespace persist across calls (it is a separate dict from `sys.modules["__main__"]`, so `import __main__` does not see them): use them to collect async tool results (`vibeue.exec_tool_async`/`collect_tool_result`), and release PIE object references (`vibeue.release_globals`) before `StopPIE`.
