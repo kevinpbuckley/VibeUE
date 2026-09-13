@@ -343,3 +343,14 @@ material skill through `GetSkills` (AgentSkillToolset):
 ## Sample scripts (run via `execute_python_code`)
 
 - **`scripts/sculpt_terrain.txt`** — create a landscape and sculpt procedural mountain/valley features.
+
+## Additional gotchas
+
+- On a World Partition landscape, verify every sculpt and every reader with a `line_trace_single` grid; the only safe write path is `export_heightmap` -> stamp in Python -> `import_heightmap`. Never synthesise a flat baseline — a flat-plus-pit import erases carved features.
+- Pixel mapping: origin is the proxy min corner, `world = min + px * scale`, `worldZ = (H - 32768) * 100/128`, no row flip; check against a known trace height before writing.
+- `import_heightmap` does not write proxies to disk — call `save_landscape` (or `save_packages` the Landscape and every proxy). Use `get_last_landscape_write` to see what changed, since the dirty list is unreliable right after landscape calls.
+- `flatten_at_location` and `set_height_in_region` read and write the same edit layer now, so a region write stays inside its brush on World Partition; `apply_erosion` was always safe.
+- `load_level` from Python leaves all WP cells unloaded for the rest of the session, and `create_landscape` run headless produces a broken landscape (zero heights, no collision).
+- Delete a landscape together with its streaming proxies via `delete_landscape(include_proxies=True)`; destroying proxy actors by hand crashes the editor.
+- The edit-layer merge can re-surface old garbage after a later merge (a brush spawn, `apply_splines_to_landscape`); re-verify landmarks by trace after any landscape-touching op.
+- Spawning any WaterBody auto-spawns a `WaterBrushManager` (`affects_landscape` defaults True) that adds a "Water" edit layer and poisons the terrain; flip that CDO default first and delete any spawned manager. `WaterZone.zone_extent` is on the actor; the river/lake seam material is `lake_transition_material`; `target_wave_mask_depth` is the still-water knob.

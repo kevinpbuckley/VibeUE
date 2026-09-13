@@ -323,3 +323,13 @@ After non-trivial wiring run `MaterialNodeService.get_material_diagnostics(path)
 ## Related skills
 - **landscape-materials** — `LandscapeLayerBlend` nodes.
 - **landscape-auto-material** — production landscape materials (functions, RVT, instances).
+
+## Additional gotchas
+
+- `StaticMesh.get_editor_property("static_materials")` returns struct COPIES, so writing the array back is a silent no-op; use `set_material(index, mat)` and confirm with `get_material(index)`.
+- `MEL.set_material_instance_scalar_parameter_value` returns False on success, and the static-switch setter returns False while the write still lands — verify by readback; MI reads return 0.0 and writes no-op while PIE runs.
+- Changing `body_setup.collision_trace_flag` does not rebuild the physics mesh; toggle `StaticMeshEditorSubsystem.enable_section_collision` off then on.
+- Enumerate expressions with `ObjectIterator(unreal.MaterialExpression)` filtered on `path.startswith(mat_path + ":")` (class-specific iterators miss nodes); `delete_material_expression` enables in-place rebuilds that keep instance overrides when parameter names match.
+- Pin names: StaticSwitchParameter inputs are `True`/`False`; LandscapeLayerBlend inputs are `"Layer <name>"`/`"Height <name>"`; `LayerBlendInput` fields are invisible to `dir()` but `set_editor_property("layer_name"|"blend_type"|"preview_weight")` works.
+- Gate optional master-material features behind STATIC switches (a scalar "off" still samples); measure with `MEL.get_statistics`. A material used on a Niagara sprite renderer needs `bUsedWithNiagaraSprites`.
+- Delete a material with `AssetDiscoveryService.delete_asset_unattended`; it refuses (and returns a result struct naming the holder) when the material is still referenced or held by a Python global, instead of wedging on a modal dialog.

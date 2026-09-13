@@ -157,3 +157,10 @@ called via `call_tool` (run `describe_toolset` for action names/params):
 Performance/Insights tracing is the one net-new VibeUE service â€” `unreal.PerformanceService.*` (see
 the `profiling` skill) â€” because Unreal 5.8 ships no performance toolset.
 
+
+## Additional gotchas
+
+- A Python traceback still proves the MCP link is up — only "Unable to connect" means it is down. A dropped server or a newly added tool needs a Claude Code restart. A stuck call is usually a modal dialog and the client timeout does not stop the script, so persisted results (`vibeue.last_python_result()`) let you read the outcome on the next call rather than re-running.
+- Don't run a headless `UnrealEditor-Cmd` while the GUI editor is starting — they fight over the MCP port and the loser runs with no MCP; the readiness signal's `mcpListening` flag tells you when the port is claimed. `-run=pythonscript` fully substitutes for pure-asset work when no editor runs, but not for World Partition world surgery.
+- Engine toolset quirks: `LogsToolset.GetLogEntries` requires a `pattern`; `StartPIE` via `execute_tool` needs the full options object; results can be double-encoded (`vibeue.exec_tool` decodes them). A genuinely async tool like `CaptureAssetImage` never completes inside one call — fire it with `vibeue.exec_tool_async` and read it with `vibeue.collect_tool_result` on the next call.
+- A leaked `register_slate_post_tick_callback` can survive its own unregister; an editor restart is the only reliable purge.

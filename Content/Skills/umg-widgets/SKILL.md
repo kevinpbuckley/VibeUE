@@ -267,3 +267,12 @@ loader that exposes this skill; there is no `vibeue-skills-manager` tool):
 3. Open/compile the WBP and confirm no errors, then `unreal.EditorAssetLibrary.save_asset(path)`.
 
 Never report a widget as created/configured until it appears in a fresh `get_widget_snapshot` result.
+
+## Additional gotchas
+
+- `capture_preview` renders correct gamma/colour now, but still confirm slot values with `get_component_snapshot` and layout in PIE. UMG colours are LINEAR — a dark sRGB red is about (0.035, 0.002, 0.002).
+- Slot values written through `ObjectIterator` are discarded on the next compile; set them with `set_property(path, widget, "Slot.<Prop>", value)` or in C++ `NativeConstruct`.
+- A fresh WBP has no root: the first `add_component(path, type, name, parent_name="")` becomes it. `BindWidget` binds only when the tree widget is `is_variable=True`; reading a bound member from Python is blocked, so enumerate `ObjectIterator(unreal.TextBlock)` filtered by the instance path.
+- `bind_event` is only provably bound on the `GameInstance_*`-outered PIE instance (asset/preview instances always read unbound); simulate a click with `on_clicked.broadcast()` on that instance. Hand-built bound-event nodes compile but never fire — use `create_component_bound_event`.
+- A widget can be fully authored yet never compiled; compile a legacy widget and read the error first. UE 5.8 renamed `WidgetBlueprintLibrary` to `unreal.WidgetLibrary`, and `UserWidget` instances do not expose `get_widget_from_name`.
+- Input modes: a UI-only mode drops the first WASD press after it closes, so use `SetInputMode_GameAndUIEx` in Construct; the input mode survives `ServerTravel`; `DefaultInput.ini` holds a full serialised InputSettings block mid-file, so a key appended at the section top is silently overridden.

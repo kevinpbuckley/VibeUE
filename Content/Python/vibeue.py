@@ -18,6 +18,16 @@ Why this exists:
   ALL missing required params in one error.
 - execute_tool results are inconsistently double-encoded ("returnValue" is sometimes a JSON string,
   issue #548) — exec_tool() decodes until stable and returns real Python values.
+
+Also provides (agent helpers for PIE, async tools, and asset GC):
+- pie_worlds() / role() — the live PIE worlds keyed by net role (server, clients, all, local),
+  skipping the ~100 stale /Memory/UEDPIE_* shells that a name match would grab.
+- exec_tool_async() / collect_tool_result() — fire a genuinely-async engine tool now (the editor
+  does not tick mid-script, so it never completes in one call), collect its decoded value next call.
+  exec_tool_collect() fires and collects in ONE call: the value if the tool completed synchronously,
+  else the pending key to collect_tool_result() later.
+- python_globals_holding() / release_globals() — find and drop the __main__ globals that root an
+  asset (a GCObjectReferencer root), so delete_asset_unattended can proceed.
 """
 
 import json
@@ -203,3 +213,190 @@ def exec_tool(toolset_name, tool_name, args=None, unwrap=True):
     if unwrap and isinstance(out, dict) and "returnValue" in out:
         return _decode_stable(out["returnValue"])
     return out
+
+
+# --- PIE worlds ------------------------------------------------------------------------------
+
+def role(actor):
+    """The net role of an actor as a string (e.g. 'NetRole.ROLE_AUTHORITY').
+
+    A 2-client PIE run is Standalone by default: BOTH worlds' actors read ROLE_AUTHORITY. Check
+    this before claiming a networked (server/client) result. Returns "" if the actor has no
+    readable role property.
+    """
+    try:
+        return str(actor.get_editor_property("role"))
+    except Exception:
+        return ""
+
+
+def pie_worlds():
+    """The live Play-In-Editor worlds, keyed by net role.
+
+    Returns {"server": UWorld|None, "clients": [UWorld, ...], "all": [UWorld, ...],
+    "local": UWorld|None}. The real PIE worlds have get_path_name() paths starting '/Game/' with
+    'UEDPIE_<N>_' in them: N=0 is the server (dedicated) or the listen host, N>=1 are clients,
+    ordered by N. Matching PIE worlds by name grabs one of the ~100 stale /Memory/UEDPIE_* shells
+    (0 actors) that linger in a session, so this filters on the /Game/ path instead. "local" is the
+    editor's own game world from UnrealEditorSubsystem.get_game_world().
+    """
+    marker = "UEDPIE_"
+    indexed = []
+    for world in unreal.ObjectIterator(unreal.World):
+        try:
+            path = world.get_path_name()
+        except Exception:
+            continue
+        if not path.startswith("/Game/") or marker not in path:
+            continue
+        rest = path[path.find(marker) + len(marker):]
+        digits = ""
+        for ch in rest:
+            if ch.isdigit():
+                digits += ch
+            else:
+                break
+        if not digits:
+            continue
+        indexed.append((int(digits), world))
+    indexed.sort(key=lambda pair: pair[0])
+
+    server = None
+    clients = []
+    for n, world in indexed:
+        if n == 0 and server is None:
+            server = world
+        elif n >= 1:
+            clients.append(world)
+
+    local = None
+    try:
+        local = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_game_world()
+    except Exception:
+        local = None
+
+    return {"server": server, "clients": clients, "all": [w for _, w in indexed], "local": local}
+
+
+# --- Async engine tools ----------------------------------------------------------------------
+
+_PENDING = {}
+
+
+def exec_tool_async(toolset_name, tool_name, args=None, key=None):
+    """Fire a genuinely-async ToolsetRegistry tool and stash its pending result for a later collect.
+
+    Some engine tools (e.g. EditorAppToolset.CaptureAssetImage) never reach is_complete inside one
+    execute_python_code call — the editor does not tick mid-script. Fire on one call with this, then
+    collect_tool_result(key) on the NEXT call. Args are schema-filled exactly like exec_tool(). The
+    raw result object is stored in the module-level _PENDING dict (which persists across calls) under
+    `key`, defaulting to "<toolset>.<tool>". Returns the key.
+    """
+    args = dict(args or {})
+    if key is None:
+        key = "{}.{}".format(toolset_name, tool_name)
+    tool_schema = _find_tool_schema(get_toolset_schema(toolset_name), tool_name)
+    if tool_schema is not None:
+        _fill_args_from_schema(tool_schema, args)
+    _PENDING[key] = unreal.ToolsetRegistry.execute_tool(toolset_name, tool_name, json.dumps(args))
+    return key
+
+
+def collect_tool_result(key, unwrap=True):
+    """Decoded value of an exec_tool_async() fire stashed under `key`.
+
+    Returns None while the result is still pending (is_complete False) — poll again next call. Once
+    complete, returns the decoded returnValue (or the whole decoded dict if unwrap=False / there is
+    no returnValue key), using the same stable-decode/unwrap logic as exec_tool(). Raises
+    RuntimeError with the engine error string on failure, and KeyError if nothing was fired under
+    `key`. A completed or failed result is dropped from _PENDING; a pending one is kept.
+    """
+    if key not in _PENDING:
+        raise KeyError(
+            "No pending async result under key '{}'. Fire exec_tool_async() first.".format(key))
+    res = _PENDING[key]
+    if res.error:
+        del _PENDING[key]
+        raise RuntimeError("async tool under '{}' failed: {}".format(key, res.error))
+    if not res.is_complete:
+        return None
+    out = _decode_stable(res.get_value_as_json_string())
+    del _PENDING[key]
+    if unwrap and isinstance(out, dict) and "returnValue" in out:
+        return _decode_stable(out["returnValue"])
+    return out
+
+
+def exec_tool_collect(toolset_name, tool_name, args=None, key=None):
+    """Fire an engine tool and try to collect its result in the SAME call.
+
+    A one-call convenience over exec_tool_async()/collect_tool_result(): fires the tool, then
+    collects immediately if it already completed (a synchronous editor tool) and returns the decoded
+    value; otherwise returns the pending key to pass to collect_tool_result() on a later call (a
+    genuinely-async tool cannot finish here — the editor does not tick mid-script). Raises like
+    collect_tool_result() on a tool error.
+    """
+    fired_key = exec_tool_async(toolset_name, tool_name, args=args, key=key)
+    res = _PENDING[fired_key]
+    if res.error or res.is_complete:
+        return collect_tool_result(fired_key, unwrap=True)
+    return fired_key
+
+
+# --- Asset GC roots held by Python globals ---------------------------------------------------
+
+def python_globals_holding(asset_or_path):
+    """Names of __main__ globals that reference the given asset (a GCObjectReferencer root).
+
+    Accepts a loaded unreal.Object or an asset path (either the package form '/Game/Path/Name' or
+    the object form '/Game/Path/Name.Name'). Returns the list of global names whose value is that
+    object, or whose value is any unreal.Object whose get_path_name() matches the given path.
+    delete_asset_unattended refuses an asset still held by such a global; feed this list to
+    release_globals() to free it.
+    """
+    import __main__
+    wanted_obj = asset_or_path if isinstance(asset_or_path, unreal.Object) else None
+    wanted_paths = set()
+    if isinstance(asset_or_path, str):
+        wanted_paths.add(asset_or_path)
+        leaf = asset_or_path.rsplit("/", 1)[-1]
+        if "." not in leaf:
+            wanted_paths.add("{}.{}".format(asset_or_path, leaf))
+    elif wanted_obj is not None:
+        try:
+            wanted_paths.add(wanted_obj.get_path_name())
+        except Exception:
+            pass
+
+    hits = []
+    for name, value in list(vars(__main__).items()):
+        if name.startswith("__"):
+            continue
+        if wanted_obj is not None and value is wanted_obj:
+            hits.append(name)
+            continue
+        if isinstance(value, unreal.Object):
+            try:
+                if value.get_path_name() in wanted_paths:
+                    hits.append(name)
+            except Exception:
+                pass
+    return hits
+
+
+def release_globals(names):
+    """del the named __main__ globals and collect_garbage(), freeing the GC roots they held.
+
+    Pass the names python_globals_holding() returned. Returns the names actually deleted (a name
+    not present in __main__ is skipped). Run before retrying delete_asset_unattended on an asset it
+    refused as rooted.
+    """
+    import __main__
+    globals_dict = vars(__main__)
+    released = []
+    for name in names:
+        if name in globals_dict:
+            del globals_dict[name]
+            released.append(name)
+    unreal.SystemLibrary.collect_garbage()
+    return released

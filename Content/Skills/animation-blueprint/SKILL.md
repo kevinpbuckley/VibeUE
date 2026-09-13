@@ -530,3 +530,7 @@ for machine in machines:
 ## Sample scripts (run via `execute_python_code`)
 
 - **`scripts/build_state_machine.txt`** — add a state machine with two states, set state animations, add a transition, compile.
+
+## Additional gotchas
+
+- `connect_anim_nodes` replaces an existing pose link on the target input rather than erroring; it returns False if the schema refuses the connection, so check the return instead of hunting for a `BS_ERROR` with an empty error list.

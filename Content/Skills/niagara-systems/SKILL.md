@@ -200,3 +200,8 @@ names); data-interface types ignore the default value (a default DI instance is 
 
 - **niagara-emitters** — color/curve authoring + scratch-pad Custom HLSL.
 - Engine `NiagaraToolsets.*` (via `call_tool`) — system/emitter/parameter/renderer CRUD and compile.
+
+## Additional gotchas
+
+- Save a new system immediately with `save_asset(path, only_if_is_dirty=False)` and verify the file exists — a freshly created system may not persist otherwise.
+- A fresh sprite renderer has `Material=None` and is invisible; `AddVelocityInCone.Velocity Strength` defaults to 0; use the V2 `InitializeParticle` module and drive mode inputs with `SetStackInputData`.

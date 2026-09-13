@@ -190,3 +190,14 @@ unreal.PerformanceService.set_background_throttling(True)    # after
 - Pure asset/editor validation (use `compile_blueprint`, `find_assets`, etc.)
 - Static introspection (use `get_nodes_in_graph`, `get_node_pins`)
 - Anything you can verify without a live world — PIE is slow, save it for genuine runtime checks.
+
+## Additional gotchas
+
+- `StopPIE` then `StartPIE` in one Python call fails with "A play session is already running" — the editor does not tick between statements. Split them across calls and confirm with `IsPIERunning`.
+- `EditorAssetLibrary.load_asset` returns None while PIE runs, and downstream calls then return 0/None instead of raising (a fake negative). Load assets before `StartPIE`, or find live objects with `ObjectIterator`.
+- Match PIE worlds by their `/Game/<path>/UEDPIE_0_<Map>` (server/host) and `UEDPIE_1_` (client) object paths, not by name — roughly 100 stale `/Memory/UEDPIE_*` shells match by name. `vibeue.pie_worlds()` returns them keyed by role, and `UnrealEditorSubsystem.get_game_world()` gives the local one.
+- A two-client run is Standalone by default: both worlds read `ROLE_AUTHORITY`, so confirm `get_editor_property("role")` (or `vibeue.role(actor)`) before claiming a host/client result. Read and set the PIE net mode with `get_pie_settings`/`set_pie_settings` (dedicated server = PlayNetMode 2).
+- A Server RPC invoked from Python runs LOCALLY and is silently dropped; never Start/StopFire a client world's weapon from Python (it crashes the editor). Move a client pawn through its server copy; control rotation is client-owned.
+- `slomo 0.1` stretches a 2 s timer to 20 s of wall time so a transient state survives between calls; restore `slomo 1` after. PIE time restarts each run.
+- Never leave an automation test run queued before starting PIE — it wakes on PIE activity and tears the session down.
+- `__main__` globals persist across `execute_python_code` calls: use them to collect async tool results (`vibeue.exec_tool_async`/`collect_tool_result`), and release PIE object references (`vibeue.release_globals`) before `StopPIE`.

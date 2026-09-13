@@ -461,3 +461,14 @@ result's `asset_class_path.asset_name` to learn the real class name.
 ## Sample scripts (run via `execute_python_code`)
 
 - **`scripts/find_and_save.txt`** — find an asset (Asset Registry / `EditorAssetLibrary`) and duplicate + save it.
+
+## Additional gotchas
+
+- `unreal.Rotator(...)` positional order is `(roll, pitch, yaw)` — pass by keyword.
+- `unreal.AssetTools.create_asset(...)` is a descriptor and throws; the working call is `AssetToolsHelpers.get_asset_tools().create_asset(...)`.
+- `EditDefaultsOnly` properties cannot be written on instances from Python; a server-only `UPROPERTY()` with no Blueprint flag reads as "protected"; and when a bool `bIsDead` and a `UFUNCTION IsDead()` both map to `is_dead`, the property wins.
+- `TInstancedStruct` authoring: `inst = unreal.InstancedStruct(); inst.import_text('/Script/<Module>.<Struct>(Field=...)')`; a `TSoftClassPtr` UPROPERTY wants the loaded class, not a `SoftClassPath`.
+- `LevelEditorPlaySettings` is not in the Python stub — reach it via `load_class(None, "/Script/UnrealEd.LevelEditorPlaySettings")` and exact CamelCase property names.
+- Editor-world traces need a real world: `line_trace_single(actor.get_world(), ...)` (`LevelEditorSubsystem.get_world()` is a null context); `HitResult.component`/`actor` are read-protected, so read `export_text()`.
+- World subsystems have no Python accessor — reach one via `ObjectIterator(unreal.YourSubsystem)` filtered on `get_outer().get_path_name()`.
+- Never `save_dirty_packages(True, True)` — save by explicit path; a dirty package you did not touch is the user's work.
