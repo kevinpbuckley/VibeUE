@@ -98,7 +98,9 @@ roots in `result.referencers` and an `result.error_message` explaining it. The f
 says: release the Python globals holding it — `del my_var`, then `unreal.SystemLibrary.collect_garbage()`
 — and retry. Every OTHER in-memory referencer is left to the engine's real force delete, which clears it
 without prompting: on-disk asset references, the Blueprint-palette node spawners, and transient editor
-helpers like an anim data controller all delete fine.
+helpers like an anim data controller all delete fine. Read-only package files are also refused before
+the engine delete path, because Unreal can show a read-only-package prompt even when confirmation is
+disabled. Clear the filesystem/source-control read-only state explicitly, then retry.
 
 The check never mutates state (it does not null any references before deciding), so a refusal leaves the
 asset and everything around it exactly as they were — safe to retry after releasing the global.

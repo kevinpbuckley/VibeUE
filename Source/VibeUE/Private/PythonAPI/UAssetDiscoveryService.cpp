@@ -425,6 +425,19 @@ FUnattendedDeleteResult UAssetDiscoveryService::DeleteAssetUnattended(const FStr
 		return Result;
 	}
 
+	// ForceDeleteObjects can still open a read-only-package prompt even when confirmation is
+	// disabled. Preflight the resolved package file so this API keeps its unattended/no-modal
+	// contract instead of wedging the game thread on a source-control or filesystem attribute.
+	FString PackageFilename;
+	if (FPackageName::DoesPackageExist(PackageName, &PackageFilename) &&
+		FPlatformFileManager::Get().GetPlatformFile().IsReadOnly(*PackageFilename))
+	{
+		Result.ErrorMessage = FString::Printf(
+			TEXT("Asset package is read-only; refusing unattended delete to avoid a modal prompt: %s"),
+			*PackageFilename);
+		return Result;
+	}
+
 	// The registry lags a freshly saved referencer (a montage built on this clip seconds ago is
 	// not in its dependency map yet), so also ask memory: every loaded asset package that holds
 	// a pointer to this object counts. Transient / compiled-in outers are the Python wrapper and
@@ -574,7 +587,7 @@ FUnattendedDeleteResult UAssetDiscoveryService::DeleteAssetUnattended(const FStr
 	const int32 Deleted = ObjectTools::ForceDeleteObjects(Objects, /*bShowConfirmation*/ false);
 	if (Deleted <= 0)
 	{
-		Result.ErrorMessage = FString::Printf(TEXT("ForceDeleteObjects returned 0 for %s (a read-only on-disk package, or a system veto; see the log)"), *AssetPath);
+		Result.ErrorMessage = FString::Printf(TEXT("ForceDeleteObjects returned 0 for %s (system veto; see the log)"), *AssetPath);
 		UE_LOG(LogTemp, Warning, TEXT("UAssetDiscoveryService::DeleteAssetUnattended: %s"), *Result.ErrorMessage);
 		RestoreActionDatabase();
 		return Result;

@@ -7,8 +7,10 @@
 #include "PythonAPI/UAssetDiscoveryService.h"
 #include "EditorAssetLibrary.h"
 #include "HAL/FileManager.h"
+#include "HAL/PlatformFileManager.h"
 #include "Misc/Base64.h"
 #include "Misc/FileHelper.h"
+#include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "UObject/UnrealType.h"
 
@@ -164,6 +166,24 @@ bool FVibeDeleteAssetUnattendedResultStructTest::RunTest(const FString&)
 	TestFalse(TEXT("texture fixture imported"), ImportedPath.IsEmpty());
 	if (!ImportedPath.IsEmpty())
 	{
+		FString PackageFilename;
+		const bool bResolvedPackage = FPackageName::TryConvertLongPackageNameToFilename(
+			AssetPackagePath, PackageFilename, FPackageName::GetAssetPackageExtension());
+		TestTrue(TEXT("fixture package filename resolves"), bResolvedPackage);
+		if (bResolvedPackage)
+		{
+			IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+			TestTrue(TEXT("fixture can be marked read-only"), PlatformFile.SetReadOnly(*PackageFilename, true));
+			const FUnattendedDeleteResult ReadOnlyRes =
+				UAssetDiscoveryService::DeleteAssetUnattended(AssetPackagePath, true);
+			TestFalse(TEXT("read-only package is refused without entering the engine delete path"), ReadOnlyRes.bSuccess);
+			TestTrue(TEXT("read-only refusal explains the recovery action"),
+				ReadOnlyRes.ErrorMessage.Contains(TEXT("read-only")));
+			TestTrue(TEXT("read-only refusal leaves the asset intact"),
+				UEditorAssetLibrary::DoesAssetExist(AssetPackagePath));
+			TestTrue(TEXT("fixture read-only state can be cleared"), PlatformFile.SetReadOnly(*PackageFilename, false));
+		}
+
 		const FUnattendedDeleteResult Res = UAssetDiscoveryService::DeleteAssetUnattended(AssetPackagePath, false);
 		TestTrue(TEXT("unreferenced asset deletes and reports success in the struct"), Res.bSuccess);
 		TestTrue(TEXT("success carries no error message"), Res.ErrorMessage.IsEmpty());

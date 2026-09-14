@@ -149,8 +149,8 @@ public:
 	 * =false), exactly as the pre-A13 code did, so child-Blueprint reparenting, child-redirector/
 	 * generated-class removal and UUserDefinedStruct reinstancing keep full engine fidelity. Its own
 	 * internal "is in use" check cannot reach a dialog, because we already confirmed no native root holds
-	 * the asset; the only modal it could still raise is the read-only-package prompt, and only for an asset
-	 * whose .uasset is read-only on disk with source control disabled.
+	 * the asset. A read-only package is also refused before ForceDeleteObjects, preventing its remaining
+	 * read-only-package prompt. The function therefore preserves its unattended/no-modal contract.
 	 *
 	 * @param AssetPath              - Package path of the asset (/Game/Folder/Asset)
 	 * @param bForceEvenIfReferenced - True: delete anyway and clear references; false: refuse if referenced
