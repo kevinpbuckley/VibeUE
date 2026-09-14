@@ -20,7 +20,7 @@ The file is JSON, written atomically, so it is complete the moment it appears:
 ```json
 {"signal":"toolsets-registered","pid":21044,"createdUtc":"2026-08-03T17:04:11.921Z",
  "sessionStartUtc":"2026-08-03T17:03:22.108Z","pluginVersion":"3.0",
- "currentMap":"/Game/Maps/Level1_FullBody"}
+ "currentMap":"/Game/Maps/Level1_FullBody","mcpPort":8000,"mcpListening":true}
 ```
 
 Process IDs get recycled. The launch scripts clear a matching stale signal right after starting the
@@ -38,7 +38,8 @@ world" after a relaunch without checking has silently modified the wrong level b
 
 ```json
 {"signal":"health","pid":21044,"updatedUtc":"2026-08-03T17:09:00.000Z",
- "sessionStartUtc":"2026-08-03T17:03:22.108Z","gameThreadStallSeconds":0.03}
+ "sessionStartUtc":"2026-08-03T17:03:22.108Z","gameThreadStallSeconds":0.03,
+ "mcpPort":8000,"mcpListening":true}
 ```
 
 Epic's MCP endpoint runs on the game thread with no request timeout, so a dead or wedged editor
@@ -46,6 +47,18 @@ hangs MCP calls for the client's full timeout â€” and even JSON-RPC `ping` 
 health file instead: file missing or `updatedUtc` older than ~15s â†’ the process is gone (relaunch);
 `gameThreadStallSeconds` above ~10 â†’ alive but wedged (modal dialog / crash handler; MCP will
 hang â€” relaunch); fresh and small â†’ the editor is healthy, debug something else.
+
+Both the readiness and health JSON also carry `mcpPort` and `mcpListening` (issue B6). **Check
+`mcpListening` before assuming a live link.** If it is `false`, this editor's MCP module reports no
+running HTTP server, so every MCP call to it will fail to connect. The usual cause is the port-8000
+fight: a headless `UnrealEditor-Cmd` and the GUI editor started together, one lost the bind, and the
+loser looks healthy while owning no MCP. Restart the loser (never run a headless editor while the GUI
+editor is starting). If `mcpListening` is `true` but calls still will not connect, grep the editor log
+for `VibeUE: MCP is expected to listen ... found the port FREE` and Epic's `LogHttpListener ... unable
+to bind to 127.0.0.1:<port>` — that Error line is the fight leaving a loud trail. Note that a
+bind-probe issued from inside the process cannot tell whether this editor or another holds the port,
+so `mcpListening=true` means only that this process's module started a server, not that it won the
+port.
 
 Skill packs (this file and its siblings) are loaded through the engine's `AgentSkillToolset`.
 Each skill carries exact API patterns and gotchas; **load the relevant skill before writing any
