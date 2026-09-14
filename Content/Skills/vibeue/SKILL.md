@@ -69,9 +69,12 @@ re-running** -- re-running double-executes a mutation. Every run's outcome is wr
 (last ~200 runs / ~2 MB):
 
 ```json
-{"runId":7,"pid":21044,"success":true,"label":"#7 import unreal; ...","output":"...",
+{"runId":7,"pid":21044,"success":true,"label":"#7 execute_python_code","output":"...",
  "error":"","result":"","execution_time_ms":48210.5,"startedUtc":"...","finishedUtc":"..."}
 ```
+
+The record deliberately does not store the submitted Python source: snippets commonly contain
+credentials passed to SDKs, and timeout recovery must not create a plaintext source-code secret log.
 
 Recovery after a timeout -- the aborted call kept running in THIS same editor process, so the next
 call just reads the file:

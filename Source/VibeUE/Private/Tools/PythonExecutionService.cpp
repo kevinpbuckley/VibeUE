@@ -356,7 +356,7 @@ TResult<FPythonExecutionResult> FPythonExecutionService::ExecuteCode(
 	Result.RunId = RunId;
 
 	// Persist off the return path. A failure here logs Warning inside Record and never affects the run.
-	FVibeUEPythonResultLog::Record(Result, Code, StartedUtc, FinishedUtc);
+	FVibeUEPythonResultLog::Record(Result, StartedUtc, FinishedUtc);
 
 	if (!OutErrorCode.IsEmpty())
 	{

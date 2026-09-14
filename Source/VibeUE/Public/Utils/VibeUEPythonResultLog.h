@@ -43,12 +43,12 @@ public:
 	/**
 	 * Write the run's outcome to python-<pid>-last.json (atomic replace) and append it to
 	 * python-<pid>-runs.jsonl (trimmed to the last N lines / ~2 MB). The run id, success, output,
-	 * error, result, execution time and start/finish timestamps come from Result; Code supplies the
-	 * label (first ~200 chars, prefixed with the run id). Never throws; logs Warning on any failure.
+	 * error, result, execution time and start/finish timestamps come from Result. The label contains
+	 * only the run id and operation name; submitted source is deliberately never persisted because it
+	 * may contain credentials. Never throws; logs Warning on any failure.
 	 */
 	static void Record(
 		const VibeUE::FPythonExecutionResult& Result,
-		const FString& Code,
 		const FDateTime& StartedUtc,
 		const FDateTime& FinishedUtc);
 };

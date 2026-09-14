@@ -18,8 +18,6 @@ DEFINE_LOG_CATEGORY_STATIC(LogVibeUEPythonResult, Log, All);
 
 namespace
 {
-	// The whole label (incl. code) collapses to one line and is clamped to keep it a label, not a dump.
-	constexpr int32 MaxLabelCodeChars = 200;
 	// Each payload field is clamped so a script printing megabytes cannot produce a giant file.
 	constexpr int32 MaxFieldChars = 200000;
 	// JSONL history bounds: keep the tail small enough to read cheaply on recovery.
@@ -35,28 +33,22 @@ namespace
 		return In.Left(MaxFieldChars) + FString::Printf(TEXT("...[truncated %d chars]"), In.Len() - MaxFieldChars);
 	}
 
-	FString BuildLabel(int64 RunId, const FString& Code)
+	FString BuildLabel(int64 RunId)
 	{
-		FString Snippet = Code.Left(MaxLabelCodeChars);
-		Snippet.ReplaceInline(TEXT("\r"), TEXT(" "));
-		Snippet.ReplaceInline(TEXT("\n"), TEXT(" "));
-		FString Label = FString::Printf(TEXT("#%lld %s"), (long long)RunId, *Snippet);
-		if (Code.Len() > MaxLabelCodeChars)
-		{
-			Label += TEXT("...");
-		}
-		return Label;
+		// Do not persist source text. Python snippets often contain credentials passed to SDKs;
+		// recording even a short prefix would turn timeout recovery into a plaintext secret log.
+		return FString::Printf(TEXT("#%lld execute_python_code"), (long long)RunId);
 	}
 
 	// Serialize the record as one condensed (single-line) JSON object.
-	FString BuildRecordJson(const VibeUE::FPythonExecutionResult& Result, const FString& Code,
+	FString BuildRecordJson(const VibeUE::FPythonExecutionResult& Result,
 		const FDateTime& StartedUtc, const FDateTime& FinishedUtc, uint32 ProcessId)
 	{
 		const TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
 		Root->SetNumberField(TEXT("runId"), static_cast<double>(Result.RunId));
 		Root->SetNumberField(TEXT("pid"), static_cast<double>(ProcessId));
 		Root->SetBoolField(TEXT("success"), Result.bSuccess);
-		Root->SetStringField(TEXT("label"), BuildLabel(Result.RunId, Code));
+		Root->SetStringField(TEXT("label"), BuildLabel(Result.RunId));
 		Root->SetStringField(TEXT("output"), ClampField(Result.Output));
 		Root->SetStringField(TEXT("error"), ClampField(Result.ErrorMessage));
 		Root->SetStringField(TEXT("result"), ClampField(Result.Result));
@@ -157,7 +149,6 @@ FString FVibeUEPythonResultLog::GetRunsPathForPid(uint32 ProcessId)
 
 void FVibeUEPythonResultLog::Record(
 	const VibeUE::FPythonExecutionResult& Result,
-	const FString& Code,
 	const FDateTime& StartedUtc,
 	const FDateTime& FinishedUtc)
 {
@@ -167,7 +158,7 @@ void FVibeUEPythonResultLog::Record(
 	const FString SignalsDir = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("VibeUE"), TEXT("Signals"));
 	IFileManager::Get().MakeDirectory(*SignalsDir, /*Tree=*/true);
 
-	const FString RecordJson = BuildRecordJson(Result, Code, StartedUtc, FinishedUtc, ProcessId);
+	const FString RecordJson = BuildRecordJson(Result, StartedUtc, FinishedUtc, ProcessId);
 
 	if (!AtomicWrite(GetLastResultPathForPid(ProcessId), RecordJson))
 	{
