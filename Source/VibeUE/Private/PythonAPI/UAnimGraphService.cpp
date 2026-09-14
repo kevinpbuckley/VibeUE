@@ -1688,8 +1688,44 @@ bool UAnimGraphService::ConnectAnimNodes(const FString& AnimBlueprintPath, const
 		return false;
 	}
 
-	// Make connection
-	SourcePin->MakeLinkTo(TargetPin);
+	// Already wired to each other - nothing to do (keep the call idempotent).
+	if (SourcePin->LinkedTo.Contains(TargetPin))
+	{
+		UE_LOG(LogTemp, Log, TEXT("ConnectAnimNodes: Pins already connected in '%s'"), *GraphName);
+		return true;
+	}
+
+	// Route the connection through the graph schema instead of calling MakeLinkTo directly.
+	// Anim-graph pose inputs (and other struct/single-link pins) are 1:1; a raw MakeLinkTo on an
+	// already-wired input stacks an illegal second link, after which the Anim Blueprint compiles to
+	// BS_ERROR with an EMPTY error list. The AnimationGraphSchema's CanCreateConnection returns a
+	// CONNECT_RESPONSE_BREAK_OTHERS_* response for those pins, and TryCreateConnection honours it by
+	// breaking the existing link before making the new one, so an existing single-link connection is
+	// replaced rather than doubled up.
+	const UEdGraphSchema* Schema = TargetGraph->GetSchema();
+	if (!Schema)
+	{
+		UE_LOG(LogTemp, Error, TEXT("ConnectAnimNodes: Graph '%s' has no schema"), *GraphName);
+		return false;
+	}
+
+	const FPinConnectionResponse ConnectionResponse = Schema->CanCreateConnection(SourcePin, TargetPin);
+	if (ConnectionResponse.Response == CONNECT_RESPONSE_DISALLOW)
+	{
+		// Refusal (not an engine fault) - log Warning so a headless test is not failed by a stray Error.
+		UE_LOG(LogTemp, Warning, TEXT("ConnectAnimNodes: Schema refused connection %s.%s -> %s.%s: %s"),
+			*SourceNodeId, *SourcePinName, *TargetNodeId, *TargetPinName, *ConnectionResponse.Message.ToString());
+		return false;
+	}
+
+	// TryCreateConnection performs the schema-approved link, breaking any existing single-link
+	// connection first, and returns true only if the graph was actually modified.
+	if (!Schema->TryCreateConnection(SourcePin, TargetPin))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("ConnectAnimNodes: Connection %s.%s -> %s.%s was not created: %s"),
+			*SourceNodeId, *SourcePinName, *TargetNodeId, *TargetPinName, *ConnectionResponse.Message.ToString());
+		return false;
+	}
 
 	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(AnimBlueprint);
 
