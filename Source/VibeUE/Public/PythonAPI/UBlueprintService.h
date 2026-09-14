@@ -1438,6 +1438,35 @@ public:
 		const FString& ContainerType = TEXT(""));
 
 	/**
+	 * Remove a single member variable from a Blueprint by name.
+	 *
+	 * The engine exposes no targeted variable delete to Python — only
+	 * `BlueprintEditorLibrary.remove_unused_variables`, which sweeps EVERY unreferenced variable.
+	 * This removes exactly one, and only that one. It first counts references across ALL graphs
+	 * (Get and Set nodes for this Blueprint's own variable):
+	 *   - references present and bForce false -> refuse (Warning), listing the graphs and node counts;
+	 *   - bForce true -> `FBlueprintEditorUtils::RemoveMemberVariable` removes the variable and its
+	 *     referencing nodes.
+	 * A name that is a component from the Simple Construction Script is refused with a pointer to the
+	 * component API (it is not a NewVariables member). Verifies by readback and returns true only when
+	 * the variable is confirmed gone.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param VariableName - Name of the member variable to remove
+	 * @param bForce - Remove even when referenced (its Get/Set nodes are removed too)
+	 * @return True only if the variable is confirmed removed
+	 *
+	 * Example:
+	 *   unreal.BlueprintService.remove_member_variable("/Game/BP_Player", "UnusedScratch")
+	 *   unreal.BlueprintService.remove_member_variable("/Game/BP_Player", "OldHealth", True)  # force
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints")
+	static bool RemoveMemberVariable(
+		const FString& BlueprintPath,
+		const FString& VariableName,
+		bool bForce = false);
+
+	/**
 	 * Set the default value of an existing variable.
 	 *
 	 * @param BlueprintPath - Full path to the blueprint

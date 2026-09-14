@@ -177,6 +177,21 @@ unreal.BlueprintEditorLibrary.compile_blueprint(unreal.EditorAssetLibrary.load_a
 Returns `False` (with the reason in the log) on a duplicate name or an unresolvable type string.
 Compile after adding — the variable is registered but the class is only rebuilt on compile.
 
+### Removing one variable — `remove_member_variable` (VibeUE delta)
+
+`unreal.BlueprintService.remove_member_variable(bp_path, name, force=False)` removes exactly one
+member variable. The engine alternative, `BlueprintEditorLibrary.remove_unused_variables`, sweeps
+**every** unreferenced variable — use this when you want to delete just one. It counts Get/Set
+references across all graphs first: with references present and `force=False` it refuses (returns
+`False`, logs the referencing graphs and node counts); with `force=True` it removes the variable
+and its referencing nodes. A component name (from the Simple Construction Script) is refused with a
+pointer to the component API. Verifies by readback and returns `True` only when the variable is gone.
+
+```python
+unreal.BlueprintService.remove_member_variable(bp_path, "UnusedScratch")        # refuses if referenced
+unreal.BlueprintService.remove_member_variable(bp_path, "OldHealth", True)       # force: nodes go too
+```
+
 ### ⚠️ Adding a function graph — engine `BlueprintTools.add_function_graph`
 
 Creating a function graph moved to the engine toolset (`create_function` / `add_function` on

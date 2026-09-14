@@ -60,6 +60,33 @@ bind-probe issued from inside the process cannot tell whether this editor or ano
 so `mcpListening=true` means only that this process's module started a server, not that it won the
 port.
 
+## Persisted Python results -- a timed-out call is not a failed call
+
+The MCP client aborts an `execute_python_code` call after its own timeout (~30s for most clients,
+300s for some), but the script keeps running in the editor. **Read the persisted result before
+re-running** -- re-running double-executes a mutation. Every run's outcome is written to
+`Signals/python-<pid>-last.json` (always the latest) and appended to `Signals/python-<pid>-runs.jsonl`
+(last ~200 runs / ~2 MB):
+
+```json
+{"runId":7,"pid":21044,"success":true,"label":"#7 import unreal; ...","output":"...",
+ "error":"","result":"","execution_time_ms":48210.5,"startedUtc":"...","finishedUtc":"..."}
+```
+
+Recovery after a timeout -- the aborted call kept running in THIS same editor process, so the next
+call just reads the file:
+
+```python
+import vibeue
+print(vibeue.last_python_result())      # dict of the most recent run, or None
+print(vibeue.python_run(7))             # a specific run by its runId, from the JSONL history
+```
+
+`last_python_result()` sees the lost run because the read happens before this recovery call's own
+result is persisted. A SECOND read reflects the recovery read itself -- grab the `runId` from the
+first read and use `python_run(run_id)` for a stable handle. Successful MCP replies also carry
+`run_id` so you can correlate a reply that did return with its record.
+
 Skill packs (this file and its siblings) are loaded through the engine's `AgentSkillToolset`.
 Each skill carries exact API patterns and gotchas; **load the relevant skill before writing any
 code** in a domain, or you will guess wrong property names and spiral into discovery loops.

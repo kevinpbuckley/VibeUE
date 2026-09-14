@@ -2,6 +2,7 @@
 
 #include "Tools/PythonExecutionService.h"
 #include "Core/ErrorCodes.h"
+#include "Utils/VibeUEPythonResultLog.h"
 #include "Misc/DateTime.h"
 #include "HAL/PlatformMisc.h"
 #include "Internationalization/Regex.h"
@@ -224,6 +225,11 @@ TResult<FPythonExecutionResult> FPythonExecutionService::ExecuteCode(
 		);
 	}
 
+	// Assign this run its per-process id and wall-clock start now, so the outcome can be persisted
+	// (B2) even when the client abandons the call after its timeout while the script keeps running.
+	const int64 RunId = FVibeUEPythonResultLog::NextRunId();
+	const FDateTime StartedUtc = FDateTime::UtcNow();
+
 	// Setup command
 	FPythonCommandEx Command;
 	Command.Command = Code;
@@ -233,6 +239,7 @@ TResult<FPythonExecutionResult> FPythonExecutionService::ExecuteCode(
 
 	// Execute with timing and timeout handling
 	double StartTime = FPlatformTime::Seconds();
+	double ExecutionTimeMs = 0.0; // measured for the main execution (excludes the post-crash probe)
 	bool bSuccess = false;
 	bool bCrashed = false;
 	FString CrashMessage;
@@ -250,6 +257,7 @@ TResult<FPythonExecutionResult> FPythonExecutionService::ExecuteCode(
 #if PLATFORM_WINDOWS
 	// Use SEH helper to catch access violations that C++ try/catch won't handle
 	FSEHExecutionResult SEHResult = ExecutePythonWithSEH(PythonPlugin, &Command);
+	ExecutionTimeMs = (FPlatformTime::Seconds() - StartTime) * 1000.0; // before the probe below
 	bSuccess = SEHResult.bSuccess;
 	if (SEHResult.bCrashed)
 	{
@@ -306,38 +314,53 @@ TResult<FPythonExecutionResult> FPythonExecutionService::ExecuteCode(
 		bCrashed = true;
 		CrashMessage = TEXT("Python execution threw an unhandled exception");
 	}
+	ExecutionTimeMs = (FPlatformTime::Seconds() - StartTime) * 1000.0;
 #endif
+
+	const FDateTime FinishedUtc = FDateTime::UtcNow();
+
+	// Build the outcome record once so EVERY completed run is persisted (B2) — including the error
+	// paths, because the code has already run in the editor even when we return an error to a client
+	// that has since timed out. OutErrorCode empty => success.
+	FPythonExecutionResult Result;
+	FString OutErrorCode;
+	FString OutErrorMessage;
 
 	if (bCrashed)
 	{
-		return TResult<FPythonExecutionResult>::Error(
-			ErrorCodes::PYTHON_RUNTIME_ERROR,
-			CrashMessage
-		);
+		Result.bSuccess = false;
+		Result.ErrorMessage = CrashMessage;
+		Result.ExecutionTimeMs = ExecutionTimeMs;
+		OutErrorCode = ErrorCodes::PYTHON_RUNTIME_ERROR;
+		OutErrorMessage = CrashMessage;
+	}
+	else
+	{
+		Result = ConvertExecutionResult(Command, ExecutionTimeMs);
+
+		// Check if execution took too long (post-execution check). The script has already completed;
+		// the caller likely gave up, which is exactly why the result is persisted below.
+		if (TimeoutMs > 0 && ExecutionTimeMs > TimeoutMs)
+		{
+			OutErrorCode = ErrorCodes::PYTHON_EXECUTION_TIMEOUT;
+			OutErrorMessage = FString::Printf(TEXT("Python execution exceeded %dms timeout (took %.2fms)"),
+				TimeoutMs, ExecutionTimeMs);
+		}
+		else if (!bSuccess || !Result.bSuccess)
+		{
+			OutErrorCode = ErrorCodes::PYTHON_RUNTIME_ERROR;
+			OutErrorMessage = Result.ErrorMessage.IsEmpty() ? TEXT("Python execution failed") : Result.ErrorMessage;
+		}
 	}
 
-	double ExecutionTimeMs = (FPlatformTime::Seconds() - StartTime) * 1000.0;
+	Result.RunId = RunId;
 
-	// Check if execution took too long (post-execution check)
-	if (TimeoutMs > 0 && ExecutionTimeMs > TimeoutMs)
+	// Persist off the return path. A failure here logs Warning inside Record and never affects the run.
+	FVibeUEPythonResultLog::Record(Result, Code, StartedUtc, FinishedUtc);
+
+	if (!OutErrorCode.IsEmpty())
 	{
-		return TResult<FPythonExecutionResult>::Error(
-			ErrorCodes::PYTHON_EXECUTION_TIMEOUT,
-			FString::Printf(TEXT("Python execution exceeded %dms timeout (took %.2fms)"),
-				TimeoutMs, ExecutionTimeMs)
-		);
-	}
-
-	// Convert result
-	FPythonExecutionResult Result = ConvertExecutionResult(Command, ExecutionTimeMs);
-
-	// Check for errors in result
-	if (!bSuccess || !Result.bSuccess)
-	{
-		return TResult<FPythonExecutionResult>::Error(
-			ErrorCodes::PYTHON_RUNTIME_ERROR,
-			Result.ErrorMessage.IsEmpty() ? TEXT("Python execution failed") : Result.ErrorMessage
-		);
+		return TResult<FPythonExecutionResult>::Error(OutErrorCode, OutErrorMessage);
 	}
 
 	return TResult<FPythonExecutionResult>::Success(Result);
