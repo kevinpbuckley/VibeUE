@@ -339,3 +339,11 @@ unreal.ViewportService.set_exposure_game_settings()
 ## Sample scripts (run via `execute_python_code`)
 
 - **`scripts/set_camera.txt`** — position the editor camera and set the view mode.
+
+## Additional gotchas
+
+- `CaptureViewport` through `call_tool` needs BOTH optional params present (`{"captureTransform":{}, "annotations":{}}`); `captureTransform` is ignored (it always frames the world origin), and the ~1 MB base64 result must be decoded to a file before it can be viewed.
+- Outside PIE the MCP-driven viewport does not pump frames, so captures are stale — static actors render but dynamic FX are absent and `HighResShot` never fires. Call `PerformanceService.set_background_throttling(False)` first; asset thumbnails still render fine while backgrounded.
+- `CaptureEditorImage` returns the previous frame unless you call `editor_invalidate_viewports()` and wait briefly first.
+- Use `capture_scene` for a real off-screen render instead of hand-building a `SceneCapture2D`; a backgrounded editor has no converged eye adaptation, so fix the exposure (`AEM_MANUAL`, bias ~10-14) or the shot comes out black.
+- Never A/B a capture against one taken earlier in the session — streaming, LOD and lighting drift between moments; after a material change, recompile and discard one warm-up capture or the thumbnail shows the default checker.

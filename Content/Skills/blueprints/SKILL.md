@@ -463,3 +463,9 @@ After any edit: compile via the engine `BlueprintTools.compile_blueprint` toolse
 (`call_tool(tool_name="compile_blueprint", toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools", arguments={"blueprint": path})`)
 and check the result's `success` / `num_errors`, then `unreal.EditorAssetLibrary.save_asset(path)`.
 Don't claim success until compile reports zero errors.
+
+## Additional gotchas
+
+- `SubobjectDataSubsystem` is an ENGINE subsystem (`get_engine_subsystem`); `get_object_for_blueprint` lives on `SubobjectDataBlueprintFunctionLibrary`; SCS templates are named `<Name>_GEN_VARIABLE`; a `SubobjectDataHandle` has no `is_valid()` — test `k2_find_subobject_data_from_handle(h) is not None`.
+- `set_collision_enabled(NO_COLLISION)` on a spawned actor's component does not survive save/reload; `set_collision_profile_name("NoCollision")` serialises, and `can_ever_affect_navigation=False` persists.
+- Engine collision profiles predate custom trace channels, so a channel with no explicit entry falls back to the ini default response (BLOCK); a scripted volume or primitive must set each custom channel's response explicitly.

@@ -507,3 +507,7 @@ unreal.BlueprintService.add_event_node(bp_path, "EventGraph", "ReceiveLatentEnte
 ## Sample scripts (run via `execute_python_code`)
 
 - **`scripts/build_state_tree.txt`** — create a StateTree, add states + a transition (see api-reference.md for task struct names).
+
+## Additional gotchas
+
+- A `ConstructorHelpers::FClassFinder` on a Blueprint that owns a StateTree force-loads the tree before the StateTree module registers; `IsReadyToRun()` then stays false all session and every instance is brain-dead while looking healthy. Use a `TSoftClassPtr` plus `LoadSynchronous()` at BeginPlay instead.
