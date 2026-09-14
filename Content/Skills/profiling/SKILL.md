@@ -53,10 +53,10 @@ The whole API is small — read the live signatures once with
 | `get_trace_status()` | Whether a trace is active and which channels are enabled. |
 | `bookmark(name)` | Drop a point-in-time bookmark in the active trace. |
 | `region_start(name)` / `region_end(name)` | Begin / end a named region span in the active trace. |
-| `analyse(source="both", file="")` | Read back trace and/or log → frame stats, worst frames, hitches, notable log lines. |
-| `start_standalone(name="standalone_capture", channels="")` | Launch the game as a separate standalone process with a trace attached (representative readings the editor viewport can't give). |
-| `stop_standalone()` | Stop the standalone process and finalise its trace/log. |
-| `get_standalone_status()` | Whether a standalone session is running and which trace/log it writes. |
+| `analyse(source="both", file="")` | Read back trace and/or log → frame stats, worst frames, hitches, notable log lines. Combined analysis reports `complete`, `partial`, or `failed`; partial is never top-level success. |
+| `start_standalone(name="standalone_capture", channels="")` | Request a separate process with a unique direct-to-file trace. The first response is `start_pending`; poll status for verified capture. |
+| `stop_standalone()` | Gracefully stop the exact tracked process and verify the exact trace finalized; forced/partial outcomes are explicit failures. |
+| `get_standalone_status()` | Session ID, PID, map, exact trace/log destinations, process state, and capture/finalization verification. |
 
 All methods return a JSON string. For a representative reading, profile under PIE or a standalone
 session (`start_standalone`), not the bare editor viewport.
@@ -243,6 +243,13 @@ print(summary)  # avg/p95/worst frame ms, hitches, notable log lines
 unreal.PerformanceService.analyse("trace", "Saved/Profiling/combat_encounter.utrace")
 ```
 
+For `source="both"`, inspect `status`: `complete` means both sources succeeded, `partial` means
+exactly one did, and `failed` means neither did. A partial result deliberately has `success=false`
+and names `available_sources` / `failed_sources`; this prevents a missing trace from masquerading as
+a successful capture. Log output separates `pso_hitch_event_lines`, cumulative
+`pso_hitches_reported`, and `pso_hitch_summary_lines`; repeated cumulative summary lines are not
+summed. The backward-compatible `pso_hitches` field is the best supported count.
+
 Remember: `analyse()` is frame-time aggregates only — use `frame_timing()` for the CPU/GPU split.
 
 ---
@@ -250,21 +257,33 @@ Remember: `analyse()` is frame-time aggregates only — use `frame_timing()` for
 ## Standalone capture — representative readings
 
 The editor viewport (and even PIE) is not always representative of a packaged run. `start_standalone()`
-launches the game as a **separate standalone process** with a trace attached, connecting back to the
-editor's Unreal Trace Server:
+launches the game as a **separate standalone process** with one unique, direct-to-file trace. It does
+not use the global Unreal Trace Server store and never substitutes an unrelated "latest" trace:
 
 ```python
 import unreal, json
 
-unreal.PerformanceService.start_standalone("standalone_capture")
-print(json.loads(unreal.PerformanceService.get_standalone_status()))  # running? trace/log path
+start = json.loads(unreal.PerformanceService.start_standalone("standalone_capture"))
+# start is request_accepted=true, success=false, pending=true until the child and trace exist
+status = json.loads(unreal.PerformanceService.get_standalone_status())
+# poll on later editor ticks until status["capture_verified"] is true
 
 # ... let it run / drive the workload ...
 
-unreal.PerformanceService.stop_standalone()  # finalises the trace + log
+stopped = json.loads(unreal.PerformanceService.stop_standalone())
+# require stopped["success"] and status == "finalized" before trusting the trace
 ```
 
-Once stopped, point `analyse()` at the standalone trace/log to summarise it.
+Record the returned `session_id`, `pid`, `map`, `trace_file`, and `log_file` with benchmark results.
+If shutdown is forced or the exact trace stays missing/empty, stop returns failure and may mark the
+available log/partial trace as `partial`; do not silently use another store trace. `analyse("both")`
+can still return a clearly marked log-only partial summary.
+
+For comparisons, keep map/route, resolution, scalability, difficulty, power mode, and warm-up fixed;
+disable editor background throttling for unattended runs and restore its prior value afterward.
+Treat short or sparse samples as observations, not stable averages. Compare median/p95/p99 and frame
+counts above 33/50/100 ms, and separate cold-start/shader/PSO runs from warm-cache runs. Run
+`ProfileGPU` or `stat dumpframe` separately because their instrumentation stalls contaminate traces.
 
 ---
 
