@@ -15,10 +15,14 @@
  * The signal means only "toolset registration finished for THIS process". Python, World and level
  * readiness remain separate checks.
  *
- * The file carries real JSON (pid, createdUtc, sessionStartUtc, pluginVersion, currentMap) so a
- * watcher can tell a fresh signal from one left behind by a crashed editor whose PID the OS later
- * reused: compare `sessionStartUtc` against the time you launched the process. It is written to a
- * .tmp sibling and moved into place, so a watcher never observes a half-written file.
+ * The file carries real JSON (pid, createdUtc, sessionStartUtc, pluginVersion, currentMap, mcpPort,
+ * mcpListening) so a watcher can tell a fresh signal from one left behind by a crashed editor whose
+ * PID the OS later reused: compare `sessionStartUtc` against the time you launched the process. It is
+ * written to a .tmp sibling and moved into place, so a watcher never observes a half-written file.
+ *
+ * `mcpPort` is the MCP endpoint port and `mcpListening` is whether this process's MCP module reports
+ * a running server (issue B6). A socket bind-probe cross-check runs at publish time and logs a loud
+ * Error line when the port-8000 fight has left this editor without a listener.
  *
  * `currentMap` is the package name of the loaded editor map ("" when no world is up yet). The signal
  * is re-published on every map open (issue #554), so agents can gate world edits on the right level
@@ -41,7 +45,7 @@ public:
 
 	/** Build the signal payload. Pure — split out so automation tests can verify it headlessly. */
 	static FString BuildSignalJson(uint32 ProcessId, const FDateTime& SessionStartUtc, const FDateTime& CreatedUtc,
-		const FString& CurrentMap);
+		const FString& CurrentMap, uint32 McpPort, bool bMcpListening);
 
 	/** Write the signal for this process. Returns false (and logs) if the directory or file write fails. */
 	static bool Publish();

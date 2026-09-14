@@ -594,3 +594,9 @@ print(f"Absolute: loc={loc}, rot={rot}, scale={scale}")
 ## Sample scripts (run via `execute_python_code`)
 
 - **`scripts/manipulate_actors.txt`** — list level actors, find by class, move/rotate by name.
+
+## Additional gotchas
+
+- World Partition: `save_current_level()` does not save external actor packages; `spawn_actor_from_object` writes to disk immediately with no dirty flag, but a later `set_actor_location` does not; after `load_level` WP actors read as unloaded stubs (not data loss); deleting a WP actor means `destroy_actor` plus saving the emptied package, or an orphan resurrects it.
+- An actor whose constructor creates no components has no root and is pinned to (0,0,0) forever (`RootComponent` reads None).
+- Editor-scripted volumes work — `spawn_actor_from_class(unreal.SomeVolume)` gives a 200 uu brush — but `encompasses_point` is not exposed.

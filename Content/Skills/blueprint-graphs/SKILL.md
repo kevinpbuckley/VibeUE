@@ -779,3 +779,15 @@ This skill index contains the frontmatter, intro, and the **Critical Rules / got
 - **`function-classes.md`** — Quick reference for the common class names you pass to a `build_graph` `function_call` node / engine `create_node` (KismetMathLibrary, KismetSystemLibrary, KismetArrayLibrary, GameplayStatics, etc.).
 - **`array-operations.md`** — Array operations on wildcard pins: `Array_Random`, available array functions, `K2Node_GetArrayItem`, wildcard pin type propagation, common array mistakes.
 - **`build-graph.md`** — The batch `build_graph` API: when to use it, node types, connection format, examples (BeginPlay → PrintString, Branch with Math, StateTreeDelegate Broadcast), round-trip export/rebuild, auto-layout, Make Struct / Make Instanced Struct, error handling.
+
+## Additional gotchas
+
+- `discover_nodes` returns clean `FUNC <BP>_C::Fn` keys now (no `SKEL_` prefix to strip). BP custom events are callable cross-BP through such a key; BP functions cannot call custom events — `FUNC Self::<Event>` in a function graph returns "".
+- Read pin defaults from `get_node_pins` (it now reports non-string defaults too); `get_graph_definition`'s `defaults` array and a node's `default_object` are the cross-checks. Bool pins on VariableSet nodes work (the pin name is the variable name).
+- Variable GET/SET spawners are scoped to the owning Blueprint now, so their keys are unambiguous — you no longer disambiguate by `n.category` (`Variables|<OwningBlueprint>`).
+- `build_graph` that fails on one node spec leaves the OTHER nodes behind; inspect the graph and delete the strays before retrying.
+- An interface function spawns as a plain `K2Node_CallFunction` with an interface-typed self pin — feed self through a `Cast To <Interface>` node; some query functions spawn PURE (no exec pins).
+- Compile errors surface in `compile_blueprint`'s `res.error`, and `get_editor_property("status")` reads `BS_ERROR`; never save on `BS_ERROR`, and stop PIE before structural edits (service calls against a BP with live PIE instances fail silently or return None).
+- Script-baked BP-CDO `TArray<TSubclassOf<...>>` defaults can be LOST on editor reload — read them back after a restart to confirm they persisted (writing the CDO is allowed; the engine just drops these array defaults across a reload).
+- Editor-world edits issued immediately after `StopPIE` can silently no-op; let the editor settle (poll) before editing.
+- `list_graphs`/`get_graph_summary` returning empty or None in a long session is a stale-session artifact, not a per-asset fact — restart before diagnosing. `list_graphs` legitimately returns `[]` for Anim Blueprints (use `AnimGraphService.list_graphs`).

@@ -55,6 +55,11 @@ struct FBlueprintGraphInfo
 	/** Number of nodes in this graph (cheap to compute, useful as a sanity signal) */
 	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
 	int32 NodeCount = 0;
+
+	/** Full object path of the graph (Graph->GetPathName()) — unique even when several graphs
+	 *  share a GraphName. Pass it back to any GraphName parameter to disambiguate duplicates. */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	FString GraphPath;
 };
 
 /**
@@ -548,6 +553,12 @@ struct FBlueprintPinInfo
 
 	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
 	FString DefaultValue;
+
+	/** Object/class default value as an object path; empty when the pin holds no object/class
+	 *  default. Populated for PC_Object/PC_Class/PC_SoftObject/PC_SoftClass pins so get_node_pins
+	 *  can report class/object references that the string-only DefaultValue does not capture. */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	FString DefaultObject;
 };
 
 /**
@@ -1425,6 +1436,35 @@ public:
 		const FString& DefaultValue = TEXT(""),
 		bool bIsArray = false,
 		const FString& ContainerType = TEXT(""));
+
+	/**
+	 * Remove a single member variable from a Blueprint by name.
+	 *
+	 * The engine exposes no targeted variable delete to Python — only
+	 * `BlueprintEditorLibrary.remove_unused_variables`, which sweeps EVERY unreferenced variable.
+	 * This removes exactly one, and only that one. It first counts references across ALL graphs
+	 * (Get and Set nodes for this Blueprint's own variable):
+	 *   - references present and bForce false -> refuse (Warning), listing the graphs and node counts;
+	 *   - bForce true -> `FBlueprintEditorUtils::RemoveMemberVariable` removes the variable and its
+	 *     referencing nodes.
+	 * A name that is a component from the Simple Construction Script is refused with a pointer to the
+	 * component API (it is not a NewVariables member). Verifies by readback and returns true only when
+	 * the variable is confirmed gone.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param VariableName - Name of the member variable to remove
+	 * @param bForce - Remove even when referenced (its Get/Set nodes are removed too)
+	 * @return True only if the variable is confirmed removed
+	 *
+	 * Example:
+	 *   unreal.BlueprintService.remove_member_variable("/Game/BP_Player", "UnusedScratch")
+	 *   unreal.BlueprintService.remove_member_variable("/Game/BP_Player", "OldHealth", True)  # force
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints")
+	static bool RemoveMemberVariable(
+		const FString& BlueprintPath,
+		const FString& VariableName,
+		bool bForce = false);
 
 	/**
 	 * Set the default value of an existing variable.

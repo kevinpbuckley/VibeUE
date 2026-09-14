@@ -96,6 +96,9 @@ struct VIBEUE_API FPythonExecutionResult
 	/** Was execution successful */
 	bool bSuccess = false;
 
+	/** Per-process sequential run id assigned by FPythonExecutionService::ExecuteCode (B2). 0 = unset. */
+	int64 RunId = 0;
+
 	/** stdout from print statements */
 	FString Output;
 

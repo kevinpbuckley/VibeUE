@@ -433,6 +433,9 @@ FString UPythonTools::ConvertExecutionResultToJson(const VibeUE::FPythonExecutio
 {
 	TSharedPtr<FJsonObject> JsonObj = MakeShared<FJsonObject>();
 	JsonObj->SetBoolField(TEXT("success"), Result.bSuccess);
+	// run_id lets a client correlate this reply with the persisted python-<pid>-last.json / -runs.jsonl
+	// record; on a call that timed out, recover the result with vibeue.last_python_result() (B2).
+	JsonObj->SetNumberField(TEXT("run_id"), static_cast<double>(Result.RunId));
 	JsonObj->SetStringField(TEXT("output"), Result.Output);
 	JsonObj->SetStringField(TEXT("result"), Result.Result);
 	

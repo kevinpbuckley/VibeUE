@@ -18,9 +18,22 @@ Why this exists:
   ALL missing required params in one error.
 - execute_tool results are inconsistently double-encoded ("returnValue" is sometimes a JSON string,
   issue #548) — exec_tool() decodes until stable and returns real Python values.
+
+Also provides (agent helpers for PIE, async tools, and asset GC):
+- pie_worlds() / role() — the live PIE worlds keyed by net role (server, clients, all, local),
+  skipping the ~100 stale /Memory/UEDPIE_* shells that a name match would grab.
+- exec_tool_async() / collect_tool_result() — fire a genuinely-async engine tool now (the editor
+  does not tick mid-script, so it never completes in one call), collect its decoded value next call.
+  exec_tool_collect() fires and collects in ONE call: the value if the tool completed synchronously,
+  else the pending key to collect_tool_result() later.
+- python_globals_holding() / release_globals() — find and drop the execute_python_code script
+  globals that root an asset (a GCObjectReferencer root), so delete_asset_unattended can proceed.
 """
 
+import inspect
 import json
+import os
+import sys
 
 import unreal
 
@@ -203,3 +216,303 @@ def exec_tool(toolset_name, tool_name, args=None, unwrap=True):
     if unwrap and isinstance(out, dict) and "returnValue" in out:
         return _decode_stable(out["returnValue"])
     return out
+
+
+# --- Persisted Python results (B2) -------------------------------------------------
+# execute_python_code persists every run to Saved/VibeUE/Signals/python-<pid>-last.json (latest)
+# and python-<pid>-runs.jsonl (history). A client whose call timed out (~30s / 300s) while the
+# script kept running in the editor reads these on its NEXT call instead of re-running the script
+# and double-executing a mutation. The recovery call runs in the SAME editor process, so os.getpid()
+# resolves the same files the C++ wrote.
+
+
+def _signals_dir():
+    saved = unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_saved_dir())
+    return os.path.join(saved, "VibeUE", "Signals")
+
+
+def _last_result_path(pid=None):
+    return os.path.join(_signals_dir(), "python-{}-last.json".format(pid or os.getpid()))
+
+
+def _runs_path(pid=None):
+    return os.path.join(_signals_dir(), "python-{}-runs.jsonl".format(pid or os.getpid()))
+
+
+def last_python_result(pid=None):
+    """The persisted result of the most recent execute_python_code run in THIS editor process, as a
+    dict (keys: runId, pid, success, label, output, error, result, execution_time_ms, startedUtc,
+    finishedUtc), or None if nothing has been recorded.
+
+    Use after a call timed out: `execute_python_code("import vibeue; print(vibeue.last_python_result())")`
+    returns the lost run because the read happens before this call's own result is persisted. Note
+    that a SECOND such read reflects the first read, not the original run — use its runId with
+    python_run() for a stable handle, or read it once and keep it.
+    """
+    try:
+        with open(_last_result_path(pid), "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        return None
+
+
+def python_run(run_id, pid=None):
+    """The persisted record for a specific runId from python-<pid>-runs.jsonl (a dict), or None if it
+    is not present (it may have been trimmed — the history keeps the last ~200 runs / ~2 MB)."""
+    try:
+        with open(_runs_path(pid), "r", encoding="utf-8") as handle:
+            lines = handle.readlines()
+    except OSError:
+        return None
+    for line in reversed(lines):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if record.get("runId") == run_id:
+            return record
+    return None
+
+
+# --- PIE worlds ------------------------------------------------------------------------------
+
+def role(actor):
+    """The net role of an actor as a string (e.g. 'NetRole.ROLE_AUTHORITY').
+
+    A 2-client PIE run is Standalone by default: BOTH worlds' actors read ROLE_AUTHORITY. Check
+    this before claiming a networked (server/client) result. Returns "" if the actor has no
+    readable role property.
+    """
+    try:
+        return str(actor.get_editor_property("role"))
+    except Exception:
+        return ""
+
+
+def pie_worlds():
+    """The live Play-In-Editor worlds, keyed by net role.
+
+    Returns {"server": UWorld|None, "clients": [UWorld, ...], "all": [UWorld, ...],
+    "local": UWorld|None}. The real PIE worlds have get_path_name() paths starting '/Game/' with
+    'UEDPIE_<N>_' in them: N=0 is the server (dedicated) or the listen host, N>=1 are clients,
+    ordered by N. Matching PIE worlds by name grabs one of the ~100 stale /Memory/UEDPIE_* shells
+    (0 actors) that linger in a session, so this filters on the /Game/ path instead. "local" is the
+    editor's own game world from UnrealEditorSubsystem.get_game_world().
+    """
+    marker = "UEDPIE_"
+    indexed = []
+    for world in unreal.ObjectIterator(unreal.World):
+        try:
+            path = world.get_path_name()
+        except Exception:
+            continue
+        if not path.startswith("/Game/") or marker not in path:
+            continue
+        rest = path[path.find(marker) + len(marker):]
+        digits = ""
+        for ch in rest:
+            if ch.isdigit():
+                digits += ch
+            else:
+                break
+        if not digits:
+            continue
+        indexed.append((int(digits), world))
+    indexed.sort(key=lambda pair: pair[0])
+
+    server = None
+    clients = []
+    for n, world in indexed:
+        if n == 0 and server is None:
+            server = world
+        elif n >= 1:
+            clients.append(world)
+
+    local = None
+    try:
+        local = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_game_world()
+    except Exception:
+        local = None
+
+    return {"server": server, "clients": clients, "all": [w for _, w in indexed], "local": local}
+
+
+# --- Async engine tools ----------------------------------------------------------------------
+
+_PENDING = {}
+
+
+def exec_tool_async(toolset_name, tool_name, args=None, key=None):
+    """Fire a genuinely-async ToolsetRegistry tool and stash its pending result for a later collect.
+
+    Some engine tools (e.g. EditorAppToolset.CaptureAssetImage) never reach is_complete inside one
+    execute_python_code call — the editor does not tick mid-script. Fire on one call with this, then
+    collect_tool_result(key) on the NEXT call. Args are schema-filled exactly like exec_tool(). The
+    raw result object is stored in the module-level _PENDING dict (which persists across calls) under
+    `key`, defaulting to "<toolset>.<tool>". Returns the key.
+    """
+    args = dict(args or {})
+    if key is None:
+        key = "{}.{}".format(toolset_name, tool_name)
+    tool_schema = _find_tool_schema(get_toolset_schema(toolset_name), tool_name)
+    if tool_schema is not None:
+        _fill_args_from_schema(tool_schema, args)
+    _PENDING[key] = unreal.ToolsetRegistry.execute_tool(toolset_name, tool_name, json.dumps(args))
+    return key
+
+
+def collect_tool_result(key, unwrap=True):
+    """Decoded value of an exec_tool_async() fire stashed under `key`.
+
+    Returns None while the result is still pending (is_complete False) — poll again next call. Once
+    complete, returns the decoded returnValue (or the whole decoded dict if unwrap=False / there is
+    no returnValue key), using the same stable-decode/unwrap logic as exec_tool(). Raises
+    RuntimeError with the engine error string on failure, and KeyError if nothing was fired under
+    `key`. A completed or failed result is dropped from _PENDING; a pending one is kept.
+    """
+    if key not in _PENDING:
+        raise KeyError(
+            "No pending async result under key '{}'. Fire exec_tool_async() first.".format(key))
+    res = _PENDING[key]
+    if res.error:
+        del _PENDING[key]
+        raise RuntimeError("async tool under '{}' failed: {}".format(key, res.error))
+    if not res.is_complete:
+        return None
+    out = _decode_stable(res.get_value_as_json_string())
+    del _PENDING[key]
+    if unwrap and isinstance(out, dict) and "returnValue" in out:
+        return _decode_stable(out["returnValue"])
+    return out
+
+
+def exec_tool_collect(toolset_name, tool_name, args=None, key=None):
+    """Fire an engine tool and try to collect its result in the SAME call.
+
+    A one-call convenience over exec_tool_async()/collect_tool_result(): fires the tool, then
+    collects immediately if it already completed (a synchronous editor tool) and returns the decoded
+    value; otherwise returns the pending key to pass to collect_tool_result() on a later call (a
+    genuinely-async tool cannot finish here — the editor does not tick mid-script). Raises like
+    collect_tool_result() on a tool error.
+    """
+    fired_key = exec_tool_async(toolset_name, tool_name, args=args, key=key)
+    res = _PENDING[fired_key]
+    if res.error or res.is_complete:
+        return collect_tool_result(fired_key, unwrap=True)
+    return fired_key
+
+
+# --- Asset GC roots held by Python globals ---------------------------------------------------
+#
+# Namespace note: inside execute_python_code, __name__ == "__main__" but globals() is NOT
+# sys.modules["__main__"].__dict__ — the script runs in a SEPARATE dict that persists across calls
+# (which is exactly why a global there keeps rooting an asset). So `import __main__` never sees it.
+# These helpers resolve the CALLER's globals via the call stack AND scan __main__ as a fallback.
+#
+# Self-test (run the two lines below in ONE execute_python_code call, then a THIRD call):
+#   import unreal, vibeue
+#   held = unreal.load_asset("/Game/UI/W_Prompt")            # a script global now roots the asset
+#   print(vibeue.python_globals_holding("/Game/UI/W_Prompt"))  # -> ['held']
+#   # ...next call:
+#   print(vibeue.release_globals(vibeue.python_globals_holding("/Game/UI/W_Prompt")))  # -> ['held']
+
+def _script_namespaces():
+    """The namespace dicts an execute_python_code global might live in, most-relevant first.
+
+    Returns the CALLER's globals (found by walking the stack back past vibeue's own frames — the
+    execute_python_code script namespace, a persistent dict that is not sys.modules['__main__'])
+    followed by sys.modules['__main__'].__dict__ as a fallback, deduplicated by dict identity.
+    """
+    module_ns = globals()
+    namespaces = []
+    seen = set()
+
+    def _add(namespace):
+        if isinstance(namespace, dict) and id(namespace) not in seen:
+            seen.add(id(namespace))
+            namespaces.append(namespace)
+
+    frame = inspect.currentframe()
+    walker = frame.f_back if frame is not None else None
+    try:
+        while walker is not None:
+            if walker.f_globals is not module_ns:
+                _add(walker.f_globals)
+                break
+            walker = walker.f_back
+    finally:
+        del frame
+        del walker
+    try:
+        _add(sys.modules["__main__"].__dict__)
+    except Exception:
+        pass
+    return namespaces
+
+
+def python_globals_holding(asset_or_path):
+    """Names of execute_python_code script globals that reference the given asset (a GC root).
+
+    Accepts a loaded unreal.Object or an asset path (either the package form '/Game/Path/Name' or
+    the object form '/Game/Path/Name.Name'). Scans the caller's script namespace and __main__ (see
+    _script_namespaces) and returns the names whose value is that object, or is any unreal.Object
+    whose get_path_name() matches the given path — deduplicated across namespaces.
+    delete_asset_unattended refuses an asset still held by such a global; feed this list to
+    release_globals() to free it.
+    """
+    wanted_obj = asset_or_path if isinstance(asset_or_path, unreal.Object) else None
+    wanted_paths = set()
+    if isinstance(asset_or_path, str):
+        wanted_paths.add(asset_or_path)
+        leaf = asset_or_path.rsplit("/", 1)[-1]
+        if "." not in leaf:
+            wanted_paths.add("{}.{}".format(asset_or_path, leaf))
+    elif wanted_obj is not None:
+        try:
+            wanted_paths.add(wanted_obj.get_path_name())
+        except Exception:
+            pass
+
+    hits = []
+    seen_names = set()
+    for namespace in _script_namespaces():
+        for name, value in list(namespace.items()):
+            if name.startswith("__") or name in seen_names:
+                continue
+            if wanted_obj is not None and value is wanted_obj:
+                hits.append(name)
+                seen_names.add(name)
+                continue
+            if isinstance(value, unreal.Object):
+                try:
+                    if value.get_path_name() in wanted_paths:
+                        hits.append(name)
+                        seen_names.add(name)
+                except Exception:
+                    pass
+    return hits
+
+
+def release_globals(names, namespace=None):
+    """del the named script globals and collect_garbage(), freeing the GC roots they held.
+
+    Pass the names python_globals_holding() returned. Deletes each name from every namespace that
+    holds it (the caller's execute_python_code script namespace and __main__; see
+    _script_namespaces), so a name defined in both is fully released. Pass an explicit `namespace`
+    dict to delete from only that dict instead. Returns the names actually deleted (a name present
+    in none is skipped). Run before retrying delete_asset_unattended on an asset it refused as
+    rooted.
+    """
+    namespaces = [namespace] if isinstance(namespace, dict) else _script_namespaces()
+    released = []
+    for name in names:
+        for ns in namespaces:
+            if name in ns:
+                del ns[name]
+                if name not in released:
+                    released.append(name)
+    unreal.SystemLibrary.collect_garbage()
+    return released

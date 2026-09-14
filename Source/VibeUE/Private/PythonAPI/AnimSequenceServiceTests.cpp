@@ -57,9 +57,7 @@ bool FVibeAnimSequenceCreateWritesKeysTest::RunTest(const FString&)
 	const FString SavePath = TEXT("/Game/VibeUETests");
 	const FString AssetPath = SavePath / AssetName;
 
-	TArray<FString> Referencers;
-	FString Error;
-	UAssetDiscoveryService::DeleteAssetUnattended(AssetPath, true, Referencers, Error); // leftovers from an earlier run
+	UAssetDiscoveryService::DeleteAssetUnattended(AssetPath, true); // leftovers from an earlier run
 
 	// Two keys: identity at 0 s, a quarter turn about Y at the end
 	const float Duration = 0.5f;
@@ -102,7 +100,8 @@ bool FVibeAnimSequenceCreateWritesKeysTest::RunTest(const FString&)
 	}
 
 	// Cleanup through the unattended delete (also exercises its unreferenced path)
-	TestTrue(TEXT("unattended delete removes the test clip"), UAssetDiscoveryService::DeleteAssetUnattended(AssetPath, false, Referencers, Error));
+	const FUnattendedDeleteResult CleanupResult = UAssetDiscoveryService::DeleteAssetUnattended(AssetPath, false);
+	TestTrue(TEXT("unattended delete removes the test clip"), CleanupResult.bSuccess);
 	TestFalse(TEXT("asset is gone"), UEditorAssetLibrary::DoesAssetExist(AssetPath));
 	return true;
 }
@@ -120,11 +119,11 @@ bool FVibeDeleteAssetUnattendedTest::RunTest(const FString&)
 		TestTrue(TEXT("DeleteAssetUnattended is AICallable"), Function->HasMetaData(TEXT("AICallable")));
 	}
 
-	TArray<FString> Referencers;
-	FString Error;
-	TestFalse(TEXT("missing asset is refused"), UAssetDiscoveryService::DeleteAssetUnattended(TEXT("/Game/VibeUETests/AS_DoesNotExist"), false, Referencers, Error));
-	TestTrue(TEXT("missing asset reports not found"), Error.Contains(TEXT("not found")));
-	TestFalse(TEXT("empty path is refused"), UAssetDiscoveryService::DeleteAssetUnattended(TEXT(""), false, Referencers, Error));
+	const FUnattendedDeleteResult MissingResult = UAssetDiscoveryService::DeleteAssetUnattended(TEXT("/Game/VibeUETests/AS_DoesNotExist"), false);
+	TestFalse(TEXT("missing asset is refused"), MissingResult.bSuccess);
+	TestTrue(TEXT("missing asset reports not found"), MissingResult.ErrorMessage.Contains(TEXT("not found")));
+	const FUnattendedDeleteResult EmptyResult = UAssetDiscoveryService::DeleteAssetUnattended(TEXT(""), false);
+	TestFalse(TEXT("empty path is refused"), EmptyResult.bSuccess);
 	return true;
 }
 

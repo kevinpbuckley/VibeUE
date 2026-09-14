@@ -10,6 +10,8 @@
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "Misc/AutomationTest.h"
+#include "Misc/FileHelper.h"
+#include "HAL/FileManager.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 
@@ -117,6 +119,110 @@ bool FWorkflowScenarioTest::RunTest(const FString&)
 	if (!TestTrue(TEXT("scenarios queued"), Passing.IsValid() && Failing.IsValid())) { return false; }
 	ADD_LATENT_AUTOMATION_COMMAND(FWaitWorkflowScenario(this, Passing->GetStringField(TEXT("scenarioId")), true));
 	ADD_LATENT_AUTOMATION_COMMAND(FWaitWorkflowScenario(this, Failing->GetStringField(TEXT("scenarioId")), false));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWorkflowScenarioValidationTest, "VibeUE.Workflow.Scenario.RejectInvalidAssertions",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FWorkflowScenarioValidationTest::RunTest(const FString&)
+{
+	const TArray<FString> Invalid = {
+		TEXT(R"({"steps":[{"action":"wait"}]})"),
+		TEXT(R"({"steps":[null]})"),
+		TEXT(R"({"steps":[{"action":"assert_log"}]})"),
+		TEXT(R"({"steps":[{"action":"python_assert","expression":"1"}]})"),
+		TEXT(R"({"steps":[{"action":"python_assert_number","expression":"1","operator":"bogus","expected":1}]})"),
+		TEXT(R"({"steps":[{"action":"python_assert_number","expression":"1","operator":"eq","expected":1,"tolerance":-1}]})"),
+		TEXT(R"({"steps":[{"action":"python_assert_number","expression":"1","operator":"lt","expected":2,"tolerance":1}]})"),
+		TEXT(R"({"smoke":"yes","steps":[{"action":"wait"}]})"),
+		TEXT(R"({"smoke":true,"steps":[{"action":"wait"}],"dependencies":["Saved/NoSuchScenarioDependency"]})")
+	};
+	for (const FString& Spec : Invalid)
+	{
+		const auto Result = ParseWorkflowJson(UWorkflowService::RunScenario(Spec));
+		TestTrue(TEXT("invalid scenario rejected before execution: ") + Spec, Result && !Result->GetBoolField(TEXT("success")) && !Result->HasField(TEXT("scenarioId")));
+	}
+	return true;
+}
+
+DEFINE_LATENT_AUTOMATION_COMMAND_FOUR_PARAMETER(FVerifyScenarioEvidence, FAutomationTestBase*, Test, FString, Id, FString, ExpectedStatus, FString, Dependency);
+bool FVerifyScenarioEvidence::Update()
+{
+	static TMap<FString, double> Starts;
+	const double Start = Starts.FindOrAdd(Id, FPlatformTime::Seconds());
+	const auto Report = ParseWorkflowJson(UWorkflowService::GetScenario(Id));
+	if (!Report) { Test->AddError(TEXT("invalid evidence JSON")); Starts.Remove(Id); return true; }
+	if (Report->GetStringField(TEXT("status")) == TEXT("running"))
+	{
+		if (FPlatformTime::Seconds() - Start < 10.0) { return false; }
+		Test->AddError(TEXT("scenario evidence timed out")); UWorkflowService::CancelScenario(Id); Starts.Remove(Id); return true;
+	}
+	Starts.Remove(Id);
+	Test->TestEqual(TEXT("expected terminal status"), Report->GetStringField(TEXT("status")), ExpectedStatus);
+	Test->TestEqual(TEXT("only verified assertions pass"), Report->GetBoolField(TEXT("passed")), ExpectedStatus == TEXT("passed"));
+	Test->TestTrue(TEXT("scenario hash recorded"), Report->GetObjectField(TEXT("provenance"))->HasField(TEXT("scenarioSha1")));
+	if (ExpectedStatus == TEXT("smoke_passed"))
+	{
+		Test->TestEqual(TEXT("smoke evaluated no assertions"), Report->GetNumberField(TEXT("assertionsEvaluated")), 0.0);
+	}
+	if (!Dependency.IsEmpty())
+	{
+		Test->TestTrue(TEXT("tracked pass is current"), Report->GetBoolField(TEXT("verifiedCurrent")));
+		for (const auto& File : Report->GetObjectField(TEXT("provenance"))->GetArrayField(TEXT("files")))
+		{
+			Test->TestFalse(TEXT("fingerprint paths are absolute"), FPaths::IsRelative(File->AsObject()->GetStringField(TEXT("path"))));
+		}
+		const FString PersistedId = TEXT("persisted-") + Id;
+		const FString PersistedPath = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("VibeUE/Scenarios"), PersistedId + TEXT(".json"));
+		FFileHelper::SaveStringToFile(UWorkflowService::GetScenario(Id), *PersistedPath);
+		Test->TestEqual(TEXT("all declared assertions evaluated"), Report->GetNumberField(TEXT("assertionsDeclared")), Report->GetNumberField(TEXT("assertionsEvaluated")));
+		// Same-length replacement proves freshness uses content, not file size.
+		FFileHelper::SaveStringToFile(TEXT("after!"), *Dependency);
+		const auto Stale = ParseWorkflowJson(UWorkflowService::GetScenario(Id));
+		Test->TestEqual(TEXT("changed dependency invalidates pass"), Stale->GetStringField(TEXT("status")), FString(TEXT("stale")));
+		Test->TestFalse(TEXT("stale cannot pass"), Stale->GetBoolField(TEXT("passed")));
+		Test->TestTrue(TEXT("historical outcome remains available"), Stale->GetBoolField(TEXT("historicalPassed")));
+		const auto Reloaded = ParseWorkflowJson(UWorkflowService::GetScenario(PersistedId));
+		Test->TestEqual(TEXT("disk-loaded evidence also becomes stale"), Reloaded->GetStringField(TEXT("status")), FString(TEXT("stale")));
+		IFileManager::Get().Delete(*PersistedPath);
+		IFileManager::Get().Delete(*Dependency);
+		const auto Missing = ParseWorkflowJson(UWorkflowService::GetScenario(Id));
+		Test->TestEqual(TEXT("deleted dependency remains stale"), Missing->GetStringField(TEXT("validity")), FString(TEXT("stale")));
+	}
+	else { Test->TestFalse(TEXT("untracked report never claims current verification"), Report->GetBoolField(TEXT("verifiedCurrent"))); }
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWorkflowScenarioEvidenceTest, "VibeUE.Workflow.Scenario.NumericSmokeAndFreshness",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FWorkflowScenarioEvidenceTest::RunTest(const FString&)
+{
+	const FString Leaf = TEXT("VibeUE-scenario-") + FGuid::NewGuid().ToString(EGuidFormats::Digits) + TEXT(".txt");
+	const FString Dependency = FPaths::Combine(FPaths::ProjectSavedDir(), Leaf);
+	if (!FFileHelper::SaveStringToFile(TEXT("before"), *Dependency)) { AddError(TEXT("cannot create dependency fixture")); return false; }
+	const FString Numeric = FString::Printf(TEXT(R"({"dependencies":["Saved/%s"],"steps":[
+		{"action":"python_assert_number","expression":"0.1+0.2","operator":"eq","expected":0.3,"tolerance":0.00001},
+		{"action":"python_assert_number","expression":"25","operator":"lt","expected":100},
+		{"action":"python_assert_number","expression":"25","operator":"le","expected":25},
+		{"action":"python_assert_number","expression":"25","operator":"gt","expected":20},
+		{"action":"python_assert_number","expression":"25","operator":"ge","expected":25}],"teardown":{"stop_pie":false}})"), *Leaf);
+	auto Queue = [this](const FString& Spec, const FString& Status, const FString& File = FString())
+	{
+		const auto Result = ParseWorkflowJson(UWorkflowService::RunScenario(Spec));
+		if (!Result || !Result->HasField(TEXT("scenarioId"))) { AddError(TEXT("scenario was not queued")); return; }
+		ADD_LATENT_AUTOMATION_COMMAND(FVerifyScenarioEvidence(this, Result->GetStringField(TEXT("scenarioId")), Status, File));
+	};
+	Queue(Numeric, TEXT("passed"), Dependency);
+	Queue(TEXT(R"({"smoke":true,"steps":[{"action":"wait"}],"teardown":{"stop_pie":false}})"), TEXT("smoke_passed"));
+	Queue(TEXT(R"({"steps":[{"action":"python_assert_number","expression":"10","operator":"ge","expected":20}],"teardown":{"stop_pie":false}})"), TEXT("failed"));
+	Queue(TEXT(R"({"steps":[{"action":"python_assert_number","expression":"'25garbage'","operator":"eq","expected":25}],"teardown":{"stop_pie":false}})"), TEXT("failed"));
+	Queue(TEXT(R"json({"steps":[{"action":"python_assert_number","expression":"float('nan')","operator":"eq","expected":0}],"teardown":{"stop_pie":false}})json"), TEXT("failed"));
+	Queue(TEXT(R"({"steps":[{"action":"python_assert","expression":"1","expected":"2"},{"action":"python_assert","expression":"1","expected":"1"}],"teardown":{"stop_pie":false}})"), TEXT("failed"));
+	const FString Marker = TEXT("WorkflowLogAssertion-") + FGuid::NewGuid().ToString(EGuidFormats::Digits);
+	Queue(FString::Printf(TEXT(R"({"steps":[{"action":"assert_log","contains":"%s","not_contains":"%s"}],"teardown":{"stop_pie":false}})"), *Marker, *Marker), TEXT("failed"));
+	Queue(FString::Printf(TEXT(R"({"steps":[{"action":"assert_log","contains":"%s","not_contains":"%s-absent"}],"teardown":{"stop_pie":false}})"), *Marker, *Marker), TEXT("passed"));
+	UE_LOG(LogTemp, Display, TEXT("%s"), *Marker);
+	GLog->FlushThreadedLogs(); GLog->Flush();
 	return true;
 }
 

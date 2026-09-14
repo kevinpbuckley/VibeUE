@@ -45,6 +45,7 @@ keywords:
 | `set_camera_speed(speed)` | Set camera movement speed (1-8) |
 | `set_viewport_layout(name)` | Switch viewport layout (single, quad, etc.) |
 | `get_viewport_layout()` | Get current layout name |
+| `capture_scene(location, rotation, width, height, out_png, ortho_width=0, fov=90, manual_ev100=0)` | Synchronous SceneCapture2D → PNG that works while the editor is backgrounded (see below) |
 
 ---
 
@@ -151,6 +152,80 @@ When `set_realtime(False)`, the viewport only repaints on interaction. All Viewp
 > can succeed yet `is_realtime` reads back `False`. Verify realtime in `OnePane` layout, or don't rely on
 > the read-back to gate logic when in a split layout. (Other fields like view type / FOV / camera read back
 > correctly across layouts.)
+
+### 📸 Capture that works while backgrounded
+
+`CaptureViewport` / `CaptureEditorImage` (and `HighResShot`) return a **stale frame** when the
+MCP-driven editor is minimised or backgrounded — the level viewport does not pump frames. The
+reliable path is **`ViewportService.capture_scene(...)`**: it spawns a transient `ASceneCapture2D`,
+renders one frame synchronously with `CaptureScene()`, reads the pixels back and writes the PNG
+in-call. No viewport pumping, no `editor_invalidate_viewports()` + sleep dance.
+
+```python
+import unreal
+
+# Perspective grab of a spot in the level (works even when the editor window is hidden)
+res = unreal.ViewportService.capture_scene(
+    unreal.Vector(1200, -800, 900),          # camera location
+    unreal.Rotator(pitch=-20, yaw=45, roll=0),  # kwargs — Rotator positional order is (roll,pitch,yaw)
+    1280, 720,                                # width, height (px)
+    "C:/temp/shot.png",                       # absolute path, or relative → Saved/VibeUE/Captures
+    manual_ev100=-6.0)                        # 0 = auto (black when hidden); negative EV = brighter fixed exposure — see below
+if res.b_success:
+    print("wrote", res.output_path, res.file_size_bytes, "bytes")
+else:
+    print("failed:", res.error_message)
+```
+
+**Baked-in facts (measured — these are why the hand-rolled recipe existed):**
+
+- **Alpha.** The capture source is `SCS_FINAL_COLOR_LDR`, which yields **alpha 255**. `SCS_BASE_COLOR`
+  writes **alpha 0**, producing a PNG that renders as a **blank white page** in most viewers even
+  though the file is a full-size capture. `capture_scene` forces the exported alpha to 255 regardless,
+  so its PNGs are always opaque. (Check the file *size*, not just the preview — a truly empty PNG is a
+  few KB.)
+- **Format.** The render target is `RTF_RGBA8`. The engine default (`RTF_RGBA16f`, a float format)
+  writes non-PNG bytes; `capture_scene` never uses it.
+- **Exposure.** Leave `manual_ev100=0` (default) to keep the engine's **automatic** exposure — fine
+  for a foreground / PIE window, but **black** when the editor is hidden (no converged eye adaptation).
+  A backgrounded editor needs a **fixed** exposure: pass `manual_ev100` != 0 and `capture_scene`
+  switches to a manual exposure **decoupled from the physical camera**, where the value is the exposure
+  **TARGET in EV100** — exactly like a camera's metered EV: **higher EV100 is DARKER** (it assumes a
+  brighter scene and stops down), lower/negative is brighter. Measured on a daylit scene from a
+  backgrounded editor (mean RGB luminance): `0` (auto) → 16.4, `+4` → 4.3, `-4` → 43.8, `-6` → 63.4,
+  `-8` → 86.0. **A daylit backgrounded scene reads well around `-6` to `-8`; try `-4` first for bright
+  scenes.** Tune by capturing.
+  > Note: the engine reads its underlying `AutoExposureBias` as a `pow(2,bias)` exposure *compensation*
+  > (so its docs say "positive brightens"), but in this decoupled-Manual SceneCapture path the observed,
+  > repeatable behaviour is the opposite — higher = darker — so treat `manual_ev100` as a camera EV
+  > target. Do **not** carry over any old "bias ~10–14 to brighten" advice; that was from a build that
+  > left the physical camera coupled, and here a large positive value is near-black.
+- **Cleanup.** The transient capture actor and its render target are destroyed inside the call — no
+  stray actors are left in the level.
+
+**Minimap / top-down map recipe (orthographic, north-up):**
+
+```python
+import unreal
+# Ortho capture centred over the map, looking straight down, north-up.
+# ortho_width = the world-space span you want to cover (e.g. the landscape size in uu).
+map_size = 500000.0  # uu across
+res = unreal.ViewportService.capture_scene(
+    unreal.Vector(0, 0, 100000),                    # high above centre; Z only needs to clear geometry
+    unreal.Rotator(pitch=-90, yaw=-90, roll=0),     # pitch=-90 looks down; yaw=-90 makes +X point up = north-up
+    2048, 2048,
+    "minimap.png",                                  # → Saved/VibeUE/Captures/minimap.png
+    ortho_width=map_size,
+    manual_ev100=-6.0)   # fixed exposure for a hidden editor; LOWER (more negative) = brighter
+```
+
+- `ortho_width > 0` selects **orthographic** projection (and `fov` is ignored); `ortho_width == 0`
+  (default) is **perspective** using `fov`.
+- The rotation `(pitch=-90, yaw=-90, roll=0)` yields a **north-up** image (world +X points to the top).
+  This is a convention of the caller's rotation, not something the API forces — pass a different yaw to
+  rotate the map.
+- For flat map labels, a `TextRenderActor` at rotation `(roll=0, pitch=90, yaw=90)` reads correctly in
+  this north-up view.
 
 ---
 
@@ -264,3 +339,11 @@ unreal.ViewportService.set_exposure_game_settings()
 ## Sample scripts (run via `execute_python_code`)
 
 - **`scripts/set_camera.txt`** — position the editor camera and set the view mode.
+
+## Additional gotchas
+
+- `CaptureViewport` through `call_tool` needs BOTH optional params present (`{"captureTransform":{}, "annotations":{}}`); `captureTransform` is ignored (it always frames the world origin), and the ~1 MB base64 result must be decoded to a file before it can be viewed.
+- Outside PIE the MCP-driven viewport does not pump frames, so captures are stale — static actors render but dynamic FX are absent and `HighResShot` never fires. Call `PerformanceService.set_background_throttling(False)` first; asset thumbnails still render fine while backgrounded.
+- `CaptureEditorImage` returns the previous frame unless you call `editor_invalidate_viewports()` and wait briefly first.
+- Use `capture_scene` for a real off-screen render instead of hand-building a `SceneCapture2D`; a backgrounded editor has no converged eye adaptation, so fix the exposure (`AEM_MANUAL`, bias ~10-14) or the shot comes out black.
+- Never A/B a capture against one taken earlier in the session — streaming, LOD and lighting drift between moments; after a material change, recompile and discard one warm-up capture or the thumbnail shows the default checker.

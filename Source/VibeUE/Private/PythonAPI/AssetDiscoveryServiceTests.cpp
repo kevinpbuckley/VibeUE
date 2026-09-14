@@ -7,9 +7,12 @@
 #include "PythonAPI/UAssetDiscoveryService.h"
 #include "EditorAssetLibrary.h"
 #include "HAL/FileManager.h"
+#include "HAL/PlatformFileManager.h"
 #include "Misc/Base64.h"
 #include "Misc/FileHelper.h"
+#include "Misc/PackageName.h"
 #include "Misc/Paths.h"
+#include "UObject/UnrealType.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeAssetReimportTest, "VibeUE.Assets.ReimportAsset",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -88,6 +91,110 @@ bool FVibeAssetReimportTest::RunTest(const FString&)
 	}
 	IFileManager::Get().Delete(*OriginalSource, false, true);
 	IFileManager::Get().Delete(*ReplacementSource, false, true);
+	IFileManager::Get().DeleteDirectory(*TestDirectory, false, true);
+
+	return true;
+}
+
+// Regression guard for the A13 follow-up (DeleteAssetUnattended false-refusal + lost-reason fix).
+//
+// SCOPE NOTE: the false-refusal half of the bug (a Blueprint refused because FBlueprintActionDatabase
+// roots transient UBlueprintNodeSpawner objects) cannot be reproduced under a commandlet — the
+// automation harness runs headless, and FBlueprintActionDatabase::RefreshAssetActions early-returns
+// on IsRunningCommandlet() (BlueprintActionDatabase.cpp:1628), so no node spawners are ever built to
+// refuse over. That half was verified in the live editor. What this test locks in headlessly is the
+// API-shape half: the function returns an FUnattendedDeleteResult struct (so Python never loses the
+// reason to a false->None collapse), the struct's fields are populated on both refusal and success,
+// and an unreferenced asset still deletes cleanly through the new clear-actions + gather path.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeDeleteAssetUnattendedResultStructTest, "VibeUE.Assets.DeleteAssetUnattendedResultStruct",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVibeDeleteAssetUnattendedResultStructTest::RunTest(const FString&)
+{
+	UFunction* Function = UAssetDiscoveryService::StaticClass()->FindFunctionByName(
+		GET_FUNCTION_NAME_CHECKED(UAssetDiscoveryService, DeleteAssetUnattended));
+	TestNotNull(TEXT("DeleteAssetUnattended is reflected"), Function);
+	if (Function)
+	{
+		TestTrue(TEXT("DeleteAssetUnattended is AICallable"), Function->HasMetaData(TEXT("AICallable")));
+		// The whole point of the fix: it returns a struct, not a bool, so the reason survives to Python.
+		const FStructProperty* ReturnProp = CastField<FStructProperty>(Function->GetReturnProperty());
+		TestNotNull(TEXT("DeleteAssetUnattended returns a struct (not a bool)"), ReturnProp);
+		if (ReturnProp)
+		{
+			TestTrue(TEXT("return type is FUnattendedDeleteResult"),
+				ReturnProp->Struct == FUnattendedDeleteResult::StaticStruct());
+		}
+	}
+
+	// Empty path: refused, reason survives in the struct.
+	{
+		const FUnattendedDeleteResult Res = UAssetDiscoveryService::DeleteAssetUnattended(TEXT(""), true);
+		TestFalse(TEXT("empty path is refused"), Res.bSuccess);
+		TestTrue(TEXT("empty-path reason survives"), Res.ErrorMessage.Contains(TEXT("empty")));
+	}
+
+	// Missing asset: refused, reason survives in the struct.
+	{
+		const FUnattendedDeleteResult Res = UAssetDiscoveryService::DeleteAssetUnattended(
+			TEXT("/Game/VibeUETests/T_MissingDeleteAsset"), true);
+		TestFalse(TEXT("missing asset is refused"), Res.bSuccess);
+		TestTrue(TEXT("missing-asset reason survives"), Res.ErrorMessage.Contains(TEXT("not found")));
+	}
+
+	// Unreferenced asset: deletes cleanly through the new clear-actions + gather path.
+	const FString TestDirectory = FPaths::Combine(FPaths::ProjectIntermediateDir(), TEXT("VibeUE/DeleteAssetUnattendedTest"));
+	const FString SourcePng = FPaths::Combine(TestDirectory, TEXT("pixel.png"));
+	const FString AssetPackagePath = TEXT("/Game/VibeUETests/T_DeleteAssetUnattendedTest");
+
+	IFileManager::Get().MakeDirectory(*TestDirectory, true);
+	if (UEditorAssetLibrary::DoesAssetExist(AssetPackagePath))
+	{
+		UEditorAssetLibrary::DeleteAsset(AssetPackagePath);
+	}
+
+	TArray<uint8> PngBytes;
+	const bool bDecoded = FBase64::Decode(
+		TEXT("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="),
+		PngBytes);
+	TestTrue(TEXT("PNG fixture decoded"), bDecoded);
+	TestTrue(TEXT("PNG fixture written"), bDecoded && FFileHelper::SaveArrayToFile(PngBytes, *SourcePng));
+
+	FString ImportError;
+	const FString ImportedPath = UAssetDiscoveryService::ImportAsset(
+		SourcePng, TEXT("/Game/VibeUETests"), TEXT("T_DeleteAssetUnattendedTest"), ImportError);
+	TestFalse(TEXT("texture fixture imported"), ImportedPath.IsEmpty());
+	if (!ImportedPath.IsEmpty())
+	{
+		FString PackageFilename;
+		const bool bResolvedPackage = FPackageName::TryConvertLongPackageNameToFilename(
+			AssetPackagePath, PackageFilename, FPackageName::GetAssetPackageExtension());
+		TestTrue(TEXT("fixture package filename resolves"), bResolvedPackage);
+		if (bResolvedPackage)
+		{
+			IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+			TestTrue(TEXT("fixture can be marked read-only"), PlatformFile.SetReadOnly(*PackageFilename, true));
+			const FUnattendedDeleteResult ReadOnlyRes =
+				UAssetDiscoveryService::DeleteAssetUnattended(AssetPackagePath, true);
+			TestFalse(TEXT("read-only package is refused without entering the engine delete path"), ReadOnlyRes.bSuccess);
+			TestTrue(TEXT("read-only refusal explains the recovery action"),
+				ReadOnlyRes.ErrorMessage.Contains(TEXT("read-only")));
+			TestTrue(TEXT("read-only refusal leaves the asset intact"),
+				UEditorAssetLibrary::DoesAssetExist(AssetPackagePath));
+			TestTrue(TEXT("fixture read-only state can be cleared"), PlatformFile.SetReadOnly(*PackageFilename, false));
+		}
+
+		const FUnattendedDeleteResult Res = UAssetDiscoveryService::DeleteAssetUnattended(AssetPackagePath, false);
+		TestTrue(TEXT("unreferenced asset deletes and reports success in the struct"), Res.bSuccess);
+		TestTrue(TEXT("success carries no error message"), Res.ErrorMessage.IsEmpty());
+		TestFalse(TEXT("asset is actually gone after delete"), UEditorAssetLibrary::DoesAssetExist(AssetPackagePath));
+	}
+
+	if (UEditorAssetLibrary::DoesAssetExist(AssetPackagePath))
+	{
+		UEditorAssetLibrary::DeleteAsset(AssetPackagePath);
+	}
+	IFileManager::Get().Delete(*SourcePng, false, true);
 	IFileManager::Get().DeleteDirectory(*TestDirectory, false, true);
 
 	return true;

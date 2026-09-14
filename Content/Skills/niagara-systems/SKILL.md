@@ -152,6 +152,12 @@ System lifecycle, user parameters, and compile are NOT on `NiagaraService` anymo
 engine `NiagaraToolsets.*` tools shown above. After tuning, compile via the engine toolset (or
 `unreal.EditorAssetLibrary.save_asset(path)` to persist).
 
+- **Save a newly created system immediately.** A `NiagaraSystem` created through the engine
+  `NiagaraToolsets` create tool is not rooted, and was lost to garbage collection before its first
+  save at least once. Right after creating it, run
+  `unreal.EditorAssetLibrary.save_asset(path, only_if_is_dirty=False)` and confirm the `.uasset`
+  exists on disk (`unreal.EditorAssetLibrary.does_asset_exist(path)`) before doing anything else.
+
 ---
 
 ## ⚠️ User Parameter Types (engine `NiagaraToolsets` — reference)
@@ -200,3 +206,8 @@ names); data-interface types ignore the default value (a default DI instance is 
 
 - **niagara-emitters** — color/curve authoring + scratch-pad Custom HLSL.
 - Engine `NiagaraToolsets.*` (via `call_tool`) — system/emitter/parameter/renderer CRUD and compile.
+
+## Additional gotchas
+
+- Save a new system immediately with `save_asset(path, only_if_is_dirty=False)` and verify the file exists — a freshly created system may not persist otherwise.
+- A fresh sprite renderer has `Material=None` and is invisible; `AddVelocityInCone.Velocity Strength` defaults to 0; use the V2 `InitializeParticle` module and drive mode inputs with `SetStackInputData`.

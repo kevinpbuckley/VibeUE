@@ -59,7 +59,7 @@ For repeatable multi-step verification, prefer `WorkflowService.run_scenario()` 
 the loop. It queues a state machine on editor ticks, waits for actual PIE readiness, scopes log
 assertions to the scenario start, uses VibeUE's focus-free input injection, captures evidence, and
 always tears PIE down on pass, failure, or cancellation. Poll `get_scenario(id)` until its `status`
-is `passed`, `failed`, or `cancelled`:
+is `passed`, `failed`, `cancelled`, `smoke_passed`, or `stale`:
 
 ```python
 import json, unreal
@@ -83,6 +83,51 @@ queued = json.loads(unreal.WorkflowService.run_scenario(json.dumps(spec)))
 Use the lower-level primitives below for interactive investigation, one-off probes, or actions not in
 the scenario schema. Never spin/sleep inside one editor Python call while waiting for a scenario.
 
+### Assertions and evidence freshness
+
+A normal scenario must declare at least one `assert_log`, `python_assert`, or
+`python_assert_number` step. Completing input/wait/capture steps alone does not verify gameplay.
+For a deliberate boot-only check, set `"smoke": true`: an assertion-free run finishes with
+`status="smoke_passed"` and `passed=false`. Pollers must treat `smoke_passed` and `stale` as terminal
+alongside `passed`, `failed`, and `cancelled`.
+
+`python_assert` compares the Python result with a required string `expected`.
+`python_assert_number` evaluates an expression and requires a finite numeric result:
+
+```json
+{"action":"python_assert_number", "expression":"0.1 + 0.2",
+ "operator":"eq", "expected":0.3, "tolerance":0.00001}
+```
+
+Operators are `eq`, `lt`, `le`, `gt`, and `ge`; nonnegative `tolerance` is supported only for `eq`
+and defaults to zero. For gameplay, use an expression reading a live actor/property instead of
+the arithmetic example. Expected/actual values are recorded per assertion; an expression error,
+nonnumeric result, or unmet comparison fails the scenario. Do not cache PIE objects in globals.
+If an `assert_log` supplies both `contains` and `not_contains`, both conditions must hold.
+Log assertions use the active log (including `-abslog` overrides); unavailable or truncated logs
+fail the assertion, including negative checks.
+Reports include `assertionsDeclared` and `assertionsEvaluated`, including failed assertions.
+
+To detect stale evidence, add a top-level `dependencies` array of actual file paths relative to the
+project directory (or absolute paths), for example `Content/Ships/BP_Ship.uasset` and relevant
+source/config files. Dependencies must exist. VibeUE hashes their contents after preflight,
+records the scenario hash and engine version, and automatically tracks its plugin DLL when
+dependencies are provided. It does not persist the submitted Python source as provenance.
+
+`get_scenario()` checks those hashes again for completed reports, including reports loaded from
+disk. A changed/missing file or changed engine version produces `validity="stale"`; a historical
+pass then returns `status="stale"`, `passed=false`, and `historicalPassed=true`.
+`verifiedCurrent=true` requires passing assertions and unchanged tracked inputs. Without
+dependencies, `validity="untracked"` and `verifiedCurrent=false`, even if assertions passed.
+Freshness covers only explicitly listed files plus the plugin DLL: it does not infer transitive
+asset dependencies, detect unsaved edits, or prove a newly changed project binary is loaded.
+Save and compile first, list all relevant inputs, and rerun after changes. Hashes are freshness
+checks, not tamper-proof attestations. Large dependency sets increase polling cost.
+
+These verification improvements were inspired by
+[PageMastr/Gatekeeper](https://github.com/PageMastr/Gatekeeper), particularly its assertion coverage
+and source-bound verdicts. The VibeUE implementation is independently written for Unreal.
+
 ```
 # 1. Make sure you're starting from a clean state
 call_tool(toolset="EditorToolset.EditorAppToolset", tool="StopPIE")   # no-op if not running
@@ -94,6 +139,36 @@ call_tool(toolset="EditorToolset.EditorAppToolset", tool="StartPIE")
 # 4. Stop when done
 call_tool(toolset="EditorToolset.EditorAppToolset", tool="StopPIE")
 ```
+
+## Net mode from Python — `EngineSettingsService`
+
+`StartPIE` uses the editor's saved PIE settings, so set the net mode BEFORE starting the session.
+`EngineSettingsService` reads and writes `ULevelEditorPlaySettings` directly and persists the
+change, so a dedicated-server PIE gate no longer means quitting the editor to hand-edit
+`EditorPerProjectUserSettings.ini` and relaunching:
+
+```python
+import unreal
+
+# Read the current PIE multiplayer settings
+info = unreal.EngineSettingsService.get_pie_settings()
+print(info.net_mode, info.num_clients, info.run_under_one_process)
+
+# Set dedicated-server PIE: 1 client, all windows in one process
+ok = unreal.EngineSettingsService.set_pie_settings("Client", 1, True)   # returns True only on verified write
+# Verify by readback, never by return value alone
+assert unreal.EngineSettingsService.get_pie_settings().net_mode == "Client"
+```
+
+- `net_mode` maps `EPlayNetMode`: `"Standalone"` | `"ListenServer"` | `"Client"`. **`"Client"` is
+  dedicated-server PIE** — the editor's "Play As Client", where a windowless dedicated server is
+  spawned behind the scenes and PIE instance 0 is that server (`"DedicatedServer"` is accepted as an
+  alias for `"Client"`).
+- `set_pie_settings` refuses an unknown net mode or a `num_clients` outside 1-10 (returns `False`,
+  logs a Warning), and returns `False` if any written value fails to read back.
+- **These are per-USER config, not project config** — they live in
+  `Saved/Config/<Platform>/EditorPerProjectUserSettings.ini` and follow the machine, not the repo.
+  Do not expect a teammate or CI to inherit them; set them from the gate itself.
 
 ## Validating widgets in PIE — `WidgetService`
 
@@ -190,3 +265,14 @@ unreal.PerformanceService.set_background_throttling(True)    # after
 - Pure asset/editor validation (use `compile_blueprint`, `find_assets`, etc.)
 - Static introspection (use `get_nodes_in_graph`, `get_node_pins`)
 - Anything you can verify without a live world — PIE is slow, save it for genuine runtime checks.
+
+## Additional gotchas
+
+- `StopPIE` then `StartPIE` in one Python call fails with "A play session is already running" — the editor does not tick between statements. Split them across calls and confirm with `IsPIERunning`.
+- `EditorAssetLibrary.load_asset` returns None while PIE runs, and downstream calls then return 0/None instead of raising (a fake negative). Load assets before `StartPIE`, or find live objects with `ObjectIterator`.
+- Match PIE worlds by their `/Game/<path>/UEDPIE_0_<Map>` (server/host) and `UEDPIE_1_` (client) object paths, not by name — roughly 100 stale `/Memory/UEDPIE_*` shells match by name. `vibeue.pie_worlds()` returns them keyed by role, and `UnrealEditorSubsystem.get_game_world()` gives the local one.
+- A two-client run is Standalone by default: both worlds read `ROLE_AUTHORITY`, so confirm `get_editor_property("role")` (or `vibeue.role(actor)`) before claiming a host/client result. Read and set the PIE net mode with `get_pie_settings`/`set_pie_settings` (dedicated server = PlayNetMode 2).
+- A Server RPC invoked from Python runs LOCALLY and is silently dropped; never Start/StopFire a client world's weapon from Python (it crashes the editor). Move a client pawn through its server copy; control rotation is client-owned.
+- `slomo 0.1` stretches a 2 s timer to 20 s of wall time so a transient state survives between calls; restore `slomo 1` after. PIE time restarts each run.
+- Never leave an automation test run queued before starting PIE — it wakes on PIE activity and tears the session down.
+- Globals in the `execute_python_code` script namespace persist across calls (it is a separate dict from `sys.modules["__main__"]`, so `import __main__` does not see them): use them to collect async tool results (`vibeue.exec_tool_async`/`collect_tool_result`), and release PIE object references (`vibeue.release_globals`) before `StopPIE`.

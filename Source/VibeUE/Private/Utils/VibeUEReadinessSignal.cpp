@@ -3,6 +3,7 @@
 #include "Utils/VibeUEReadinessSignal.h"
 #include "Utils/VibeUEPaths.h"
 #include "Utils/VibeUEEnvironment.h"
+#include "Utils/VibeUEMcpStatus.h"
 #include "CoreGlobals.h"
 #if WITH_EDITOR
 #include "Editor.h"
@@ -63,7 +64,7 @@ FString FVibeUEReadinessSignal::GetCurrentMapPackageName()
 }
 
 FString FVibeUEReadinessSignal::BuildSignalJson(uint32 ProcessId, const FDateTime& SessionStartUtc, const FDateTime& CreatedUtc,
-	const FString& CurrentMap)
+	const FString& CurrentMap, uint32 McpPort, bool bMcpListening)
 {
 	const TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
 	Root->SetStringField(TEXT("signal"), TEXT("toolsets-registered"));
@@ -74,6 +75,9 @@ FString FVibeUEReadinessSignal::BuildSignalJson(uint32 ProcessId, const FDateTim
 	Root->SetStringField(TEXT("sessionStartUtc"), SessionStartUtc.ToIso8601());
 	Root->SetStringField(TEXT("pluginVersion"), FVibeUEPaths::GetPluginVersionName());
 	Root->SetStringField(TEXT("currentMap"), CurrentMap);
+	// MCP endpoint status (issue B6): port and whether this process's MCP module reports it listening.
+	Root->SetNumberField(TEXT("mcpPort"), static_cast<double>(McpPort));
+	Root->SetBoolField(TEXT("mcpListening"), bMcpListening);
 	Root->SetObjectField(TEXT("environment"), FVibeUEEnvironment::BuildObject());
 
 	FString Payload;
@@ -94,7 +98,16 @@ bool FVibeUEReadinessSignal::Publish()
 	const uint32 ProcessId = FPlatformProcess::GetCurrentProcessId();
 	const FString SignalPath = GetSignalPathForPid(ProcessId);
 	const FString TempPath = SignalPath + TEXT(".tmp");
-	const FString Payload = BuildSignalJson(ProcessId, GetSessionStartUtc(), FDateTime::UtcNow(), GetCurrentMapPackageName());
+
+	// MCP endpoint status for the signal (issue B6). Publish runs on the game thread (RegisterToolsets
+	// / OnMapOpened), so it is safe to read the ModelContextProtocol module here. The bind-probe
+	// cross-check logs a loud Error line once per publish if this editor lost the port fight.
+	uint32 McpPort = 0;
+	bool bMcpListening = false;
+	FVibeUEMcpStatus::Query(McpPort, bMcpListening);
+	FVibeUEMcpStatus::LogPortContradictionIfAny(McpPort, bMcpListening);
+
+	const FString Payload = BuildSignalJson(ProcessId, GetSessionStartUtc(), FDateTime::UtcNow(), GetCurrentMapPackageName(), McpPort, bMcpListening);
 
 	// Write-then-move: an agent watching for the create event must never read a partial file.
 	if (!FFileHelper::SaveStringToFile(Payload, *TempPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))

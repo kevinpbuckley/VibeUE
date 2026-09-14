@@ -72,15 +72,38 @@ every later call hangs, and the process has to be force-killed with the files re
 Use the plugin's dialog-free delete instead:
 
 ```python
-# Refuses when referenced and tells you who (returns None on refusal -> read the out params):
+# Refuses when referenced and tells you who:
 result = unreal.AssetDiscoveryService.delete_asset_unattended("/Game/Anim/AM_Old", False)
 # Delete anyway and null every reference (what the dialog's Force Delete does):
 result = unreal.AssetDiscoveryService.delete_asset_unattended("/Game/Anim/AM_Old", True)
+if not result.b_success:
+    print(result.error_message)     # why it did not happen
+    print(result.referencers)       # what pointed at the asset
 ```
 
-A `False` return maps to `None` in Python; the `(referencers, error)` tuple comes back on success
-too, so you always see what pointed at the asset. Prefer creating the replacement under a NEW name
-and repointing references over force-deleting.
+The call returns an `FUnattendedDeleteResult` struct — `result.b_success`, `result.referencers`,
+`result.error_message` — so the reason ALWAYS survives, even on a refusal. (It used to return a
+bool with out-params, and Python maps a `False` return to `None`, which silently dropped the reason;
+that is fixed.) `result.referencers` is filled on a refusal AND on a forced delete, so you always see
+what pointed at the asset. Prefer creating the replacement under a NEW name and repointing references
+over force-deleting.
+
+**Even `delete_asset_unattended(path, True)` refuses a natively rooted in-memory object — it never
+prompts.** Before deleting, the call does a conservative, non-mutating check: it looks at who holds the
+asset and refuses ONLY when a native GC root holds it directly — a `UGCObjectReferencer`, which in an
+agent session is a Python module-level global that created or loaded the asset earlier this session.
+That is the one case the engine's own force delete cannot clear, so it would stall on the modal "is in
+use" dialog (6+ minutes observed). When it refuses, the call returns `b_success == False` with those
+roots in `result.referencers` and an `result.error_message` explaining it. The fix is what the error
+says: release the Python globals holding it — `del my_var`, then `unreal.SystemLibrary.collect_garbage()`
+— and retry. Every OTHER in-memory referencer is left to the engine's real force delete, which clears it
+without prompting: on-disk asset references, the Blueprint-palette node spawners, and transient editor
+helpers like an anim data controller all delete fine. Read-only package files are also refused before
+the engine delete path, because Unreal can show a read-only-package prompt even when confirmation is
+disabled. Clear the filesystem/source-control read-only state explicitly, then retry.
+
+The check never mutates state (it does not null any references before deciding), so a refusal leaves the
+asset and everything around it exactly as they were — safe to retry after releasing the global.
 
 ### ⚠️ Never `delete_asset` a Blueprint you loaded or compiled this session
 
@@ -461,3 +484,14 @@ result's `asset_class_path.asset_name` to learn the real class name.
 ## Sample scripts (run via `execute_python_code`)
 
 - **`scripts/find_and_save.txt`** — find an asset (Asset Registry / `EditorAssetLibrary`) and duplicate + save it.
+
+## Additional gotchas
+
+- `unreal.Rotator(...)` positional order is `(roll, pitch, yaw)` — pass by keyword.
+- `unreal.AssetTools.create_asset(...)` is a descriptor and throws; the working call is `AssetToolsHelpers.get_asset_tools().create_asset(...)`.
+- `EditDefaultsOnly` properties cannot be written on instances from Python; a server-only `UPROPERTY()` with no Blueprint flag reads as "protected"; and when a bool `bIsDead` and a `UFUNCTION IsDead()` both map to `is_dead`, the property wins.
+- `TInstancedStruct` authoring: `inst = unreal.InstancedStruct(); inst.import_text('/Script/<Module>.<Struct>(Field=...)')`; a `TSoftClassPtr` UPROPERTY wants the loaded class, not a `SoftClassPath`.
+- `LevelEditorPlaySettings` is not in the Python stub — reach it via `load_class(None, "/Script/UnrealEd.LevelEditorPlaySettings")` and exact CamelCase property names.
+- Editor-world traces need a real world: `line_trace_single(actor.get_world(), ...)` (`LevelEditorSubsystem.get_world()` is a null context); `HitResult.component`/`actor` are read-protected, so read `export_text()`.
+- World subsystems have no Python accessor — reach one via `ObjectIterator(unreal.YourSubsystem)` filtered on `get_outer().get_path_name()`.
+- Never `save_dirty_packages(True, True)` — save by explicit path; a dirty package you did not touch is the user's work.
