@@ -3,6 +3,7 @@
 #include "PythonAPI/ULandscapeService.h"
 #include "Landscape.h"
 #include "LandscapeProxy.h"
+#include "LandscapeStreamingProxy.h"
 #include "LandscapeInfo.h"
 #include "LandscapeComponent.h"
 #include "LandscapeEdit.h"
@@ -123,6 +124,12 @@ static FGuid ResolveEditLayerGuid(ALandscape* Landscape)
  * component-sized chunks far from the later edit's brush. Every height writer must use this
  * helper (or an equivalent FScopedSetLandscapeEditingLayer + FHeightmapAccessor block).
  * Any FLandscapeEditDataInterface used to read the source heights must be destroyed first.
+ *
+ * The HeightData rect passed here MUST have been read from the SAME edit layer via
+ * ReadEditLayerHeights (never the merged multi-layer view) and MUST use the original,
+ * un-narrowed rect/stride — see ReadEditLayerHeights for the two World Partition hazards this
+ * avoids. FHeightmapAccessor::SetData writes only cells whose component is loaded, so vertices on
+ * unloaded / absent components are skipped rather than zeroed.
  */
 static void WriteHeightsToEditLayer(ALandscape* Landscape, ULandscapeInfo* LandscapeInfo,
 	int32 MinX, int32 MinY, int32 MaxX, int32 MaxY, const uint16* HeightData)
@@ -143,6 +150,51 @@ static void WriteHeightsToEditLayer(ALandscape* Landscape, ULandscapeInfo* Lands
 	HeightmapAccessor.SetData(MinX, MinY, MaxX, MaxY, HeightData);
 	HeightmapAccessor.Flush();
 } // ~FHeightmapAccessor: flushes and releases heightmap texture write lock
+
+/**
+ * Read a rectangle of uint16 heights from the SOURCE of the edit layer that
+ * WriteHeightsToEditLayer will write into — NOT the merged multi-layer view. Reading and writing
+ * the same layer is the fix for the A2 World Partition corruption. Two hazards it guards against:
+ *
+ *   1. Reading the MERGED view (a plain FLandscapeEditDataInterface(LandscapeInfo), which resolves
+ *      to the landscape's final heightmap) and writing it back into ONE layer bakes every OTHER
+ *      layer's contribution into that layer. On the next layer merge those contributions
+ *      double-count (e.g. a Water edit layer re-adds its delta) and cells whose real source is a
+ *      different layer are stomped — the observed "corruption far outside the brush" and
+ *      "old garbage re-surfaces after a later merge". Reading the SAME layer means the cells the
+ *      brush did NOT touch round-trip to their own layer-source value, so the merge is unchanged.
+ *   2. Vertices whose component is not loaded / does not exist (unloaded WP cells, or a
+ *      non-rectangular component layout) read back as 0; writing 0 punches the terrain to the
+ *      floor. If the whole rect has no loaded component this refuses (returns false, buffer
+ *      untouched) so the caller can bail; where only part of the rect is loaded,
+ *      FHeightmapAccessor::SetData / FLandscapeEditDataInterface::SetHeightData already skip the
+ *      missing components on write.
+ *
+ * Reads the same edit-layer GUID ResolveEditLayerGuid returns, so read and write stay on one
+ * layer. Rect params are taken BY VALUE: GetHeightData narrows the rect it is handed to the
+ * loaded-component bounds, and the caller must keep the ORIGINAL MinX..MaxY (and its stride) for
+ * the matching WriteHeightsToEditLayer / FHeightmapAccessor::SetData call. The buffer is sized to
+ * the original rect and zero-filled first, so unloaded cells are a deterministic 0 (never written
+ * back because SetData skips their component).
+ */
+static bool ReadEditLayerHeights(ALandscape* Landscape, ULandscapeInfo* LandscapeInfo,
+	int32 MinX, int32 MinY, int32 MaxX, int32 MaxY, TArray<uint16>& OutHeightData)
+{
+	const FGuid EditLayerGuid = ResolveEditLayerGuid(Landscape);
+	FLandscapeEditDataInterface LandscapeEdit(LandscapeInfo, EditLayerGuid);
+
+	TSet<ULandscapeComponent*> Components;
+	LandscapeEdit.GetComponentsInRegion(MinX, MinY, MaxX, MaxY, &Components);
+	if (Components.Num() == 0)
+	{
+		return false;
+	}
+
+	OutHeightData.SetNumZeroed((MaxX - MinX + 1) * (MaxY - MinY + 1));
+	int32 X1 = MinX, Y1 = MinY, X2 = MaxX, Y2 = MaxY;
+	LandscapeEdit.GetHeightData(X1, Y1, X2, Y2, OutHeightData.GetData(), 0);
+	return true;
+}
 
 void ULandscapeService::UpdateLandscapeAfterHeightEdit(ALandscapeProxy* Landscape)
 {
@@ -454,7 +506,7 @@ FLandscapeCreateResult ULandscapeService::CreateLandscape(
 	return Result;
 }
 
-bool ULandscapeService::DeleteLandscape(const FString& LandscapeNameOrLabel)
+bool ULandscapeService::DeleteLandscape(const FString& LandscapeNameOrLabel, bool bIncludeProxies)
 {
 	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel);
 	if (!Landscape)
@@ -469,15 +521,68 @@ bool ULandscapeService::DeleteLandscape(const FString& LandscapeNameOrLabel)
 		return false;
 	}
 
+	ULandscapeInfo* LandscapeInfo = Landscape->GetLandscapeInfo();
+	const FGuid LandscapeGuid = Landscape->GetLandscapeGuid();
+
 	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "DeleteLandscape", "Delete Landscape"));
 
-	bool bDestroyed = World->DestroyActor(Landscape);
-	if (bDestroyed)
+	// World Partition: destroy the streaming proxies that share this landscape's GUID BEFORE the
+	// parent, and unregister each from the ULandscapeInfo FIRST. Destroying a proxy while the
+	// LandscapeInfo still references it is the crash the skill's destroy_actor loop hit (A11) —
+	// the editor's own delete unregisters, then destroys, then rebuilds the info (below).
+	if (bIncludeProxies)
 	{
-		UE_LOG(LogTemp, Log, TEXT("ULandscapeService::DeleteLandscape: Destroyed landscape '%s'"), *LandscapeNameOrLabel);
+		TArray<ALandscapeStreamingProxy*> Proxies;
+		for (TActorIterator<ALandscapeStreamingProxy> It(World); It; ++It)
+		{
+			ALandscapeStreamingProxy* Proxy = *It;
+			if (Proxy && Proxy->GetLandscapeGuid() == LandscapeGuid)
+			{
+				Proxies.Add(Proxy);
+			}
+		}
+
+		for (ALandscapeStreamingProxy* Proxy : Proxies)
+		{
+			if (LandscapeInfo)
+			{
+				LandscapeInfo->UnregisterActor(Proxy);
+			}
+			if (!World->DestroyActor(Proxy))
+			{
+				UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::DeleteLandscape: Failed to destroy streaming proxy '%s' of landscape '%s'"),
+					*Proxy->GetName(), *LandscapeNameOrLabel);
+				return false;
+			}
+		}
+
+		if (Proxies.Num() > 0)
+		{
+			UE_LOG(LogTemp, Log, TEXT("ULandscapeService::DeleteLandscape: Destroyed %d streaming prox%s of landscape '%s'"),
+				Proxies.Num(), Proxies.Num() == 1 ? TEXT("y") : TEXT("ies"), *LandscapeNameOrLabel);
+		}
 	}
 
-	return bDestroyed;
+	// Unregister and destroy the parent last, mirroring the proxy path above.
+	if (LandscapeInfo)
+	{
+		LandscapeInfo->UnregisterActor(Landscape);
+	}
+
+	const bool bDestroyed = World->DestroyActor(Landscape);
+	if (!bDestroyed)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::DeleteLandscape: Failed to destroy landscape actor '%s'"), *LandscapeNameOrLabel);
+		return false;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("ULandscapeService::DeleteLandscape: Destroyed landscape '%s'"), *LandscapeNameOrLabel);
+
+	// Rebuild the per-world LandscapeInfo map so the now-empty GUID entry (and any dangling proxy
+	// references) are cleaned up — the same call ULandscapeSubsystem::ChangeGridSize makes.
+	ULandscapeInfo::RecreateLandscapeInfo(World, /*bMapCheck=*/false);
+
+	return true;
 }
 
 // =================================================================
@@ -1339,6 +1444,24 @@ bool ULandscapeService::SetHeightInRegion(
 
 	const FGuid EditLayerGuid = ResolveEditLayerGuid(Landscape);
 
+	const int32 EndX = StartX + SizeX - 1;
+	const int32 EndY = StartY + SizeY - 1;
+
+	// Refuse if the region lands entirely on unloaded / absent components (A2): SetData would
+	// silently write nothing yet the call would report success. A partially-loaded region is fine
+	// — SetData skips the missing components.
+	{
+		FLandscapeEditDataInterface RegionCheck(LandscapeInfo, EditLayerGuid);
+		TSet<ULandscapeComponent*> Components;
+		RegionCheck.GetComponentsInRegion(StartX, StartY, EndX, EndY, &Components);
+		if (Components.Num() == 0)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::SetHeightInRegion: region (%d,%d)-(%d,%d) has no loaded landscape components — nothing written"),
+				StartX, StartY, EndX, EndY);
+			return false;
+		}
+	}
+
 	// Scope the HeightmapAccessor so its destructor flushes and releases the
 	// heightmap texture write lock before UpdateLandscapeAfterHeightEdit
 	// triggers UpdateMaterialInstances / texture compression.
@@ -1355,7 +1478,7 @@ bool ULandscapeService::SetHeightInRegion(
 			});
 
 		FHeightmapAccessor<false> HeightmapAccessor(LandscapeInfo);
-		HeightmapAccessor.SetData(StartX, StartY, StartX + SizeX - 1, StartY + SizeY - 1, HeightData.GetData());
+		HeightmapAccessor.SetData(StartX, StartY, EndX, EndY, HeightData.GetData());
 		HeightmapAccessor.Flush();
 	} // ~FHeightmapAccessor: flushes and releases heightmap texture write lock
 
@@ -1459,16 +1582,17 @@ bool ULandscapeService::SculptAtLocation(
 
 	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "SculptAtLocation", "Sculpt Landscape"));
 
-	// Read current height data (merged view across all edit layers)
+	// Read the SOURCE heights of the edit layer we are about to write (not the merged view) and
+	// refuse if the brush rect is entirely on unloaded / absent components (A2).
 	TArray<uint16> HeightData;
-	HeightData.SetNumUninitialized(SizeX * SizeY);
+	if (!ReadEditLayerHeights(Landscape, LandscapeInfo, MinX, MinY, MaxX, MaxY, HeightData))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::SculptAtLocation: brush region (%d,%d)-(%d,%d) has no loaded landscape components — nothing written"),
+			MinX, MinY, MaxX, MaxY);
+		return false;
+	}
 
 	int32 SaturatedCount = 0;
-
-	{
-		FLandscapeEditDataInterface LandscapeEdit(LandscapeInfo);
-		LandscapeEdit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
-	} // ~FLandscapeEditDataInterface: release read lock
 
 	// Apply brush
 	// Convert world-space height delta to uint16 heightmap delta
@@ -1598,14 +1722,15 @@ bool ULandscapeService::FlattenAtLocation(
 
 	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "FlattenAtLocation", "Flatten Landscape"));
 
+	// Read the SOURCE heights of the edit layer we are about to write (not the merged view) and
+	// refuse if the brush rect is entirely on unloaded / absent components (A2).
 	TArray<uint16> HeightData;
-	HeightData.SetNumUninitialized(SizeX * SizeY);
-
-	// Read current heights (merged view across all edit layers)
+	if (!ReadEditLayerHeights(Landscape, LandscapeInfo, MinX, MinY, MaxX, MaxY, HeightData))
 	{
-		FLandscapeEditDataInterface LandscapeEdit(LandscapeInfo);
-		LandscapeEdit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
-	} // ~FLandscapeEditDataInterface: release read lock
+		UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::FlattenAtLocation: brush region (%d,%d)-(%d,%d) has no loaded landscape components — nothing written"),
+			MinX, MinY, MaxX, MaxY);
+		return false;
+	}
 
 	for (int32 Y = 0; Y < SizeY; Y++)
 	{
@@ -1714,14 +1839,15 @@ bool ULandscapeService::SmoothAtLocation(
 
 	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "SmoothAtLocation", "Smooth Landscape"));
 
+	// Read the SOURCE heights of the edit layer we are about to write (not the merged view) and
+	// refuse if the brush rect is entirely on unloaded / absent components (A2).
 	TArray<uint16> HeightData;
-	HeightData.SetNumUninitialized(SizeX * SizeY);
-
-	// Read current heights (merged view across all edit layers)
+	if (!ReadEditLayerHeights(Landscape, LandscapeInfo, MinX, MinY, MaxX, MaxY, HeightData))
 	{
-		FLandscapeEditDataInterface LandscapeEdit(LandscapeInfo);
-		LandscapeEdit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
-	} // ~FLandscapeEditDataInterface: release read lock
+		UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::SmoothAtLocation: brush region (%d,%d)-(%d,%d) has no loaded landscape components — nothing written"),
+			MinX, MinY, MaxX, MaxY);
+		return false;
+	}
 
 	// Pre-compute Gaussian weights for the kernel
 	float Sigma = static_cast<float>(KernelRadius) / 2.0f;
@@ -1862,16 +1988,17 @@ bool ULandscapeService::RaiseLowerRegion(
 
 	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "RaiseLowerRegion", "Raise/Lower Landscape Region"));
 
+	// Read the SOURCE heights of the edit layer we are about to write (not the merged view) and
+	// refuse if the region is entirely on unloaded / absent components (A2).
 	TArray<uint16> HeightData;
-	HeightData.SetNumUninitialized(SizeX * SizeY);
+	if (!ReadEditLayerHeights(Landscape, LandscapeInfo, MinX, MinY, MaxX, MaxY, HeightData))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::RaiseLowerRegion: region (%d,%d)-(%d,%d) has no loaded landscape components — nothing written"),
+			MinX, MinY, MaxX, MaxY);
+		return false;
+	}
 
 	int32 SaturatedCount = 0;
-
-	// Read current heights (merged view across all edit layers)
-	{
-		FLandscapeEditDataInterface LandscapeEdit(LandscapeInfo);
-		LandscapeEdit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
-	} // ~FLandscapeEditDataInterface: release read lock
 
 	for (int32 Y = 0; Y < SizeY; Y++)
 	{
@@ -2090,15 +2217,19 @@ FLandscapeNoiseResult ULandscapeService::ApplyNoise(
 
 	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "ApplyNoise", "Apply Noise to Landscape"));
 
+	// Read the SOURCE heights of the edit layer we are about to write (not the merged view) and
+	// refuse if the region is entirely on unloaded / absent components (A2). The write goes
+	// through WriteHeightsToEditLayer below.
 	TArray<uint16> HeightData;
-	HeightData.SetNumUninitialized(SizeX * SizeY);
-
-	// Read current height data (merged view across all edit layers); the write goes through
-	// WriteHeightsToEditLayer once the read interface has released its locks.
+	if (!ReadEditLayerHeights(Landscape, LandscapeInfo, MinX, MinY, MaxX, MaxY, HeightData))
 	{
-		FLandscapeEditDataInterface LandscapeEdit(LandscapeInfo);
-		LandscapeEdit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
+		UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::ApplyNoise: region (%d,%d)-(%d,%d) has no loaded landscape components — nothing written"),
+			MinX, MinY, MaxX, MaxY);
+		Result.ErrorMessage = TEXT("Region has no loaded landscape components");
+		return Result;
+	}
 
+	{
 		for (int32 Y = 0; Y < SizeY; Y++)
 		{
 			for (int32 X = 0; X < SizeX; X++)
@@ -2140,7 +2271,7 @@ FLandscapeNoiseResult ULandscapeService::ApplyNoise(
 		}
 	}
 
-	} // ~FLandscapeEditDataInterface: release read lock
+	} // end noise application
 
 	WriteHeightsToEditLayer(Landscape, LandscapeInfo, MinX, MinY, MaxX, MaxY, HeightData.GetData());
 
@@ -4432,14 +4563,15 @@ namespace LandscapeServiceV3
 		int32 SzX = MaxX - MinX + 1;
 		int32 SzY = MaxY - MinY + 1;
 
+		// Read the SOURCE heights of the edit layer we are about to write (not the merged view) and
+		// refuse if the region is entirely on unloaded / absent components (A2).
 		TArray<uint16> HeightData;
-		HeightData.SetNumUninitialized(SzX * SzY);
-
-		// Read current height data (merged view across all edit layers)
+		if (!ReadEditLayerHeights(Landscape, LInfo, MinX, MinY, MaxX, MaxY, HeightData))
 		{
-			FLandscapeEditDataInterface Edit(LInfo);
-			Edit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
-		} // ~FLandscapeEditDataInterface: release read lock
+			UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::%s: region (%d,%d)-(%d,%d) has no loaded landscape components — nothing written"),
+				OpName, MinX, MinY, MaxX, MaxY);
+			return false;
+		}
 
 		for (int32 Y = 0; Y < SzY; Y++)
 		{
@@ -4544,7 +4676,6 @@ FMeshProjectionResult ULandscapeService::ProjectMeshToLandscape(
 	int32 SzY = MaxY - MinY + 1;
 
 	TArray<uint16> HeightData;
-	HeightData.SetNumUninitialized(SzX * SzY);
 
 	FCollisionQueryParams Params;
 	Params.bTraceComplex = true;
@@ -4554,10 +4685,17 @@ FMeshProjectionResult ULandscapeService::ProjectMeshToLandscape(
 
 	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "ProjectMesh", "Project Mesh to Landscape"));
 
+	// Read the SOURCE heights of the edit layer we are about to write (not the merged view) and
+	// refuse if the mesh footprint is entirely on unloaded / absent components (A2).
+	if (!ReadEditLayerHeights(Landscape, LInfo, MinX, MinY, MaxX, MaxY, HeightData))
 	{
-		FLandscapeEditDataInterface Edit(LInfo);
-		Edit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
+		UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::ProjectMeshToLandscape: region (%d,%d)-(%d,%d) has no loaded landscape components — nothing written"),
+			MinX, MinY, MaxX, MaxY);
+		Result.ErrorMessage = TEXT("Region has no loaded landscape components");
+		return Result;
+	}
 
+	{
 		for (int32 Y = 0; Y < SzY; Y++)
 		{
 			for (int32 X = 0; X < SzX; X++)
@@ -5175,15 +5313,19 @@ bool ULandscapeService::CreateRidge(
 
 	float NoiseAmplitude = Height * 0.12f;
 
-	TArray<uint16> HeightData;
-	HeightData.SetNumUninitialized(SzX * SzY);
-
 	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "CreateRidge", "Create Ridge"));
 
+	// Read the SOURCE heights of the edit layer we are about to write (not the merged view) and
+	// refuse if the ridge footprint is entirely on unloaded / absent components (A2).
+	TArray<uint16> HeightData;
+	if (!ReadEditLayerHeights(Landscape, LInfo, MinX, MinY, MaxX, MaxY, HeightData))
 	{
-		FLandscapeEditDataInterface Edit(LInfo);
-		Edit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
+		UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::CreateRidge: region (%d,%d)-(%d,%d) has no loaded landscape components — nothing written"),
+			MinX, MinY, MaxX, MaxY);
+		return false;
+	}
 
+	{
 		for (int32 Y = 0; Y < SzY; Y++)
 		{
 			for (int32 X = 0; X < SzX; X++)
@@ -5286,15 +5428,19 @@ bool ULandscapeService::ApplyErosion(
 	int32 SzX = MaxX - MinX + 1;
 	int32 SzY = MaxY - MinY + 1;
 
-	TArray<uint16> HeightData;
-	HeightData.SetNumUninitialized(SzX * SzY);
-
 	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "ApplyErosionV3", "Apply Erosion"));
 
+	// Read the SOURCE heights of the edit layer we are about to write (not the merged view) and
+	// refuse if the region is entirely on unloaded / absent components (A2).
+	TArray<uint16> HeightData;
+	if (!ReadEditLayerHeights(Landscape, LInfo, MinX, MinY, MaxX, MaxY, HeightData))
 	{
-		FLandscapeEditDataInterface Edit(LInfo);
-		Edit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
+		UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::ApplyErosion: region (%d,%d)-(%d,%d) has no loaded landscape components — nothing written"),
+			MinX, MinY, MaxX, MaxY);
+		return false;
+	}
 
+	{
 		// Thermal erosion: iteratively move material from steep to adjacent lower cells
 		int32 Passes = FMath::Max(1, Iterations / 100);
 		float TalusThreshold = 4.0f * Strength; // in uint16 units
@@ -5429,15 +5575,19 @@ bool ULandscapeService::CreateTerraces(
 	int32 SzX = MaxX - MinX + 1;
 	int32 SzY = MaxY - MinY + 1;
 
-	TArray<uint16> HeightData;
-	HeightData.SetNumUninitialized(SzX * SzY);
-
 	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "CreateTerraces", "Create Terraces"));
 
+	// Read the SOURCE heights of the edit layer we are about to write (not the merged view) and
+	// refuse if the region is entirely on unloaded / absent components (A2).
+	TArray<uint16> HeightData;
+	if (!ReadEditLayerHeights(Landscape, LInfo, MinX, MinY, MaxX, MaxY, HeightData))
 	{
-		FLandscapeEditDataInterface Edit(LInfo);
-		Edit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
+		UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::CreateTerraces: region (%d,%d)-(%d,%d) has no loaded landscape components — nothing written"),
+			MinX, MinY, MaxX, MaxY);
+		return false;
+	}
 
+	{
 		// Find height range in region to determine terrace step size
 		float MinH = FLT_MAX, MaxH = -FLT_MAX;
 		for (int32 Y = 0; Y < SzY; Y++)
@@ -5529,17 +5679,21 @@ bool ULandscapeService::BlendTerrainFeatures(
 	int32 SzX = MaxX - MinX + 1;
 	int32 SzY = MaxY - MinY + 1;
 
-	TArray<uint16> HeightData;
-	HeightData.SetNumUninitialized(SzX * SzY);
-
 	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "BlendTerrainFeatures", "Blend Terrain"));
+
+	// Read the SOURCE heights of the edit layer we are about to write (not the merged view) and
+	// refuse if the region is entirely on unloaded / absent components (A2).
+	TArray<uint16> HeightData;
+	if (!ReadEditLayerHeights(Landscape, LInfo, MinX, MinY, MaxX, MaxY, HeightData))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::BlendTerrainFeatures: region (%d,%d)-(%d,%d) has no loaded landscape components — nothing written"),
+			MinX, MinY, MaxX, MaxY);
+		return false;
+	}
 
 	TArray<uint16> Smoothed;
 
 	{
-		FLandscapeEditDataInterface Edit(LInfo);
-		Edit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
-
 		Smoothed = HeightData;
 
 		// 3x3 box average

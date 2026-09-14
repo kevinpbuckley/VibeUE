@@ -749,11 +749,20 @@ public:
 	 * Delete a landscape from the level.
 	 * Maps to action="delete_landscape"
 	 *
+	 * On a World Partition landscape the terrain is split across ALandscapeStreamingProxy actors
+	 * that share the parent's landscape GUID. With bIncludeProxies=true (default) those proxies are
+	 * unregistered from the ULandscapeInfo and destroyed FIRST, then the ALandscape parent — the
+	 * order the editor uses. Do NOT destroy proxies yourself with destroy_actor: destroying a proxy
+	 * while the LandscapeInfo still references it crashes the editor (access violation in the
+	 * Landscape module). Pass bIncludeProxies=false to remove only the parent actor.
+	 *
 	 * @param LandscapeNameOrLabel - Name or label of the landscape to delete
-	 * @return True if deleted successfully
+	 * @param bIncludeProxies - Also destroy every LandscapeStreamingProxy sharing this landscape's
+	 *                          GUID (safely, through ULandscapeInfo). Default true.
+	 * @return True if the landscape (and, when requested, all its proxies) were destroyed
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
-	static bool DeleteLandscape(const FString& LandscapeNameOrLabel);
+	static bool DeleteLandscape(const FString& LandscapeNameOrLabel, bool bIncludeProxies = true);
 
 	// =================================================================
 	// Heightmap Operations
