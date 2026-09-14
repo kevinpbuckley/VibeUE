@@ -152,6 +152,12 @@ System lifecycle, user parameters, and compile are NOT on `NiagaraService` anymo
 engine `NiagaraToolsets.*` tools shown above. After tuning, compile via the engine toolset (or
 `unreal.EditorAssetLibrary.save_asset(path)` to persist).
 
+- **Save a newly created system immediately.** A `NiagaraSystem` created through the engine
+  `NiagaraToolsets` create tool is not rooted, and was lost to garbage collection before its first
+  save at least once. Right after creating it, run
+  `unreal.EditorAssetLibrary.save_asset(path, only_if_is_dirty=False)` and confirm the `.uasset`
+  exists on disk (`unreal.EditorAssetLibrary.does_asset_exist(path)`) before doing anything else.
+
 ---
 
 ## ⚠️ User Parameter Types (engine `NiagaraToolsets` — reference)

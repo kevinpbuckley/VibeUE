@@ -72,15 +72,36 @@ every later call hangs, and the process has to be force-killed with the files re
 Use the plugin's dialog-free delete instead:
 
 ```python
-# Refuses when referenced and tells you who (returns None on refusal -> read the out params):
+# Refuses when referenced and tells you who:
 result = unreal.AssetDiscoveryService.delete_asset_unattended("/Game/Anim/AM_Old", False)
 # Delete anyway and null every reference (what the dialog's Force Delete does):
 result = unreal.AssetDiscoveryService.delete_asset_unattended("/Game/Anim/AM_Old", True)
+if not result.b_success:
+    print(result.error_message)     # why it did not happen
+    print(result.referencers)       # what pointed at the asset
 ```
 
-A `False` return maps to `None` in Python; the `(referencers, error)` tuple comes back on success
-too, so you always see what pointed at the asset. Prefer creating the replacement under a NEW name
-and repointing references over force-deleting.
+The call returns an `FUnattendedDeleteResult` struct — `result.b_success`, `result.referencers`,
+`result.error_message` — so the reason ALWAYS survives, even on a refusal. (It used to return a
+bool with out-params, and Python maps a `False` return to `None`, which silently dropped the reason;
+that is fixed.) `result.referencers` is filled on a refusal AND on a forced delete, so you always see
+what pointed at the asset. Prefer creating the replacement under a NEW name and repointing references
+over force-deleting.
+
+**Even `delete_asset_unattended(path, True)` refuses a natively rooted in-memory object — it never
+prompts.** Before deleting, the call does a conservative, non-mutating check: it looks at who holds the
+asset and refuses ONLY when a native GC root holds it directly — a `UGCObjectReferencer`, which in an
+agent session is a Python module-level global that created or loaded the asset earlier this session.
+That is the one case the engine's own force delete cannot clear, so it would stall on the modal "is in
+use" dialog (6+ minutes observed). When it refuses, the call returns `b_success == False` with those
+roots in `result.referencers` and an `result.error_message` explaining it. The fix is what the error
+says: release the Python globals holding it — `del my_var`, then `unreal.SystemLibrary.collect_garbage()`
+— and retry. Every OTHER in-memory referencer is left to the engine's real force delete, which clears it
+without prompting: on-disk asset references, the Blueprint-palette node spawners, and transient editor
+helpers like an anim data controller all delete fine.
+
+The check never mutates state (it does not null any references before deciding), so a refusal leaves the
+asset and everything around it exactly as they were — safe to retry after releasing the global.
 
 ### ⚠️ Never `delete_asset` a Blueprint you loaded or compiled this session
 

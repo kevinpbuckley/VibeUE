@@ -84,6 +84,55 @@ static FSEHExecutionResult ExecutePythonWithSEH(IPythonScriptPlugin* PythonPlugi
 }
 #endif
 
+// Strip Python comments (text after an unquoted '#' to end of line) so guards below are not
+// defeated by a '#' anywhere in the script. Simple scan: track single/double quotes (honouring
+// backslash escapes) and reset at each newline; a '#' seen outside a string ends that line.
+static FString StripPythonComments(const FString& Code)
+{
+	FString Out;
+	Out.Reserve(Code.Len());
+	bool bInSingle = false;
+	bool bInDouble = false;
+	bool bInComment = false;
+	for (int32 i = 0; i < Code.Len(); ++i)
+	{
+		const TCHAR C = Code[i];
+		if (C == TEXT('\n'))
+		{
+			bInSingle = false;
+			bInDouble = false;
+			bInComment = false;
+			Out.AppendChar(C);
+			continue;
+		}
+		if (bInComment)
+		{
+			continue;
+		}
+		if (bInSingle || bInDouble)
+		{
+			// Skip an escaped character so a \' or \" does not flip the quote state.
+			if (C == TEXT('\\') && (i + 1) < Code.Len() && Code[i + 1] != TEXT('\n'))
+			{
+				Out.AppendChar(C);
+				Out.AppendChar(Code[i + 1]);
+				++i;
+				continue;
+			}
+			if (bInSingle && C == TEXT('\'')) { bInSingle = false; }
+			else if (bInDouble && C == TEXT('"')) { bInDouble = false; }
+		}
+		else
+		{
+			if (C == TEXT('#')) { bInComment = true; continue; }
+			if (C == TEXT('\'')) { bInSingle = true; }
+			else if (C == TEXT('"')) { bInDouble = true; }
+		}
+		Out.AppendChar(C);
+	}
+	return Out;
+}
+
 // Dangerous patterns that can crash the editor
 static bool ContainsDangerousPattern(const FString& Code, FString& OutPattern, FString& OutReason)
 {
@@ -95,29 +144,18 @@ static bool ContainsDangerousPattern(const FString& Code, FString& OutPattern, F
 		return true;
 	}
 	
-	// Direct CDO modification causes crashes — block only when modifying, not reading.
-	// Use regex to detect modification patterns on the CDO result directly (inline or via chained call).
-	// Simple Contains checks are too broad — they fire when set_editor_property or = appear anywhere
-	// in the script, even on unrelated objects.
-	{
-		// Inline: get_default_object(...).set_editor_property(...) on the same line.
-		// Uses [^\n]* to skip nested parens (e.g. get_default_object(bp.generated_class())).
-		static FRegexPattern CdoModifyPattern(TEXT("get_default_object\\b[^\\n]*\\.\\s*set_editor_property"));
-		FRegexMatcher CdoModifyMatcher(CdoModifyPattern, Code);
-		if (CdoModifyMatcher.FindNext())
-		{
-			OutPattern = TEXT("get_default_object() modification");
-			OutReason = TEXT("Modifying Class Default Objects (CDOs) from Python causes crashes. Modify instances instead.");
-			return true;
-		}
-	}
-	
-	// input() blocks the editor indefinitely
-	// Use regex to match standalone input( calls, not method names like add_function_input(
-	// Pattern matches: input(, =input(, (input(, but NOT _input( or identifier_input(
+	// (CDO set_editor_property guard removed: the same-line regex guarded nothing — a chained write
+	// split across two statements passed it — and it blocked the standard, safe way to set Blueprint
+	// defaults from Python, e.g. flipping WaterBodyComponent.affects_landscape before spawning water.)
+
+	// input() blocks the editor indefinitely.
+	// Strip comments first so a '#' anywhere in the script no longer defeats this guard.
+	// The regex matches a bare input( preceded by a non-identifier char (input(, =input(, (input(),
+	// so it already ignores method names ending in _input( such as Enhanced Input's inject_input(.
+	const FString CodeNoComments = StripPythonComments(Code);
 	static FRegexPattern InputPattern(TEXT("(?:^|[^_a-zA-Z0-9])input\\s*\\("));
-	FRegexMatcher InputMatcher(InputPattern, Code);
-	if (InputMatcher.FindNext() && !Code.Contains(TEXT("#")) && !Code.Contains(TEXT("Enhanced")))
+	FRegexMatcher InputMatcher(InputPattern, CodeNoComments);
+	if (InputMatcher.FindNext())
 	{
 		OutPattern = TEXT("input()");
 		OutReason = TEXT("input() blocks the editor. Use a different approach for user interaction.");

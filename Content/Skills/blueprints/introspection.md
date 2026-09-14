@@ -50,7 +50,11 @@ for comp in cdo.get_components_by_class(unreal.ActorComponent):
     print(f"{comp.get_class().get_name()}: {comp.get_name()}")
 ```
 
-CDO modification is blocked — `set_editor_property(...)` on the CDO raises `PYTHON_UNSAFE_CODE`.
+CDO `set_editor_property(...)` writes are **allowed** — this is the standard way to set a
+Blueprint's defaults from Python (e.g. flipping `WaterBodyComponent.affects_landscape` before
+spawning water). Save the asset afterward to persist. (The old `PYTHON_UNSAFE_CODE` block on chained
+`get_default_object(...).set_editor_property(...)` has been removed: it only caught the write when it
+sat on one line and blocked a safe, common operation.)
 
 These do **not** work: `bp.get_editor_property('simple_construction_script')` (protected),
 `scs.get_all_nodes()` (crash), `BlueprintEditorLibrary.get_blueprint_component_names()` (absent),
