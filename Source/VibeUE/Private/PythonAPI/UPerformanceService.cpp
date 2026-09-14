@@ -1,11 +1,13 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UPerformanceService.h"
+#include "PythonAPI/PerformanceAnalysis.h"
 #include "PythonAPI/PerformanceVerdict.h"
 #include "Json.h"
 #include "Misc/Paths.h"
 #include "Misc/FileHelper.h"
 #include "Misc/App.h"
+#include "Internationalization/Regex.h"
 #include "HAL/FileManager.h"
 #include "HAL/PlatformProcess.h"
 #include "HAL/PlatformTime.h"
@@ -27,6 +29,11 @@
 #include "RenderTimer.h"       // GGameThreadTime / GRenderThreadTime / GRHIThreadTime (RenderCore)
 #include "RHIGlobals.h"        // RHIGetGPUFrameCycles (RHI)
 
+#if PLATFORM_WINDOWS
+#include "Windows/WindowsPlatformMisc.h"
+#include "Windows/WindowsHWrapper.h"
+#endif
+
 DEFINE_LOG_CATEGORY_STATIC(LogPerformance, Log, All);
 
 // ---------------------------------------------------------------------------
@@ -35,8 +42,17 @@ DEFINE_LOG_CATEGORY_STATIC(LogPerformance, Log, All);
 
 static FString GLastTraceFilePath;
 static FString GLastLogFilePath;
-static bool           GStandaloneRunning = false;
-static FProcHandle    GStandaloneProcess;
+static bool            GStandaloneRunning = false;
+static bool            GStandaloneStartVerified = false;
+static bool            GStandaloneFinalized = false;
+static bool            GStandaloneForcedTermination = false;
+static uint32          GStandalonePID = 0;
+static FString         GStandaloneSessionId;
+static FString         GStandaloneMap;
+static FString         GStandaloneTraceFilePath;
+static FString         GStandaloneLogFilePath;
+static FDateTime       GStandaloneStartedUtc;
+static FProcHandle     GStandaloneProcess;
 static FDelegateHandle GStandalonePlayDelegateHandle;
 
 // ---------------------------------------------------------------------------
@@ -86,7 +102,42 @@ static FString BuildTraceFilePath(const FString& Name)
 	return Dir / Name;
 }
 
-// Read StoreDir from the Unreal Trace Server settings file (used when -tracehost is set).
+static bool RequestStandaloneExitGracefully(uint32 ProcessId)
+{
+#if PLATFORM_WINDOWS
+	struct FCloseWindowsData
+	{
+		uint32 PID = 0;
+		bool bSent = false;
+	} Data { ProcessId, false };
+	::EnumWindows([](HWND Window, LPARAM Param) -> BOOL
+	{
+		FCloseWindowsData& CloseData = *reinterpret_cast<FCloseWindowsData*>(Param);
+		DWORD WindowPID = 0;
+		::GetWindowThreadProcessId(Window, &WindowPID);
+		if (WindowPID == CloseData.PID && ::GetWindow(Window, GW_OWNER) == nullptr)
+		{
+			CloseData.bSent |= ::PostMessageW(Window, WM_CLOSE, 0, 0) != 0;
+		}
+		return 1;
+	}, reinterpret_cast<LPARAM>(&Data));
+	return Data.bSent;
+#else
+	return false;
+#endif
+}
+
+FString VibeUEPerformanceAnalysis::MakeStandaloneSessionStem(const FString& RequestedName)
+{
+	static uint64 SessionCounter = 0;
+	FString SafeName = FPaths::MakeValidFileName(RequestedName.IsEmpty() ? TEXT("standalone_capture") : RequestedName);
+	if (SafeName.IsEmpty()) SafeName = TEXT("standalone_capture");
+	const FDateTime Now = FDateTime::UtcNow();
+	return FString::Printf(TEXT("%s_%s_%lld_%llu"), *SafeName,
+		*Now.ToString(TEXT("%Y%m%dT%H%M%SZ")), Now.GetTicks(), ++SessionCounter);
+}
+
+// Read StoreDir only for diagnostics. Standalone sessions deliberately never select a trace from it.
 static FString GetUTSStoreDir()
 {
 	FString SettingsPath = FPlatformMisc::GetEnvironmentVariable(TEXT("LOCALAPPDATA"))
@@ -112,41 +163,24 @@ static FString GetUTSStoreDir()
 	return FString();
 }
 
-// Find the most recently modified .utrace file in the UTS store.
-static FString FindLatestUTSTrace()
-{
-	FString StoreDir = GetUTSStoreDir();
-	if (StoreDir.IsEmpty()) return FString();
-
-	FString Latest;
-	FDateTime LatestTime = FDateTime::MinValue();
-
-	IFileManager::Get().IterateDirectory(*StoreDir, [&](const TCHAR* Path, bool bDir) -> bool
-	{
-		if (!bDir && FPaths::GetExtension(Path).Equals(TEXT("utrace"), ESearchCase::IgnoreCase))
-		{
-			FDateTime T = IFileManager::Get().GetTimeStamp(Path);
-			if (T > LatestTime)
-			{
-				LatestTime = T;
-				Latest = Path;
-			}
-		}
-		return true;
-	});
-
-	return Latest;
-}
-
 // ---------------------------------------------------------------------------
 // Trace analysis
 // ---------------------------------------------------------------------------
 
-static FString AnalyseTrace(const FString& TraceFile)
+FString VibeUEPerformanceAnalysis::AnalyseTrace(const FString& TraceFile)
 {
+	if (TraceFile.IsEmpty())
+	{
+		return ErrJson(TEXT("NO_TRACE"), TEXT("No trace file was supplied or recorded for this session."));
+	}
 	if (!FPaths::FileExists(TraceFile))
 	{
 		return ErrJson(TEXT("FILE_NOT_FOUND"), FString::Printf(TEXT("Trace file not found: %s"), *TraceFile));
+	}
+	const int64 TraceSize = IFileManager::Get().FileSize(*TraceFile);
+	if (TraceSize <= 0)
+	{
+		return ErrJson(TEXT("EMPTY_TRACE"), FString::Printf(TEXT("Trace file is empty or not finalized: %s"), *TraceFile));
 	}
 
 	ITraceServicesModule* TraceModule = FModuleManager::LoadModulePtr<ITraceServicesModule>("TraceServices");
@@ -220,8 +254,24 @@ static FString AnalyseTrace(const FString& TraceFile)
 					Root->SetNumberField(TEXT("max_frame_timestamp"), MaxFrameTime);
 
 					AllMs.Sort();
+					int32 FramesOver33Ms = 0;
+					int32 FramesOver50Ms = 0;
+					int32 FramesOver100Ms = 0;
+					for (const double Ms : AllMs)
+					{
+						if (Ms > 33.0) ++FramesOver33Ms;
+						if (Ms > 50.0) ++FramesOver50Ms;
+						if (Ms > 100.0) ++FramesOver100Ms;
+					}
+					int32 MedianIdx = FMath::Clamp(AllMs.Num() / 2, 0, AllMs.Num() - 1);
 					int32 P95Idx = FMath::Clamp((int32)(AllMs.Num() * 0.95), 0, AllMs.Num() - 1);
+					int32 P99Idx = FMath::Clamp((int32)(AllMs.Num() * 0.99), 0, AllMs.Num() - 1);
+					Root->SetNumberField(TEXT("median_frame_ms"), FMath::RoundToFloat(AllMs[MedianIdx] * 100.0f) / 100.0f);
 					Root->SetNumberField(TEXT("p95_frame_ms"), FMath::RoundToFloat(AllMs[P95Idx] * 100.0f) / 100.0f);
+					Root->SetNumberField(TEXT("p99_frame_ms"), FMath::RoundToFloat(AllMs[P99Idx] * 100.0f) / 100.0f);
+					Root->SetNumberField(TEXT("frames_over_33ms"), FramesOver33Ms);
+					Root->SetNumberField(TEXT("frames_over_50ms"), FramesOver50Ms);
+					Root->SetNumberField(TEXT("frames_over_100ms"), FramesOver100Ms);
 				}
 
 				// Worst 10 frames
@@ -260,7 +310,7 @@ static FString AnalyseTrace(const FString& TraceFile)
 // Log analysis
 // ---------------------------------------------------------------------------
 
-static FString AnalyseLogs(const FString& LogFile)
+FString VibeUEPerformanceAnalysis::AnalyseLogs(const FString& LogFile)
 {
 	FString Content;
 	if (!FFileHelper::LoadFileToString(Content, *LogFile))
@@ -283,7 +333,9 @@ static FString AnalyseLogs(const FString& LogFile)
 	Root->SetNumberField(TEXT("total_lines"), Lines.Num());
 
 	TArray<TSharedPtr<FJsonValue>> Notable;
-	int32 PSOHitches = 0;
+	int32 PSOHitchEventLines = 0;
+	int32 PSOHitchSummaryLines = 0;
+	int32 PSOHitchesReported = 0;
 	int32 ErrorCount = 0;
 	int32 WarningCount = 0;
 
@@ -305,7 +357,28 @@ static FString AnalyseLogs(const FString& LogFile)
 		if (bError)   ++ErrorCount;
 		if (bWarning) ++WarningCount;
 
-		if (Line.Contains(TEXT("PSO creation hitch"))) ++PSOHitches;
+		int32 SummaryCount = INDEX_NONE;
+		const FRegexPattern CountBeforePattern(TEXT("([0-9]+)\\s+PSO creation hitches"));
+		FRegexMatcher CountBefore(CountBeforePattern, Line);
+		if (CountBefore.FindNext())
+		{
+			SummaryCount = FCString::Atoi(*CountBefore.GetCaptureGroup(1));
+		}
+		else
+		{
+			const FRegexPattern CountAfterPattern(TEXT("PSO creation hitches[^0-9]*([0-9]+)"));
+			FRegexMatcher CountAfter(CountAfterPattern, Line);
+			if (CountAfter.FindNext()) SummaryCount = FCString::Atoi(*CountAfter.GetCaptureGroup(1));
+		}
+		if (SummaryCount != INDEX_NONE)
+		{
+			++PSOHitchSummaryLines;
+			PSOHitchesReported = FMath::Max(PSOHitchesReported, SummaryCount);
+		}
+		else if (Line.Contains(TEXT("PSO creation hitch")))
+		{
+			++PSOHitchEventLines;
+		}
 
 		bool bNotable = bError;
 		if (!bNotable)
@@ -323,13 +396,16 @@ static FString AnalyseLogs(const FString& LogFile)
 
 	Root->SetNumberField(TEXT("errors"), ErrorCount);
 	Root->SetNumberField(TEXT("warnings"), WarningCount);
-	Root->SetNumberField(TEXT("pso_hitches"), PSOHitches);
+	Root->SetNumberField(TEXT("pso_hitch_event_lines"), PSOHitchEventLines);
+	Root->SetNumberField(TEXT("pso_hitch_summary_lines"), PSOHitchSummaryLines);
+	Root->SetNumberField(TEXT("pso_hitches_reported"), PSOHitchesReported);
+	Root->SetNumberField(TEXT("pso_hitches"), FMath::Max(PSOHitchEventLines, PSOHitchesReported));
 	Root->SetArrayField(TEXT("notable_lines"), Notable);
 
 	return OkJson(Root);
 }
 
-static FString AnalyseBoth(const FString& TraceFile, const FString& LogFile)
+FString VibeUEPerformanceAnalysis::AnalyseBoth(const FString& TraceFile, const FString& LogFile)
 {
 	FString TraceResult = AnalyseTrace(TraceFile);
 	FString LogResult   = AnalyseLogs(LogFile);
@@ -348,11 +424,27 @@ static FString AnalyseBoth(const FString& TraceFile, const FString& LogFile)
 		return Obj;
 	};
 
+	TSharedPtr<FJsonObject> TraceObj = ParseOrError(TraceResult, TEXT("trace"));
+	TSharedPtr<FJsonObject> ParsedLogObj = ParseOrError(LogResult, TEXT("logs"));
+	bool bTraceSuccess = false;
+	bool bLogSuccess = false;
+	TraceObj->TryGetBoolField(TEXT("success"), bTraceSuccess);
+	ParsedLogObj->TryGetBoolField(TEXT("success"), bLogSuccess);
+
 	TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
-	Root->SetBoolField(TEXT("success"), true);
+	Root->SetBoolField(TEXT("success"), bTraceSuccess && bLogSuccess);
+	Root->SetBoolField(TEXT("partial"), bTraceSuccess != bLogSuccess);
+	Root->SetStringField(TEXT("status"), bTraceSuccess && bLogSuccess ? TEXT("complete")
+		: (bTraceSuccess || bLogSuccess ? TEXT("partial") : TEXT("failed")));
 	Root->SetStringField(TEXT("source"), TEXT("both"));
-	Root->SetObjectField(TEXT("trace"), ParseOrError(TraceResult, TEXT("trace")));
-	Root->SetObjectField(TEXT("logs"),  ParseOrError(LogResult,   TEXT("logs")));
+	Root->SetObjectField(TEXT("trace"), TraceObj);
+	Root->SetObjectField(TEXT("logs"), ParsedLogObj);
+	TArray<TSharedPtr<FJsonValue>> Available;
+	TArray<TSharedPtr<FJsonValue>> Failed;
+	(bTraceSuccess ? Available : Failed).Add(MakeShared<FJsonValueString>(TEXT("trace")));
+	(bLogSuccess ? Available : Failed).Add(MakeShared<FJsonValueString>(TEXT("logs")));
+	Root->SetArrayField(TEXT("available_sources"), Available);
+	Root->SetArrayField(TEXT("failed_sources"), Failed);
 
 	FString Out;
 	TSharedRef<TJsonWriter<>> W = TJsonWriterFactory<>::Create(&Out);
@@ -1072,17 +1164,13 @@ FString UPerformanceService::StopTrace()
 	}
 	FTraceAuxiliary::Stop();
 
-	FString UTSTrace = FindLatestUTSTrace();
-	if (!UTSTrace.IsEmpty())
-	{
-		FDateTime StoredTime = GLastTraceFilePath.IsEmpty() ? FDateTime::MinValue()
-			: IFileManager::Get().GetTimeStamp(*GLastTraceFilePath);
-		FDateTime UTSTime = IFileManager::Get().GetTimeStamp(*UTSTrace);
-		if (UTSTime > StoredTime) GLastTraceFilePath = UTSTrace;
-	}
-
 	int64 FileSizeBytes = GLastTraceFilePath.IsEmpty() ? 0
 		: IFileManager::Get().FileSize(*GLastTraceFilePath);
+	if (FileSizeBytes <= 0)
+	{
+		return ErrJson(TEXT("TRACE_NOT_FINALIZED"), FString::Printf(
+			TEXT("The exact trace destination is missing or empty after StopTrace: %s"), *GLastTraceFilePath));
+	}
 
 	TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
 	R->SetStringField(TEXT("status"),       TEXT("stopped"));
@@ -1151,16 +1239,15 @@ FString UPerformanceService::Analyse(const FString& Source, const FString& File)
 	if (Src == TEXT("trace"))
 	{
 		if (TraceFile.IsEmpty()) return ErrJson(TEXT("NO_TRACE"), TEXT("No trace file known. Run StartTrace first, or pass File=<path>."));
-		return AnalyseTrace(TraceFile);
+		return VibeUEPerformanceAnalysis::AnalyseTrace(TraceFile);
 	}
 	if (Src == TEXT("logs"))
 	{
-		return AnalyseLogs(LogFile);
+		return VibeUEPerformanceAnalysis::AnalyseLogs(File.IsEmpty() ? LogFile : File);
 	}
 
 	// both
-	if (TraceFile.IsEmpty()) return AnalyseLogs(LogFile);
-	return AnalyseBoth(TraceFile, LogFile);
+	return VibeUEPerformanceAnalysis::AnalyseBoth(TraceFile, LogFile);
 }
 
 FString UPerformanceService::StartStandalone(const FString& Name, const FString& Channels)
@@ -1168,10 +1255,23 @@ FString UPerformanceService::StartStandalone(const FString& Name, const FString&
 	if (!GEditor) return ErrJson(TEXT("NO_EDITOR"), TEXT("GEditor not available."));
 	if (GStandaloneRunning) return ErrJson(TEXT("ALREADY_RUNNING"), TEXT("Standalone is already running. Call StopStandalone first."));
 
-	const FString TraceName = Name.IsEmpty() ? TEXT("standalone_capture") : Name;
+	const FString TraceName = VibeUEPerformanceAnalysis::MakeStandaloneSessionStem(Name);
 	const FString ChannelSet = Channels.IsEmpty() ? FString(DefaultTraceChannels()) : Channels;
 	FString TracePath = BuildTraceFilePath(TraceName);
-	GLastTraceFilePath = TracePath + TEXT(".utrace");
+	GStandaloneTraceFilePath = TracePath + TEXT(".utrace");
+	GLastTraceFilePath = GStandaloneTraceFilePath;
+	GStandaloneSessionId = TraceName;
+	GStandaloneStartedUtc = FDateTime::UtcNow();
+	GStandaloneStartVerified = false;
+	GStandaloneFinalized = false;
+	GStandaloneForcedTermination = false;
+	GStandalonePID = 0;
+	GStandaloneProcess.Reset();
+	GStandaloneMap.Reset();
+	if (const UWorld* EditorWorld = GEditor->GetEditorWorldContext().World())
+	{
+		GStandaloneMap = EditorWorld->GetOutermost()->GetName();
+	}
 
 	// Give the standalone process its own timestamped log via -abslog, rather than sharing the
 	// project's default <Project>.log. That file is held open by the running editor, so LoadFileToString
@@ -1179,13 +1279,22 @@ FString UPerformanceService::StartStandalone(const FString& Name, const FString&
 	// the editor's live log instead of the standalone's. A dedicated, unique path is unlocked and exact.
 	FString LogDir = ProjectSavedDirAbs() / TEXT("Logs");
 	IPlatformFile::GetPlatformPhysical().CreateDirectoryTree(*LogDir);
-	FString StandaloneLogPath = LogDir / FString::Printf(TEXT("%s_%s.log"),
-		*TraceName, *FDateTime::Now().ToString(TEXT("%Y%m%d_%H%M%S")));
-	GLastLogFilePath = StandaloneLogPath;
+	GStandaloneLogFilePath = LogDir / (TraceName + TEXT(".log"));
+	GLastLogFilePath = GStandaloneLogFilePath;
 
 	FString ExtraArgs = FString::Printf(
-		TEXT("-tracehost=127.0.0.1 -trace=%s -tracefile=\"%s\" -abslog=\"%s\""),
-		*ChannelSet, *TracePath, *StandaloneLogPath);
+		TEXT("-trace=%s -tracefile=\"%s\" -abslog=\"%s\""),
+		*ChannelSet, *GStandaloneTraceFilePath, *GStandaloneLogFilePath);
+
+	GStandalonePlayDelegateHandle = FEditorDelegates::BeginStandaloneLocalPlay.AddLambda([](uint32 PID)
+	{
+		GStandalonePID = PID;
+		GStandaloneProcess = FPlatformProcess::OpenProcess(PID);
+		GStandaloneStartVerified = GStandaloneProcess.IsValid()
+			&& FPlatformProcess::IsProcRunning(GStandaloneProcess);
+		FEditorDelegates::BeginStandaloneLocalPlay.Remove(GStandalonePlayDelegateHandle);
+		GStandalonePlayDelegateHandle.Reset();
+	});
 
 	FRequestPlaySessionParams P;
 	P.SessionDestination = EPlaySessionDestinationType::NewProcess;
@@ -1194,26 +1303,31 @@ FString UPerformanceService::StartStandalone(const FString& Name, const FString&
 	GEditor->RequestPlaySession(P);
 	GStandaloneRunning = true;
 
-	GStandalonePlayDelegateHandle = FEditorDelegates::BeginStandaloneLocalPlay.AddLambda([](uint32 PID)
-	{
-		GStandaloneProcess = FPlatformProcess::OpenProcess(PID);
-		FEditorDelegates::BeginStandaloneLocalPlay.Remove(GStandalonePlayDelegateHandle);
-		GStandalonePlayDelegateHandle.Reset();
-	});
-
 	TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
-	R->SetStringField(TEXT("status"), TEXT("standalone start requested"));
+	R->SetBoolField(TEXT("success"), false);
+	R->SetBoolField(TEXT("pending"), true);
+	R->SetBoolField(TEXT("request_accepted"), true);
+	R->SetStringField(TEXT("status"), TEXT("start_pending"));
+	R->SetStringField(TEXT("session_id"), GStandaloneSessionId);
+	R->SetStringField(TEXT("map"), GStandaloneMap);
 	R->SetStringField(TEXT("trace_file"), GLastTraceFilePath);
 	R->SetStringField(TEXT("log_file"),   GLastLogFilePath);
 	R->SetStringField(TEXT("channels"),   ChannelSet);
-	R->SetStringField(TEXT("hint"), TEXT("Call StopStandalone when done, then Analyse to read results."));
-	return OkJson(R);
+	R->SetStringField(TEXT("trace_transport"), TEXT("direct_file"));
+	R->SetStringField(TEXT("hint"), TEXT("Poll GetStandaloneStatus until capture_verified=true before driving the workload."));
+	FString Out;
+	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Out);
+	FJsonSerializer::Serialize(R.ToSharedRef(), Writer);
+	return Out;
 }
 
 FString UPerformanceService::StopStandalone()
 {
 	if (!GStandaloneRunning) return ErrJson(TEXT("NOT_RUNNING"), TEXT("No standalone session tracked. Did you call StartStandalone?"));
-	if (GEditor) GEditor->RequestEndPlayMap();
+	// Separate-process PIE has no PlayWorld in the editor, so RequestEndPlayMap is a no-op and
+	// EndPlayMap asserts. Ask the tracked game window to close so Unreal can flush its trace/log.
+	bool bGracefulExitRequested = GStandalonePID != 0
+		&& RequestStandaloneExitGracefully(GStandalonePID);
 
 	if (GStandalonePlayDelegateHandle.IsValid())
 	{
@@ -1221,46 +1335,111 @@ FString UPerformanceService::StopStandalone()
 		GStandalonePlayDelegateHandle.Reset();
 	}
 
+	bool bForced = false;
+	bool bProcessExited = false;
 	if (GStandaloneProcess.IsValid())
 	{
 		double StartTime = FPlatformTime::Seconds();
 		while (FPlatformProcess::IsProcRunning(GStandaloneProcess)
-			   && (FPlatformTime::Seconds() - StartTime) < 5.0)
+			   && (FPlatformTime::Seconds() - StartTime) < 10.0)
 		{
+			// Startup may replace its splash window with the game window after Stop was requested.
+			// Re-send WM_CLOSE to all current top-level windows for this exact PID during the bound.
+			bGracefulExitRequested |= RequestStandaloneExitGracefully(GStandalonePID);
 			FPlatformProcess::Sleep(0.2f);
 		}
 		if (FPlatformProcess::IsProcRunning(GStandaloneProcess))
 		{
 			FPlatformProcess::TerminateProc(GStandaloneProcess);
+			bForced = true;
+			FPlatformProcess::WaitForProc(GStandaloneProcess);
 		}
+		bProcessExited = !FPlatformProcess::IsProcRunning(GStandaloneProcess);
 		FPlatformProcess::CloseProc(GStandaloneProcess);
+		GStandaloneProcess.Reset();
 	}
 
 	GStandaloneRunning = false;
+	GStandaloneForcedTermination = bForced;
 
-	FString UTSTrace = FindLatestUTSTrace();
-	if (!UTSTrace.IsEmpty()) GLastTraceFilePath = UTSTrace;
+	// Finalize and verify only the exact direct-file destination assigned to this session.
+	int64 TraceSize = IFileManager::Get().FileSize(*GStandaloneTraceFilePath);
+	int64 PreviousSize = INDEX_NONE;
+	int32 StableChecks = 0;
+	const double FinalizeStart = FPlatformTime::Seconds();
+	while ((FPlatformTime::Seconds() - FinalizeStart) < 5.0 && StableChecks < 2)
+	{
+		FPlatformProcess::Sleep(0.2f);
+		TraceSize = IFileManager::Get().FileSize(*GStandaloneTraceFilePath);
+		if (TraceSize > 0 && TraceSize == PreviousSize) ++StableChecks;
+		else StableChecks = 0;
+		PreviousSize = TraceSize;
+	}
+	GStandaloneFinalized = GStandaloneStartVerified && bProcessExited && !bForced
+		&& TraceSize > 0 && StableChecks >= 2;
 
 	// GLastLogFilePath was set to a dedicated timestamped file in StartStandalone (-abslog), so it is
 	// already the standalone's own log — no need to guess the newest log in the folder (which would
 	// pick the editor's live, locked log).
 
 	TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
-	R->SetStringField(TEXT("status"),     TEXT("standalone stop requested"));
+	R->SetBoolField(TEXT("success"), GStandaloneFinalized);
+	R->SetBoolField(TEXT("partial"), !GStandaloneFinalized && (TraceSize > 0 || FPaths::FileExists(GStandaloneLogFilePath)));
+	R->SetStringField(TEXT("status"), GStandaloneFinalized ? TEXT("finalized") : TEXT("finalization_failed"));
+	R->SetStringField(TEXT("session_id"), GStandaloneSessionId);
+	R->SetNumberField(TEXT("pid"), GStandalonePID);
+	R->SetBoolField(TEXT("start_verified"), GStandaloneStartVerified);
+	R->SetBoolField(TEXT("graceful_exit_requested"), bGracefulExitRequested);
+	R->SetBoolField(TEXT("process_exited"), bProcessExited);
+	R->SetBoolField(TEXT("forced_termination"), bForced);
 	R->SetStringField(TEXT("trace_file"), GLastTraceFilePath);
 	R->SetStringField(TEXT("log_file"),   GLastLogFilePath);
-	R->SetStringField(TEXT("uts_store"),  GetUTSStoreDir());
-	R->SetStringField(TEXT("hint"),       TEXT("Allow a few seconds for the trace file to finalise, then call Analyse."));
-	return OkJson(R);
+	R->SetNumberField(TEXT("trace_size_bytes"), TraceSize > 0 ? TraceSize : 0);
+	const FString UTSStore = GetUTSStoreDir();
+	R->SetStringField(TEXT("trace_transport"), TEXT("direct_file"));
+	R->SetStringField(TEXT("uts_store"), UTSStore);
+	R->SetBoolField(TEXT("uts_store_available"), !UTSStore.IsEmpty());
+	R->SetStringField(TEXT("uts_store_note"), UTSStore.IsEmpty()
+		? TEXT("Unreal Trace Server store unavailable; this direct-file capture does not depend on it.")
+		: TEXT("Reported for diagnostics only; this session never selects traces from the global store."));
+	R->SetStringField(TEXT("hint"), GStandaloneFinalized
+		? TEXT("The exact trace destination is finalized; call Analyse to read it.")
+		: TEXT("Capture could not be fully verified. Inspect start_verified, forced_termination, and the exact trace/log paths; Analyse(both) will report any log-only partial result."));
+	FString Out;
+	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Out);
+	FJsonSerializer::Serialize(R.ToSharedRef(), Writer);
+	return Out;
 }
 
 FString UPerformanceService::GetStandaloneStatus()
 {
+	const bool bProcessRunning = GStandaloneProcess.IsValid()
+		&& FPlatformProcess::IsProcRunning(GStandaloneProcess);
+	const int64 TraceSize = GStandaloneTraceFilePath.IsEmpty() ? 0
+		: IFileManager::Get().FileSize(*GStandaloneTraceFilePath);
+	const bool bCaptureVerified = GStandaloneStartVerified && bProcessRunning && TraceSize > 0;
 	TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+	R->SetBoolField(TEXT("success"), bCaptureVerified || GStandaloneFinalized);
 	R->SetBoolField(TEXT("running"), GStandaloneRunning);
+	R->SetBoolField(TEXT("process_running"), bProcessRunning);
+	R->SetBoolField(TEXT("start_verified"), GStandaloneStartVerified);
+	R->SetBoolField(TEXT("capture_verified"), bCaptureVerified);
+	R->SetBoolField(TEXT("finalized"), GStandaloneFinalized);
+	R->SetBoolField(TEXT("forced_termination"), GStandaloneForcedTermination);
+	R->SetStringField(TEXT("status"), GStandaloneFinalized ? TEXT("finalized")
+		: (bCaptureVerified ? TEXT("capturing") : (GStandaloneRunning ? TEXT("start_pending") : TEXT("idle"))));
+	R->SetStringField(TEXT("session_id"), GStandaloneSessionId);
+	R->SetStringField(TEXT("map"), GStandaloneMap);
+	R->SetNumberField(TEXT("pid"), GStandalonePID);
+	R->SetStringField(TEXT("started_utc"), GStandaloneStartedUtc == FDateTime() ? TEXT("") : GStandaloneStartedUtc.ToIso8601());
+	R->SetNumberField(TEXT("trace_size_bytes"), TraceSize > 0 ? TraceSize : 0);
+	R->SetStringField(TEXT("trace_transport"), TEXT("direct_file"));
 	R->SetStringField(TEXT("last_trace_file"), GLastTraceFilePath);
 	R->SetStringField(TEXT("last_log_file"),   GLastLogFilePath);
-	return OkJson(R);
+	FString Out;
+	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Out);
+	FJsonSerializer::Serialize(R.ToSharedRef(), Writer);
+	return Out;
 }
 
 FString UPerformanceService::StartPIE()
