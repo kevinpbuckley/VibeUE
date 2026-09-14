@@ -2817,6 +2817,44 @@ struct FPreviewEditState
 
 static TMap<FString, FPreviewEditState> ActivePreviews;
 
+// Learned/manual ranges describe absolute local rotations, not edit deltas.
+// Match BakePreviewToKeyframes' Current * Delta order, then convert a clamped
+// absolute target back to a delta before storing it in the preview.
+static void ValidateAnimPreviewDelta(UAnimSequence* AnimSeq, const FString& BoneName,
+	const FRotator& Delta, const FString& Space, int32 PreviewFrame, bool bLearned,
+	FBoneValidationResult& OutValidation, FRotator& OutEffectiveDelta)
+{
+	const bool bLocal = Space.Equals(TEXT("local"), ESearchCase::IgnoreCase);
+	FQuat CurrentRotation = FQuat::Identity;
+	if (bLocal)
+	{
+		const int32 BoneIndex = AnimSeq->GetSkeleton()->GetReferenceSkeleton().FindBoneIndex(FName(*BoneName));
+		const int32 Frame = FMath::Clamp(PreviewFrame, 0, FMath::Max(0, AnimSeq->GetNumberOfSampledKeys() - 1));
+		const double Time = static_cast<double>(Frame) / AnimSeq->GetSamplingFrameRate().AsDecimal();
+		FTransform CurrentTransform;
+		FAnimExtractContext Context(Time);
+		AnimSeq->GetBoneTransform(CurrentTransform, FSkeletonPoseBoneIndex(BoneIndex), Context, true);
+		CurrentRotation = CurrentTransform.GetRotation();
+	}
+	const FRotator Target = bLocal ? (CurrentRotation * Delta.Quaternion()).Rotator() : Delta;
+	USkeletonService::ValidateBoneRotation(AnimSeq->GetSkeleton()->GetPathName(),
+		BoneName, Target, bLearned, OutValidation);
+	// Stored float keys and JSON Euler round-trips can straddle a learned limit
+	// by a few ten-thousandths of a degree. Do not turn that into a real clamp.
+	if (!OutValidation.bIsValid && OutValidation.ClampedRotation.Equals(Target, 0.001f))
+	{
+		OutValidation.bIsValid = true;
+		OutValidation.ClampedRotation = Target;
+	}
+	OutEffectiveDelta = Delta;
+	if (!OutValidation.bIsValid)
+	{
+		OutEffectiveDelta = bLocal
+			? (CurrentRotation.Inverse() * OutValidation.ClampedRotation.Quaternion()).Rotator()
+			: OutValidation.ClampedRotation;
+	}
+}
+
 bool UAnimSequenceService::PreviewBoneRotation(
 	const FString& AnimPath,
 	const FString& BoneName,
@@ -2856,18 +2894,18 @@ bool UAnimSequenceService::PreviewBoneRotation(
 	// Validate rotation against constraints — enforce MANUAL constraints first (set via
 	// set_bone_constraints), falling back to learned constraints when manual didn't clamp. (#447)
 	FBoneValidationResult ValidationResult;
-	FString SkeletonPath = Skeleton->GetPathName();
-	USkeletonService::ValidateBoneRotation(SkeletonPath, BoneName, RotationDelta, false, ValidationResult);
+	FRotator EffectiveRotation = RotationDelta;
+	ValidateAnimPreviewDelta(AnimSeq, BoneName, RotationDelta, Space, PreviewFrame,
+		false, ValidationResult, EffectiveRotation);
 	if (ValidationResult.bIsValid)
 	{
-		USkeletonService::ValidateBoneRotation(SkeletonPath, BoneName, RotationDelta, true, ValidationResult);
+		ValidateAnimPreviewDelta(AnimSeq, BoneName, RotationDelta, Space, PreviewFrame,
+			true, ValidationResult, EffectiveRotation);
 	}
 
-	FRotator EffectiveRotation = RotationDelta;
 	if (!ValidationResult.bIsValid)
 	{
 		OutResult.bWasClamped = true;
-		EffectiveRotation = ValidationResult.ClampedRotation;
 		OutResult.Messages.Add(ValidationResult.Message);
 	}
 
@@ -2932,7 +2970,6 @@ bool UAnimSequenceService::PreviewPoseDelta(
 	}
 
 	const FReferenceSkeleton& RefSkeleton = Skeleton->GetReferenceSkeleton();
-	FString SkeletonPath = Skeleton->GetPathName();
 
 	// First pass: validate all bones exist
 	for (const FBoneDelta& Delta : BoneDeltas)
@@ -2952,17 +2989,18 @@ bool UAnimSequenceService::PreviewPoseDelta(
 		// Enforce MANUAL constraints first (set via set_bone_constraints); fall back to
 		// learned constraints when the manual profile didn't clamp. (issue #447)
 		FBoneValidationResult ValidationResult;
-		USkeletonService::ValidateBoneRotation(SkeletonPath, Delta.BoneName, Delta.RotationDelta, false, ValidationResult);
+		FBoneDelta EffectiveDelta = Delta;
+		ValidateAnimPreviewDelta(AnimSeq, Delta.BoneName, Delta.RotationDelta, Space,
+			PreviewFrame, false, ValidationResult, EffectiveDelta.RotationDelta);
 		if (ValidationResult.bIsValid)
 		{
-			USkeletonService::ValidateBoneRotation(SkeletonPath, Delta.BoneName, Delta.RotationDelta, true, ValidationResult);
+			ValidateAnimPreviewDelta(AnimSeq, Delta.BoneName, Delta.RotationDelta, Space,
+				PreviewFrame, true, ValidationResult, EffectiveDelta.RotationDelta);
 		}
 
-		FBoneDelta EffectiveDelta = Delta;
 		if (!ValidationResult.bIsValid)
 		{
 			OutResult.bWasClamped = true;
-			EffectiveDelta.RotationDelta = ValidationResult.ClampedRotation;
 			OutResult.Messages.Add(ValidationResult.Message);
 		}
 
@@ -3044,13 +3082,14 @@ bool UAnimSequenceService::ValidatePose(
 		return false;
 	}
 
-	FString SkeletonPath = Skeleton->GetPathName();
 	const FPreviewEditState& PreviewState = ActivePreviews[AnimPath];
 
 	for (const FBoneDelta& Delta : PreviewState.PendingDeltas)
 	{
 		FBoneValidationResult BoneResult;
-		USkeletonService::ValidateBoneRotation(SkeletonPath, Delta.BoneName, Delta.RotationDelta, bUseLearnedConstraints, BoneResult);
+		FRotator EffectiveDelta;
+		ValidateAnimPreviewDelta(AnimSeq, Delta.BoneName, Delta.RotationDelta,
+			PreviewState.Space, PreviewState.PreviewFrame, bUseLearnedConstraints, BoneResult, EffectiveDelta);
 
 		if (BoneResult.bIsValid)
 		{
