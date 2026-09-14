@@ -44,11 +44,17 @@ public:
 
 	/**
 	 * Queue a deterministic PIE scenario. Returns a scenario id immediately; poll GetScenario until
-	 * status is passed/failed/cancelled. Teardown is guaranteed on every terminal path.
+	 * status is passed/failed/cancelled/smoke_passed. Normal runs require assertions;
+	 * smoke:true permits assertion-free runs but never reports passed=true.
+	 * Optional dependencies (project-relative or absolute file paths) bind evidence to file content.
+	 * Teardown is requested on every terminal path.
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Workflow|PIE")
 	static FString RunScenario(const FString& ScenarioJson);
 
+	/** Recheck tracked evidence. Changed inputs return stale/passed=false with historicalPassed preserved.
+	 * verifiedCurrent covers declared files, the VibeUE binary and engine version, not unsaved state.
+	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Workflow|PIE")
 	static FString GetScenario(const FString& ScenarioId);
 
