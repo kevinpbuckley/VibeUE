@@ -9,10 +9,14 @@
 #include "Engine/Blueprint.h"
 #include "Engine/Engine.h"
 #include "HAL/FileManager.h"
+#include "HAL/PlatformOutputDevices.h"
 #include "IPythonScriptPlugin.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Misc/SecureHash.h"
+#include "Misc/EngineVersion.h"
+#include "Modules/ModuleManager.h"
 #include "PythonAPI/UInputService.h"
 #include "PythonAPI/UPerformanceService.h"
 #include "Serialization/JsonReader.h"
@@ -33,17 +37,20 @@ namespace
 		double StartedSeconds = 0.0;
 		double StepStartedSeconds = 0.0;
 		double WaitUntil = 0.0;
-		int32 LogStartChars = 0;
+		int32 LogStartChars = -1;
 		bool bOwnsPIE = false;
 		bool bStopPIE = true;
 		bool bTerminal = false;
+		int32 AssertionsDeclared = 0;
+		int32 AssertionsEvaluated = 0;
+		bool bSmoke = false;
 	};
 
 	TMap<FString, TSharedPtr<FWorkflowScenario>> GWorkflowScenarios;
 
 	FString ScenarioDir() { return FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("VibeUE/Scenarios")); }
 	FString ScenarioPath(const FString& Id) { return FPaths::Combine(ScenarioDir(), Id + TEXT(".json")); }
-	FString ProjectLogPath() { return FPaths::Combine(FPaths::ProjectLogDir(), FString(FApp::GetProjectName()) + TEXT(".log")); }
+	FString ProjectLogPath() { return FPlatformOutputDevices::GetAbsoluteLogFilename(); }
 
 	FString SerializeScenario(const TSharedRef<FJsonObject>& Object)
 	{
@@ -56,6 +63,66 @@ namespace
 		Root->SetStringField(TEXT("error"), Message); return SerializeScenario(Root);
 	}
 
+	bool FingerprintFile(const FString& Path, FString& Hash)
+	{
+		TUniquePtr<FArchive> Reader(IFileManager::Get().CreateFileReader(*Path));
+		if (!Reader) { return false; }
+		FSHA1 Digest;
+		uint8 Buffer[65536];
+		while (Reader->Tell() < Reader->TotalSize() && !Reader->IsError())
+		{
+			const int64 Count = FMath::Min<int64>(sizeof(Buffer), Reader->TotalSize() - Reader->Tell());
+			Reader->Serialize(Buffer, Count); Digest.Update(Buffer, static_cast<uint32>(Count));
+		}
+		if (Reader->IsError()) { return false; }
+		Digest.Final(); uint8 Bytes[20]; Digest.GetHash(Bytes); Hash = BytesToHex(Bytes, 20); return true;
+	}
+
+	bool IsAssertion(const FString& Action)
+	{
+		return Action == TEXT("assert_log") || Action == TEXT("python_assert") || Action == TEXT("python_assert_number");
+	}
+
+	FString HashText(const FString& Text)
+	{
+		FTCHARToUTF8 Utf8(*Text); uint8 Bytes[20];
+		FSHA1::HashBuffer(Utf8.Get(), Utf8.Length(), Bytes); return BytesToHex(Bytes, 20);
+	}
+
+	// Historical outcome is preserved on disk; callers receive a current validity assessment.
+	FString CurrentScenarioReport(const TSharedRef<FJsonObject>& Report)
+	{
+		TSharedPtr<FJsonObject> Copy;
+		FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(SerializeScenario(Report)), Copy);
+		if (Copy->GetStringField(TEXT("status")) == TEXT("running")) { return SerializeScenario(Copy.ToSharedRef()); }
+		const TSharedPtr<FJsonObject>* Provenance = nullptr;
+		FString Validity = TEXT("untracked");
+		if (Copy->TryGetObjectField(TEXT("provenance"), Provenance))
+		{
+			const TArray<TSharedPtr<FJsonValue>>* Files = nullptr;
+			if ((*Provenance)->TryGetArrayField(TEXT("files"), Files) && Files->Num() > 0)
+			{
+				Validity = TEXT("current");
+				for (const auto& Value : *Files)
+				{
+					const auto File = Value->AsObject(); FString Hash;
+					if (!File || !FingerprintFile(File->GetStringField(TEXT("path")), Hash) || Hash != File->GetStringField(TEXT("sha1")))
+					{ Validity = TEXT("stale"); break; }
+				}
+				if ((*Provenance)->GetStringField(TEXT("engineVersion")) != FEngineVersion::Current().ToString()) { Validity = TEXT("stale"); }
+			}
+		}
+		Copy->SetStringField(TEXT("validity"), Validity);
+		bool Passed = false; Copy->TryGetBoolField(TEXT("passed"), Passed);
+		Copy->SetBoolField(TEXT("historicalPassed"), Passed);
+		Copy->SetBoolField(TEXT("verifiedCurrent"), Passed && Validity == TEXT("current"));
+		if (Passed && Validity == TEXT("stale"))
+		{
+			Copy->SetBoolField(TEXT("passed"), false); Copy->SetStringField(TEXT("status"), TEXT("stale"));
+		}
+		return SerializeScenario(Copy.ToSharedRef());
+	}
+
 	void SaveScenario(const FWorkflowScenario& Scenario)
 	{
 		IFileManager::Get().MakeDirectory(*ScenarioDir(), true);
@@ -64,10 +131,14 @@ namespace
 		IFileManager::Get().Move(*Path, *Temp, true, true, false, true);
 	}
 
-	FString ReadScenarioLogDelta(const FWorkflowScenario& Scenario)
+	FString ReadScenarioLogDelta(const FWorkflowScenario& Scenario, bool* bReadable = nullptr)
 	{
-		FString Log; FFileHelper::LoadFileToString(Log, *ProjectLogPath());
-		return Scenario.LogStartChars <= Log.Len() ? Log.Mid(Scenario.LogStartChars) : Log;
+		if (GLog) { GLog->FlushThreadedLogs(); GLog->Flush(); }
+		FString Log;
+		const bool bOk = FFileHelper::LoadFileToString(Log, *ProjectLogPath(), FFileHelper::EHashOptions::None, FILEREAD_AllowWrite) &&
+			Scenario.LogStartChars >= 0 && Scenario.LogStartChars <= Log.Len();
+		if (bReadable) { *bReadable = bOk; }
+		return bOk ? Log.Mid(Scenario.LogStartChars) : FString();
 	}
 
 	bool JsonSuccess(const FString& Json, FString& OutError)
@@ -95,8 +166,12 @@ namespace
 		{
 			FString StopError; bTeardownOk = JsonSuccess(UPerformanceService::StopPIE(), StopError);
 		}
-		Scenario->Report->SetStringField(TEXT("status"), bTeardownOk ? Status : TEXT("failed"));
-		Scenario->Report->SetBoolField(TEXT("passed"), Status == TEXT("passed") && bTeardownOk);
+		const bool bVerified = Scenario->AssertionsDeclared > 0 && Scenario->AssertionsEvaluated == Scenario->AssertionsDeclared;
+		const FString FinalStatus = !bTeardownOk ? TEXT("failed") : Status == TEXT("passed") && !bVerified ? (Scenario->bSmoke ? TEXT("smoke_passed") : TEXT("failed")) : Status;
+		Scenario->Report->SetStringField(TEXT("status"), FinalStatus);
+		Scenario->Report->SetBoolField(TEXT("passed"), FinalStatus == TEXT("passed"));
+		Scenario->Report->SetNumberField(TEXT("assertionsDeclared"), Scenario->AssertionsDeclared);
+		Scenario->Report->SetNumberField(TEXT("assertionsEvaluated"), Scenario->AssertionsEvaluated);
 		Scenario->Report->SetArrayField(TEXT("steps"), Scenario->Results);
 		Scenario->Report->SetStringField(TEXT("finishedAtIso"), FDateTime::UtcNow().ToIso8601());
 		Scenario->Report->SetNumberField(TEXT("durationMs"), (FPlatformTime::Seconds() - Scenario->StartedSeconds) * 1000.0);
@@ -112,6 +187,7 @@ namespace
 	{
 		TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
 		Result->SetNumberField(TEXT("index"), Scenario->StepIndex); Result->SetStringField(TEXT("action"), Action);
+		if (IsAssertion(Action)) { ++Scenario->AssertionsEvaluated; }
 		Result->SetStringField(TEXT("status"), bPassed ? TEXT("passed") : TEXT("failed"));
 		Result->SetNumberField(TEXT("durationMs"), (FPlatformTime::Seconds() - Scenario->StepStartedSeconds) * 1000.0);
 		if (!Error.IsEmpty()) { Result->SetStringField(TEXT("error"), Error); }
@@ -172,10 +248,10 @@ namespace
 			else if (Action == TEXT("assert_log"))
 			{
 				FString Contains, NotContains; Step->TryGetStringField(TEXT("contains"), Contains); Step->TryGetStringField(TEXT("not_contains"), NotContains);
-				const FString Delta = ReadScenarioLogDelta(*Scenario);
-				const bool bOk = (!Contains.IsEmpty() && Delta.Contains(Contains)) || (!NotContains.IsEmpty() && !Delta.Contains(NotContains));
-				const FString Expected = !Contains.IsEmpty() ? TEXT("contains: ") + Contains : TEXT("does not contain: ") + NotContains;
-				AddScenarioStepResult(Scenario, Action, bOk, bOk ? FString() : TEXT("log assertion failed"), Delta.Right(2000), Expected);
+				bool bReadable = false; const FString Delta = ReadScenarioLogDelta(*Scenario, &bReadable);
+				const bool bOk = bReadable && (Contains.IsEmpty() || Delta.Contains(Contains)) && (NotContains.IsEmpty() || !Delta.Contains(NotContains));
+				const FString Expected = TEXT("contains: ") + Contains + TEXT("; does not contain: ") + NotContains;
+				AddScenarioStepResult(Scenario, Action, bOk, bOk ? FString() : bReadable ? TEXT("log assertion failed") : TEXT("scenario log unavailable or truncated"), Delta.Right(2000), Expected);
 			}
 			else if (Action == TEXT("python_assert"))
 			{
@@ -184,6 +260,26 @@ namespace
 				IPythonScriptPlugin* Python = IPythonScriptPlugin::Get(); const bool bExecuted = Python && Python->ExecPythonCommandEx(Command);
 				const bool bOk = bExecuted && Command.CommandResult == Expected;
 				AddScenarioStepResult(Scenario, Action, bOk, bOk ? FString() : TEXT("Python assertion failed"), Command.CommandResult, Expected);
+			}
+			else if (Action == TEXT("python_assert_number"))
+			{
+				FPythonCommandEx Command; Command.Command = Step->GetStringField(TEXT("expression"));
+				Command.ExecutionMode = EPythonCommandExecutionMode::EvaluateStatement;
+				IPythonScriptPlugin* Python = IPythonScriptPlugin::Get();
+				const bool bExecuted = Python && Python->ExecPythonCommandEx(Command);
+				double Actual = 0.0; const double Expected = Step->GetNumberField(TEXT("expected"));
+				double Tolerance = 0.0; Step->TryGetNumberField(TEXT("tolerance"), Tolerance);
+				const FString Op = Step->GetStringField(TEXT("operator"));
+				// Unreal's JSON reader expects a container at the root. Wrapping also rejects
+				// Python strings, booleans, NaN/Inf and multiple values instead of coercing them.
+				TArray<TSharedPtr<FJsonValue>> Numbers;
+				const bool bNumeric = bExecuted && FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(TEXT("[") + Command.CommandResult + TEXT("]")), Numbers) &&
+					Numbers.Num() == 1 && Numbers[0]->Type == EJson::Number && Numbers[0]->TryGetNumber(Actual) && FMath::IsFinite(Actual);
+				const bool bOk = bNumeric && (Op == TEXT("eq") ? FMath::Abs(Actual - Expected) <= Tolerance :
+					Op == TEXT("lt") ? Actual < Expected : Op == TEXT("le") ? Actual <= Expected :
+					Op == TEXT("gt") ? Actual > Expected : Actual >= Expected);
+				AddScenarioStepResult(Scenario, Action, bOk, bOk ? FString() : TEXT("numeric Python assertion failed"), Command.CommandResult,
+					FString::Printf(TEXT("%s %.17g (tolerance %.17g)"), *Op, Expected, Tolerance));
 			}
 			else if (Action == TEXT("capture_game"))
 			{
@@ -219,10 +315,69 @@ FString UWorkflowService::RunScenario(const FString& ScenarioJson)
 	if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(ScenarioJson), Spec) || !Spec.IsValid()) { return ScenarioError(TEXT("scenario_json must be an object")); }
 	const TArray<TSharedPtr<FJsonValue>>* Steps = nullptr;
 	if (!Spec->TryGetArrayField(TEXT("steps"), Steps) || Steps->Num() == 0) { return ScenarioError(TEXT("scenario requires a non-empty steps array")); }
+	int32 AssertionsDeclared = 0;
+	for (const auto& Value : *Steps)
+	{
+		if (!Value || Value->Type != EJson::Object) { return ScenarioError(TEXT("each step must be an object")); }
+		const auto Step = Value->AsObject(); FString Action;
+		if (!Step || !Step->TryGetStringField(TEXT("action"), Action)) { return ScenarioError(TEXT("each step requires an action")); }
+		Action = Action.ToLower();
+		if (!IsAssertion(Action)) { continue; }
+		++AssertionsDeclared;
+		FString Expression, Expected, Contains, NotContains;
+		if (Action == TEXT("assert_log"))
+		{
+			Step->TryGetStringField(TEXT("contains"), Contains); Step->TryGetStringField(TEXT("not_contains"), NotContains);
+			if (Contains.IsEmpty() && NotContains.IsEmpty()) { return ScenarioError(TEXT("assert_log requires contains or not_contains")); }
+		}
+		else
+		{
+			if (!Step->TryGetStringField(TEXT("expression"), Expression) || Expression.TrimStartAndEnd().IsEmpty()) { return ScenarioError(TEXT("assertion requires expression")); }
+			if (Action == TEXT("python_assert"))
+			{
+				if (!Step->TryGetStringField(TEXT("expected"), Expected)) { return ScenarioError(TEXT("python_assert requires string expected")); }
+			}
+			else
+			{
+				double Number, Tolerance = 0.0; FString Op;
+				if (!Step->HasTypedField<EJson::Number>(TEXT("expected")) || !Step->TryGetNumberField(TEXT("expected"), Number) || !FMath::IsFinite(Number) ||
+					!Step->TryGetStringField(TEXT("operator"), Op) || !(Op == TEXT("eq") || Op == TEXT("lt") || Op == TEXT("le") || Op == TEXT("gt") || Op == TEXT("ge")))
+				{ return ScenarioError(TEXT("numeric assertion requires finite expected and operator eq/lt/le/gt/ge")); }
+				if (Step->HasField(TEXT("tolerance")) && (!Step->HasTypedField<EJson::Number>(TEXT("tolerance")) || !Step->TryGetNumberField(TEXT("tolerance"), Tolerance) || !FMath::IsFinite(Tolerance) || Tolerance < 0 || Op != TEXT("eq")))
+				{ return ScenarioError(TEXT("tolerance must be finite, nonnegative, and only used with eq")); }
+			}
+		}
+	}
+	bool bSmoke = false;
+	if (Spec->HasField(TEXT("smoke")) && (!Spec->HasTypedField<EJson::Boolean>(TEXT("smoke")) || !Spec->TryGetBoolField(TEXT("smoke"), bSmoke))) { return ScenarioError(TEXT("smoke must be boolean")); }
+	if (AssertionsDeclared == 0 && !bSmoke) { return ScenarioError(TEXT("scenario requires an assertion; use smoke:true for boot-only checks")); }
+	TArray<TSharedPtr<FJsonValue>> Fingerprints;
+	const TArray<TSharedPtr<FJsonValue>>* Dependencies = nullptr;
+	if (Spec->HasField(TEXT("dependencies")))
+	{
+		if (!Spec->TryGetArrayField(TEXT("dependencies"), Dependencies)) { return ScenarioError(TEXT("dependencies must be an array of file paths")); }
+		for (const auto& Value : *Dependencies)
+		{
+			FString Path, Hash;
+			if (!Value || Value->Type != EJson::String || !Value->TryGetString(Path) || Path.IsEmpty()) { return ScenarioError(TEXT("dependency must be a file path")); }
+			if (FPaths::IsRelative(Path)) { Path = FPaths::Combine(FPaths::ProjectDir(), Path); }
+			Path = FPaths::ConvertRelativePathToFull(Path);
+			if (!FingerprintFile(Path, Hash)) { return ScenarioError(TEXT("cannot fingerprint dependency: ") + Path); }
+			auto File = MakeShared<FJsonObject>(); File->SetStringField(TEXT("path"), Path); File->SetStringField(TEXT("sha1"), Hash);
+			Fingerprints.Add(MakeShared<FJsonValueObject>(File));
+		}
+	}
 	TSharedPtr<FWorkflowScenario> Scenario = MakeShared<FWorkflowScenario>();
+	Scenario->AssertionsDeclared = AssertionsDeclared; Scenario->bSmoke = bSmoke;
+	auto Provenance = MakeShared<FJsonObject>(); Provenance->SetArrayField(TEXT("files"), Fingerprints);
+	Provenance->SetStringField(TEXT("engineVersion"), FEngineVersion::Current().ToString());
+	Provenance->SetStringField(TEXT("scenarioSha1"), HashText(ScenarioJson));
+	Scenario->Report->SetObjectField(TEXT("provenance"), Provenance);
 	Scenario->Id = FDateTime::UtcNow().ToString(TEXT("%Y%m%dT%H%M%SZ")) + TEXT("-") + FGuid::NewGuid().ToString(EGuidFormats::Digits).Left(8);
 	Scenario->Spec = Spec.ToSharedRef(); Scenario->Steps = *Steps; Scenario->StartedSeconds = FPlatformTime::Seconds();
-	FString CurrentLog; FFileHelper::LoadFileToString(CurrentLog, *ProjectLogPath()); Scenario->LogStartChars = CurrentLog.Len();
+	if (GLog) { GLog->FlushThreadedLogs(); GLog->Flush(); }
+	FString CurrentLog;
+	if (FFileHelper::LoadFileToString(CurrentLog, *ProjectLogPath(), FFileHelper::EHashOptions::None, FILEREAD_AllowWrite)) { Scenario->LogStartChars = CurrentLog.Len(); }
 	const TSharedPtr<FJsonObject>* Teardown = nullptr; if (Spec->TryGetObjectField(TEXT("teardown"), Teardown)) { (*Teardown)->TryGetBoolField(TEXT("stop_pie"), Scenario->bStopPIE); }
 	Scenario->Report->SetStringField(TEXT("schema"), TEXT("vibeue.scenario.v1")); Scenario->Report->SetStringField(TEXT("id"), Scenario->Id);
 	FString Name = Scenario->Id; Spec->TryGetStringField(TEXT("name"), Name); Scenario->Report->SetStringField(TEXT("name"), Name);
@@ -254,9 +409,27 @@ FString UWorkflowService::RunScenario(const FString& ScenarioJson)
 			}
 		}
 	}
+	// Capture after preflight saves, so the baseline describes the files actually tested.
+	for (const auto& Value : Fingerprints)
+	{
+		const auto File = Value->AsObject(); FString Hash;
+		if (!FingerprintFile(File->GetStringField(TEXT("path")), Hash)) { bCompileOk = false; }
+		else { File->SetStringField(TEXT("sha1"), Hash); }
+	}
+	if (Fingerprints.Num() > 0)
+	{
+		const FString ModulePath = FPaths::ConvertRelativePathToFull(FModuleManager::Get().GetModuleFilename(TEXT("VibeUE"))); FString Hash;
+		if (!FingerprintFile(ModulePath, Hash)) { bCompileOk = false; }
+		else
+		{
+			auto File = MakeShared<FJsonObject>(); File->SetStringField(TEXT("path"), ModulePath); File->SetStringField(TEXT("sha1"), Hash);
+			Fingerprints.Add(MakeShared<FJsonValueObject>(File));
+		}
+	}
+	Provenance->SetArrayField(TEXT("files"), Fingerprints);
 	Scenario->Report->SetArrayField(TEXT("compileResults"), CompileResults); SaveScenario(*Scenario);
 	GWorkflowScenarios.Add(Scenario->Id, Scenario);
-	if (!bCompileOk) { FinishScenario(Scenario, TEXT("failed"), TEXT("Blueprint preflight compile failed")); return SerializeScenario(Scenario->Report); }
+	if (!bCompileOk) { FinishScenario(Scenario, TEXT("failed"), TEXT("preflight compile or provenance capture failed")); return SerializeScenario(Scenario->Report); }
 	TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>(); Root->SetBoolField(TEXT("success"), true); Root->SetStringField(TEXT("scenarioId"), Scenario->Id);
 	Root->SetStringField(TEXT("status"), TEXT("running")); Root->SetStringField(TEXT("reportPath"), ScenarioPath(Scenario->Id));
 	return SerializeScenario(Root);
@@ -264,8 +437,11 @@ FString UWorkflowService::RunScenario(const FString& ScenarioJson)
 
 FString UWorkflowService::GetScenario(const FString& ScenarioId)
 {
-	if (const TSharedPtr<FWorkflowScenario>* Found = GWorkflowScenarios.Find(ScenarioId)) { return SerializeScenario((*Found)->Report); }
-	FString Text; return FFileHelper::LoadFileToString(Text, *ScenarioPath(ScenarioId)) ? Text : ScenarioError(TEXT("scenario not found"));
+	if (const TSharedPtr<FWorkflowScenario>* Found = GWorkflowScenarios.Find(ScenarioId)) { return CurrentScenarioReport((*Found)->Report); }
+	FString Text; TSharedPtr<FJsonObject> Report;
+	if (!FFileHelper::LoadFileToString(Text, *ScenarioPath(ScenarioId)) || !FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Text), Report) || !Report)
+	{ return ScenarioError(TEXT("scenario not found or invalid")); }
+	return CurrentScenarioReport(Report.ToSharedRef());
 }
 
 FString UWorkflowService::CancelScenario(const FString& ScenarioId)

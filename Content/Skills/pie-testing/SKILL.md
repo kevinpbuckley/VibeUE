@@ -59,7 +59,7 @@ For repeatable multi-step verification, prefer `WorkflowService.run_scenario()` 
 the loop. It queues a state machine on editor ticks, waits for actual PIE readiness, scopes log
 assertions to the scenario start, uses VibeUE's focus-free input injection, captures evidence, and
 always tears PIE down on pass, failure, or cancellation. Poll `get_scenario(id)` until its `status`
-is `passed`, `failed`, or `cancelled`:
+is `passed`, `failed`, `cancelled`, `smoke_passed`, or `stale`:
 
 ```python
 import json, unreal
@@ -82,6 +82,51 @@ queued = json.loads(unreal.WorkflowService.run_scenario(json.dumps(spec)))
 
 Use the lower-level primitives below for interactive investigation, one-off probes, or actions not in
 the scenario schema. Never spin/sleep inside one editor Python call while waiting for a scenario.
+
+### Assertions and evidence freshness
+
+A normal scenario must declare at least one `assert_log`, `python_assert`, or
+`python_assert_number` step. Completing input/wait/capture steps alone does not verify gameplay.
+For a deliberate boot-only check, set `"smoke": true`: an assertion-free run finishes with
+`status="smoke_passed"` and `passed=false`. Pollers must treat `smoke_passed` and `stale` as terminal
+alongside `passed`, `failed`, and `cancelled`.
+
+`python_assert` compares the Python result with a required string `expected`.
+`python_assert_number` evaluates an expression and requires a finite numeric result:
+
+```json
+{"action":"python_assert_number", "expression":"0.1 + 0.2",
+ "operator":"eq", "expected":0.3, "tolerance":0.00001}
+```
+
+Operators are `eq`, `lt`, `le`, `gt`, and `ge`; nonnegative `tolerance` is supported only for `eq`
+and defaults to zero. For gameplay, use an expression reading a live actor/property instead of
+the arithmetic example. Expected/actual values are recorded per assertion; an expression error,
+nonnumeric result, or unmet comparison fails the scenario. Do not cache PIE objects in globals.
+If an `assert_log` supplies both `contains` and `not_contains`, both conditions must hold.
+Log assertions use the active log (including `-abslog` overrides); unavailable or truncated logs
+fail the assertion, including negative checks.
+Reports include `assertionsDeclared` and `assertionsEvaluated`, including failed assertions.
+
+To detect stale evidence, add a top-level `dependencies` array of actual file paths relative to the
+project directory (or absolute paths), for example `Content/Ships/BP_Ship.uasset` and relevant
+source/config files. Dependencies must exist. VibeUE hashes their contents after preflight,
+records the scenario hash and engine version, and automatically tracks its plugin DLL when
+dependencies are provided. It does not persist the submitted Python source as provenance.
+
+`get_scenario()` checks those hashes again for completed reports, including reports loaded from
+disk. A changed/missing file or changed engine version produces `validity="stale"`; a historical
+pass then returns `status="stale"`, `passed=false`, and `historicalPassed=true`.
+`verifiedCurrent=true` requires passing assertions and unchanged tracked inputs. Without
+dependencies, `validity="untracked"` and `verifiedCurrent=false`, even if assertions passed.
+Freshness covers only explicitly listed files plus the plugin DLL: it does not infer transitive
+asset dependencies, detect unsaved edits, or prove a newly changed project binary is loaded.
+Save and compile first, list all relevant inputs, and rerun after changes. Hashes are freshness
+checks, not tamper-proof attestations. Large dependency sets increase polling cost.
+
+These verification improvements were inspired by
+[PageMastr/Gatekeeper](https://github.com/PageMastr/Gatekeeper), particularly its assertion coverage
+and source-bound verdicts. The VibeUE implementation is independently written for Unreal.
 
 ```
 # 1. Make sure you're starting from a clean state
