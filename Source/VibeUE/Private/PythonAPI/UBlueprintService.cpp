@@ -462,6 +462,26 @@ namespace
 		return Class;
 	}
 
+	// Single implementation of the compiler-message harvest so BuildGraph and CompileBlueprint agree
+	// on what counts as an error vs a warning. Prefix is prepended to each message (BuildGraph tags
+	// them "Compile: "; CompileBlueprint passes an empty prefix).
+	static void HarvestCompilerMessages(const FCompilerResultsLog& CompileResults, const FString& Prefix,
+		TArray<FString>& OutErrors, TArray<FString>& OutWarnings)
+	{
+		for (const TSharedRef<FTokenizedMessage>& Msg : CompileResults.Messages)
+		{
+			const FString MsgText = Msg->ToText().ToString();
+			if (Msg->GetSeverity() == EMessageSeverity::Error)
+			{
+				OutErrors.Add(Prefix + MsgText);
+			}
+			else if (Msg->GetSeverity() == EMessageSeverity::Warning || Msg->GetSeverity() == EMessageSeverity::PerformanceWarning)
+			{
+				OutWarnings.Add(Prefix + MsgText);
+			}
+		}
+	}
+
 	// Object/class default of a pin as an object path, empty when the pin holds none. Hard
 	// object/class pins store the resolved object in DefaultObject; soft object/class pins store
 	// the path string in DefaultValue. Lets get_node_pins report class/object defaults that the
@@ -558,6 +578,108 @@ namespace
 		return false;
 	}
 
+	// Result of trying to write a class/object default onto a pin.
+	//   NotApplicable — the pin is not a class/object reference pin; caller should fall back to
+	//                   Schema->TrySetDefaultValue (plain string default).
+	//   Applied        — the class/object was resolved and landed on the pin.
+	//   Failed         — the pin IS a class/object pin but the value could not be resolved, or the
+	//                    pin's metaclass/class rejected it (OutError describes which).
+	enum class EApplyPinDefaultResult : uint8 { NotApplicable, Applied, Failed };
+
+	// Shared class/object pin-default path used by BOTH SetNodePinValue and BuildGraph's pin-default
+	// loop (issue #552 follow-up). A hard class/object pin stores its default in Pin->DefaultObject,
+	// which Schema->TrySetDefaultValue (a string path) cannot write — so a build_graph pin_default
+	// like {"ActorClass":"/Script/Engine.StaticMeshActor"} used to silently no-op. Resolve the
+	// class/object, write the field that matches (soft pins keep the path string in DefaultValue),
+	// then read it back so a metaclass rejection is a hard failure, not a false success.
+	static EApplyPinDefaultResult ApplyPinDefault(UEdGraphPin* Pin, const FString& Value, FString& OutError)
+	{
+		if (!Pin)
+		{
+			OutError = TEXT("null pin");
+			return EApplyPinDefaultResult::Failed;
+		}
+
+		const FName PinCategory = Pin->PinType.PinCategory;
+		const bool bClass  = (PinCategory == UEdGraphSchema_K2::PC_Class  || PinCategory == UEdGraphSchema_K2::PC_SoftClass);
+		const bool bObject = (PinCategory == UEdGraphSchema_K2::PC_Object || PinCategory == UEdGraphSchema_K2::PC_SoftObject);
+		if (!bClass && !bObject)
+		{
+			return EApplyPinDefaultResult::NotApplicable;
+		}
+
+		const UEdGraphSchema_K2* K2Schema = nullptr;
+		if (const UEdGraphNode* OwningNode = Pin->GetOwningNodeUnchecked())
+		{
+			if (const UEdGraph* OwningGraph = OwningNode->GetGraph())
+			{
+				K2Schema = Cast<UEdGraphSchema_K2>(OwningGraph->GetSchema());
+			}
+		}
+
+		if (bClass)
+		{
+			// Resolve the class with U/A prefix fallbacks (mirrors SetNodePinValue's original path).
+			UClass* ResolvedClass = LoadObject<UClass>(nullptr, *Value);
+			if (!ResolvedClass)
+				ResolvedClass = FindFirstObject<UClass>(*Value, EFindFirstObjectOptions::ExactClass);
+			if (!ResolvedClass)
+				ResolvedClass = FindFirstObject<UClass>(*FString::Printf(TEXT("U%s"), *Value), EFindFirstObjectOptions::ExactClass);
+			if (!ResolvedClass)
+				ResolvedClass = FindFirstObject<UClass>(*FString::Printf(TEXT("A%s"), *Value), EFindFirstObjectOptions::ExactClass);
+
+			if (!ResolvedClass)
+			{
+				OutError = FString::Printf(TEXT("could not resolve class '%s' for class reference pin '%s'"), *Value, *Pin->PinName.ToString());
+				return EApplyPinDefaultResult::Failed;
+			}
+
+			const bool bSoft = (PinCategory == UEdGraphSchema_K2::PC_SoftClass);
+			if (K2Schema)
+				K2Schema->TrySetDefaultObject(*Pin, ResolvedClass);
+			else if (bSoft)
+				Pin->DefaultValue = ResolvedClass->GetPathName();
+			else
+				Pin->DefaultObject = ResolvedClass;
+
+			const bool bLanded = bSoft
+				? Pin->DefaultValue.Equals(ResolvedClass->GetPathName())
+				: (Pin->DefaultObject == ResolvedClass);
+			if (!bLanded)
+			{
+				OutError = FString::Printf(TEXT("class '%s' was not accepted on class pin '%s' (the pin's expected metaclass likely rejected it)"), *Value, *Pin->PinName.ToString());
+				return EApplyPinDefaultResult::Failed;
+			}
+			return EApplyPinDefaultResult::Applied;
+		}
+
+		// Object reference pin.
+		UObject* ResolvedObject = LoadObject<UObject>(nullptr, *Value);
+		if (!ResolvedObject)
+		{
+			OutError = FString::Printf(TEXT("could not load object '%s' for object reference pin '%s'"), *Value, *Pin->PinName.ToString());
+			return EApplyPinDefaultResult::Failed;
+		}
+
+		const bool bSoft = (PinCategory == UEdGraphSchema_K2::PC_SoftObject);
+		if (K2Schema)
+			K2Schema->TrySetDefaultObject(*Pin, ResolvedObject);
+		else if (bSoft)
+			Pin->DefaultValue = ResolvedObject->GetPathName();
+		else
+			Pin->DefaultObject = ResolvedObject;
+
+		const bool bLanded = bSoft
+			? Pin->DefaultValue.Equals(ResolvedObject->GetPathName())
+			: (Pin->DefaultObject == ResolvedObject);
+		if (!bLanded)
+		{
+			OutError = FString::Printf(TEXT("object '%s' was not accepted on object pin '%s' (the pin's expected class likely rejected it)"), *Value, *Pin->PinName.ToString());
+			return EApplyPinDefaultResult::Failed;
+		}
+		return EApplyPinDefaultResult::Applied;
+	}
+
 	static UBlueprintFunctionNodeSpawner* FindBestFunctionSpawner(
 		UBlueprint* Blueprint,
 		UEdGraph* UiGraph,
@@ -647,6 +769,70 @@ namespace
 		}
 
 		return BestScore > 20 ? BestSpawner : nullptr;
+	}
+
+	// Item 16: map a "Get X"/"Set X" spawner menu name (or a bare name) to an SCS or inherited
+	// component variable that belongs to the TARGET blueprint's own class hierarchy. The Blueprint
+	// action database does not reliably register a spawner for SCS component variables (so
+	// "SPAWN K2Node_VariableGet|Get <Component>" returned an empty id), and any same-named spawner it
+	// does surface may belong to an unrelated blueprint. Returns the actual member FName, or NAME_None
+	// when no component of the target matches. Matching ignores case and non-alphanumerics so the
+	// display name ("Static Mesh") lines up with the variable name ("StaticMesh").
+	static FName ResolveSelfComponentVariable(UBlueprint* Blueprint, const FString& MenuOrVarName)
+	{
+		if (!Blueprint)
+		{
+			return NAME_None;
+		}
+
+		FString Requested = MenuOrVarName;
+		Requested.TrimStartAndEndInline();
+		if (Requested.StartsWith(TEXT("Get "), ESearchCase::IgnoreCase))
+			Requested = Requested.RightChop(4);
+		else if (Requested.StartsWith(TEXT("Set "), ESearchCase::IgnoreCase))
+			Requested = Requested.RightChop(4);
+
+		const FString NormRequested = NormalizeBlueprintNodeSearchText(Requested);
+		if (NormRequested.IsEmpty())
+		{
+			return NAME_None;
+		}
+
+		// 1. SCS nodes declared on this blueprint (covers components added before a compile has
+		// reflected them onto the generated class).
+		if (USimpleConstructionScript* SCS = Blueprint->SimpleConstructionScript)
+		{
+			for (USCS_Node* Node : SCS->GetAllNodes())
+			{
+				if (!Node)
+				{
+					continue;
+				}
+				const FName VarName = Node->GetVariableName();
+				if (!VarName.IsNone() && NormalizeBlueprintNodeSearchText(VarName.ToString()) == NormRequested)
+				{
+					return VarName;
+				}
+			}
+		}
+
+		// 2. Component object properties on the generated class (covers inherited native components).
+		if (UClass* GenClass = Blueprint->GeneratedClass)
+		{
+			for (TFieldIterator<FProperty> It(GenClass); It; ++It)
+			{
+				if (const FObjectProperty* ObjProp = CastField<FObjectProperty>(*It))
+				{
+					if (ObjProp->PropertyClass && ObjProp->PropertyClass->IsChildOf(UActorComponent::StaticClass()) &&
+						NormalizeBlueprintNodeSearchText(ObjProp->GetName()) == NormRequested)
+					{
+						return ObjProp->GetFName();
+					}
+				}
+			}
+		}
+
+		return NAME_None;
 	}
 
 	static FString BuildEventSpawnerKey(const UBlueprintEventNodeSpawner* EventSpawner)
@@ -7042,88 +7228,30 @@ bool UBlueprintService::SetNodePinValue(
 		return false;
 	}
 
-	// Set the default value — class/object reference pins use DefaultObject, not DefaultValue
+	// Set the default value. Class/object reference pins live in Pin->DefaultObject and go through
+	// the shared ApplyPinDefault helper (also used by BuildGraph). Everything else uses the schema
+	// string path below.
 	const UEdGraphSchema* Schema = Graph->GetSchema();
-	const UEdGraphSchema_K2* K2Schema = Cast<UEdGraphSchema_K2>(Schema);
 	const FName PinCategory = Pin->PinType.PinCategory;
 
-	if (PinCategory == UEdGraphSchema_K2::PC_Class || PinCategory == UEdGraphSchema_K2::PC_SoftClass)
 	{
-		// Resolve the class with U/A prefix fallbacks
-		UClass* ResolvedClass = LoadObject<UClass>(nullptr, *Value);
-		if (!ResolvedClass)
-			ResolvedClass = FindFirstObject<UClass>(*Value, EFindFirstObjectOptions::ExactClass);
-		if (!ResolvedClass)
-			ResolvedClass = FindFirstObject<UClass>(*FString::Printf(TEXT("U%s"), *Value), EFindFirstObjectOptions::ExactClass);
-		if (!ResolvedClass)
-			ResolvedClass = FindFirstObject<UClass>(*FString::Printf(TEXT("A%s"), *Value), EFindFirstObjectOptions::ExactClass);
-
-		if (ResolvedClass)
+		FString PinDefaultError;
+		const EApplyPinDefaultResult ClassObjResult = ApplyPinDefault(Pin, Value, PinDefaultError);
+		if (ClassObjResult == EApplyPinDefaultResult::Failed)
 		{
-			// Soft pins store the path in DefaultValue (TrySetDefaultObject -> TrySetDefaultValue);
-			// hard pins store the resolved object in DefaultObject. Set the field that matches, then
-			// read it back — TrySetDefaultObject returns void and silently drops a class the pin's
-			// metaclass rejects, so without a readback this used to return true having written nothing.
-			const bool bSoft = (PinCategory == UEdGraphSchema_K2::PC_SoftClass);
-			if (K2Schema)
-				K2Schema->TrySetDefaultObject(*Pin, ResolvedClass);
-			else if (bSoft)
-				Pin->DefaultValue = ResolvedClass->GetPathName();
-			else
-				Pin->DefaultObject = ResolvedClass;
-
-			const bool bLanded = bSoft
-				? Pin->DefaultValue.Equals(ResolvedClass->GetPathName())
-				: (Pin->DefaultObject == ResolvedClass);
-			if (!bLanded)
-			{
-				UE_LOG(LogTemp, Warning,
-					TEXT("SetNodePinValue: class '%s' was not accepted on class pin '%s' of node '%s' (readback mismatch — the pin's expected metaclass likely rejected it); pin left unchanged"),
-					*Value, *PinName, *NodeId);
-				return false;
-			}
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("SetNodePinValue: Could not resolve class '%s' for class reference pin '%s'"), *Value, *PinName);
+			UE_LOG(LogTemp, Warning, TEXT("SetNodePinValue: %s on node '%s'; pin left unchanged"), *PinDefaultError, *NodeId);
 			return false;
 		}
-	}
-	else if (PinCategory == UEdGraphSchema_K2::PC_Object || PinCategory == UEdGraphSchema_K2::PC_SoftObject)
-	{
-		// Load object by path and set the appropriate default field
-		UObject* ResolvedObject = LoadObject<UObject>(nullptr, *Value);
-		if (ResolvedObject)
+		if (ClassObjResult == EApplyPinDefaultResult::Applied)
 		{
-			// Soft pins store the path in DefaultValue; hard pins store DefaultObject. Read back the
-			// field that matches so an object the pin's class rejects returns false instead of a
-			// silent no-op that used to claim success.
-			const bool bSoft = (PinCategory == UEdGraphSchema_K2::PC_SoftObject);
-			if (K2Schema)
-				K2Schema->TrySetDefaultObject(*Pin, ResolvedObject);
-			else if (bSoft)
-				Pin->DefaultValue = ResolvedObject->GetPathName();
-			else
-				Pin->DefaultObject = ResolvedObject;
+			FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+			UE_LOG(LogTemp, Log, TEXT("SetNodePinValue: Set pin '%s' on node '%s' to '%s'"), *PinName, *NodeId, *Value);
+			return true;
+		}
+		// NotApplicable — fall through to the wildcard/byte/plain string paths below.
+	}
 
-			const bool bLanded = bSoft
-				? Pin->DefaultValue.Equals(ResolvedObject->GetPathName())
-				: (Pin->DefaultObject == ResolvedObject);
-			if (!bLanded)
-			{
-				UE_LOG(LogTemp, Warning,
-					TEXT("SetNodePinValue: object '%s' was not accepted on object pin '%s' of node '%s' (readback mismatch — the pin's expected class likely rejected it); pin left unchanged"),
-					*Value, *PinName, *NodeId);
-				return false;
-			}
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("SetNodePinValue: Could not load object '%s' for object reference pin '%s'"), *Value, *PinName);
-			return false;
-		}
-	}
-	else if (PinCategory == UEdGraphSchema_K2::PC_Wildcard)
+	if (PinCategory == UEdGraphSchema_K2::PC_Wildcard)
 	{
 		// BUG-2 fix (issue #373): wildcard pins (e.g. K2Node_Select case pins
 		// "NewEnumerator0..N" before the enum index resolves them) cannot store a
@@ -7737,54 +7865,98 @@ FString UBlueprintService::CreateNodeByKey(
 		UBlueprintNodeSpawner* MatchSpawner = nullptr;
 		const bool bIsVariableNode = NodeClassName == TEXT("K2Node_VariableGet") || NodeClassName == TEXT("K2Node_VariableSet");
 
-		if (bIsVariableNode && Matches.Num() > 1)
+		// Item 16: a get/set for one of the target Blueprint's OWN SCS or inherited component
+		// variables binds directly, bypassing the action database. The action DB does not reliably
+		// register a spawner for SCS component variables (so this key returned an empty id and fell
+		// through below), and any same-named spawner it does surface may belong to another Blueprint.
+		// Resolve the member fully BEFORE adding a node so no failure path can leave an orphan.
+		if (bIsVariableNode)
 		{
-			// Prefer the variable whose owning class is the target Blueprint's own class or one of
-			// its parents. Variable spawners are registered against the SKELETON class, so compare
-			// both sides through their authoritative (persistent generated) class.
-			UClass* TargetClass = GetAuthoritativeClass(Blueprint->GeneratedClass ? Blueprint->GeneratedClass : Blueprint->ParentClass);
-			TArray<FString> CandidateOwners;
-			for (UBlueprintNodeSpawner* Candidate : Matches)
+			const FName ComponentVar = ResolveSelfComponentVariable(Blueprint, MenuName);
+			if (!ComponentVar.IsNone())
 			{
-				UClass* VarOwner = nullptr;
-				if (UBlueprintVariableNodeSpawner* VarSpawner = Cast<UBlueprintVariableNodeSpawner>(Candidate))
+				if (NodeClassName == TEXT("K2Node_VariableGet"))
 				{
-					if (const FProperty* VarProp = VarSpawner->GetVarProperty())
+					UK2Node_VariableGet* GetNode = NewObject<UK2Node_VariableGet>(Graph);
+					GetNode->VariableReference.SetSelfMember(ComponentVar);
+					Graph->AddNode(GetNode, false, false);
+					GetNode->CreateNewGuid();
+					GetNode->PostPlacedNewNode();
+					GetNode->AllocateDefaultPins();
+					GetNode->NodePosX = PosX;
+					GetNode->NodePosY = PosY;
+					NewNode = GetNode;
+				}
+				else
+				{
+					UK2Node_VariableSet* SetNode = NewObject<UK2Node_VariableSet>(Graph);
+					SetNode->VariableReference.SetSelfMember(ComponentVar);
+					Graph->AddNode(SetNode, false, false);
+					SetNode->CreateNewGuid();
+					SetNode->PostPlacedNewNode();
+					SetNode->AllocateDefaultPins();
+					SetNode->NodePosX = PosX;
+					SetNode->NodePosY = PosY;
+					NewNode = SetNode;
+				}
+				UE_LOG(LogTemp, Log, TEXT("CreateNodeByKey: Bound self component variable '%s' directly for SPAWN key '%s'"), *ComponentVar.ToString(), *KeyValue);
+			}
+		}
+
+		if (!NewNode)
+		{
+			// Item 4: the owner check applies to the single-match case too — a lone match that belongs
+			// to an unrelated Blueprint must be refused, not silently bound (it was only guarded for
+			// Matches.Num() > 1 before).
+			if (bIsVariableNode && Matches.Num() >= 1)
+			{
+				// Prefer the variable whose owning class is the target Blueprint's own class or one of
+				// its parents. Variable spawners are registered against the SKELETON class, so compare
+				// both sides through their authoritative (persistent generated) class.
+				UClass* TargetClass = GetAuthoritativeClass(Blueprint->GeneratedClass ? Blueprint->GeneratedClass : Blueprint->ParentClass);
+				TArray<FString> CandidateOwners;
+				for (UBlueprintNodeSpawner* Candidate : Matches)
+				{
+					UClass* VarOwner = nullptr;
+					if (UBlueprintVariableNodeSpawner* VarSpawner = Cast<UBlueprintVariableNodeSpawner>(Candidate))
 					{
-						VarOwner = VarProp->GetOwnerClass();
+						if (const FProperty* VarProp = VarSpawner->GetVarProperty())
+						{
+							VarOwner = VarProp->GetOwnerClass();
+						}
+					}
+					CandidateOwners.AddUnique(VarOwner ? VarOwner->GetName() : TEXT("<local/unknown>"));
+
+					UClass* AuthoritativeOwner = GetAuthoritativeClass(VarOwner);
+					if (TargetClass && AuthoritativeOwner && TargetClass->IsChildOf(AuthoritativeOwner))
+					{
+						MatchSpawner = Candidate;
+						break;
 					}
 				}
-				CandidateOwners.AddUnique(VarOwner ? VarOwner->GetName() : TEXT("<local/unknown>"));
 
-				UClass* AuthoritativeOwner = GetAuthoritativeClass(VarOwner);
-				if (TargetClass && AuthoritativeOwner && TargetClass->IsChildOf(AuthoritativeOwner))
+				if (!MatchSpawner)
 				{
-					MatchSpawner = Candidate;
-					break;
+					UE_LOG(LogTemp, Warning,
+						TEXT("CreateNodeByKey: SPAWN key '%s' matched %d variable spawner(s), none owned by '%s' or a parent (candidate owners: %s). ")
+						TEXT("Refusing to bind an unrelated Blueprint's variable — use a variable that exists on this Blueprint or its parents, or pass a fully qualified key."),
+						*KeyValue, Matches.Num(), *GetNameSafe(TargetClass), *FString::Join(CandidateOwners, TEXT(", ")));
+					return FString();
 				}
+			}
+			else if (Matches.Num() > 0)
+			{
+				MatchSpawner = Matches[0];
 			}
 
 			if (!MatchSpawner)
 			{
-				UE_LOG(LogTemp, Warning,
-					TEXT("CreateNodeByKey: SPAWN key '%s' matched %d variable spawners, none owned by '%s' or a parent (candidate owners: %s). ")
-					TEXT("Refusing to bind an unrelated Blueprint's variable — use a variable that exists on this Blueprint or its parents, or pass a fully qualified key."),
-					*KeyValue, Matches.Num(), *GetNameSafe(TargetClass), *FString::Join(CandidateOwners, TEXT(", ")));
+				UE_LOG(LogTemp, Error, TEXT("CreateNodeByKey: No action-database spawner matched SPAWN key '%s'"), *KeyValue);
 				return FString();
 			}
-		}
-		else if (Matches.Num() > 0)
-		{
-			MatchSpawner = Matches[0];
-		}
 
-		if (!MatchSpawner)
-		{
-			UE_LOG(LogTemp, Error, TEXT("CreateNodeByKey: No action-database spawner matched SPAWN key '%s'"), *KeyValue);
-			return FString();
+			NewNode = MatchSpawner->Invoke(Graph, IBlueprintNodeBinder::FBindingSet(), FVector2D(PosX, PosY));
 		}
-
-		NewNode = MatchSpawner->Invoke(Graph, IBlueprintNodeBinder::FBindingSet(), FVector2D(PosX, PosY));
 	}
 	else if (KeyType.Equals(TEXT("STRUCT"), ESearchCase::IgnoreCase))
 	{
@@ -9846,6 +10018,65 @@ FBuildGraphResult UBlueprintService::BuildGraph(
 			continue;
 		}
 
+		// "existing":"true" descriptors (function_entry / function_result from GetGraphDefinition)
+		// are BOUND to the node already in the graph, not created — this is what lets a dumped
+		// function graph round-trip with its parameter/return wiring intact.
+		if (const FString* ExistingFlag = Desc.Params.Find(TEXT("existing")))
+		{
+			if (ExistingFlag->Equals(TEXT("true"), ESearchCase::IgnoreCase))
+			{
+				UEdGraphNode* Bound = nullptr;
+				if (Desc.Type.Equals(TEXT("function_entry"), ESearchCase::IgnoreCase))
+				{
+					for (UEdGraphNode* N : Graph->Nodes)
+					{
+						if (N && N->IsA<UK2Node_FunctionEntry>()) { Bound = N; break; }
+					}
+				}
+				else if (Desc.Type.Equals(TEXT("function_result"), ESearchCase::IgnoreCase))
+				{
+					// Ref is "result" (index 0) or "result_N" (index N-1).
+					int32 WantIndex = 0;
+					if (!Desc.Ref.Equals(TEXT("result"), ESearchCase::IgnoreCase))
+					{
+						FString NumPart;
+						if (Desc.Ref.Split(TEXT("_"), nullptr, &NumPart))
+						{
+							WantIndex = FMath::Max(0, FCString::Atoi(*NumPart) - 1);
+						}
+					}
+					int32 Seen = 0;
+					for (UEdGraphNode* N : Graph->Nodes)
+					{
+						if (N && N->IsA<UK2Node_FunctionResult>())
+						{
+							if (Seen == WantIndex) { Bound = N; break; }
+							++Seen;
+						}
+					}
+				}
+				else
+				{
+					OutResult.Warnings.Add(FString::Printf(TEXT("Node '%s': 'existing' is only supported for function_entry/function_result (got type '%s')"), *Desc.Ref, *Desc.Type));
+					OutResult.NodesFailed++;
+					continue;
+				}
+
+				if (Bound)
+				{
+					RefToNode.Add(Desc.Ref, Bound);
+					OutResult.RefToNodeId.Add(Desc.Ref, Bound->NodeGuid.ToString());
+					UE_LOG(LogTemp, Log, TEXT("BuildGraph: Bound existing %s node → ref '%s' (%s)"), *Desc.Type, *Desc.Ref, *Bound->NodeGuid.ToString());
+				}
+				else
+				{
+					OutResult.Warnings.Add(FString::Printf(TEXT("Node '%s': no existing %s node found in graph to bind"), *Desc.Ref, *Desc.Type));
+					OutResult.NodesFailed++;
+				}
+				continue;
+			}
+		}
+
 		// Place in a grid if auto-layout is on (positions will be overwritten)
 		float PosX = bAutoLayout ? (float)(i % 5) * SpacingX : (float)(i % 5) * SpacingX;
 		float PosY = bAutoLayout ? (float)(i / 5) * SpacingY : (float)(i / 5) * SpacingY;
@@ -10001,24 +10232,40 @@ FBuildGraphResult UBlueprintService::BuildGraph(
 			continue;
 		}
 
-		if (Schema)
+		// Class/object reference pins store their default in Pin->DefaultObject, which
+		// TrySetDefaultValue cannot write — route them through the shared ApplyPinDefault helper
+		// (same path SetNodePinValue uses) so a default like {"ActorClass":"/Script/Engine.StaticMeshActor"}
+		// or a Blueprint class path actually lands (issue #552 follow-up).
+		FString PinDefaultError;
+		const EApplyPinDefaultResult ClassObjResult = ApplyPinDefault(Pin, PinDefault.Value, PinDefaultError);
+		if (ClassObjResult == EApplyPinDefaultResult::Failed)
 		{
-			// Silent-drop guard (issue #373 pattern, applied to batch defaults for issue #552):
-			// TrySetDefaultValue can refuse a value without returning false through this path, so
-			// verify the write landed instead of counting it as set.
-			const FString PreviousDefault = Pin->DefaultValue;
-			Schema->TrySetDefaultValue(*Pin, PinDefault.Value);
-			if (Pin->DefaultValue == PreviousDefault && Pin->DefaultValue != PinDefault.Value && !PinDefault.Value.IsEmpty())
-			{
-				OutResult.Warnings.Add(FString::Printf(TEXT("PinDefault %d: Schema dropped value '%s' for pin '%s' on '%s' (type mismatch?)"),
-					i, *PinDefault.Value, *PinDefault.PinName, *PinDefault.NodeRef));
-				OutResult.DefaultsFailed++;
-				continue;
-			}
+			OutResult.Warnings.Add(FString::Printf(TEXT("PinDefault %d: %s (pin '%s' on '%s')"),
+				i, *PinDefaultError, *PinDefault.PinName, *PinDefault.NodeRef));
+			OutResult.DefaultsFailed++;
+			continue;
 		}
-		else
+		if (ClassObjResult == EApplyPinDefaultResult::NotApplicable)
 		{
-			Pin->DefaultValue = PinDefault.Value;
+			if (Schema)
+			{
+				// Silent-drop guard (issue #373 pattern, applied to batch defaults for issue #552):
+				// TrySetDefaultValue can refuse a value without returning false through this path, so
+				// verify the write landed instead of counting it as set.
+				const FString PreviousDefault = Pin->DefaultValue;
+				Schema->TrySetDefaultValue(*Pin, PinDefault.Value);
+				if (Pin->DefaultValue == PreviousDefault && Pin->DefaultValue != PinDefault.Value && !PinDefault.Value.IsEmpty())
+				{
+					OutResult.Warnings.Add(FString::Printf(TEXT("PinDefault %d: Schema dropped value '%s' for pin '%s' on '%s' (type mismatch?)"),
+						i, *PinDefault.Value, *PinDefault.PinName, *PinDefault.NodeRef));
+					OutResult.DefaultsFailed++;
+					continue;
+				}
+			}
+			else
+			{
+				Pin->DefaultValue = PinDefault.Value;
+			}
 		}
 
 		OutResult.DefaultsSet++;
@@ -10075,18 +10322,7 @@ FBuildGraphResult UBlueprintService::BuildGraph(
 		OutResult.CompileErrors = CompileResults.NumErrors;
 		OutResult.CompileWarnings = CompileResults.NumWarnings;
 
-		for (const TSharedRef<FTokenizedMessage>& Msg : CompileResults.Messages)
-		{
-			const FString MsgText = Msg->ToText().ToString();
-			if (Msg->GetSeverity() == EMessageSeverity::Error)
-			{
-				OutResult.Errors.Add(FString::Printf(TEXT("Compile: %s"), *MsgText));
-			}
-			else if (Msg->GetSeverity() == EMessageSeverity::Warning || Msg->GetSeverity() == EMessageSeverity::PerformanceWarning)
-			{
-				OutResult.Warnings.Add(FString::Printf(TEXT("Compile: %s"), *MsgText));
-			}
-		}
+		HarvestCompilerMessages(CompileResults, TEXT("Compile: "), OutResult.Errors, OutResult.Warnings);
 	}
 
 	// Connection/default failures count too now that the full result always reaches the caller —
@@ -10101,6 +10337,40 @@ FBuildGraphResult UBlueprintService::BuildGraph(
 		OutResult.bSuccess ? TEXT("true") : TEXT("false"));
 
 	return OutResult;
+}
+
+// ────────────────────────────────────────────────────────────────
+// CompileBlueprint — compile and return the harvested error/warning text (issue: no compile API
+// returned the compiler's messages; FBlueprintCompileResult was declared but never used).
+// ────────────────────────────────────────────────────────────────
+FBlueprintCompileResult UBlueprintService::CompileBlueprint(const FString& BlueprintPath)
+{
+	FBlueprintCompileResult Result;
+
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		Result.bSuccess = false;
+		Result.NumErrors = 1;
+		Result.Errors.Add(FString::Printf(TEXT("Failed to load blueprint: %s"), *BlueprintPath));
+		UE_LOG(LogTemp, Error, TEXT("CompileBlueprint: Failed to load blueprint: %s"), *BlueprintPath);
+		return Result;
+	}
+
+	FCompilerResultsLog CompileResults;
+	CompileResults.bSilentMode = false;
+	CompileResults.bLogInfoOnly = false;
+	FKismetEditorUtilities::CompileBlueprint(Blueprint, EBlueprintCompileOptions::None, &CompileResults);
+
+	Result.NumErrors = CompileResults.NumErrors;
+	Result.NumWarnings = CompileResults.NumWarnings;
+	HarvestCompilerMessages(CompileResults, FString(), Result.Errors, Result.Warnings);
+	Result.bSuccess = (CompileResults.NumErrors == 0);
+
+	UE_LOG(LogTemp, Log, TEXT("CompileBlueprint: %s — %d error(s), %d warning(s). Success: %s"),
+		*BlueprintPath, Result.NumErrors, Result.NumWarnings, Result.bSuccess ? TEXT("true") : TEXT("false"));
+
+	return Result;
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -11096,6 +11366,7 @@ bool UBlueprintService::GetGraphDefinition(
 	// Build node → ref map
 	TMap<UEdGraphNode*, FString> NodeToRef;
 	int32 UnnamedIdx = 0;
+	int32 ResultIdx = 0; // distinguishes multiple UK2Node_FunctionResult nodes: result, result_2, ...
 
 	for (UEdGraphNode* Node : Graph->Nodes)
 	{
@@ -11209,10 +11480,22 @@ bool UBlueprintService::GetGraphDefinition(
 			Desc.Params.Add(TEXT("function"), CreateDelegateNode->SelectedFunctionName.ToString());
 			Desc.Ref = FString::Printf(TEXT("CreateDelegate_%d"), UnnamedIdx++);
 		}
-		else if (Node->IsA<UK2Node_FunctionEntry>() || Node->IsA<UK2Node_FunctionResult>())
+		else if (Node->IsA<UK2Node_FunctionEntry>())
 		{
-			// Function entry/result — skip, these are auto-created
-			continue;
+			// Emit the function entry as an EXISTING node (build_graph binds it, does not create it),
+			// so a dumped function graph keeps its parameter wiring and can round-trip as a rollback.
+			Desc.Type = TEXT("function_entry");
+			Desc.Params.Add(TEXT("existing"), TEXT("true"));
+			Desc.Ref = TEXT("entry");
+		}
+		else if (Node->IsA<UK2Node_FunctionResult>())
+		{
+			// Emit the function result node(s) as EXISTING nodes. Reserved refs: "result", then
+			// "result_2", "result_3", ... when a graph has more than one result terminal.
+			Desc.Type = TEXT("function_result");
+			Desc.Params.Add(TEXT("existing"), TEXT("true"));
+			Desc.Ref = (ResultIdx == 0) ? FString(TEXT("result")) : FString::Printf(TEXT("result_%d"), ResultIdx + 1);
+			++ResultIdx;
 		}
 		else
 		{

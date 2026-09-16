@@ -931,6 +931,12 @@ struct FGraphNodeDesc
 	 *   event, custom_event, branch, cast, print_string,
 	 *   input_action, math, comparison, delegate_bind,
 	 *   create_event, validated_get, member_get, create_delegate
+	 *
+	 * The pre-existing function terminals are addressed as EXISTING nodes rather than
+	 * created: type "function_entry" (ref "entry") and "function_result" (ref "result",
+	 * "result_2", ...), each carrying params["existing"]="true". GetGraphDefinition emits
+	 * them so a dumped function graph round-trips with its parameter/return wiring; BuildGraph
+	 * binds them to the graph's own entry/result nodes instead of spawning new ones.
 	 */
 	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
 	FString Type;
@@ -940,6 +946,8 @@ struct FGraphNodeDesc
 	 * Any node type also accepts an optional "group":"<title>" layout hint — after
 	 * BuildGraph's auto-layout phase, each distinct title becomes a comment box
 	 * wrapping its member nodes (GUID returned in RefToNodeId under "group:<title>").
+	 * "existing":"true" marks a descriptor that BuildGraph resolves to a node already in
+	 * the graph (used for function_entry/function_result) rather than creating a new one.
 	 */
 	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
 	TMap<FString, FString> Params;
@@ -3378,6 +3386,20 @@ public:
 		bool bAutoLayout,
 		bool bCompileAfter
 	);
+
+	/**
+	 * Compile a blueprint and return the full result — success flag, error/warning counts,
+	 * and the harvested error/warning message text. This is the only compile entry point that
+	 * hands back the compiler's error strings (build_graph only returns them when it happens to
+	 * compile); use it to validate a hand-edited graph or to read why a compile failed.
+	 *
+	 * Python Usage:
+	 *   result = unreal.BlueprintService.compile_blueprint("/Game/BP_Player")
+	 *   if not result.success:
+	 *       print(result.num_errors, result.errors)
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints|BatchGraph")
+	static FBlueprintCompileResult CompileBlueprint(const FString& BlueprintPath);
 
 	/**
 	 * Auto-layout all nodes in an existing graph.
