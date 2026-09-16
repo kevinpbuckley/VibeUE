@@ -16,7 +16,8 @@ param(
     # Block until the launched editor writes its readiness signal
     # (Saved/VibeUE/Signals/editor-<pid>-true.json, written once VibeUE's toolsets are
     # registered), so agents can chain the next MCP call without watching the file
-    # themselves. Exit codes: 0 ready, 2 timed out, 3 editor exited before ready.
+    # themselves. Exit codes: 0 ready, 2 timed out, 3 editor exited before ready,
+    # 4 invalid -Map (rejected before building; see the -Map note below).
     [switch]$WaitForReady,
     [int]$ReadyTimeoutSec = 120,
     # Optional explicit engine root for non-registered/source installations.
@@ -56,6 +57,26 @@ if (-not $uprojectFile) {
 $projectPath = $uprojectFile.FullName
 $projectName = $uprojectFile.BaseName
 $projectRoot = $uprojectFile.DirectoryName
+
+# ============================================================================
+# Validate -Map BEFORE building (issue #554 follow-up)
+# ============================================================================
+# A mount-point path like /Game/Maps/L_Foo is what the editor expects. When this script is invoked
+# from Git Bash, MSYS path conversion rewrites a leading-slash argument into a Windows path
+# (e.g. /Game/Maps/L_Foo -> C:/Program Files/Git/Game/Maps/L_Foo), and the editor then silently
+# opens the WRONG level. Reject anything that is not a clean mount-point path (must start with '/',
+# must not contain ':' or '\') up front, so the mistake fails loudly instead of after a full build.
+if ($Map) {
+    if ($Map -notmatch '^/' -or $Map -match '[:\\]') {
+        Write-Host "ERROR: -Map '$Map' is not a valid Unreal package path." -ForegroundColor Red
+        Write-Host "       Expected a mount-point path such as /Game/Maps/L_Foo or /Engine/Maps/Foo" -ForegroundColor Red
+        Write-Host "       (starts with '/', no ':' or '\\')." -ForegroundColor Red
+        Write-Host "       Likely cause: MSYS path conversion when run from Git Bash rewrote the leading" -ForegroundColor Red
+        Write-Host "       slash into a Windows path. Prefix the command with MSYS_NO_PATHCONV=1, or run" -ForegroundColor Red
+        Write-Host "       this script from PowerShell instead." -ForegroundColor Red
+        exit 4
+    }
+}
 
 # Resolve the editor target from the C# target declaration. The .uproject file
 # name is not required to match the module/target name (for example this
@@ -375,6 +396,28 @@ if ($WaitForReady) {
         $waited++
     }
     Write-Host "Editor is ready (signaled after ${waited}s)." -ForegroundColor Green
+
+    # Verify the editor actually opened the requested map. The readiness signal publishes the loaded
+    # level as "currentMap"; if it differs from -Map, world edits would land on the wrong level.
+    if ($Map) {
+        try {
+            $readyJson = Get-Content -LiteralPath $readySignal -Raw | ConvertFrom-Json
+            $currentMap = $readyJson.currentMap
+            if ($currentMap) {
+                # The signal may report a full object path (/Game/Maps/L_Foo.L_Foo); compare on the
+                # package portion, case-insensitively (PowerShell -ne is case-insensitive).
+                $currentMapPkg = ($currentMap -split '\.')[0]
+                if ($currentMapPkg -ne $Map) {
+                    Write-Host "WARNING: requested -Map '$Map' but the editor reports currentMap '$currentMap'." -ForegroundColor Yellow
+                    Write-Host "         The wrong level may be open; verify before making world edits." -ForegroundColor Yellow
+                }
+            } else {
+                Write-Host "WARNING: readiness signal did not report a currentMap; cannot verify the loaded level." -ForegroundColor Yellow
+            }
+        } catch {
+            Write-Host "WARNING: could not read currentMap from the readiness signal to verify the loaded level." -ForegroundColor Yellow
+        }
+    }
 }
 
 Write-Host "=== Launch Complete ===" -ForegroundColor Green
