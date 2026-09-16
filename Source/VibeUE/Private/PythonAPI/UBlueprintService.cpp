@@ -678,6 +678,15 @@ UBlueprint* UBlueprintService::LoadBlueprint(const FString& BlueprintPath)
 		return nullptr;
 	}
 
+	// Under Play-In-Editor the editor asset often will not resolve and BlueprintService edits are
+	// unsafe, so callers used to get an empty/False result with no explanation. Make the refusal
+	// visible with a fixed PIE_ACTIVE: prefix naming the Blueprint path (LoadBlueprint is the shared
+	// choke point every BlueprintService entry point funnels through). Return type is unchanged.
+	if (GEditor && GEditor->PlayWorld)
+	{
+		UE_LOG(LogTemp, Error, TEXT("PIE_ACTIVE: LoadBlueprint refused '%s' — a Play-In-Editor session is running; stop PIE before using BlueprintService."), *BlueprintPath);
+	}
+
 	// Subobject paths (":" present) don't load through the asset library — resolve them
 	// directly. Covers explicit LevelScriptBlueprint paths like
 	// /Game/Maps/MyMap.MyMap:PersistentLevel.MyMap.
@@ -881,6 +890,28 @@ TArray<FBlueprintGraphInfo> UBlueprintService::ListGraphs(const FString& Bluepri
 	AppendGraphs(Blueprint->FunctionGraphs,          TEXT("Function"));
 	AppendGraphs(Blueprint->MacroGraphs,             TEXT("Macro"));
 	AppendGraphs(Blueprint->DelegateSignatureGraphs, TEXT("DelegateSignature"));
+
+	// Return-valued interface functions are auto-materialised as graphs stored per interface
+	// (FBPInterfaceDescription::Graphs), NOT in FunctionGraphs, so the loops above miss them.
+	// Emit one entry per interface graph, tagging the kind with the interface name so callers can
+	// tell which interface it came from ("Interface (BPI_HingedDoor)").
+	for (const FBPInterfaceDescription& Intf : Blueprint->ImplementedInterfaces)
+	{
+		const FString IntfName = Intf.Interface ? Intf.Interface->GetName() : TEXT("Unknown");
+		for (UEdGraph* Graph : Intf.Graphs)
+		{
+			if (!Graph)
+			{
+				continue;
+			}
+			FBlueprintGraphInfo Info;
+			Info.GraphName = Graph->GetName();
+			Info.GraphKind = FString::Printf(TEXT("Interface (%s)"), *IntfName);
+			Info.NodeCount = Graph->Nodes.Num();
+			Info.GraphPath = Graph->GetPathName();
+			Graphs.Add(MoveTemp(Info));
+		}
+	}
 
 	return Graphs;
 }
@@ -2162,7 +2193,8 @@ bool UBlueprintService::AddMemberVariable(
 	const FString& VariableType,
 	const FString& DefaultValue,
 	bool bIsArray,
-	const FString& ContainerType)
+	const FString& ContainerType,
+	bool bInstanceEditable)
 {
 	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
 	if (!Blueprint)
@@ -2195,12 +2227,46 @@ bool UBlueprintService::AddMemberVariable(
 	NewVar.FriendlyName = VariableName;
 	NewVar.Category = FText::FromString(TEXT("Default"));
 	NewVar.DefaultValue = DefaultValue;
-	NewVar.PropertyFlags = CPF_Edit | CPF_BlueprintVisible | CPF_DisableEditOnInstance;
+	// CPF_DisableEditOnInstance keeps the variable blueprint-only (not editable per placed instance).
+	// Only set it when the caller did NOT ask for instance-editable, so bInstanceEditable=true yields
+	// a variable that the Details panel of a placed actor can edit.
+	NewVar.PropertyFlags = CPF_Edit | CPF_BlueprintVisible;
+	if (!bInstanceEditable)
+	{
+		NewVar.PropertyFlags |= CPF_DisableEditOnInstance;
+	}
 
 	Blueprint->NewVariables.Add(NewVar);
 	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
 
-	UE_LOG(LogTemp, Log, TEXT("AddMemberVariable: Added variable '%s' of type '%s' to %s"), *VariableName, *VariableType, *BlueprintPath);
+	UE_LOG(LogTemp, Log, TEXT("AddMemberVariable: Added variable '%s' of type '%s' to %s (instance_editable=%s)"), *VariableName, *VariableType, *BlueprintPath, bInstanceEditable ? TEXT("true") : TEXT("false"));
+	return true;
+}
+
+bool UBlueprintService::SetVariableInstanceEditable(
+	const FString& BlueprintPath,
+	const FString& VariableName,
+	bool bInstanceEditable)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetVariableInstanceEditable: Failed to load blueprint: %s"), *BlueprintPath);
+		return false;
+	}
+
+	const FName VarFName(*VariableName);
+	if (FBlueprintEditorUtils::FindNewVariableIndex(Blueprint, VarFName) == INDEX_NONE)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SetVariableInstanceEditable: Variable '%s' not found in %s (must be one of this Blueprint's own variables)"), *VariableName, *BlueprintPath);
+		return false;
+	}
+
+	// SetBlueprintOnlyEditableFlag toggles CPF_DisableEditOnInstance and marks the Blueprint
+	// structurally modified. "Blueprint-only" is the inverse of "instance editable".
+	FBlueprintEditorUtils::SetBlueprintOnlyEditableFlag(Blueprint, VarFName, /*bNewBlueprintOnly*/ !bInstanceEditable);
+
+	UE_LOG(LogTemp, Log, TEXT("SetVariableInstanceEditable: '%s' on %s instance_editable=%s"), *VariableName, *BlueprintPath, bInstanceEditable ? TEXT("true") : TEXT("false"));
 	return true;
 }
 
@@ -2317,7 +2383,8 @@ bool UBlueprintService::SetVariableDefaultValue(
 		return false;
 	}
 
-	// Find the variable
+	// Find the variable among this Blueprint's OWN variables first — the fast path stores the
+	// default directly on the FBPVariableDescription.
 	for (FBPVariableDescription& Var : Blueprint->NewVariables)
 	{
 		if (Var.VarName.ToString() == VariableName)
@@ -2329,7 +2396,38 @@ bool UBlueprintService::SetVariableDefaultValue(
 		}
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("SetVariableDefaultValue: Variable '%s' not found in %s"), *VariableName, *BlueprintPath);
+	// Not one of our own variables — it may be inherited from a parent Blueprint/class. Inherited
+	// variables are not in NewVariables; their per-class default lives on the CDO. Resolve the
+	// FProperty on the generated class (which walks the whole class chain) and write the value
+	// straight into the CDO so the child's instances read it back.
+	UClass* GenClass = Blueprint->GeneratedClass;
+	FProperty* Property = GenClass ? GenClass->FindPropertyByName(FName(*VariableName)) : nullptr;
+	if (Property)
+	{
+		UObject* CDO = GenClass->GetDefaultObject();
+		if (!CDO)
+		{
+			UE_LOG(LogTemp, Error, TEXT("SetVariableDefaultValue: '%s' resolved on %s but the class has no CDO"), *VariableName, *BlueprintPath);
+			return false;
+		}
+
+		uint8* ValuePtr = Property->ContainerPtrToValuePtr<uint8>(CDO);
+		if (!FBlueprintEditorUtils::PropertyValueFromString(Property, DefaultValue, reinterpret_cast<uint8*>(CDO), CDO))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("SetVariableDefaultValue: could not parse '%s' into inherited variable '%s' (type %s) on %s"),
+				*DefaultValue, *VariableName, *Property->GetCPPType(), *BlueprintPath);
+			return false;
+		}
+
+		FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+		FString ReadBack;
+		Property->ExportTextItem_Direct(ReadBack, ValuePtr, ValuePtr, CDO, PPF_None);
+		UE_LOG(LogTemp, Log, TEXT("SetVariableDefaultValue: Set inherited '%s' CDO default to '%s' (readback '%s') on %s"),
+			*VariableName, *DefaultValue, *ReadBack, *BlueprintPath);
+		return true;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("SetVariableDefaultValue: Variable '%s' not found in %s (neither an own variable nor an inherited property)"), *VariableName, *BlueprintPath);
 	return false;
 }
 
@@ -4156,7 +4254,8 @@ FString UBlueprintService::AddTimeline(
 	bool bAutoPlay,
 	bool bLoop,
 	float PosX,
-	float PosY)
+	float PosY,
+	bool bReplaceExisting)
 {
 	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
 	if (!Blueprint)
@@ -4181,8 +4280,33 @@ FString UBlueprintService::AddTimeline(
 	const FName DesiredName = TimelineName.IsEmpty() ? FBlueprintEditorUtils::FindUniqueTimelineName(Blueprint) : FName(*TimelineName);
 	if (Blueprint->FindTimelineTemplateByVariableName(DesiredName))
 	{
-		UE_LOG(LogTemp, Error, TEXT("AddTimeline: Timeline '%s' already exists on %s"), *DesiredName.ToString(), *BlueprintPath);
-		return FString();
+		// A leftover UTimelineTemplate (e.g. its Timeline node was deleted but the template stayed)
+		// blocks re-adding the same name. Previously this returned an empty string and logged only
+		// to UE_LOG, invisible from Python. Now: replace on request, otherwise return a visible
+		// "ERROR:" sentinel that says how to proceed.
+		if (bReplaceExisting)
+		{
+			if (!RemoveTimeline(BlueprintPath, DesiredName.ToString()))
+			{
+				const FString Sentinel = FString::Printf(TEXT("ERROR: Timeline '%s' already exists on %s and could not be removed for replacement"), *DesiredName.ToString(), *BlueprintPath);
+				UE_LOG(LogTemp, Error, TEXT("AddTimeline: %s"), *Sentinel);
+				return Sentinel;
+			}
+			// Re-resolve the graph: RemoveTimeline recompiles, which can invalidate the pointer.
+			Graph = ResolveBlueprintGraph(Blueprint, GraphName);
+			if (!Graph)
+			{
+				const FString Sentinel = FString::Printf(TEXT("ERROR: Graph '%s' not found in %s after removing timeline '%s'"), *GraphName, *BlueprintPath, *DesiredName.ToString());
+				UE_LOG(LogTemp, Error, TEXT("AddTimeline: %s"), *Sentinel);
+				return Sentinel;
+			}
+		}
+		else
+		{
+			const FString Sentinel = FString::Printf(TEXT("ERROR: Timeline '%s' already exists on %s (a deleted Timeline node can leave its template behind). Call remove_timeline first, or pass replace_existing=true."), *DesiredName.ToString(), *BlueprintPath);
+			UE_LOG(LogTemp, Error, TEXT("AddTimeline: %s"), *Sentinel);
+			return Sentinel;
+		}
 	}
 
 	// Create the Timeline node.
@@ -4353,9 +4477,9 @@ bool UBlueprintService::AddTimelineFloatKey(
 	return true;
 }
 
-TArray<FBlueprintFunctionParameterInfo> UBlueprintService::GetTimelines(const FString& BlueprintPath)
+TArray<FBlueprintTimelineInfo> UBlueprintService::GetTimelines(const FString& BlueprintPath)
 {
-	TArray<FBlueprintFunctionParameterInfo> Result;
+	TArray<FBlueprintTimelineInfo> Result;
 	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
 	if (!Blueprint)
 	{
@@ -4369,18 +4493,13 @@ TArray<FBlueprintFunctionParameterInfo> UBlueprintService::GetTimelines(const FS
 		{
 			continue;
 		}
-		FBlueprintFunctionParameterInfo Info;
-		Info.ParameterName = Template->GetVariableName().ToString();
-		TArray<FString> TrackNames;
-		for (const FTTFloatTrack& T : Template->FloatTracks) { TrackNames.Add(FString::Printf(TEXT("float:%s"), *T.GetTrackName().ToString())); }
-		for (const FTTVectorTrack& T : Template->VectorTracks) { TrackNames.Add(FString::Printf(TEXT("vector:%s"), *T.GetTrackName().ToString())); }
-		for (const FTTLinearColorTrack& T : Template->LinearColorTracks) { TrackNames.Add(FString::Printf(TEXT("color:%s"), *T.GetTrackName().ToString())); }
-		for (const FTTEventTrack& T : Template->EventTracks) { TrackNames.Add(FString::Printf(TEXT("event:%s"), *T.GetTrackName().ToString())); }
-		Info.ParameterType = FString::Join(TrackNames, TEXT(","));
-		Info.DefaultValue = FString::Printf(TEXT("Length=%.2f LengthMode=%s AutoPlay=%d Loop=%d Replicated=%d IgnoreTimeDilation=%d"),
-			Template->TimelineLength,
-			Template->LengthMode == ETimelineLengthMode::TL_LastKeyFrame ? TEXT("LastKeyFrame") : TEXT("Fixed"),
-			Template->bAutoPlay ? 1 : 0, Template->bLoop ? 1 : 0, Template->bReplicated ? 1 : 0, Template->bIgnoreTimeDilation ? 1 : 0);
+		FBlueprintTimelineInfo Info;
+		Info.TimelineName = Template->GetVariableName().ToString();
+		Info.TrackCount = Template->FloatTracks.Num() + Template->VectorTracks.Num()
+			+ Template->LinearColorTracks.Num() + Template->EventTracks.Num();
+		Info.Length = Template->TimelineLength;
+		Info.bLoop = Template->bLoop;
+		Info.bAutoPlay = Template->bAutoPlay;
 		Result.Add(Info);
 	}
 	return Result;
@@ -8498,9 +8617,93 @@ bool UBlueprintService::OverrideFunction(const FString& BlueprintPath, const FSt
 		}
 	}
 
+	// Interface functions live in ImplementedInterfaces, not the parent-class chain. Scan the
+	// implemented interfaces so a function declared on an interface the Blueprint implements can be
+	// overridden the same way an inherited event/function is.
+	const FBPInterfaceDescription* InterfaceDesc = nullptr;
 	if (!TargetFunc)
 	{
-		UE_LOG(LogTemp, Error, TEXT("OverrideFunction: '%s' not found in parent hierarchy of %s"), *FunctionName, *BlueprintPath);
+		for (const FBPInterfaceDescription& Intf : Blueprint->ImplementedInterfaces)
+		{
+			if (!Intf.Interface)
+			{
+				continue;
+			}
+			if (UFunction* Found = Intf.Interface->FindFunctionByName(FName(*FunctionName), EIncludeSuperFlag::IncludeSuper))
+			{
+				TargetFunc = Found;
+				FuncOwnerClass = Intf.Interface;
+				InterfaceDesc = &Intf;
+				break;
+			}
+		}
+	}
+
+	if (!TargetFunc)
+	{
+		UE_LOG(LogTemp, Error, TEXT("OverrideFunction: '%s' not found in parent hierarchy or implemented interfaces of %s"), *FunctionName, *BlueprintPath);
+		return false;
+	}
+
+	// Interface functions take a dedicated path: a void one is an event node in the EventGraph
+	// (exactly like create_node_by_key's "EVENT <Iface>_C::<Fn>"), a return-valued one is
+	// materialised as a function graph when the interface is added, so we surface that existing graph.
+	// The FUNC_BlueprintEvent gate below does not apply to interface functions.
+	if (InterfaceDesc)
+	{
+		const FString FallbackKey = FString::Printf(TEXT("EVENT %s::%s"), *FuncOwnerClass->GetName(), *FunctionName);
+		const bool bInterfaceHasReturn = (TargetFunc->GetReturnProperty() != nullptr);
+
+		if (!bInterfaceHasReturn)
+		{
+			UEdGraph* EventGraph = FindGraph(Blueprint, TEXT("EventGraph"));
+			if (!EventGraph && Blueprint->UbergraphPages.Num() > 0)
+			{
+				EventGraph = Blueprint->UbergraphPages[0];
+			}
+			if (!EventGraph)
+			{
+				UE_LOG(LogTemp, Error, TEXT("OverrideFunction: EventGraph not found in %s (fallback: create_node_by_key with key '%s')"), *BlueprintPath, *FallbackKey);
+				return false;
+			}
+
+			// Idempotent — an interface event can exist only once.
+			for (UEdGraphNode* Node : EventGraph->Nodes)
+			{
+				if (UK2Node_Event* EventNode = Cast<UK2Node_Event>(Node))
+				{
+					if (EventNode->EventReference.GetMemberName().ToString().Equals(FunctionName, ESearchCase::IgnoreCase))
+					{
+						UE_LOG(LogTemp, Log, TEXT("OverrideFunction: Interface event '%s' already exists in EventGraph of %s"), *FunctionName, *BlueprintPath);
+						return true;
+					}
+				}
+			}
+
+			UK2Node_Event* EventNode = NewObject<UK2Node_Event>(EventGraph);
+			EventNode->EventReference.SetExternalMember(FName(*FunctionName), FuncOwnerClass);
+			EventNode->bOverrideFunction = true;
+			EventGraph->AddNode(EventNode, false, false);
+			EventNode->CreateNewGuid();
+			EventNode->PostPlacedNewNode();
+			EventNode->AllocateDefaultPins();
+			FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+			UE_LOG(LogTemp, Log, TEXT("OverrideFunction: Added interface event node '%s' (%s) to EventGraph of %s"), *FunctionName, *FuncOwnerClass->GetName(), *BlueprintPath);
+			return true;
+		}
+
+		// Return-valued interface function: its implementation graph is auto-materialised in
+		// ImplementedInterfaces[i].Graphs when the interface is added. Return it if present.
+		for (UEdGraph* Graph : InterfaceDesc->Graphs)
+		{
+			if (Graph && Graph->GetName().Equals(FunctionName, ESearchCase::IgnoreCase))
+			{
+				UE_LOG(LogTemp, Log, TEXT("OverrideFunction: Interface function graph '%s' is available on %s"), *FunctionName, *BlueprintPath);
+				return true;
+			}
+		}
+
+		UE_LOG(LogTemp, Error, TEXT("OverrideFunction: return-valued interface function '%s' has no materialised graph on %s (re-add the interface, or drive the event directly with key '%s')"), *FunctionName, *BlueprintPath, *FallbackKey);
 		return false;
 	}
 
@@ -8568,6 +8771,45 @@ bool UBlueprintService::OverrideFunction(const FString& BlueprintPath, const FSt
 	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
 
 	UE_LOG(LogTemp, Log, TEXT("OverrideFunction: Created override function graph '%s' in %s"), *FunctionName, *BlueprintPath);
+	return true;
+}
+
+bool UBlueprintService::RefreshBlueprintEditor(const FString& BlueprintPath)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("RefreshBlueprintEditor: Failed to load blueprint: %s"), *BlueprintPath);
+		return false;
+	}
+
+	UAssetEditorSubsystem* AssetEditorSubsystem = GEditor ? GEditor->GetEditorSubsystem<UAssetEditorSubsystem>() : nullptr;
+	if (!AssetEditorSubsystem)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("RefreshBlueprintEditor: AssetEditorSubsystem not available"));
+		return false;
+	}
+
+	IAssetEditorInstance* EditorInstance = AssetEditorSubsystem->FindEditorForAsset(Blueprint, /*bFocusIfOpen=*/false);
+	if (!EditorInstance)
+	{
+		UE_LOG(LogTemp, Log, TEXT("RefreshBlueprintEditor: Blueprint '%s' has no editor open — nothing to refresh"), *BlueprintPath);
+		return false;
+	}
+
+	// Rebuild node state on the Blueprint itself, then ask the open editor to redraw so the SCS
+	// viewport re-runs the construction script.
+	FBlueprintEditorUtils::RefreshAllNodes(Blueprint);
+
+	if (EditorInstance->GetEditorName() == FName(TEXT("BlueprintEditor"))
+		|| EditorInstance->GetEditorName() == FName(TEXT("WidgetBlueprintEditor"))
+		|| EditorInstance->GetEditorName() == FName(TEXT("AnimationBlueprintEditor")))
+	{
+		FBlueprintEditor* BlueprintEditor = static_cast<FBlueprintEditor*>(EditorInstance);
+		BlueprintEditor->RefreshEditors();
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("RefreshBlueprintEditor: refreshed open editor for '%s'"), *BlueprintPath);
 	return true;
 }
 
