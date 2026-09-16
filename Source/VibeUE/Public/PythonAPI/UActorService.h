@@ -291,6 +291,25 @@ public:
 		const FString& ComponentName = TEXT(""),
 		const FString& CategoryFilter = TEXT(""));
 
+	// ═══════════════════════════════════════════════════════════════════
+	// Construction Script
+	// ═══════════════════════════════════════════════════════════════════
+
+	/**
+	 * Re-run a placed Blueprint actor's construction script in the editor world. This is the
+	 * capability Python otherwise lacks — after changing a component template or an instance's
+	 * exposed variable, the placed actor's construction script does not re-execute on its own, so
+	 * the SCS-driven state goes stale. Editor world only; refuses while a PIE session is running.
+	 *
+	 * @param ActorLabelOrPath - Name or label of the actor (resolved like the other ActorService calls)
+	 * @return True if the actor was found and RerunConstructionScripts was called
+	 *
+	 * Example:
+	 *   unreal.ActorService.rerun_construction_scripts("BP_Refrigerator_2")
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
+	static bool RerunConstructionScripts(const FString& ActorLabelOrPath);
+
 	/** Find an actor in the current level by name or label (case-insensitive, falls back to contains-match). */
 	static AActor* FindActorByIdentifier(const FString& NameOrLabel);
 

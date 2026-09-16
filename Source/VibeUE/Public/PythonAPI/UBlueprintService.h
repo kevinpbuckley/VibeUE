@@ -215,6 +215,37 @@ struct FBlueprintFunctionParameterInfo
 };
 
 /**
+ * Information about a single Timeline on a Blueprint. Returned by get_timelines.
+ * (Replaces the earlier FBlueprintFunctionParameterInfo overload that carried the timeline
+ * name in parameter_name — read the fields below by name instead.)
+ */
+USTRUCT(BlueprintType)
+struct FBlueprintTimelineInfo
+{
+	GENERATED_BODY()
+
+	/** Timeline (component variable) name */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	FString TimelineName;
+
+	/** Total number of tracks (float + vector + color + event) */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	int32 TrackCount = 0;
+
+	/** Timeline length in seconds */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	float Length = 0.0f;
+
+	/** Whether the timeline loops */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	bool bLoop = false;
+
+	/** Whether the timeline auto-plays */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	bool bAutoPlay = false;
+};
+
+/**
  * Information about a function that can be overridden in a blueprint.
  * Returned by list_overridable_functions — one entry per overridable parent function.
  */
@@ -1429,6 +1460,10 @@ public:
 	 * @param DefaultValue - Optional default value as a string
 	 * @param bIsArray - Make it an array of VariableType
 	 * @param ContainerType - "", "Array", "Set", or "Map" (overrides bIsArray when set)
+	 * @param bInstanceEditable - When true, the variable is editable per placed instance in the
+	 *                            Details panel (clears CPF_DisableEditOnInstance). Defaults to false
+	 *                            to preserve the historical blueprint-only behaviour. Flip an existing
+	 *                            variable later with set_variable_instance_editable.
 	 * @return True if the variable was added
 	 *
 	 * Example:
@@ -1443,7 +1478,32 @@ public:
 		const FString& VariableType,
 		const FString& DefaultValue = TEXT(""),
 		bool bIsArray = false,
-		const FString& ContainerType = TEXT(""));
+		const FString& ContainerType = TEXT(""),
+		bool bInstanceEditable = false);
+
+	/**
+	 * Toggle whether an existing member variable is editable per placed instance in the Details
+	 * panel. This flips CPF_DisableEditOnInstance on the variable's PropertyFlags — the flag
+	 * add_member_variable used to hard-code, which left every placed actor stuck on the class
+	 * default ("cannot be edited on instances").
+	 *
+	 * Operates on the Blueprint's OWN variables (NewVariables). Returns False when the variable
+	 * does not exist on this Blueprint.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param VariableName - Name of the member variable
+	 * @param bInstanceEditable - True = instance-editable (clears CPF_DisableEditOnInstance),
+	 *                            False = blueprint-only (sets CPF_DisableEditOnInstance)
+	 * @return True if the variable was found and its flag updated
+	 *
+	 * Example:
+	 *   unreal.BlueprintService.set_variable_instance_editable("/Game/BP_Window", "YawOffset", True)
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints")
+	static bool SetVariableInstanceEditable(
+		const FString& BlueprintPath,
+		const FString& VariableName,
+		bool bInstanceEditable);
 
 	/**
 	 * Remove a single member variable from a Blueprint by name.
@@ -2233,7 +2293,12 @@ public:
 	 * @param bLoop - Whether the timeline loops
 	 * @param PosX - X position in the graph
 	 * @param PosY - Y position in the graph
-	 * @return Node ID (GUID) of the Timeline node, empty string on failure
+	 * @param bReplaceExisting - When a UTimelineTemplate with this name already exists (a deleted
+	 *                           Timeline node can leave its template behind), true removes it first
+	 *                           via remove_timeline and re-adds; false (default) refuses and returns
+	 *                           an "ERROR: ..." sentinel string naming the timeline.
+	 * @return Node ID (GUID) of the Timeline node on success; empty string on load/graph failure;
+	 *         a string starting with "ERROR:" when the name is taken and bReplaceExisting is false
 	 *
 	 * Example:
 	 *   node_id = unreal.BlueprintService.add_timeline("/Game/StateTree/BP_Cube", "EventGraph", "LookAtTimeline", 0.5)
@@ -2248,7 +2313,8 @@ public:
 		bool bAutoPlay = false,
 		bool bLoop = false,
 		float PosX = 0.0f,
-		float PosY = 0.0f
+		float PosY = 0.0f,
+		bool bReplaceExisting = false
 	);
 
 	/**
@@ -2296,17 +2362,17 @@ public:
 	);
 
 	/**
-	 * List the timelines on a blueprint, with their float track names.
+	 * List the timelines on a blueprint.
 	 *
 	 * @param BlueprintPath - Full path to the blueprint
-	 * @return Array of "TimelineName" entries; each entry's ParameterType lists comma-separated float track names
+	 * @return Array of FBlueprintTimelineInfo (timeline_name, track_count, length, loop, auto_play)
 	 *
 	 * Example:
 	 *   for t in unreal.BlueprintService.get_timelines("/Game/StateTree/BP_Cube"):
-	 *       print(t.parameter_name, "tracks:", t.parameter_type)
+	 *       print(t.timeline_name, "tracks:", t.track_count, "len:", t.length)
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints")
-	static TArray<FBlueprintFunctionParameterInfo> GetTimelines(
+	static TArray<FBlueprintTimelineInfo> GetTimelines(
 		const FString& BlueprintPath
 	);
 
@@ -3520,6 +3586,21 @@ public:
 		const FString& BlueprintPath,
 		const FString& InterfacePath
 	);
+
+	/**
+	 * Refresh the open Blueprint editor for a Blueprint so its SCS viewport re-runs the
+	 * construction script and its graphs redraw. Use after authoring changes that the open editor
+	 * does not reflect live. Returns False when the Blueprint has no editor open (there is nothing
+	 * to refresh — the on-disk asset is already up to date).
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @return True if an editor was open and was refreshed
+	 *
+	 * Example:
+	 *   unreal.BlueprintService.refresh_blueprint_editor("/Game/Props/BP_Refrigerator")
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints")
+	static bool RefreshBlueprintEditor(const FString& BlueprintPath);
 
 private:
 	/** Helper to load blueprint from path */
