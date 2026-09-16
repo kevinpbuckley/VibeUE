@@ -5,6 +5,7 @@
 #include "Utils/VibeUEPythonResultLog.h"
 #include "Misc/DateTime.h"
 #include "HAL/PlatformMisc.h"
+#include "HAL/PlatformProcess.h"
 #include "Internationalization/Regex.h"
 
 // For SEH exception handling on Windows
@@ -134,7 +135,84 @@ static FString StripPythonComments(const FString& Code)
 	return Out;
 }
 
-// Dangerous patterns that can crash the editor
+// Blank the CONTENTS of every Python string literal ('...', "...", '''...''', """...""") while
+// keeping the surrounding quote characters and the overall line/column shape, so a keyword that
+// appears only inside a string or a docstring (e.g. "show_modal" in a doc line, or the word "break"
+// in a message) no longer trips the guards below. Comments should be stripped first (this helper
+// does not treat '#'). Escapes are honoured so a \' or \" inside a string does not end it early.
+static FString StripPythonStringLiterals(const FString& Code)
+{
+	FString Out;
+	Out.Reserve(Code.Len());
+	const int32 Len = Code.Len();
+	int32 i = 0;
+	while (i < Len)
+	{
+		const TCHAR C = Code[i];
+
+		// Triple-quoted string ('''...''' or """...""") — may span lines.
+		if ((C == TEXT('\'') || C == TEXT('"')) && (i + 2) < Len && Code[i + 1] == C && Code[i + 2] == C)
+		{
+			const TCHAR Q = C;
+			Out.AppendChar(Q); Out.AppendChar(Q); Out.AppendChar(Q);
+			i += 3;
+			while (i < Len)
+			{
+				if (Code[i] == TEXT('\\') && (i + 1) < Len)
+				{
+					// Preserve real newlines to keep line counts stable; blank the rest.
+					Out.AppendChar(Code[i] == TEXT('\n') ? TEXT('\n') : TEXT(' '));
+					Out.AppendChar(Code[i + 1] == TEXT('\n') ? TEXT('\n') : TEXT(' '));
+					i += 2;
+					continue;
+				}
+				if ((i + 2) < Len && Code[i] == Q && Code[i + 1] == Q && Code[i + 2] == Q)
+				{
+					Out.AppendChar(Q); Out.AppendChar(Q); Out.AppendChar(Q);
+					i += 3;
+					break;
+				}
+				Out.AppendChar(Code[i] == TEXT('\n') ? TEXT('\n') : TEXT(' '));
+				++i;
+			}
+			continue;
+		}
+
+		// Single- or double-quoted string on one line.
+		if (C == TEXT('\'') || C == TEXT('"'))
+		{
+			const TCHAR Q = C;
+			Out.AppendChar(Q);
+			++i;
+			while (i < Len && Code[i] != TEXT('\n'))
+			{
+				if (Code[i] == TEXT('\\') && (i + 1) < Len && Code[i + 1] != TEXT('\n'))
+				{
+					Out.AppendChar(TEXT(' '));
+					Out.AppendChar(TEXT(' '));
+					i += 2;
+					continue;
+				}
+				if (Code[i] == Q)
+				{
+					Out.AppendChar(Q);
+					++i;
+					break;
+				}
+				Out.AppendChar(TEXT(' '));
+				++i;
+			}
+			continue;
+		}
+
+		Out.AppendChar(C);
+		++i;
+	}
+	return Out;
+}
+
+// Dangerous patterns that can crash the editor. Free helper kept for internal use; the public,
+// testable entry point is FPythonExecutionService::ContainsUnsafePattern (declared in the header).
 static bool ContainsDangerousPattern(const FString& Code, FString& OutPattern, FString& OutReason)
 {
 	// EdGraphPinType construction crashes - use BlueprintEditorLibrary.get_basic_type_by_name() instead
@@ -162,23 +240,33 @@ static bool ContainsDangerousPattern(const FString& Code, FString& OutPattern, F
 		OutReason = TEXT("input() blocks the editor. Use a different approach for user interaction.");
 		return true;
 	}
-	
+
+	// The remaining guards used to run against the raw source, so a mention of the pattern in a
+	// comment or a docstring/string literal produced a false refusal. Run them against code that has
+	// had both comments AND string-literal contents blanked, so only real code trips them.
+	const FString CodeSanitized = StripPythonStringLiterals(CodeNoComments);
+
 	// Modal dialogs freeze the editor
-	if (Code.Contains(TEXT("EditorDialog")) || Code.Contains(TEXT("show_modal")))
+	if (CodeSanitized.Contains(TEXT("EditorDialog")) || CodeSanitized.Contains(TEXT("show_modal")))
 	{
 		OutPattern = TEXT("Modal dialogs");
 		OutReason = TEXT("Modal dialogs freeze the editor from Python. Use non-blocking alternatives.");
 		return true;
 	}
-	
-	// Infinite loops
-	if (Code.Contains(TEXT("while True:")) && !Code.Contains(TEXT("break")))
+
+	// Infinite loops: a `while True:` with no way out. break is the obvious exit, but return, raise
+	// and sys.exit() also leave the loop, so a `while True:` guarded by any of those is not infinite.
+	if (CodeSanitized.Contains(TEXT("while True:")) &&
+		!CodeSanitized.Contains(TEXT("break")) &&
+		!CodeSanitized.Contains(TEXT("return")) &&
+		!CodeSanitized.Contains(TEXT("raise")) &&
+		!CodeSanitized.Contains(TEXT("sys.exit(")))
 	{
 		OutPattern = TEXT("while True without break");
-		OutReason = TEXT("Infinite loops freeze the editor. Ensure your loop has a break condition.");
+		OutReason = TEXT("Infinite loops freeze the editor. Ensure your loop has a break/return/raise/sys.exit().");
 		return true;
 	}
-	
+
 	return false;
 }
 
@@ -188,6 +276,11 @@ namespace VibeUE
 FPythonExecutionService::FPythonExecutionService(TSharedPtr<FServiceContext> Context)
 	: FServiceBase(Context)
 {
+}
+
+bool FPythonExecutionService::ContainsUnsafePattern(const FString& Code, FString& OutPattern, FString& OutReason)
+{
+	return ContainsDangerousPattern(Code, OutPattern, OutReason);
 }
 
 TResult<FPythonExecutionResult> FPythonExecutionService::ExecuteCode(
@@ -217,7 +310,7 @@ TResult<FPythonExecutionResult> FPythonExecutionService::ExecuteCode(
 	// Block dangerous patterns that can cause crashes
 	FString BlockedPattern;
 	FString BlockedReason;
-	if (ContainsDangerousPattern(Code, BlockedPattern, BlockedReason))
+	if (ContainsUnsafePattern(Code, BlockedPattern, BlockedReason))
 	{
 		return TResult<FPythonExecutionResult>::Error(
 			ErrorCodes::PYTHON_UNSAFE_CODE,
@@ -338,18 +431,23 @@ TResult<FPythonExecutionResult> FPythonExecutionService::ExecuteCode(
 	{
 		Result = ConvertExecutionResult(Command, ExecutionTimeMs);
 
-		// Check if execution took too long (post-execution check). The script has already completed;
-		// the caller likely gave up, which is exactly why the result is persisted below.
-		if (TimeoutMs > 0 && ExecutionTimeMs > TimeoutMs)
-		{
-			OutErrorCode = ErrorCodes::PYTHON_EXECUTION_TIMEOUT;
-			OutErrorMessage = FString::Printf(TEXT("Python execution exceeded %dms timeout (took %.2fms)"),
-				TimeoutMs, ExecutionTimeMs);
-		}
-		else if (!bSuccess || !Result.bSuccess)
+		if (!bSuccess || !Result.bSuccess)
 		{
 			OutErrorCode = ErrorCodes::PYTHON_RUNTIME_ERROR;
 			OutErrorMessage = Result.ErrorMessage.IsEmpty() ? TEXT("Python execution failed") : Result.ErrorMessage;
+		}
+		else if (TimeoutMs > 0 && ExecutionTimeMs > TimeoutMs)
+		{
+			// The script COMPLETED SUCCESSFULLY but ran past the client timeout. This C++ call is
+			// synchronous, so the result is always in hand here — returning PYTHON_EXECUTION_TIMEOUT
+			// (as this path used to) threw away a good result and left a client that is still waiting
+			// (or that retries with a longer budget) with nothing. Return the successful payload
+			// instead, flagged timed_out so the caller knows it overran; run_id + the persisted signal
+			// path travel with the result so vibeue.last_python_result() can recover it too.
+			Result.bTimedOut = true;
+			UE_LOG(LogTemp, Warning,
+				TEXT("Python run #%lld completed in %.2fms, past the %dms timeout — returning the successful result flagged timed_out."),
+				(long long)RunId, ExecutionTimeMs, TimeoutMs);
 		}
 	}
 
@@ -360,6 +458,13 @@ TResult<FPythonExecutionResult> FPythonExecutionService::ExecuteCode(
 
 	if (!OutErrorCode.IsEmpty())
 	{
+		// The run has already executed and its outcome is persisted, so even on the error path give the
+		// caller a handle to it: a client that timed out can recover the full result with
+		// vibeue.last_python_result() using the run id and signal file named here.
+		const FString SignalPath = FVibeUEPythonResultLog::GetLastResultPathForPid(FPlatformProcess::GetCurrentProcessId());
+		OutErrorMessage += FString::Printf(
+			TEXT(" (run_id=%lld; result persisted to %s — recover it with vibeue.last_python_result())"),
+			(long long)RunId, *SignalPath);
 		return TResult<FPythonExecutionResult>::Error(OutErrorCode, OutErrorMessage);
 	}
 
