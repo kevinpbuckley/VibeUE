@@ -3,20 +3,12 @@
 #include "Misc/AutomationTest.h"
 #include "Misc/ScopeExit.h"
 #include "PythonAPI/UBlueprintService.h"
-#include "PythonAPI/UActorService.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
-#include "Engine/StaticMeshActor.h"
-#include "Engine/World.h"
-#include "Editor.h"
-#include "EdGraphSchema_K2.h"
-#include "K2Node_Event.h"
-#include "K2Node_Timeline.h"
 #include "GameFramework/Actor.h"
-#include "UObject/Interface.h"
 #include "UObject/Package.h"
 #include "UObject/UObjectGlobals.h"
 #include "EdGraph/EdGraph.h"
@@ -29,6 +21,13 @@
 #include "BlueprintActionDatabase.h"
 #include "BlueprintNodeSpawner.h"
 #include "BlueprintVariableNodeSpawner.h"
+#include "PythonAPI/UActorService.h"
+#include "Engine/StaticMeshActor.h"
+#include "Engine/World.h"
+#include "Editor.h"
+#include "K2Node_Event.h"
+#include "K2Node_Timeline.h"
+#include "UObject/Interface.h"
 #include "UObject/TopLevelAssetPath.h"
 #include "Misc/PackageName.h"
 
@@ -207,36 +206,6 @@ namespace VibeBlueprintServiceTestUtil
 	}
 
 	static void ReleaseBlueprint(UBlueprint* Blueprint)
-// ─────────────────────────────────────────────────────────────────────────────
-// Regression coverage for the 2026-09-15 VibeUE PR-candidates brief, batch items
-// 5, 6, 7, 8, 10, 14, 15. Each throwaway Blueprint is created in-memory under a
-// /Game/__VibeUETest path, registered with AssetCreated so the service's path-based
-// API can resolve it, and unregistered on every exit path. Requires a full editor.
-// ─────────────────────────────────────────────────────────────────────────────
-
-namespace VibeUETestHelpers
-{
-	// Create an in-memory Blueprint under a /Game path and register it so
-	// UBlueprintService::LoadBlueprint (UEditorAssetLibrary::LoadAsset) can find it.
-	static UBlueprint* MakeBlueprint(UClass* ParentClass, const FString& PackageName, EBlueprintType Type = BPTYPE_Normal)
-	{
-		UPackage* Package = CreatePackage(*PackageName);
-		if (!Package)
-		{
-			return nullptr;
-		}
-		const FName AssetName(*FPackageName::GetShortName(PackageName));
-		UBlueprint* Blueprint = FKismetEditorUtilities::CreateBlueprint(
-			ParentClass, Package, AssetName, Type,
-			UBlueprint::StaticClass(), UBlueprintGeneratedClass::StaticClass());
-		if (Blueprint)
-		{
-			FAssetRegistryModule::AssetCreated(Blueprint);
-		}
-		return Blueprint;
-	}
-
-	static void ForgetBlueprint(UBlueprint* Blueprint)
 	{
 		if (Blueprint)
 		{
@@ -402,70 +371,6 @@ bool FVibeBlueprintServiceGetGraphDefinitionEntryResultTest::RunTest(const FStri
 	}
 	if (!TestNotNull(TEXT("function graph has an entry terminal"), EntryNode) ||
 		!TestNotNull(TEXT("function graph has a result terminal"), ResultNode))
-}
-
-// Item 5: add_member_variable can make a variable instance-editable, and
-// set_variable_instance_editable flips CPF_DisableEditOnInstance on the generated FProperty.
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBlueprintServiceInstanceEditableTest, "VibeUE.BlueprintService.VariableInstanceEditable",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-bool FVibeBlueprintServiceInstanceEditableTest::RunTest(const FString&)
-{
-	const FString Path = TEXT("/Game/__VibeUETest/BP_InstanceEditable");
-	UBlueprint* Blueprint = VibeUETestHelpers::MakeBlueprint(AActor::StaticClass(), Path);
-	if (!TestNotNull(TEXT("created the transient Blueprint"), Blueprint))
-	{
-		return false;
-	}
-	ON_SCOPE_EXIT{ VibeUETestHelpers::ForgetBlueprint(Blueprint); };
-
-	// Add a variable that should be editable per instance from the start.
-	TestTrue(TEXT("add_member_variable with bInstanceEditable=true"),
-		UBlueprintService::AddMemberVariable(Path, TEXT("InstEditInt"), TEXT("int"), TEXT(""), false, TEXT(""), /*bInstanceEditable*/true));
-	FKismetEditorUtilities::CompileBlueprint(Blueprint);
-
-	FProperty* Prop = Blueprint->GeneratedClass ? Blueprint->GeneratedClass->FindPropertyByName(TEXT("InstEditInt")) : nullptr;
-	if (!TestNotNull(TEXT("generated FProperty exists for the new variable"), Prop))
-	{
-		return false;
-	}
-	TestFalse(TEXT("instance-editable variable lacks CPF_DisableEditOnInstance"),
-		Prop->HasAnyPropertyFlags(CPF_DisableEditOnInstance));
-
-	// Flip it to blueprint-only and confirm the flag comes back.
-	TestTrue(TEXT("set_variable_instance_editable false"),
-		UBlueprintService::SetVariableInstanceEditable(Path, TEXT("InstEditInt"), false));
-	FKismetEditorUtilities::CompileBlueprint(Blueprint);
-
-	FProperty* Prop2 = Blueprint->GeneratedClass ? Blueprint->GeneratedClass->FindPropertyByName(TEXT("InstEditInt")) : nullptr;
-	if (!TestNotNull(TEXT("generated FProperty exists after flip"), Prop2))
-	{
-		return false;
-	}
-	TestTrue(TEXT("blueprint-only variable has CPF_DisableEditOnInstance"),
-		Prop2->HasAnyPropertyFlags(CPF_DisableEditOnInstance));
-	return true;
-}
-
-// Item 6: set_variable_default_value writes the CDO default of a variable INHERITED from a parent
-// Blueprint (it used to walk NewVariables only and return False for inherited variables).
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBlueprintServiceInheritedDefaultTest, "VibeUE.BlueprintService.SetInheritedVariableDefault",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-bool FVibeBlueprintServiceInheritedDefaultTest::RunTest(const FString&)
-{
-	const FString ParentPath = TEXT("/Game/__VibeUETest/BP_InheritParent");
-	const FString ChildPath  = TEXT("/Game/__VibeUETest/BP_InheritChild");
-
-	UBlueprint* Parent = VibeUETestHelpers::MakeBlueprint(AActor::StaticClass(), ParentPath);
-	if (!TestNotNull(TEXT("created parent Blueprint"), Parent))
-	{
-		return false;
-	}
-	ON_SCOPE_EXIT{ VibeUETestHelpers::ForgetBlueprint(Parent); };
-
-	TestTrue(TEXT("added int variable ParentHealth to parent"),
-		UBlueprintService::AddMemberVariable(ParentPath, TEXT("ParentHealth"), TEXT("int"), TEXT("10")));
-	FKismetEditorUtilities::CompileBlueprint(Parent);
-	if (!TestNotNull(TEXT("parent has a generated class"), Parent->GeneratedClass.Get()))
 	{
 		return false;
 	}
@@ -613,6 +518,261 @@ bool FVibeBlueprintServiceForeignVariableSingleMatchTest::RunTest(const FString&
 				if (Candidate->PrimeDefaultUiSpec(nullptr).MenuName.ToString() == MenuName)
 				{
 					++MatchCount;
+				}
+			}
+		}
+	}
+
+	if (!TestTrue(TEXT("found the foreign variable's getter spawner menu name"), !MenuName.IsEmpty()))
+	{
+		return false;
+	}
+	// A uniquely-named variable on a single Blueprint should produce exactly one matching spawner —
+	// the single-match path this test targets (item 4). Reported, not aborted: even if the registry
+	// surfaced more than one, they are all foreign and the refusal below must still hold.
+	TestEqual(TEXT("exactly one spawner matches the foreign variable's menu name (single-match path)"), MatchCount, 1);
+
+	// Spawning the foreign getter on the unrelated target must be refused (empty id).
+	const FString SpawnKey = FString::Printf(TEXT("SPAWN K2Node_VariableGet|%s"), *MenuName);
+	const FString NodeId = UBlueprintService::CreateNodeByKey(TargetPackage, TEXT("EventGraph"), SpawnKey, 0.0f, 0.0f);
+	TestTrue(TEXT("create_node_by_key refused the single foreign-variable match (empty id)"), NodeId.IsEmpty());
+
+	return true;
+}
+
+// ============================================================================
+// Item 9: compile_blueprint returns the compiler's error text. Compiles a deliberately broken
+// Blueprint — a function-call node in the BeginPlay exec chain whose FunctionReference names a
+// function that does not exist — and asserts the result reports errors by count AND message.
+//
+// Why this fixture: an unresolved UK2Node_CallFunction (GetTargetFunction()==nullptr) is a hard
+// compile Error in FKismetCompilerContext (K2Node_CallFunction::ValidateNodeDuringCompilation emits
+// MessageLog.Error "Could not find a function named ..."). But AllocateDefaultPins skips
+// CreatePinsForFunctionCall when the function is null, so a node created bad has no exec pin and
+// would be pruned as isolated. So we spawn a REAL PrintString call (which has exec pins), wire it
+// from BeginPlay so it survives pruning, THEN corrupt its FunctionReference to a bogus self member.
+// A unique package name keeps the fixture independent of any asset left over from a prior run.
+// ============================================================================
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBlueprintServiceCompileBlueprintErrorsTest, "VibeUE.BlueprintService.CompileBlueprintReportsErrors",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FVibeBlueprintServiceCompileBlueprintErrorsTest::RunTest(const FString&)
+{
+	using namespace VibeBlueprintServiceTestUtil;
+
+	const FString PackageName = FString::Printf(TEXT("/Game/__VibeUETest/BP_CompileErrors_%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+	UBlueprint* Blueprint = MakeRegisteredBlueprint(*this, PackageName, AActor::StaticClass());
+	if (!Blueprint)
+	{
+		return false;
+	}
+	ON_SCOPE_EXIT { ReleaseBlueprint(Blueprint); };
+
+	const FString Path = PackageName;
+
+	UEdGraph* EventGraph = GetEventGraph(Blueprint);
+	if (!TestNotNull(TEXT("blueprint has an EventGraph"), EventGraph))
+	{
+		return false;
+	}
+
+	// BeginPlay -> PrintString, wired via the service. PrintString gives the call node real exec pins.
+	const FString BeginPlayId = UBlueprintService::CreateNodeByKey(Path, TEXT("EventGraph"), TEXT("EVENT Actor::ReceiveBeginPlay"), 0.0f, 0.0f);
+	const FString CallId      = UBlueprintService::CreateNodeByKey(Path, TEXT("EventGraph"), TEXT("FUNC KismetSystemLibrary::PrintString"), 320.0f, 0.0f);
+	if (!TestFalse(TEXT("BeginPlay node created"), BeginPlayId.IsEmpty()) ||
+		!TestFalse(TEXT("PrintString call node created"), CallId.IsEmpty()))
+	{
+		return false;
+	}
+	TestTrue(TEXT("wired BeginPlay.then -> Call.execute"),
+		UBlueprintService::ConnectNodes(Path, TEXT("EventGraph"), BeginPlayId, TEXT("then"), CallId, TEXT("execute")));
+
+	// Corrupt the call node's function reference to a name that does not exist on this Blueprint's own
+	// class. The node stays wired into the exec chain (so it is not pruned), and the compiler cannot
+	// resolve the function — a hard error naming the bogus function.
+	const FName BogusFunctionName(TEXT("ThisFunctionDoesNotExistZZZ"));
+	UK2Node_CallFunction* CallNode = Cast<UK2Node_CallFunction>(FindNodeByGuidString(EventGraph, CallId));
+	if (!TestNotNull(TEXT("resolved the PrintString call node to corrupt"), CallNode))
+	{
+		return false;
+	}
+	CallNode->FunctionReference.SetSelfMember(BogusFunctionName);
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+
+	const FBlueprintCompileResult Result = UBlueprintService::CompileBlueprint(Path);
+
+	TestFalse(TEXT("compile is reported as failed"), Result.bSuccess);
+	TestTrue(TEXT("compile reports at least one error (NumErrors > 0)"), Result.NumErrors > 0);
+	TestTrue(TEXT("compile returns non-empty error text"), Result.Errors.Num() > 0);
+
+	// The error text should name the missing function.
+	bool bErrorMentionsBogusName = false;
+	for (const FString& Err : Result.Errors)
+	{
+		if (Err.Contains(BogusFunctionName.ToString()))
+		{
+			bErrorMentionsBogusName = true;
+			break;
+		}
+	}
+	TestTrue(TEXT("an error message names the missing function"), bErrorMentionsBogusName);
+
+	return true;
+}
+
+// ============================================================================
+// Item 16: create_node_by_key can spawn a getter for an SCS component variable (previously returned
+// an empty id). Adds a StaticMeshComponent and spawns its getter, asserting the node exists and its
+// member reference names the component.
+// ============================================================================
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBlueprintServiceComponentGetterSpawnTest, "VibeUE.BlueprintService.CreateNodeByKeySpawnsComponentGetter",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FVibeBlueprintServiceComponentGetterSpawnTest::RunTest(const FString&)
+{
+	using namespace VibeBlueprintServiceTestUtil;
+
+	const FString PackageName = TEXT("/Game/__VibeUETest/BP_ComponentGetter");
+	const FString ComponentName = TEXT("VibeMeshThing");
+	UBlueprint* Blueprint = MakeRegisteredBlueprint(*this, PackageName, AActor::StaticClass());
+	if (!Blueprint)
+	{
+		return false;
+	}
+	ON_SCOPE_EXIT { ReleaseBlueprint(Blueprint); };
+
+	const FString Path = PackageName;
+
+	if (!TestTrue(TEXT("added a StaticMeshComponent to the blueprint"),
+		UBlueprintService::AddComponent(Path, TEXT("StaticMeshComponent"), ComponentName, TEXT(""))))
+	{
+		return false;
+	}
+
+	// Spawn the component getter via the key that used to return an empty id.
+	const FString SpawnKey = FString::Printf(TEXT("SPAWN K2Node_VariableGet|Get %s"), *ComponentName);
+	const FString NodeId = UBlueprintService::CreateNodeByKey(Path, TEXT("EventGraph"), SpawnKey, 0.0f, 0.0f);
+	if (!TestFalse(TEXT("component getter spawn returned a non-empty id"), NodeId.IsEmpty()))
+	{
+		return false;
+	}
+
+	UEdGraphNode* Node = FindNodeByGuidString(GetEventGraph(Blueprint), NodeId);
+	UK2Node_VariableGet* GetNode = Cast<UK2Node_VariableGet>(Node);
+	if (!TestNotNull(TEXT("spawned node is a K2Node_VariableGet"), GetNode))
+	{
+		return false;
+	}
+
+	TestEqual(TEXT("getter's member reference names the component"),
+		GetNode->VariableReference.GetMemberName().ToString(), ComponentName);
+
+	return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Regression coverage for the 2026-09-15 VibeUE PR-candidates brief, batch items
+// 5, 6, 7, 8, 10, 14, 15. Each throwaway Blueprint is created in-memory under a
+// /Game/__VibeUETest path, registered with AssetCreated so the service's path-based
+// API can resolve it, and unregistered on every exit path. Requires a full editor.
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace VibeUETestHelpers
+{
+	// Create an in-memory Blueprint under a /Game path and register it so
+	// UBlueprintService::LoadBlueprint (UEditorAssetLibrary::LoadAsset) can find it.
+	static UBlueprint* MakeBlueprint(UClass* ParentClass, const FString& PackageName, EBlueprintType Type = BPTYPE_Normal)
+	{
+		UPackage* Package = CreatePackage(*PackageName);
+		if (!Package)
+		{
+			return nullptr;
+		}
+		const FName AssetName(*FPackageName::GetShortName(PackageName));
+		UBlueprint* Blueprint = FKismetEditorUtilities::CreateBlueprint(
+			ParentClass, Package, AssetName, Type,
+			UBlueprint::StaticClass(), UBlueprintGeneratedClass::StaticClass());
+		if (Blueprint)
+		{
+			FAssetRegistryModule::AssetCreated(Blueprint);
+		}
+		return Blueprint;
+	}
+
+	static void ForgetBlueprint(UBlueprint* Blueprint)
+	{
+		if (Blueprint)
+		{
+			FAssetRegistryModule::AssetDeleted(Blueprint);
+			Blueprint->ClearFlags(RF_Standalone | RF_Public);
+		}
+	}
+}
+
+// Item 5: add_member_variable can make a variable instance-editable, and
+// set_variable_instance_editable flips CPF_DisableEditOnInstance on the generated FProperty.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBlueprintServiceInstanceEditableTest, "VibeUE.BlueprintService.VariableInstanceEditable",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FVibeBlueprintServiceInstanceEditableTest::RunTest(const FString&)
+{
+	const FString Path = TEXT("/Game/__VibeUETest/BP_InstanceEditable");
+	UBlueprint* Blueprint = VibeUETestHelpers::MakeBlueprint(AActor::StaticClass(), Path);
+	if (!TestNotNull(TEXT("created the transient Blueprint"), Blueprint))
+	{
+		return false;
+	}
+	ON_SCOPE_EXIT{ VibeUETestHelpers::ForgetBlueprint(Blueprint); };
+
+	// Add a variable that should be editable per instance from the start.
+	TestTrue(TEXT("add_member_variable with bInstanceEditable=true"),
+		UBlueprintService::AddMemberVariable(Path, TEXT("InstEditInt"), TEXT("int"), TEXT(""), false, TEXT(""), /*bInstanceEditable*/true));
+	FKismetEditorUtilities::CompileBlueprint(Blueprint);
+
+	FProperty* Prop = Blueprint->GeneratedClass ? Blueprint->GeneratedClass->FindPropertyByName(TEXT("InstEditInt")) : nullptr;
+	if (!TestNotNull(TEXT("generated FProperty exists for the new variable"), Prop))
+	{
+		return false;
+	}
+	TestFalse(TEXT("instance-editable variable lacks CPF_DisableEditOnInstance"),
+		Prop->HasAnyPropertyFlags(CPF_DisableEditOnInstance));
+
+	// Flip it to blueprint-only and confirm the flag comes back.
+	TestTrue(TEXT("set_variable_instance_editable false"),
+		UBlueprintService::SetVariableInstanceEditable(Path, TEXT("InstEditInt"), false));
+	FKismetEditorUtilities::CompileBlueprint(Blueprint);
+
+	FProperty* Prop2 = Blueprint->GeneratedClass ? Blueprint->GeneratedClass->FindPropertyByName(TEXT("InstEditInt")) : nullptr;
+	if (!TestNotNull(TEXT("generated FProperty exists after flip"), Prop2))
+	{
+		return false;
+	}
+	TestTrue(TEXT("blueprint-only variable has CPF_DisableEditOnInstance"),
+		Prop2->HasAnyPropertyFlags(CPF_DisableEditOnInstance));
+	return true;
+}
+
+// Item 6: set_variable_default_value writes the CDO default of a variable INHERITED from a parent
+// Blueprint (it used to walk NewVariables only and return False for inherited variables).
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBlueprintServiceInheritedDefaultTest, "VibeUE.BlueprintService.SetInheritedVariableDefault",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FVibeBlueprintServiceInheritedDefaultTest::RunTest(const FString&)
+{
+	const FString ParentPath = TEXT("/Game/__VibeUETest/BP_InheritParent");
+	const FString ChildPath  = TEXT("/Game/__VibeUETest/BP_InheritChild");
+
+	UBlueprint* Parent = VibeUETestHelpers::MakeBlueprint(AActor::StaticClass(), ParentPath);
+	if (!TestNotNull(TEXT("created parent Blueprint"), Parent))
+	{
+		return false;
+	}
+	ON_SCOPE_EXIT{ VibeUETestHelpers::ForgetBlueprint(Parent); };
+
+	TestTrue(TEXT("added int variable ParentHealth to parent"),
+		UBlueprintService::AddMemberVariable(ParentPath, TEXT("ParentHealth"), TEXT("int"), TEXT("10")));
+	FKismetEditorUtilities::CompileBlueprint(Parent);
+	if (!TestNotNull(TEXT("parent has a generated class"), Parent->GeneratedClass.Get()))
+	{
+		return false;
+	}
+
 	UBlueprint* Child = VibeUETestHelpers::MakeBlueprint(Parent->GeneratedClass, ChildPath);
 	if (!TestNotNull(TEXT("created child Blueprint from the parent's generated class"), Child))
 	{
@@ -721,55 +881,6 @@ bool FVibeBlueprintServiceOverrideInterfaceTest::RunTest(const FString&)
 			}
 		}
 	}
-
-	if (!TestTrue(TEXT("found the foreign variable's getter spawner menu name"), !MenuName.IsEmpty()))
-	{
-		return false;
-	}
-	// A uniquely-named variable on a single Blueprint should produce exactly one matching spawner —
-	// the single-match path this test targets (item 4). Reported, not aborted: even if the registry
-	// surfaced more than one, they are all foreign and the refusal below must still hold.
-	TestEqual(TEXT("exactly one spawner matches the foreign variable's menu name (single-match path)"), MatchCount, 1);
-
-	// Spawning the foreign getter on the unrelated target must be refused (empty id).
-	const FString SpawnKey = FString::Printf(TEXT("SPAWN K2Node_VariableGet|%s"), *MenuName);
-	const FString NodeId = UBlueprintService::CreateNodeByKey(TargetPackage, TEXT("EventGraph"), SpawnKey, 0.0f, 0.0f);
-	TestTrue(TEXT("create_node_by_key refused the single foreign-variable match (empty id)"), NodeId.IsEmpty());
-
-	return true;
-}
-
-// ============================================================================
-// Item 9: compile_blueprint returns the compiler's error text. Compiles a deliberately broken
-// Blueprint — a function-call node in the BeginPlay exec chain whose FunctionReference names a
-// function that does not exist — and asserts the result reports errors by count AND message.
-//
-// Why this fixture: an unresolved UK2Node_CallFunction (GetTargetFunction()==nullptr) is a hard
-// compile Error in FKismetCompilerContext (K2Node_CallFunction::ValidateNodeDuringCompilation emits
-// MessageLog.Error "Could not find a function named ..."). But AllocateDefaultPins skips
-// CreatePinsForFunctionCall when the function is null, so a node created bad has no exec pin and
-// would be pruned as isolated. So we spawn a REAL PrintString call (which has exec pins), wire it
-// from BeginPlay so it survives pruning, THEN corrupt its FunctionReference to a bogus self member.
-// A unique package name keeps the fixture independent of any asset left over from a prior run.
-// ============================================================================
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBlueprintServiceCompileBlueprintErrorsTest, "VibeUE.BlueprintService.CompileBlueprintReportsErrors",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-bool FVibeBlueprintServiceCompileBlueprintErrorsTest::RunTest(const FString&)
-{
-	using namespace VibeBlueprintServiceTestUtil;
-
-	const FString PackageName = FString::Printf(TEXT("/Game/__VibeUETest/BP_CompileErrors_%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-	UBlueprint* Blueprint = MakeRegisteredBlueprint(*this, PackageName, AActor::StaticClass());
-	if (!Blueprint)
-	{
-		return false;
-	}
-	ON_SCOPE_EXIT { ReleaseBlueprint(Blueprint); };
-
-	const FString Path = PackageName;
-
-	UEdGraph* EventGraph = GetEventGraph(Blueprint);
-	if (!TestNotNull(TEXT("blueprint has an EventGraph"), EventGraph))
 	TestTrue(TEXT("EventGraph now contains the DoThing interface event node"), bFound);
 
 	// Idempotent — calling again must not fail or duplicate.
@@ -793,96 +904,6 @@ bool FVibeBlueprintServiceListInterfaceGraphsTest::RunTest(const FString&)
 	{
 		return false;
 	}
-
-	// BeginPlay -> PrintString, wired via the service. PrintString gives the call node real exec pins.
-	const FString BeginPlayId = UBlueprintService::CreateNodeByKey(Path, TEXT("EventGraph"), TEXT("EVENT Actor::ReceiveBeginPlay"), 0.0f, 0.0f);
-	const FString CallId      = UBlueprintService::CreateNodeByKey(Path, TEXT("EventGraph"), TEXT("FUNC KismetSystemLibrary::PrintString"), 320.0f, 0.0f);
-	if (!TestFalse(TEXT("BeginPlay node created"), BeginPlayId.IsEmpty()) ||
-		!TestFalse(TEXT("PrintString call node created"), CallId.IsEmpty()))
-	{
-		return false;
-	}
-	TestTrue(TEXT("wired BeginPlay.then -> Call.execute"),
-		UBlueprintService::ConnectNodes(Path, TEXT("EventGraph"), BeginPlayId, TEXT("then"), CallId, TEXT("execute")));
-
-	// Corrupt the call node's function reference to a name that does not exist on this Blueprint's own
-	// class. The node stays wired into the exec chain (so it is not pruned), and the compiler cannot
-	// resolve the function — a hard error naming the bogus function.
-	const FName BogusFunctionName(TEXT("ThisFunctionDoesNotExistZZZ"));
-	UK2Node_CallFunction* CallNode = Cast<UK2Node_CallFunction>(FindNodeByGuidString(EventGraph, CallId));
-	if (!TestNotNull(TEXT("resolved the PrintString call node to corrupt"), CallNode))
-	{
-		return false;
-	}
-	CallNode->FunctionReference.SetSelfMember(BogusFunctionName);
-	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
-
-	const FBlueprintCompileResult Result = UBlueprintService::CompileBlueprint(Path);
-
-	TestFalse(TEXT("compile is reported as failed"), Result.bSuccess);
-	TestTrue(TEXT("compile reports at least one error (NumErrors > 0)"), Result.NumErrors > 0);
-	TestTrue(TEXT("compile returns non-empty error text"), Result.Errors.Num() > 0);
-
-	// The error text should name the missing function.
-	bool bErrorMentionsBogusName = false;
-	for (const FString& Err : Result.Errors)
-	{
-		if (Err.Contains(BogusFunctionName.ToString()))
-		{
-			bErrorMentionsBogusName = true;
-			break;
-		}
-	}
-	TestTrue(TEXT("an error message names the missing function"), bErrorMentionsBogusName);
-
-	return true;
-}
-
-// ============================================================================
-// Item 16: create_node_by_key can spawn a getter for an SCS component variable (previously returned
-// an empty id). Adds a StaticMeshComponent and spawns its getter, asserting the node exists and its
-// member reference names the component.
-// ============================================================================
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBlueprintServiceComponentGetterSpawnTest, "VibeUE.BlueprintService.CreateNodeByKeySpawnsComponentGetter",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-bool FVibeBlueprintServiceComponentGetterSpawnTest::RunTest(const FString&)
-{
-	using namespace VibeBlueprintServiceTestUtil;
-
-	const FString PackageName = TEXT("/Game/__VibeUETest/BP_ComponentGetter");
-	const FString ComponentName = TEXT("VibeMeshThing");
-	UBlueprint* Blueprint = MakeRegisteredBlueprint(*this, PackageName, AActor::StaticClass());
-	if (!Blueprint)
-	{
-		return false;
-	}
-	ON_SCOPE_EXIT { ReleaseBlueprint(Blueprint); };
-
-	const FString Path = PackageName;
-
-	if (!TestTrue(TEXT("added a StaticMeshComponent to the blueprint"),
-		UBlueprintService::AddComponent(Path, TEXT("StaticMeshComponent"), ComponentName, TEXT(""))))
-	{
-		return false;
-	}
-
-	// Spawn the component getter via the key that used to return an empty id.
-	const FString SpawnKey = FString::Printf(TEXT("SPAWN K2Node_VariableGet|Get %s"), *ComponentName);
-	const FString NodeId = UBlueprintService::CreateNodeByKey(Path, TEXT("EventGraph"), SpawnKey, 0.0f, 0.0f);
-	if (!TestFalse(TEXT("component getter spawn returned a non-empty id"), NodeId.IsEmpty()))
-	{
-		return false;
-	}
-
-	UEdGraphNode* Node = FindNodeByGuidString(GetEventGraph(Blueprint), NodeId);
-	UK2Node_VariableGet* GetNode = Cast<UK2Node_VariableGet>(Node);
-	if (!TestNotNull(TEXT("spawned node is a K2Node_VariableGet"), GetNode))
-	{
-		return false;
-	}
-
-	TestEqual(TEXT("getter's member reference names the component"),
-		GetNode->VariableReference.GetMemberName().ToString(), ComponentName);
 
 	const TArray<FBlueprintGraphInfo> Graphs = UBlueprintService::ListGraphs(ActorPath);
 	bool bFoundInterfaceGraph = false;
@@ -946,30 +967,31 @@ bool FVibeBlueprintServiceAddTimelineReplaceTest::RunTest(const FString&)
 		return false;
 	}
 
-	// Delete ONLY the Timeline node, leaving its UTimelineTemplate behind (the bug scenario).
-	for (UEdGraph* Ubergraph : Blueprint->UbergraphPages)
-	{
-		if (!Ubergraph)
-		{
-			continue;
-		}
-		TArray<UK2Node_Timeline*> TimelineNodes;
-		Ubergraph->GetNodesOfClass(TimelineNodes);
-		for (UK2Node_Timeline* Node : TimelineNodes)
-		{
-			FBlueprintEditorUtils::RemoveNode(Blueprint, Node, /*bDontRecompile*/true);
-		}
-	}
-	if (!TestNotNull(TEXT("the UTimelineTemplate survives the node delete"),
+	// The UTimelineTemplate now exists, so a plain re-add with the same name would be refused (the
+	// bug: a silent empty return). With replace_existing=true, add_timeline removes the existing
+	// timeline first and re-adds successfully. (This build's FBlueprintEditorUtils::RemoveNode also
+	// clears the template, so the historical "orphaned template after a node delete" cannot be staged
+	// here; the replace path covers any pre-existing template regardless of how it got there.)
+	if (!TestNotNull(TEXT("the UTimelineTemplate exists after the first add"),
 		Blueprint->FindTimelineTemplateByVariableName(FName(TEXT("PingPong")))))
 	{
 		return false;
 	}
 
-	// With replace_existing=true, add_timeline removes the leftover template and re-adds successfully.
 	const FString SecondId = UBlueprintService::AddTimeline(Path, TEXT("EventGraph"), TEXT("PingPong"), 1.0f, false, false, false, 0.0f, 0.0f, /*bReplaceExisting*/true);
-	TestFalse(TEXT("second add_timeline with replace_existing=true succeeded (not an ERROR sentinel)"),
+	TestFalse(TEXT("add_timeline with replace_existing=true succeeded (not an ERROR sentinel)"),
 		SecondId.IsEmpty() || SecondId.StartsWith(TEXT("ERROR:")));
+
+	// Exactly one timeline named PingPong should remain (the old one was replaced, not duplicated).
+	int32 PingPongCount = 0;
+	for (const FBlueprintTimelineInfo& T : UBlueprintService::GetTimelines(Path))
+	{
+		if (T.TimelineName == TEXT("PingPong"))
+		{
+			++PingPongCount;
+		}
+	}
+	TestEqual(TEXT("exactly one PingPong timeline remains after replace"), PingPongCount, 1);
 	return true;
 }
 
@@ -996,5 +1018,6 @@ bool FVibeActorServiceRerunConstructionTest::RunTest(const FString&)
 		UActorService::RerunConstructionScripts(TEXT("VibeUE_RCS_Probe")));
 	return true;
 }
+
 
 #endif // WITH_AUTOMATION_TESTS
