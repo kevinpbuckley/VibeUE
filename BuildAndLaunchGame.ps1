@@ -399,23 +399,37 @@ if ($WaitForReady) {
 
     # Verify the editor actually opened the requested map. The readiness signal publishes the loaded
     # level as "currentMap"; if it differs from -Map, world edits would land on the wrong level.
+    # The signal ("toolsets registered") can be published BEFORE the -Map level finishes loading, and
+    # at that instant currentMap is the transient /Temp/Untitled_N world (or empty). Treat that as
+    # "not loaded yet" and re-read the signal for up to ~20s waiting for a real level; only warn when
+    # a genuine /Game (or other mount-point) level is loaded that differs from -Map.
     if ($Map) {
-        try {
-            $readyJson = Get-Content -LiteralPath $readySignal -Raw | ConvertFrom-Json
-            $currentMap = $readyJson.currentMap
-            if ($currentMap) {
-                # The signal may report a full object path (/Game/Maps/L_Foo.L_Foo); compare on the
-                # package portion, case-insensitively (PowerShell -ne is case-insensitive).
-                $currentMapPkg = ($currentMap -split '\.')[0]
-                if ($currentMapPkg -ne $Map) {
-                    Write-Host "WARNING: requested -Map '$Map' but the editor reports currentMap '$currentMap'." -ForegroundColor Yellow
-                    Write-Host "         The wrong level may be open; verify before making world edits." -ForegroundColor Yellow
-                }
-            } else {
-                Write-Host "WARNING: readiness signal did not report a currentMap; cannot verify the loaded level." -ForegroundColor Yellow
-            }
-        } catch {
-            Write-Host "WARNING: could not read currentMap from the readiness signal to verify the loaded level." -ForegroundColor Yellow
+        # Read currentMap, collapsing a full object path (/Game/Maps/L_Foo.L_Foo) to its package part.
+        function Get-CurrentMapPkg {
+            try {
+                $j = Get-Content -LiteralPath $readySignal -Raw -ErrorAction Stop | ConvertFrom-Json
+                if ($j.currentMap) { return ($j.currentMap -split '\.')[0] }
+            } catch { }
+            return ""
+        }
+
+        $currentMapPkg = Get-CurrentMapPkg
+        $mapWaited = 0
+        while (($currentMapPkg -eq "" -or $currentMapPkg -like "/Temp/*") -and $mapWaited -lt 20) {
+            Start-Sleep 1
+            $mapWaited++
+            $currentMapPkg = Get-CurrentMapPkg
+        }
+
+        if ($currentMapPkg -eq "" -or $currentMapPkg -like "/Temp/*") {
+            # Still transient after the grace window: the level is loading in the background. Not an
+            # error -- just cannot confirm it here.
+            Write-Host "NOTE: level still loading at signal time (currentMap '$currentMapPkg'); verify currentMap before world edits." -ForegroundColor Gray
+        }
+        elseif ($currentMapPkg -ne $Map) {
+            # A real level is loaded and it is not the one requested (-ne is case-insensitive).
+            Write-Host "WARNING: requested -Map '$Map' but the editor reports currentMap '$currentMapPkg'." -ForegroundColor Yellow
+            Write-Host "         The wrong level may be open; verify before making world edits." -ForegroundColor Yellow
         }
     }
 }
