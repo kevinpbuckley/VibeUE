@@ -4,12 +4,23 @@
 #include "Misc/ScopeExit.h"
 #include "PythonAPI/UBlueprintService.h"
 #include "Kismet2/KismetEditorUtilities.h"
+#include "Kismet2/BlueprintEditorUtils.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
 #include "GameFramework/Actor.h"
 #include "UObject/Package.h"
 #include "UObject/UObjectGlobals.h"
+#include "EdGraph/EdGraph.h"
+#include "EdGraph/EdGraphPin.h"
+#include "EdGraphSchema_K2.h"
+#include "K2Node_Event.h"
+#include "K2Node_FunctionEntry.h"
+#include "K2Node_FunctionResult.h"
+#include "K2Node_VariableGet.h"
+#include "BlueprintActionDatabase.h"
+#include "BlueprintNodeSpawner.h"
+#include "BlueprintVariableNodeSpawner.h"
 
 #if WITH_AUTOMATION_TESTS
 
@@ -150,6 +161,478 @@ bool FVibeBlueprintServiceDisconnectPinTest::RunTest(const FString&)
 			HasEdge(Edges, AId, TEXT("then"), BId, TEXT("execute")));
 		TestEqual(TEXT("exactly one exec edge remains"), Edges.Num(), 1);
 	}
+
+	return true;
+}
+
+// ============================================================================
+// Shared helpers for the batch of graph-authoring regression tests below.
+// ============================================================================
+namespace VibeBlueprintServiceTestUtil
+{
+	// Create an in-memory Blueprint under a /Game path and register it with the asset registry so
+	// UBlueprintService's path-based API can resolve it. Never saved to disk. The caller runs the
+	// cleanup lambda on every exit path.
+	static UBlueprint* MakeRegisteredBlueprint(FAutomationTestBase& Test, const FString& PackageName, UClass* ParentClass)
+	{
+		UPackage* Package = CreatePackage(*PackageName);
+		if (!Test.TestNotNull(TEXT("created a package for the transient test Blueprint"), Package))
+		{
+			return nullptr;
+		}
+
+		FString ShortName;
+		PackageName.Split(TEXT("/"), nullptr, &ShortName, ESearchCase::IgnoreCase, ESearchDir::FromEnd);
+
+		UBlueprint* Blueprint = FKismetEditorUtilities::CreateBlueprint(
+			ParentClass, Package, FName(*ShortName), BPTYPE_Normal,
+			UBlueprint::StaticClass(), UBlueprintGeneratedClass::StaticClass());
+		if (!Test.TestNotNull(TEXT("CreateBlueprint returned a Blueprint"), Blueprint))
+		{
+			return nullptr;
+		}
+
+		FAssetRegistryModule::AssetCreated(Blueprint);
+		return Blueprint;
+	}
+
+	static void ReleaseBlueprint(UBlueprint* Blueprint)
+	{
+		if (Blueprint)
+		{
+			FAssetRegistryModule::AssetDeleted(Blueprint);
+			Blueprint->ClearFlags(RF_Standalone | RF_Public);
+		}
+	}
+
+	static UEdGraphNode* FindNodeByGuidString(UEdGraph* Graph, const FString& GuidString)
+	{
+		if (!Graph)
+		{
+			return nullptr;
+		}
+		FGuid Parsed;
+		if (!FGuid::Parse(GuidString, Parsed))
+		{
+			return nullptr;
+		}
+		for (UEdGraphNode* Node : Graph->Nodes)
+		{
+			if (Node && Node->NodeGuid == Parsed)
+			{
+				return Node;
+			}
+		}
+		return nullptr;
+	}
+
+	static UEdGraph* GetEventGraph(UBlueprint* Blueprint)
+	{
+		if (Blueprint && Blueprint->UbergraphPages.Num() > 0)
+		{
+			return Blueprint->UbergraphPages[0];
+		}
+		return nullptr;
+	}
+}
+
+// ============================================================================
+// Item 2: build_graph pin defaults must be able to set a hard class pin (Pin->DefaultObject),
+// not just plain string pins. Builds a GetAllActorsOfClass node and sets its ActorClass default
+// through build_graph, then asserts the resolved class landed in Pin->DefaultObject.
+// ============================================================================
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBlueprintServiceBuildGraphClassPinDefaultTest, "VibeUE.BlueprintService.BuildGraphSetsClassPinDefault",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FVibeBlueprintServiceBuildGraphClassPinDefaultTest::RunTest(const FString&)
+{
+	using namespace VibeBlueprintServiceTestUtil;
+
+	const FString PackageName = TEXT("/Game/__VibeUETest/BP_ClassPinDefault");
+	UBlueprint* Blueprint = MakeRegisteredBlueprint(*this, PackageName, AActor::StaticClass());
+	if (!Blueprint)
+	{
+		return false;
+	}
+	ON_SCOPE_EXIT { ReleaseBlueprint(Blueprint); };
+
+	const FString Path = PackageName;
+
+	TArray<FGraphNodeDesc> Nodes;
+	{
+		FGraphNodeDesc Node;
+		Node.Ref = TEXT("getall");
+		Node.Type = TEXT("function_call");
+		Node.Params.Add(TEXT("class"), TEXT("GameplayStatics"));
+		Node.Params.Add(TEXT("function"), TEXT("GetAllActorsOfClass"));
+		Nodes.Add(Node);
+	}
+
+	TArray<FGraphConnectionDesc> Connections;
+
+	TArray<FGraphPinDefaultDesc> PinDefaults;
+	{
+		FGraphPinDefaultDesc PinDefault;
+		PinDefault.NodeRef = TEXT("getall");
+		PinDefault.PinName = TEXT("ActorClass");
+		PinDefault.Value = TEXT("/Script/Engine.StaticMeshActor");
+		PinDefaults.Add(PinDefault);
+	}
+
+	const FBuildGraphResult Result = UBlueprintService::BuildGraph(Path, TEXT("EventGraph"), Nodes, Connections, PinDefaults, false, false);
+
+	TestEqual(TEXT("one node created"), Result.NodesCreated, 1);
+	TestEqual(TEXT("the class pin default was set (not dropped)"), Result.DefaultsSet, 1);
+	TestEqual(TEXT("no pin defaults failed"), Result.DefaultsFailed, 0);
+
+	const FString* NodeGuid = Result.RefToNodeId.Find(TEXT("getall"));
+	if (!TestTrue(TEXT("build_graph reported a GUID for the GetAllActorsOfClass node"), NodeGuid != nullptr))
+	{
+		return false;
+	}
+
+	UEdGraphNode* Node = FindNodeByGuidString(GetEventGraph(Blueprint), *NodeGuid);
+	if (!TestNotNull(TEXT("resolved the created node by GUID"), Node))
+	{
+		return false;
+	}
+
+	UEdGraphPin* ActorClassPin = Node->FindPin(TEXT("ActorClass"), EGPD_Input);
+	if (!TestNotNull(TEXT("GetAllActorsOfClass has an ActorClass input pin"), ActorClassPin))
+	{
+		return false;
+	}
+
+	UClass* ExpectedClass = LoadObject<UClass>(nullptr, TEXT("/Script/Engine.StaticMeshActor"));
+	if (!TestNotNull(TEXT("resolved AStaticMeshActor class for comparison"), ExpectedClass))
+	{
+		return false;
+	}
+
+	// The whole point of the fix: a hard class pin stores the resolved class in DefaultObject,
+	// which the old TrySetDefaultValue-only path could not write.
+	TestTrue(TEXT("ActorClass DefaultObject is the StaticMeshActor class"), ActorClassPin->DefaultObject == ExpectedClass);
+
+	return true;
+}
+
+// ============================================================================
+// Item 3: get_graph_definition must emit the function entry and result terminals (and their exec
+// wire) so a dumped function graph round-trips. Creates a function with one input and one output,
+// wires entry -> result, then asserts both terminals and the wire appear in the definition.
+// ============================================================================
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBlueprintServiceGetGraphDefinitionEntryResultTest, "VibeUE.BlueprintService.GetGraphDefinitionEmitsEntryResult",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FVibeBlueprintServiceGetGraphDefinitionEntryResultTest::RunTest(const FString&)
+{
+	using namespace VibeBlueprintServiceTestUtil;
+
+	const FString PackageName = TEXT("/Game/__VibeUETest/BP_EntryResultRoundTrip");
+	UBlueprint* Blueprint = MakeRegisteredBlueprint(*this, PackageName, AActor::StaticClass());
+	if (!Blueprint)
+	{
+		return false;
+	}
+	ON_SCOPE_EXIT { ReleaseBlueprint(Blueprint); };
+
+	const FString Path = PackageName;
+	const FString FuncName = TEXT("VibeRoundTripFunc");
+
+	// Create a user function graph with entry + result terminals.
+	UEdGraph* FuncGraph = FBlueprintEditorUtils::CreateNewGraph(
+		Blueprint, FName(*FuncName), UEdGraph::StaticClass(), UEdGraphSchema_K2::StaticClass());
+	if (!TestNotNull(TEXT("created a function graph"), FuncGraph))
+	{
+		return false;
+	}
+	FBlueprintEditorUtils::AddFunctionGraph<UClass>(Blueprint, FuncGraph, /*bIsUserCreated*/ true, (UClass*)nullptr);
+
+	// One input and one output parameter (the output guarantees a result terminal exists).
+	TestTrue(TEXT("added input parameter"),
+		UBlueprintService::AddFunctionParameter(Path, FuncName, TEXT("InValue"), TEXT("int"), false, false, TEXT(""), false, TEXT("")));
+	TestTrue(TEXT("added output parameter"),
+		UBlueprintService::AddFunctionParameter(Path, FuncName, TEXT("OutValue"), TEXT("int"), true, false, TEXT(""), false, TEXT("")));
+
+	// Locate the entry and result terminals and ensure their exec pins are wired entry -> result.
+	UK2Node_FunctionEntry* EntryNode = nullptr;
+	UK2Node_FunctionResult* ResultNode = nullptr;
+	for (UEdGraphNode* Node : FuncGraph->Nodes)
+	{
+		if (!EntryNode) { EntryNode = Cast<UK2Node_FunctionEntry>(Node); }
+		if (!ResultNode) { ResultNode = Cast<UK2Node_FunctionResult>(Node); }
+	}
+	if (!TestNotNull(TEXT("function graph has an entry terminal"), EntryNode) ||
+		!TestNotNull(TEXT("function graph has a result terminal"), ResultNode))
+	{
+		return false;
+	}
+
+	auto FindExecPin = [](UEdGraphNode* Node, EEdGraphPinDirection Dir) -> UEdGraphPin*
+	{
+		for (UEdGraphPin* Pin : Node->Pins)
+		{
+			if (Pin && Pin->Direction == Dir && Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec)
+			{
+				return Pin;
+			}
+		}
+		return nullptr;
+	};
+
+	UEdGraphPin* EntryExecOut = FindExecPin(EntryNode, EGPD_Output);
+	UEdGraphPin* ResultExecIn = FindExecPin(ResultNode, EGPD_Input);
+	if (!TestNotNull(TEXT("entry has an exec output pin"), EntryExecOut) ||
+		!TestNotNull(TEXT("result has an exec input pin"), ResultExecIn))
+	{
+		return false;
+	}
+	if (EntryExecOut->LinkedTo.Num() == 0)
+	{
+		const UEdGraphSchema* Schema = FuncGraph->GetSchema();
+		Schema->TryCreateConnection(EntryExecOut, ResultExecIn);
+	}
+	TestTrue(TEXT("entry exec is wired to result exec"), EntryExecOut->LinkedTo.Contains(ResultExecIn));
+
+	// Dump the definition and verify the terminals + their wire survive.
+	TArray<FGraphNodeDesc> OutNodes;
+	TArray<FGraphConnectionDesc> OutConnections;
+	TArray<FGraphPinDefaultDesc> OutPinDefaults;
+	FString OutError;
+	const bool bDumped = UBlueprintService::GetGraphDefinition(Path, FuncName, OutNodes, OutConnections, OutPinDefaults, OutError);
+	if (!TestTrue(FString::Printf(TEXT("GetGraphDefinition succeeded (error: %s)"), *OutError), bDumped))
+	{
+		return false;
+	}
+
+	bool bHasEntry = false;
+	bool bHasResult = false;
+	for (const FGraphNodeDesc& Desc : OutNodes)
+	{
+		if (Desc.Ref == TEXT("entry") && Desc.Type == TEXT("function_entry"))
+		{
+			bHasEntry = true;
+			TestTrue(TEXT("entry desc is marked existing"), Desc.Params.Contains(TEXT("existing")));
+		}
+		if (Desc.Ref == TEXT("result") && Desc.Type == TEXT("function_result"))
+		{
+			bHasResult = true;
+			TestTrue(TEXT("result desc is marked existing"), Desc.Params.Contains(TEXT("existing")));
+		}
+	}
+	TestTrue(TEXT("definition includes the entry terminal as an existing node"), bHasEntry);
+	TestTrue(TEXT("definition includes the result terminal as an existing node"), bHasResult);
+
+	bool bHasEntryToResultWire = false;
+	for (const FGraphConnectionDesc& Conn : OutConnections)
+	{
+		if (Conn.From.StartsWith(TEXT("entry.")) && Conn.To.StartsWith(TEXT("result.")))
+		{
+			bHasEntryToResultWire = true;
+			break;
+		}
+	}
+	TestTrue(TEXT("definition includes the entry -> result exec wire"), bHasEntryToResultWire);
+
+	return true;
+}
+
+// ============================================================================
+// Item 4: create_node_by_key must refuse a foreign variable even when EXACTLY ONE spawner matches
+// (the owner check previously ran only for >1 matches). A uniquely-named variable is created on a
+// "foreign" Blueprint; spawning its getter on an unrelated target must return an empty id.
+// ============================================================================
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBlueprintServiceForeignVariableSingleMatchTest, "VibeUE.BlueprintService.CreateNodeByKeyRefusesForeignSingleMatch",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FVibeBlueprintServiceForeignVariableSingleMatchTest::RunTest(const FString&)
+{
+	using namespace VibeBlueprintServiceTestUtil;
+
+	const FString ForeignPackage = TEXT("/Game/__VibeUETest/BP_ForeignOwner");
+	const FString TargetPackage  = TEXT("/Game/__VibeUETest/BP_ForeignVarTarget");
+	const FName   ForeignVarName(TEXT("VibeForeignVarUnique1985"));
+
+	UBlueprint* ForeignBP = MakeRegisteredBlueprint(*this, ForeignPackage, AActor::StaticClass());
+	UBlueprint* TargetBP  = MakeRegisteredBlueprint(*this, TargetPackage, AActor::StaticClass());
+	if (!ForeignBP || !TargetBP)
+	{
+		return false;
+	}
+	ON_SCOPE_EXIT { ReleaseBlueprint(ForeignBP); ReleaseBlueprint(TargetBP); };
+
+	// Add a uniquely-named bool variable to the foreign Blueprint and compile so its spawner primes.
+	FEdGraphPinType BoolType;
+	BoolType.PinCategory = UEdGraphSchema_K2::PC_Boolean;
+	if (!TestTrue(TEXT("added the foreign variable"),
+		FBlueprintEditorUtils::AddMemberVariable(ForeignBP, ForeignVarName, BoolType)))
+	{
+		return false;
+	}
+	FKismetEditorUtilities::CompileBlueprint(ForeignBP);
+	FBlueprintActionDatabase::Get().RefreshAssetActions(ForeignBP);
+
+	// Find the foreign variable's getter spawner and read its exact menu name; count matches so we
+	// know we are exercising the single-match path.
+	FString MenuName;
+	int32 MatchCount = 0;
+	const FBlueprintActionDatabase::FActionRegistry& Registry = FBlueprintActionDatabase::Get().GetAllActions();
+	for (const TPair<FObjectKey, FBlueprintActionDatabase::FActionList>& Entry : Registry)
+	{
+		for (UBlueprintNodeSpawner* Candidate : Entry.Value)
+		{
+			if (!Candidate || !Candidate->NodeClass || Candidate->NodeClass->GetName() != TEXT("K2Node_VariableGet"))
+			{
+				continue;
+			}
+			const UBlueprintVariableNodeSpawner* VarSpawner = Cast<UBlueprintVariableNodeSpawner>(Candidate);
+			if (!VarSpawner)
+			{
+				continue;
+			}
+			const FProperty* VarProp = VarSpawner->GetVarProperty();
+			if (VarProp && VarProp->GetFName() == ForeignVarName)
+			{
+				MenuName = Candidate->PrimeDefaultUiSpec(nullptr).MenuName.ToString();
+			}
+		}
+	}
+
+	// Recount matches against the resolved menu name exactly the way CreateNodeByKey does.
+	if (!MenuName.IsEmpty())
+	{
+		for (const TPair<FObjectKey, FBlueprintActionDatabase::FActionList>& Entry : Registry)
+		{
+			for (UBlueprintNodeSpawner* Candidate : Entry.Value)
+			{
+				if (!Candidate || !Candidate->NodeClass || Candidate->NodeClass->GetName() != TEXT("K2Node_VariableGet"))
+				{
+					continue;
+				}
+				if (Candidate->PrimeDefaultUiSpec(nullptr).MenuName.ToString() == MenuName)
+				{
+					++MatchCount;
+				}
+			}
+		}
+	}
+
+	if (!TestTrue(TEXT("found the foreign variable's getter spawner menu name"), !MenuName.IsEmpty()))
+	{
+		return false;
+	}
+	// A uniquely-named variable on a single Blueprint should produce exactly one matching spawner —
+	// the single-match path this test targets (item 4). Reported, not aborted: even if the registry
+	// surfaced more than one, they are all foreign and the refusal below must still hold.
+	TestEqual(TEXT("exactly one spawner matches the foreign variable's menu name (single-match path)"), MatchCount, 1);
+
+	// Spawning the foreign getter on the unrelated target must be refused (empty id).
+	const FString SpawnKey = FString::Printf(TEXT("SPAWN K2Node_VariableGet|%s"), *MenuName);
+	const FString NodeId = UBlueprintService::CreateNodeByKey(TargetPackage, TEXT("EventGraph"), SpawnKey, 0.0f, 0.0f);
+	TestTrue(TEXT("create_node_by_key refused the single foreign-variable match (empty id)"), NodeId.IsEmpty());
+
+	return true;
+}
+
+// ============================================================================
+// Item 9: compile_blueprint returns the compiler's error text. Compiles a deliberately broken
+// Blueprint (two Event BeginPlay nodes — a duplicate override event) and asserts the result reports
+// errors both by count and by message.
+// ============================================================================
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBlueprintServiceCompileBlueprintErrorsTest, "VibeUE.BlueprintService.CompileBlueprintReportsErrors",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FVibeBlueprintServiceCompileBlueprintErrorsTest::RunTest(const FString&)
+{
+	using namespace VibeBlueprintServiceTestUtil;
+
+	const FString PackageName = TEXT("/Game/__VibeUETest/BP_CompileErrors");
+	UBlueprint* Blueprint = MakeRegisteredBlueprint(*this, PackageName, AActor::StaticClass());
+	if (!Blueprint)
+	{
+		return false;
+	}
+	ON_SCOPE_EXIT { ReleaseBlueprint(Blueprint); };
+
+	const FString Path = PackageName;
+
+	UEdGraph* EventGraph = GetEventGraph(Blueprint);
+	if (!TestNotNull(TEXT("blueprint has an EventGraph"), EventGraph))
+	{
+		return false;
+	}
+
+	// First BeginPlay via the service (idempotent — creates the canonical override node).
+	const FString FirstBeginPlay = UBlueprintService::CreateNodeByKey(Path, TEXT("EventGraph"), TEXT("EVENT Actor::ReceiveBeginPlay"), 0.0f, 0.0f);
+	TestFalse(TEXT("first BeginPlay node created"), FirstBeginPlay.IsEmpty());
+
+	// Second BeginPlay added directly, bypassing the service's dedup — two identical override events
+	// are a hard compile error.
+	UFunction* BeginPlayFn = AActor::StaticClass()->FindFunctionByName(FName(TEXT("ReceiveBeginPlay")));
+	if (!TestNotNull(TEXT("resolved AActor::ReceiveBeginPlay"), BeginPlayFn))
+	{
+		return false;
+	}
+	UK2Node_Event* DupEvent = NewObject<UK2Node_Event>(EventGraph);
+	DupEvent->EventReference.SetExternalMember(FName(TEXT("ReceiveBeginPlay")), AActor::StaticClass());
+	DupEvent->bOverrideFunction = true;
+	EventGraph->AddNode(DupEvent, false, false);
+	DupEvent->CreateNewGuid();
+	DupEvent->PostPlacedNewNode();
+	DupEvent->AllocateDefaultPins();
+	DupEvent->NodePosX = 400;
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+
+	const FBlueprintCompileResult Result = UBlueprintService::CompileBlueprint(Path);
+
+	TestFalse(TEXT("compile is reported as failed"), Result.bSuccess);
+	TestTrue(TEXT("compile reports at least one error (NumErrors > 0)"), Result.NumErrors > 0);
+	TestTrue(TEXT("compile returns non-empty error text"), Result.Errors.Num() > 0);
+
+	return true;
+}
+
+// ============================================================================
+// Item 16: create_node_by_key can spawn a getter for an SCS component variable (previously returned
+// an empty id). Adds a StaticMeshComponent and spawns its getter, asserting the node exists and its
+// member reference names the component.
+// ============================================================================
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBlueprintServiceComponentGetterSpawnTest, "VibeUE.BlueprintService.CreateNodeByKeySpawnsComponentGetter",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FVibeBlueprintServiceComponentGetterSpawnTest::RunTest(const FString&)
+{
+	using namespace VibeBlueprintServiceTestUtil;
+
+	const FString PackageName = TEXT("/Game/__VibeUETest/BP_ComponentGetter");
+	const FString ComponentName = TEXT("VibeMeshThing");
+	UBlueprint* Blueprint = MakeRegisteredBlueprint(*this, PackageName, AActor::StaticClass());
+	if (!Blueprint)
+	{
+		return false;
+	}
+	ON_SCOPE_EXIT { ReleaseBlueprint(Blueprint); };
+
+	const FString Path = PackageName;
+
+	if (!TestTrue(TEXT("added a StaticMeshComponent to the blueprint"),
+		UBlueprintService::AddComponent(Path, TEXT("StaticMeshComponent"), ComponentName, TEXT(""))))
+	{
+		return false;
+	}
+
+	// Spawn the component getter via the key that used to return an empty id.
+	const FString SpawnKey = FString::Printf(TEXT("SPAWN K2Node_VariableGet|Get %s"), *ComponentName);
+	const FString NodeId = UBlueprintService::CreateNodeByKey(Path, TEXT("EventGraph"), SpawnKey, 0.0f, 0.0f);
+	if (!TestFalse(TEXT("component getter spawn returned a non-empty id"), NodeId.IsEmpty()))
+	{
+		return false;
+	}
+
+	UEdGraphNode* Node = FindNodeByGuidString(GetEventGraph(Blueprint), NodeId);
+	UK2Node_VariableGet* GetNode = Cast<UK2Node_VariableGet>(Node);
+	if (!TestNotNull(TEXT("spawned node is a K2Node_VariableGet"), GetNode))
+	{
+		return false;
+	}
+
+	TestEqual(TEXT("getter's member reference names the component"),
+		GetNode->VariableReference.GetMemberName().ToString(), ComponentName);
 
 	return true;
 }
