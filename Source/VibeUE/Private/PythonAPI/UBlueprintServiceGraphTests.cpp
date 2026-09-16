@@ -14,7 +14,7 @@
 #include "EdGraph/EdGraph.h"
 #include "EdGraph/EdGraphPin.h"
 #include "EdGraphSchema_K2.h"
-#include "K2Node_Event.h"
+#include "K2Node_CallFunction.h"
 #include "K2Node_FunctionEntry.h"
 #include "K2Node_FunctionResult.h"
 #include "K2Node_VariableGet.h"
@@ -533,8 +533,16 @@ bool FVibeBlueprintServiceForeignVariableSingleMatchTest::RunTest(const FString&
 
 // ============================================================================
 // Item 9: compile_blueprint returns the compiler's error text. Compiles a deliberately broken
-// Blueprint (two Event BeginPlay nodes — a duplicate override event) and asserts the result reports
-// errors both by count and by message.
+// Blueprint — a function-call node in the BeginPlay exec chain whose FunctionReference names a
+// function that does not exist — and asserts the result reports errors by count AND message.
+//
+// Why this fixture: an unresolved UK2Node_CallFunction (GetTargetFunction()==nullptr) is a hard
+// compile Error in FKismetCompilerContext (K2Node_CallFunction::ValidateNodeDuringCompilation emits
+// MessageLog.Error "Could not find a function named ..."). But AllocateDefaultPins skips
+// CreatePinsForFunctionCall when the function is null, so a node created bad has no exec pin and
+// would be pruned as isolated. So we spawn a REAL PrintString call (which has exec pins), wire it
+// from BeginPlay so it survives pruning, THEN corrupt its FunctionReference to a bogus self member.
+// A unique package name keeps the fixture independent of any asset left over from a prior run.
 // ============================================================================
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBlueprintServiceCompileBlueprintErrorsTest, "VibeUE.BlueprintService.CompileBlueprintReportsErrors",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -542,7 +550,7 @@ bool FVibeBlueprintServiceCompileBlueprintErrorsTest::RunTest(const FString&)
 {
 	using namespace VibeBlueprintServiceTestUtil;
 
-	const FString PackageName = TEXT("/Game/__VibeUETest/BP_CompileErrors");
+	const FString PackageName = FString::Printf(TEXT("/Game/__VibeUETest/BP_CompileErrors_%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 	UBlueprint* Blueprint = MakeRegisteredBlueprint(*this, PackageName, AActor::StaticClass());
 	if (!Blueprint)
 	{
@@ -558,25 +566,27 @@ bool FVibeBlueprintServiceCompileBlueprintErrorsTest::RunTest(const FString&)
 		return false;
 	}
 
-	// First BeginPlay via the service (idempotent — creates the canonical override node).
-	const FString FirstBeginPlay = UBlueprintService::CreateNodeByKey(Path, TEXT("EventGraph"), TEXT("EVENT Actor::ReceiveBeginPlay"), 0.0f, 0.0f);
-	TestFalse(TEXT("first BeginPlay node created"), FirstBeginPlay.IsEmpty());
-
-	// Second BeginPlay added directly, bypassing the service's dedup — two identical override events
-	// are a hard compile error.
-	UFunction* BeginPlayFn = AActor::StaticClass()->FindFunctionByName(FName(TEXT("ReceiveBeginPlay")));
-	if (!TestNotNull(TEXT("resolved AActor::ReceiveBeginPlay"), BeginPlayFn))
+	// BeginPlay -> PrintString, wired via the service. PrintString gives the call node real exec pins.
+	const FString BeginPlayId = UBlueprintService::CreateNodeByKey(Path, TEXT("EventGraph"), TEXT("EVENT Actor::ReceiveBeginPlay"), 0.0f, 0.0f);
+	const FString CallId      = UBlueprintService::CreateNodeByKey(Path, TEXT("EventGraph"), TEXT("FUNC KismetSystemLibrary::PrintString"), 320.0f, 0.0f);
+	if (!TestFalse(TEXT("BeginPlay node created"), BeginPlayId.IsEmpty()) ||
+		!TestFalse(TEXT("PrintString call node created"), CallId.IsEmpty()))
 	{
 		return false;
 	}
-	UK2Node_Event* DupEvent = NewObject<UK2Node_Event>(EventGraph);
-	DupEvent->EventReference.SetExternalMember(FName(TEXT("ReceiveBeginPlay")), AActor::StaticClass());
-	DupEvent->bOverrideFunction = true;
-	EventGraph->AddNode(DupEvent, false, false);
-	DupEvent->CreateNewGuid();
-	DupEvent->PostPlacedNewNode();
-	DupEvent->AllocateDefaultPins();
-	DupEvent->NodePosX = 400;
+	TestTrue(TEXT("wired BeginPlay.then -> Call.execute"),
+		UBlueprintService::ConnectNodes(Path, TEXT("EventGraph"), BeginPlayId, TEXT("then"), CallId, TEXT("execute")));
+
+	// Corrupt the call node's function reference to a name that does not exist on this Blueprint's own
+	// class. The node stays wired into the exec chain (so it is not pruned), and the compiler cannot
+	// resolve the function — a hard error naming the bogus function.
+	const FName BogusFunctionName(TEXT("ThisFunctionDoesNotExistZZZ"));
+	UK2Node_CallFunction* CallNode = Cast<UK2Node_CallFunction>(FindNodeByGuidString(EventGraph, CallId));
+	if (!TestNotNull(TEXT("resolved the PrintString call node to corrupt"), CallNode))
+	{
+		return false;
+	}
+	CallNode->FunctionReference.SetSelfMember(BogusFunctionName);
 	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
 
 	const FBlueprintCompileResult Result = UBlueprintService::CompileBlueprint(Path);
@@ -584,6 +594,18 @@ bool FVibeBlueprintServiceCompileBlueprintErrorsTest::RunTest(const FString&)
 	TestFalse(TEXT("compile is reported as failed"), Result.bSuccess);
 	TestTrue(TEXT("compile reports at least one error (NumErrors > 0)"), Result.NumErrors > 0);
 	TestTrue(TEXT("compile returns non-empty error text"), Result.Errors.Num() > 0);
+
+	// The error text should name the missing function.
+	bool bErrorMentionsBogusName = false;
+	for (const FString& Err : Result.Errors)
+	{
+		if (Err.Contains(BogusFunctionName.ToString()))
+		{
+			bErrorMentionsBogusName = true;
+			break;
+		}
+	}
+	TestTrue(TEXT("an error message names the missing function"), bErrorMentionsBogusName);
 
 	return true;
 }
