@@ -598,6 +598,12 @@ bool FVibeBlueprintServiceCompileBlueprintErrorsTest::RunTest(const FString&)
 	CallNode->FunctionReference.SetSelfMember(BogusFunctionName);
 	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
 
+	// The compiler logs the unresolved-function error at Error verbosity (LogBlueprint,
+	// "[Compiler] Could not find a function named ..."), which the automation framework would
+	// otherwise turn into a test failure. Register it as expected. Occurrences = 0 means "must occur
+	// at least once" — this is exactly the error the corrupted node is designed to provoke.
+	AddExpectedError(TEXT("Could not find a function named"), EAutomationExpectedErrorFlags::Contains, 0);
+
 	const FBlueprintCompileResult Result = UBlueprintService::CompileBlueprint(Path);
 
 	TestFalse(TEXT("compile is reported as failed"), Result.bSuccess);
