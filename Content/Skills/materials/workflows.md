@@ -199,11 +199,12 @@ created = mns.batch_create_expressions(path, types, names, xs, ys)
 mns.batch_connect_expressions(path, source_ids, output_names, target_ids, input_names)
 mns.batch_set_properties(path, node_ids, property_names, property_values)
 
-# Wiring a single node into a material output uses the engine MaterialTools call:
-call_tool(
-    tool_name="connect_to_output",
-    toolset_name="editor_toolset.toolsets.material.MaterialTools",
-    arguments={"expression": created[0].id, "output_name": "", "material_property": "MP_BaseColor"},
-)
+# Wire a node into a material output with the VibeUE service (output_name="" = output 0;
+# property accepts "BaseColor" or "MP_BaseColor"). Returns True only after a read-back.
+mns.connect_expression_to_output(path, created[0].id, "", "BaseColor")
+# mns.disconnect_output(path, "BaseColor")   # clear it again
+
+# created[0].id is session-specific; created[0].object_path is durable and also accepted.
+# (The engine MaterialTools.connect_to_output call_tool path is interchangeable.)
 ```
 Runnable: `scripts/material_graph_batch.txt`.
