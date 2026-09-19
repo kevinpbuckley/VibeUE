@@ -6,6 +6,7 @@ vibeue_classes:
   - WidgetService
   - InputService
   - PerformanceService
+  - PIEActorService
 unreal_classes:
   - UEditorEngine
   - FRequestPlaySessionParams
@@ -190,6 +191,69 @@ unreal.WidgetService.remove_widget_from_pie(handle)
 
 `unreal.WidgetService.is_pie_running()` also still exists and is handy from inside Python; for
 tool-level control prefer the engine `EditorAppToolset` actions above.
+
+## Spawning test actors in PIE — `PIEActorService`
+
+**Why this exists:** you cannot spawn an actor into a running PIE world from Python any other way.
+`unreal.World` / `unreal.GameplayStatics` expose no spawn (the deferred-spawn entry points are
+`BlueprintInternalUseOnly`), `EditorActorSubsystem.spawn_actor_from_class` targets the **editor**
+world, and the engine `SceneTools` toolset refuses with "Cannot create actors while PIE is active".
+`PIEActorService` resolves the live PIE world by role and spawns a **transient** actor into it — a
+blocker, a test dummy, a trigger volume — with no Blueprint and no editor-world contamination. Run it
+via `execute_python_code`.
+
+**Selector grammar** (strict — anything else returns `INVALID_SELECTOR`):
+
+| Selector | Resolves to |
+|----------|-------------|
+| `"server"` | PIE instance 0 — the standalone world, the listen host, or the dedicated server |
+| `"client"` | the single client world (instance ≥ 1); `AMBIGUOUS_WORLD` if >1, `WORLD_NOT_FOUND` if none |
+| `"client:N"` | client instance N (N ≥ 1) |
+| `"instance:N"` | the exact PIE instance N (N ≥ 0) |
+
+Worlds come from the PIE world contexts only; the editor world and the ~100 stale `/Memory/UEDPIE_*`
+shells are never used. No PIE at all → `PIE_NOT_RUNNING`.
+
+**Authority rule:** a spawn into a **client** world is cosmetic and never replicates, so it is refused
+with `CLIENT_REQUIRES_OPT_IN` unless you pass `allow_client_local=True`. Spawn on `"server"` for
+anything that must exist for every player.
+
+```python
+import unreal, json
+
+# Drop a static-mesh actor as a blocker in front of the host, then verify and clean up.
+t = unreal.Transform(location=unreal.Vector(500, 0, 100))
+res = json.loads(unreal.PIEActorService.spawn_actor(
+    "server", "/Script/Engine.StaticMeshActor", t))
+assert res["success"], res
+handle = res["handle"]          # "<session_serial>:<guid>" — dies with this PIE session
+print(res["actor_path"], res["net_mode"], res["is_authority"])
+
+# ... run whatever movement / collision check needs the blocker ...
+
+# Idempotent teardown before StopPIE.
+print(unreal.PIEActorService.destroy_all())     # {"success": true, "destroyed": 1, "already_gone": 0}
+```
+
+`resolve_world("server")` returns `{success, world_path, net_mode, pie_instance, is_authority,
+actor_count}` and is the cheap way to confirm a session's role before spawning. `destroy_actor(handle)`
+is idempotent per handle: it destroys the actor and **keeps the record**, so calling it again returns
+`success: true, already_gone: true` (never `UNKNOWN_HANDLE`). A consumed handle stays in
+`list_spawned()` as `alive: false` until PIE ends — `list_spawned()` is the full spawn ledger for the
+session, not just the live actors — and `destroy_all()` counts an already-consumed actor under
+`already_gone` rather than `destroyed`.
+
+**Error codes:** `INVALID_SELECTOR`, `PIE_NOT_RUNNING`, `WORLD_NOT_FOUND`, `AMBIGUOUS_WORLD`,
+`CLASS_NOT_FOUND`, `NOT_AN_ACTOR_CLASS`, `CLASS_ABSTRACT`, `CLASS_DEPRECATED`, `CLASS_REINSTANCED`,
+`INVALID_TRANSFORM`, `INVALID_COLLISION_HANDLING`, `CLIENT_REQUIRES_OPT_IN`, `SPAWN_REJECTED`
+(the placement collided under the chosen collision policy), `UNKNOWN_HANDLE`, `STALE_HANDLE`.
+
+> **Gotcha — handles die with the PIE session.** `EndPIE` bumps an internal session serial and clears
+> the registry, so a handle kept across a stop/start reports `STALE_HANDLE`. And the same
+> Python-globals rule as everywhere else applies with teeth here: **release any global holding a
+> spawned actor before `StopPIE`** (`del blocker` / set to `None`, or `vibeue.release_globals`), or
+> the editor asserts on PIE teardown ("Object from PIE level still referenced"). The returned JSON is
+> a string, so keeping `res`/`handle` is safe — only a live actor reference is the hazard.
 
 ## Driving gameplay input in PIE — `InputService` (issue #550)
 

@@ -63,7 +63,8 @@ tool in a toolset (the most token-heavy thing here); reach for a **skill** plus 
 AnimMontage, AnimGraph, Landscape(+Material), Foliage, MetaSound, SoundCue, Niagara(+Emitter,
 +ScratchPad), StateTree, BehaviorTree, Blackboard, Input, EnumStruct, UVMapping,
 RuntimeVirtualTexture, MapBlockout, GameplayTag, Viewport, Actor, Engine/ProjectSettings,
-**Performance** (`unreal.PerformanceService.frame_timing()`).
+**Performance** (`unreal.PerformanceService.frame_timing()`), **PIEActor**
+(`unreal.PIEActorService.spawn_actor(...)` — spawn/destroy transient actors in a running PIE world).
 These overlap-trimmed services keep only what the engine lacks — for plain asset/actor/blueprint
 basics the engine's own tools may be simpler (below).
 
@@ -220,6 +221,12 @@ unreal.PerformanceService.set_background_throttling(True)    # restore when done
 To drive gameplay in PIE without OS focus or input-asset remapping:
 `unreal.InputService.inject_action("/Game/Input/IA_Fire")` (Enhanced Input, one tick per call) and
 `unreal.InputService.inject_key("SpaceBar")` (raw key via Slate).
+
+To spawn a test actor (blocker, dummy, trigger) into a live PIE world — the one thing native/engine
+spawn can't do (they hit the editor world or refuse during PIE):
+`unreal.PIEActorService.spawn_actor("server", "/Script/Engine.StaticMeshActor", unreal.Transform())`
+(role selector `server`/`client`/`client:N`/`instance:N`; transient; `destroy_all()` to clean up;
+handles die with the PIE session). See the `pie-testing` skill.
 
 ---
 
