@@ -115,8 +115,15 @@ struct FMaterialExpressionInfo
 {
 	GENERATED_BODY()
 
+	/** Session-specific id ("<Class>_<pointer>"). Stable within one editor session but NOT across
+	 *  restarts — persist ObjectPath if you need a durable reference. Accepted by the id-based lookups. */
 	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
 	FString Id;
+
+	/** Full object path of this expression (e.g. "/Game/M.M:MaterialExpressionConstant3Vector_0").
+	 *  Session-independent; also accepted anywhere an ExpressionId is taken. */
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	FString ObjectPath;
 
 	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
 	FString ClassName;
@@ -319,11 +326,10 @@ struct FBatchCreateDescriptor
  * - get_pins: Get expression pin information
  * 
  * Connections:
- * - connect: Connect two expressions
- * - disconnect: Disconnect an input
  * - list_connections: List all connections
- * - connect_to_output: Connect expression to material output
- * - disconnect_output: Disconnect material output
+ * - batch_connect_expressions: Connect multiple expression pairs (expression-to-expression)
+ * - connect_expression_to_output: Connect an expression output to a material output (BaseColor, Normal, ...)
+ * - disconnect_output: Clear a material output's input
  * 
  * Properties:
  * - get_property: Get expression property value
@@ -359,12 +365,16 @@ struct FBatchCreateDescriptor
  *   # Discover expression types
  *   types = unreal.MaterialNodeService.discover_types("", "Constant", 20)
  * 
- *   # Create expression
- *   expr = unreal.MaterialNodeService.create_expression("/Game/M_Test", "Constant3Vector", 0, 0)
- * 
- *   # Connect to material output
- *   unreal.MaterialNodeService.connect_to_output("/Game/M_Test", expr.id, "", "BaseColor")
- * 
+ *   # Create expressions (batch)
+ *   nodes = unreal.MaterialNodeService.batch_create_expressions("/Game/M_Test", ["Constant3Vector"], [0], [0])
+ *   expr = nodes[0]
+ *
+ *   # Connect an expression output to a material output.
+ *   # expr.id is session-specific; expr.object_path is durable and also accepted here.
+ *   unreal.MaterialNodeService.connect_expression_to_output("/Game/M_Test", expr.id, "", "BaseColor")
+ *   # ... or clear it again:
+ *   unreal.MaterialNodeService.disconnect_output("/Game/M_Test", "BaseColor")
+ *
  *   # Create function call node
  *   func = unreal.MaterialNodeService.create_function_call("/Game/M_Test", "/Engine/Functions/MF_Noise", -500, 0)
  * 
@@ -718,6 +728,54 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
 	static TArray<FMaterialOutputConnectionInfo> GetOutputConnections(const FString& MaterialPath);
+
+	/**
+	 * Connect an expression's output to one of the material's output properties
+	 * (BaseColor, Normal, Roughness, ...) — the final step of "create nodes -> connect
+	 * nodes -> connect to material output -> compile/save".
+	 * Maps to action="connect_expression_to_output"
+	 *
+	 * This is the writer that closes the gap left by the expression-to-expression
+	 * BatchConnectExpressions: previously a material output could only be wired with
+	 * unreal.MaterialEditingLibrary.
+	 *
+	 * @param MaterialPath Full path to the material
+	 * @param ExpressionId Source expression id (session id from create/list) OR its object_path
+	 * @param OutputName Source output pin name; "" selects output 0. Unknown names are rejected.
+	 * @param PropertyName Material output property. Accepts friendly ("BaseColor") and enum
+	 *        ("MP_BaseColor") spellings, case-insensitive. Unknown names are rejected.
+	 * @return True only after the connection is verified via a read-back. False (with a logged
+	 *         reason and NO graph mutation) when the material, expression, output or property is invalid.
+	 *
+	 * Example:
+	 *   nodes = unreal.MaterialNodeService.batch_create_expressions("/Game/M_Test", ["Constant3Vector"], [0], [0])
+	 *   unreal.MaterialNodeService.connect_expression_to_output("/Game/M_Test", nodes[0].id, "", "BaseColor")
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
+	static bool ConnectExpressionToOutput(
+		const FString& MaterialPath,
+		const FString& ExpressionId,
+		const FString& OutputName,
+		const FString& PropertyName);
+
+	/**
+	 * Clear the expression wired to a material output property.
+	 * Maps to action="disconnect_output"
+	 *
+	 * Idempotent: returns true if the property was already empty. Returns false (with a logged
+	 * reason and no graph mutation) only when the property name is unknown.
+	 *
+	 * @param MaterialPath Full path to the material
+	 * @param PropertyName Material output property. Accepts "BaseColor" and "MP_BaseColor" spellings.
+	 * @return True if the property's input is empty afterward.
+	 *
+	 * Example:
+	 *   unreal.MaterialNodeService.disconnect_output("/Game/M_Test", "BaseColor")
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
+	static bool DisconnectOutput(
+		const FString& MaterialPath,
+		const FString& PropertyName);
 
 	// =================================================================
 	// Batch Operations
@@ -1115,7 +1173,9 @@ private:
 	static TArray<FString> GetExpressionOutputNames(UMaterialExpression* Expression);
 	static UClass* ResolveExpressionClass(const FString& ClassName);
 	static FMaterialExpressionInfo BuildExpressionInfo(UMaterialExpression* Expression);
-	static EMaterialProperty StringToMaterialProperty(const FString& PropertyName);
+	/** Strict material-property mapper. Accepts friendly ("BaseColor") and enum ("MP_BaseColor")
+	 *  spellings, case-insensitive. Returns false and leaves OutProperty untouched for unknown names. */
+	static bool StringToMaterialProperty(const FString& PropertyName, EMaterialProperty& OutProperty);
 	static void RefreshMaterialGraph(UMaterial* Material);
 	static FString FunctionInputTypeToString(int32 InputType);
 	static int32 StringToFunctionInputType(const FString& TypeName);

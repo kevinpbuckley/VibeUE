@@ -150,26 +150,69 @@ UMaterial* UMaterialNodeService::LoadMaterialAsset(const FString& MaterialPath)
 
 UMaterialExpression* UMaterialNodeService::FindExpressionById(UMaterial* Material, const FString& ExpressionId)
 {
-	if (!Material) return nullptr;
-	
+	// Strict identifier validation. An empty/garbage id must resolve to NOTHING — the old code
+	// fell through to FCString::Atoi (which returns 0 for non-numeric input), so a bogus or empty
+	// id silently resolved to expression index 0, and any writer using this helper mutated the
+	// wrong node. Empty, malformed, stale, out-of-range and foreign ids now all return nullptr.
+	if (!Material || ExpressionId.IsEmpty())
+	{
+		return nullptr;
+	}
+
 	TArray<UMaterialExpression*> Expressions;
 	Material->GetAllExpressionsInMaterialAndFunctionsOfType<UMaterialExpression>(Expressions);
-	
+
+	// (1) Exact VibeUE session id ("<Class>_<pointer>") — matches this material's graph,
+	//     including expressions inside referenced material functions.
 	for (UMaterialExpression* Expression : Expressions)
 	{
-		if (GetExpressionId(Expression) == ExpressionId)
+		if (Expression && GetExpressionId(Expression) == ExpressionId)
 		{
 			return Expression;
 		}
 	}
-	
-	// Try matching by index
-	int32 Index = FCString::Atoi(*ExpressionId);
-	if (Index >= 0 && Index < Expressions.Num())
+
+	// (2) Object path ("/Game/M.M:MaterialExpressionConstant_0") or bare subobject name
+	//     ("MaterialExpressionConstant_0"), accepted ONLY for expressions this material owns
+	//     directly (Outer == Material). This refuses a foreign material's expression and a nested
+	//     material-function expression addressed through the wrong graph — both would otherwise
+	//     be reachable objects, so ownership is what makes the path legal.
+	if (ExpressionId.Contains(TEXT(":")) || ExpressionId.Contains(TEXT(".")) ||
+		ExpressionId.StartsWith(TEXT("MaterialExpression")))
 	{
-		return Expressions[Index];
+		for (UMaterialExpression* Expression : Expressions)
+		{
+			if (!Expression || Expression->GetOuter() != Material)
+			{
+				continue;
+			}
+			if (Expression->GetPathName() == ExpressionId || Expression->GetName() == ExpressionId)
+			{
+				return Expression;
+			}
+		}
 	}
-	
+
+	// (3) Strict whole-string, range-checked numeric index (back-compat). Every character must be a
+	//     digit — a leading sign, trailing text or an out-of-range value is rejected, not truncated.
+	bool bAllDigits = true;
+	for (const TCHAR Ch : ExpressionId)
+	{
+		if (!FChar::IsDigit(Ch))
+		{
+			bAllDigits = false;
+			break;
+		}
+	}
+	if (bAllDigits)
+	{
+		const int32 Index = FCString::Atoi(*ExpressionId);
+		if (Index >= 0 && Index < Expressions.Num())
+		{
+			return Expressions[Index];
+		}
+	}
+
 	return nullptr;
 }
 
@@ -261,13 +304,19 @@ int32 UMaterialNodeService::FindOutputIndexByName(UMaterialExpression* Expressio
 		}
 	}
 	
-	int32 Index = FCString::Atoi(*OutputName);
-	if (Index >= 0 && Index < Outputs.Num())
+	if (OutputName.IsNumeric())
 	{
-		return Index;
+		int32 Index = FCString::Atoi(*OutputName);
+		if (Index >= 0 && Index < Outputs.Num())
+		{
+			return Index;
+		}
 	}
-	
-	return 0;
+
+	// A non-empty output name that matches nothing is unresolved. Return INDEX_NONE so callers can
+	// reject it; ConnectFunctionExpressions clamps a negative index back to 0 to preserve its old
+	// lenient behaviour, while ConnectExpressionToOutput treats it as a hard failure.
+	return INDEX_NONE;
 }
 
 TArray<FString> UMaterialNodeService::GetExpressionInputNames(UMaterialExpression* Expression)
@@ -341,6 +390,7 @@ FMaterialExpressionInfo UMaterialNodeService::BuildExpressionInfo(UMaterialExpre
 	if (!Expression) return Info;
 	
 	Info.Id = GetExpressionId(Expression);
+	Info.ObjectPath = Expression->GetPathName();
 	Info.ClassName = Expression->GetClass()->GetName();
 	Info.DisplayName = Info.ClassName.Replace(TEXT("MaterialExpression"), TEXT(""));
 	Info.PosX = Expression->MaterialExpressionEditorX;
@@ -369,9 +419,9 @@ FMaterialExpressionInfo UMaterialNodeService::BuildExpressionInfo(UMaterialExpre
 	return Info;
 }
 
-EMaterialProperty UMaterialNodeService::StringToMaterialProperty(const FString& PropertyName)
+bool UMaterialNodeService::StringToMaterialProperty(const FString& PropertyName, EMaterialProperty& OutProperty)
 {
-	static TMap<FString, EMaterialProperty> PropertyMap = {
+	static const TMap<FString, EMaterialProperty> PropertyMap = {
 		{TEXT("BaseColor"), MP_BaseColor},
 		{TEXT("Metallic"), MP_Metallic},
 		{TEXT("Specular"), MP_Specular},
@@ -392,9 +442,26 @@ EMaterialProperty UMaterialNodeService::StringToMaterialProperty(const FString& 
 		{TEXT("ShadingModel"), MP_ShadingModel},
 		{TEXT("Displacement"), MP_Displacement},
 	};
-	
-	EMaterialProperty* Found = PropertyMap.Find(PropertyName);
-	return Found ? *Found : MP_BaseColor;
+
+	// Normalise: trim, and accept the "MP_BaseColor" enum spelling by dropping the leading "MP_".
+	FString Key = PropertyName.TrimStartAndEnd();
+	if (Key.StartsWith(TEXT("MP_"), ESearchCase::IgnoreCase))
+	{
+		Key = Key.RightChop(3);
+	}
+
+	for (const TPair<FString, EMaterialProperty>& Pair : PropertyMap)
+	{
+		if (Pair.Key.Equals(Key, ESearchCase::IgnoreCase))
+		{
+			OutProperty = Pair.Value;
+			return true;
+		}
+	}
+
+	// Unknown property name: refuse (do NOT default to MP_BaseColor — a bad name must not silently
+	// rewire the wrong material output).
+	return false;
 }
 
 void UMaterialNodeService::RefreshMaterialGraph(UMaterial* Material)
@@ -2689,8 +2756,153 @@ TArray<FMaterialOutputConnectionInfo> UMaterialNodeService::GetOutputConnections
 	CheckProperty(MP_Refraction, TEXT("Refraction"));
 	CheckProperty(MP_PixelDepthOffset, TEXT("PixelDepthOffset"));
 	CheckProperty(MP_ShadingModel, TEXT("ShadingModel"));
-	
+
 	return Results;
+}
+
+bool UMaterialNodeService::ConnectExpressionToOutput(
+	const FString& MaterialPath,
+	const FString& ExpressionId,
+	const FString& OutputName,
+	const FString& PropertyName)
+{
+	UMaterial* Material = LoadMaterialAsset(MaterialPath);
+	if (!Material)
+	{
+		return false; // LoadMaterialAsset already logged the reason
+	}
+
+	// --- Validate everything BEFORE mutating the graph. Any failure returns false with no change. ---
+
+	UMaterialExpression* Expression = FindExpressionById(Material, ExpressionId);
+	if (!Expression)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("UMaterialNodeService::ConnectExpressionToOutput: expression id '%s' did not resolve in '%s'"),
+			*ExpressionId, *MaterialPath);
+		return false;
+	}
+
+	EMaterialProperty Property = MP_MAX;
+	if (!StringToMaterialProperty(PropertyName, Property))
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("UMaterialNodeService::ConnectExpressionToOutput: unknown material output property '%s'"),
+			*PropertyName);
+		return false;
+	}
+
+	// "" means output 0; any other name is resolved strictly (FindOutputIndexByName returns
+	// INDEX_NONE for a name that matches nothing).
+	int32 OutputIndex;
+	if (OutputName.IsEmpty())
+	{
+		OutputIndex = (Expression->GetOutputs().Num() > 0) ? 0 : INDEX_NONE;
+	}
+	else
+	{
+		OutputIndex = FindOutputIndexByName(Expression, OutputName);
+	}
+	if (OutputIndex < 0)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("UMaterialNodeService::ConnectExpressionToOutput: output '%s' not found on %s"),
+			*OutputName, *Expression->GetClass()->GetName());
+		return false;
+	}
+
+	FExpressionInput* Input = Material->GetExpressionInputForProperty(Property);
+	if (!Input)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("UMaterialNodeService::ConnectExpressionToOutput: material '%s' has no input for property '%s'"),
+			*MaterialPath, *PropertyName);
+		return false;
+	}
+
+	// --- Wire it up (same semantics as UMaterialEditingLibrary::ConnectMaterialProperty). ---
+	FScopedTransaction Transaction(NSLOCTEXT("MaterialNodeService", "Connect Expression To Output", "Connect Expression To Output"));
+	Material->Modify();
+
+	Input->Connect(OutputIndex, Expression);
+
+	RefreshMaterialGraph(Material); // MarkPackageDirty + PreEditChange(nullptr)/PostEditChange + graph rebuild
+
+	// --- Read back the authoritative property input pointer before reporting success. This covers
+	//     every property (GetOutputConnections only surfaces a display subset — e.g. ClearCoat and
+	//     Displacement are omitted there). ---
+	FExpressionInput* Verify = Material->GetExpressionInputForProperty(Property);
+	const bool bConnected = Verify && Verify->Expression == Expression && Verify->OutputIndex == OutputIndex;
+	if (!bConnected)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("UMaterialNodeService::ConnectExpressionToOutput: read-back failed for '%s' on '%s'"),
+			*PropertyName, *MaterialPath);
+		return false;
+	}
+
+	UE_LOG(LogTemp, Log,
+		TEXT("UMaterialNodeService::ConnectExpressionToOutput: connected %s[%d] -> %s.%s"),
+		*GetExpressionId(Expression), OutputIndex, *MaterialPath, *PropertyName);
+	return true;
+}
+
+bool UMaterialNodeService::DisconnectOutput(
+	const FString& MaterialPath,
+	const FString& PropertyName)
+{
+	UMaterial* Material = LoadMaterialAsset(MaterialPath);
+	if (!Material)
+	{
+		return false;
+	}
+
+	EMaterialProperty Property = MP_MAX;
+	if (!StringToMaterialProperty(PropertyName, Property))
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("UMaterialNodeService::DisconnectOutput: unknown material output property '%s'"),
+			*PropertyName);
+		return false;
+	}
+
+	FExpressionInput* Input = Material->GetExpressionInputForProperty(Property);
+	if (!Input)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("UMaterialNodeService::DisconnectOutput: material '%s' has no input for property '%s'"),
+			*MaterialPath, *PropertyName);
+		return false;
+	}
+
+	// Idempotent: already empty is success, and we make no change (so no spurious dirtying).
+	if (Input->Expression == nullptr)
+	{
+		return true;
+	}
+
+	FScopedTransaction Transaction(NSLOCTEXT("MaterialNodeService", "Disconnect Material Output", "Disconnect Material Output"));
+	Material->Modify();
+
+	Input->Expression = nullptr;
+	Input->OutputIndex = 0;
+
+	RefreshMaterialGraph(Material);
+
+	// Read back — the property's input must be empty afterward.
+	FExpressionInput* Verify = Material->GetExpressionInputForProperty(Property);
+	const bool bCleared = (Verify != nullptr) && (Verify->Expression == nullptr);
+	if (!bCleared)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("UMaterialNodeService::DisconnectOutput: read-back still shows a connection for '%s' on '%s'"),
+			*PropertyName, *MaterialPath);
+		return false;
+	}
+
+	UE_LOG(LogTemp, Log,
+		TEXT("UMaterialNodeService::DisconnectOutput: cleared %s.%s"), *MaterialPath, *PropertyName);
+	return true;
 }
 
 // =================================================================

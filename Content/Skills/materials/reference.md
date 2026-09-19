@@ -67,8 +67,10 @@ Property gotchas: `MaterialExpressionTypeInfo` uses `display_name` (not `name`);
 5. Set `ParameterName`/`Group` FIRST via `set_expression_property` (they're excluded from batch props).
 6. `batch_set_properties` for the rest.
 7. `batch_connect_expressions` using the `connections` array (mapped ids).
-8. Engine `MaterialTools.connect_to_output` (`call_tool`, args `expression`, `output_name`,
-   `material_property` e.g. `"MP_BaseColor"`) for each `output_connections` entry.
+8. `connect_expression_to_output(path, expr_id, output_name, property)` for each `output_connections`
+   entry — `property` takes the friendly name (`"BaseColor"`) or the `MP_` spelling; `output_name=""`
+   is output 0. (Interchangeable with the engine `MaterialTools.connect_to_output` `call_tool`.)
+   Use `disconnect_output(path, property)` to clear one.
 9. `compile_material`.
 
 Runnable: `scripts/export_graph.txt` (export side).
