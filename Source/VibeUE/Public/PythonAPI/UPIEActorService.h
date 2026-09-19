@@ -152,6 +152,15 @@ public:
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|PIE|Actors")
 	static FString ListSpawned();
 
+	/**
+	 * Unhook the FEditorDelegates::EndPIE callback and drop the spawn registry. Called from the
+	 * module's ShutdownModule. The hook is a raw static function pointer INTO THIS DLL, so leaving
+	 * it registered past an unload (plugin reload / Live Coding) leaves FEditorDelegates holding a
+	 * dangling callback — the same class of teardown bug the module unhooks its other delegates for.
+	 * Safe no-op when nothing was ever spawned. GAME-THREAD ONLY.
+	 */
+	static void ShutdownEndPIEHook();
+
 private:
 	// Test-only surface (no UFUNCTION): let the automation tests exercise the pure validators and
 	// read the session serial without a running PIE session. Reached through the friend struct.

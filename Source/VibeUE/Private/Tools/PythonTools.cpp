@@ -189,25 +189,35 @@ FString UPythonTools::ExecutePythonCode(const FString& Code, bool bAutoSave)
 	// script ran. Empty when auto_save is false, when the sweep is skipped, or when nothing was dirty.
 	TArray<FString> SavedPackageNames;
 
+	// Whether the sweep actually ran, and why not when it did not. Reported verbatim in the result
+	// JSON: the caller already knows what it PASSED as auto_save, so echoing the argument back tells
+	// it nothing — what it cannot otherwise tell is whether its unsaved editor edits reached disk.
+	bool bAutoSaveRan = false;
+	FString AutoSaveNote;
+
 	// Auto-save all dirty packages (headless) before executing Python code, unless the caller opted
 	// out (auto_save=false), the previous run crashed (dirty assets may be corrupt), GEditor is
 	// missing, or we're in PIE.
 	if (!bAutoSave)
 	{
+		AutoSaveNote = TEXT("opted_out");
 		UE_LOG(LogPythonTools, Verbose, TEXT("Auto-save skipped: auto_save=false — running the script without flushing dirty packages"));
 	}
 	else
 	{
 		if (bLastPythonExecutionCrashed)
 		{
+			AutoSaveNote = TEXT("previous_run_crashed");
 			UE_LOG(LogPythonTools, Warning, TEXT("Skipping auto-save: previous Python execution crashed — dirty assets may be corrupt"));
 		}
 		else if (!GEditor)
 		{
+			AutoSaveNote = TEXT("editor_unavailable");
 			UE_LOG(LogPythonTools, Warning, TEXT("Cannot auto-save: GEditor is not available"));
 		}
 		else if (GIsPlayInEditorWorld)
 		{
+			AutoSaveNote = TEXT("pie_active");
 			UE_LOG(LogPythonTools, Warning, TEXT("Cannot auto-save: Currently in PIE mode"));
 		}
 		else
@@ -223,6 +233,10 @@ FString UPythonTools::ExecutePythonCode(const FString& Code, bool bAutoSave)
 			TArray<UPackage*> DirtyPackages;
 			FEditorFileUtils::GetDirtyContentPackages(DirtyPackages);
 			FEditorFileUtils::GetDirtyWorldPackages(DirtyPackages);
+
+			// The sweep reached the point of inspecting the editor's dirty set — that is what
+			// "it ran" means, whether or not anything was dirty.
+			bAutoSaveRan = true;
 
 			if (DirtyPackages.Num() == 0)
 			{
@@ -246,6 +260,10 @@ FString UPythonTools::ExecutePythonCode(const FString& Code, bool bAutoSave)
 				}
 				else
 				{
+					// Some or all of the targeted packages did not reach disk. Say so rather than
+					// letting SavedPackages imply a clean flush.
+					bAutoSaveRan = false;
+					AutoSaveNote = TEXT("save_failed");
 					UE_LOG(LogPythonTools, Warning, TEXT("Auto-save (headless) completed with warnings or errors"));
 				}
 			}
@@ -254,9 +272,10 @@ FString UPythonTools::ExecutePythonCode(const FString& Code, bool bAutoSave)
 
 	// Attach the auto-save report to any JSON result object returned below, so every reply (success
 	// or error) carries auto_save + saved_packages.
-	auto AddSaveInfo = [&bAutoSave, &SavedPackageNames](const TSharedPtr<FJsonObject>& Obj)
+	auto AddSaveInfo = [&bAutoSaveRan, &AutoSaveNote, &SavedPackageNames](const TSharedPtr<FJsonObject>& Obj)
 	{
-		Obj->SetBoolField(TEXT("auto_save"), bAutoSave);
+		Obj->SetBoolField(TEXT("auto_save"), bAutoSaveRan);
+		Obj->SetStringField(TEXT("auto_save_note"), AutoSaveNote);
 		TArray<TSharedPtr<FJsonValue>> SavedArray;
 		for (const FString& Name : SavedPackageNames)
 		{
@@ -319,7 +338,8 @@ FString UPythonTools::ExecutePythonCode(const FString& Code, bool bAutoSave)
 
 	// Carry the auto-save report through to the success JSON alongside the execution result.
 	FPythonExecutionResult Value = Result.GetValue();
-	Value.bAutoSave = bAutoSave;
+	Value.bAutoSave = bAutoSaveRan;
+	Value.AutoSaveNote = AutoSaveNote;
 	Value.SavedPackages = SavedPackageNames;
 	return ConvertExecutionResultToJson(Value);
 }
@@ -498,7 +518,10 @@ FString UPythonTools::ConvertExecutionResultToJson(const VibeUE::FPythonExecutio
 		FVibeUEPythonResultLog::GetLastResultPathForPid(FPlatformProcess::GetCurrentProcessId()));
 
 	// Auto-save report (issue #433 follow-up): whether the pre-execution sweep ran and what it wrote.
+	// auto_save is the OUTCOME, not an echo of the argument — auto_save_note names the reason
+	// whenever it is false, so "opted out" is never confused with "ran, nothing was dirty".
 	JsonObj->SetBoolField(TEXT("auto_save"), Result.bAutoSave);
+	JsonObj->SetStringField(TEXT("auto_save_note"), Result.AutoSaveNote);
 	TArray<TSharedPtr<FJsonValue>> SavedArray;
 	for (const FString& Name : Result.SavedPackages)
 	{

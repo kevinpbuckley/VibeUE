@@ -121,10 +121,20 @@ struct VIBEUE_API FPythonExecutionResult
 	bool bTimedOut = false;
 
 	/**
-	 * Whether the pre-execution auto-save sweep ran for this call (execute_python_code's auto_save
-	 * argument). Defaults true to match the historical behaviour; set false when the caller opted out.
+	 * Whether the pre-execution auto-save sweep ACTUALLY RAN for this call — not merely whether the
+	 * caller asked for it. The caller already knows what it passed in execute_python_code's auto_save
+	 * argument; what it cannot otherwise tell is whether its unsaved editor edits were flushed to
+	 * disk, which is the only thing that matters downstream. False means nothing was written, and
+	 * AutoSaveNote says why. Defaults true to match the historical behaviour.
 	 */
 	bool bAutoSave = true;
+
+	/**
+	 * Empty when the sweep ran and completed cleanly. Otherwise a short machine-readable reason:
+	 * "opted_out", "previous_run_crashed", "editor_unavailable", "pie_active", or "save_failed"
+	 * (the sweep ran but the package save reported errors, so SavedPackages lists what it attempted).
+	 */
+	FString AutoSaveNote;
 
 	/** Names of the packages written to disk by the pre-execution auto-save sweep (empty if none). */
 	TArray<FString> SavedPackages;

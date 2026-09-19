@@ -667,6 +667,19 @@ FString UPIEActorService::ListSpawned()
 	return OkJson(Obj);
 }
 
+void UPIEActorService::ShutdownEndPIEHook()
+{
+	if (GEndPIEHookRegistered)
+	{
+		FEditorDelegates::EndPIE.Remove(GEndPIEHandle);
+		GEndPIEHandle.Reset();
+		GEndPIEHookRegistered = false;
+	}
+	// Any surviving records point at PIE actors that are already gone (or about to be); the service
+	// never destroys on shutdown, it just stops tracking.
+	GSpawnRegistry.Empty();
+}
+
 // =============================================================================
 // Test-only surface (no UFUNCTION) — reached through FPIEActorServiceTestAccess
 // =============================================================================

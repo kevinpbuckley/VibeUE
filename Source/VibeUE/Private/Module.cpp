@@ -24,6 +24,7 @@
 #include "Misc/FileHelper.h"
 #include "PythonAPI/BehaviorTreeServiceInternal.h"
 #include "PythonAPI/UWorkflowService.h"
+#include "PythonAPI/UPIEActorService.h"
 #if WITH_VIBEUE_EQS
 #include "PythonAPI/EnvQueryServiceInternal.h"
 #endif
@@ -490,6 +491,10 @@ void FModule::ShutdownModule()
 	UWorkflowService::ShutdownJournal();
 	FVibeUEHealthSignal::Stop();
 	FVibeUEReadinessSignal::Remove();
+
+	// Unhook PIEActorService's EndPIE delegate. It is a raw static callback into this DLL, so it
+	// must not outlive the module (same reason as the helper caches below).
+	UPIEActorService::ShutdownEndPIEHook();
 
 	// Release the BT node-class helper cache while FModuleManager / the asset registry still
 	// exist — ~FGraphNodeClassHelper unhooks their delegates, which is UB at static teardown.

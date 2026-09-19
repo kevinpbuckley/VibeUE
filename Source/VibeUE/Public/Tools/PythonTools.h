@@ -38,7 +38,8 @@ public:
 	 * @param Code - Python code to execute
 	 * @param bAutoSave - When true (default) every dirty content and world package is saved headlessly
 	 *                    before the script runs; pass false to run the script without that sweep.
-	 *                    The result JSON always reports auto_save and the saved_packages list.
+	 *                    The result JSON always reports the OUTCOME: auto_save (true only when the
+	 *                    sweep really ran), auto_save_note and the saved_packages list.
 	 * @return Execution result including output, errors, and success status
 	 */
 	UFUNCTION(BlueprintCallable, Category="VibeUE|Python", meta=(

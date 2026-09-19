@@ -171,7 +171,7 @@ REGISTER_VIBEUE_TOOL(execute_python_code,
 	"Python",
 	TOOL_PARAMS(
 		TOOL_PARAM("code", "Python code to execute. Must start with 'import unreal' (lowercase). For editor subsystems use unreal.get_editor_subsystem()", "string", true),
-		TOOL_PARAM("auto_save", "Save all dirty content AND world packages before running (default true). Pass false to run without the pre-execution save sweep. The result JSON reports auto_save and the saved_packages list either way.", "boolean", false)
+		TOOL_PARAM("auto_save", "Save all dirty content AND world packages before running (default true). Pass false to run without the pre-execution save sweep. The reply reports the OUTCOME: auto_save (true only if the sweep really ran), auto_save_note (why not, when false) and saved_packages.", "boolean", false)
 	),
 	{
 		FString Code = ExtractParamFromJson(Params, TEXT("code"));
