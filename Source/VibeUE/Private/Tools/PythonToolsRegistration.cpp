@@ -170,11 +170,13 @@ REGISTER_VIBEUE_TOOL(execute_python_code,
 	"Execute Python code in Unreal Engine. IMPORTANT: Use 'import unreal' (lowercase). For subsystems use: unreal.get_editor_subsystem(unreal.LevelEditorSubsystem). Returns stdout, stderr, and execution status.",
 	"Python",
 	TOOL_PARAMS(
-		TOOL_PARAM("code", "Python code to execute. Must start with 'import unreal' (lowercase). For editor subsystems use unreal.get_editor_subsystem()", "string", true)
+		TOOL_PARAM("code", "Python code to execute. Must start with 'import unreal' (lowercase). For editor subsystems use unreal.get_editor_subsystem()", "string", true),
+		TOOL_PARAM("auto_save", "Save all dirty content AND world packages before running (default true). Pass false to run without the pre-execution save sweep. The result JSON reports auto_save and the saved_packages list either way.", "boolean", false)
 	),
 	{
 		FString Code = ExtractParamFromJson(Params, TEXT("code"));
-		return UPythonTools::ExecutePythonCode(Code);
+		bool bAutoSave = ExtractBoolParam(Params, TEXT("auto_save"), true);
+		return UPythonTools::ExecutePythonCode(Code, bAutoSave);
 	}
 );
 

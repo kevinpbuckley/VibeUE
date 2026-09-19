@@ -68,6 +68,14 @@ re-running** -- re-running double-executes a mutation. Every run's outcome is wr
 `Signals/python-<pid>-last.json` (always the latest) and appended to `Signals/python-<pid>-runs.jsonl`
 (last ~200 runs / ~2 MB):
 
+A run that COMPLETES but overruns the server-side timeout is no longer reported as an error: the
+reply comes back `success:true` with `timed_out:true`, its `run_id`, and `signal_file_path` (the
+`python-<pid>-last.json` path), so a client whose own budget is longer -- or a retry -- gets the real
+output instead of a bare `PYTHON_EXECUTION_TIMEOUT`. Only a call the client actually abandoned (it
+gave up while the script was still running) returns nothing to you; that is the case
+`last_python_result()` below is for. Error replies now also append `run_id=<N>` and the signal path
+to the message for the same recovery.
+
 ```json
 {"runId":7,"pid":21044,"success":true,"label":"#7 execute_python_code","output":"...",
  "error":"","result":"","execution_time_ms":48210.5,"startedUtc":"...","finishedUtc":"..."}
@@ -170,6 +178,14 @@ unreal.StateTreeService.create_state_tree("/Game/AI/MyBehavior")
 You get the full `unreal.*` API plus every `unreal.<Service>` VibeUE adds. Reserve `call_tool` for
 **engine toolsets and skills** (e.g. `AgentSkillToolset`, `EditorToolset.EditorAppToolset`,
 `LogsToolset`, `GameplayTagsToolset`, `AssetTools`).
+
+**`auto_save` (default true).** Before running your script, `execute_python_code` saves every dirty
+content AND world package headlessly (issue #433: this avoids the modal save dialog that would hang
+the call). Every reply reports what happened: `auto_save` (the flag in effect) and `saved_packages`
+(the list of package names written). Pass `auto_save=false` to run the script WITHOUT that sweep --
+use it when you do not want in-flight editor edits flushed to disk, or to keep a mutation you are
+about to make from being interleaved with an unrelated dirty package. The sweep is skipped anyway
+after a crashed run, when GEditor is missing, or in PIE.
 
 ## Tools â€” what each is for
 

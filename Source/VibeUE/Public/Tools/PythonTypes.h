@@ -113,6 +113,21 @@ struct VIBEUE_API FPythonExecutionResult
 
 	/** Execution time in milliseconds */
 	float ExecutionTimeMs = 0.0f;
+
+	/**
+	 * True when the run completed successfully but overran the client timeout (see ExecuteCode).
+	 * The payload is still valid — a client whose own timeout is longer, or a retry, can use it.
+	 */
+	bool bTimedOut = false;
+
+	/**
+	 * Whether the pre-execution auto-save sweep ran for this call (execute_python_code's auto_save
+	 * argument). Defaults true to match the historical behaviour; set false when the caller opted out.
+	 */
+	bool bAutoSave = true;
+
+	/** Names of the packages written to disk by the pre-execution auto-save sweep (empty if none). */
+	TArray<FString> SavedPackages;
 };
 
 /**

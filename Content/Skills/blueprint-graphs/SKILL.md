@@ -709,7 +709,7 @@ After any graph edit, verify all three layers:
 
 1. **Connections**: call `get_connections()` and confirm the exact expected wiring.
 2. **Pins**: if a connection fails, call `get_node_pins()` and use the real pin names.
-3. **Compile**: inspect the engine `BlueprintTools.compile_blueprint` result's `success`, `num_errors`, and `errors`.
+3. **Compile**: inspect the compile result's `success`, `num_errors`, and `errors`. Either the engine `BlueprintTools.compile_blueprint`, or `unreal.BlueprintService.compile_blueprint(bp_path)` — the latter returns an `FBlueprintCompileResult` (`success`, `num_errors`, `num_warnings`, `errors`, `warnings`) directly from the service, so you can compile and read the error text without leaving `BlueprintService`.
 
 For any node you claim you created, also re-read the graph with `get_nodes_in_graph()` and confirm that node actually exists in the graph after the edit. A returned node ID from a create call is not enough.
 
@@ -721,11 +721,15 @@ For `Custom Event` timer callbacks, verify both of these before wiring:
 Also verify that the node type is the expected custom event form rather than `K2Node_CreateDelegate`.
 
 ```python
-# compile goes through the engine BlueprintTools toolset
+# compile via the engine BlueprintTools toolset ...
 result = call_tool(tool_name="compile_blueprint",
                    toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
                    arguments={"blueprint": bp_path})
 assert result["success"], result.get("errors")
+
+# ... or straight from BlueprintService, which returns the compiler's error text:
+res = unreal.BlueprintService.compile_blueprint(bp_path)
+assert res.success, (res.num_errors, res.errors)
 
 nodes = unreal.BlueprintService.get_nodes_in_graph(bp_path, graph)
 for node in nodes:

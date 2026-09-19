@@ -591,6 +591,23 @@ loc, rot, scale = unreal.ActorService.get_absolute_transform("MyCube")
 print(f"Absolute: loc={loc}, rot={rot}, scale={scale}")
 ```
 
+## Re-run a placed actor's construction script
+
+After changing a Blueprint component template or a placed actor's exposed variable, the placed
+actor's construction script does not re-execute on its own, so SCS-driven state goes stale. Python
+previously had no way to force it (the old nudge-by-0.01 trick). `ActorService.rerun_construction_scripts`
+now does it directly. Editor world only; it refuses (returns False, logs) while PIE is running.
+
+```python
+import unreal
+# Re-run the construction script for a placed Blueprint actor by label or name
+unreal.ActorService.rerun_construction_scripts("BP_Refrigerator_2")
+```
+
+To refresh the SCS viewport of an OPEN Blueprint editor (so it re-runs the construction script and
+redraws), use `unreal.BlueprintService.refresh_blueprint_editor("/Game/Props/BP_Refrigerator")` —
+it returns False when no editor is open for that Blueprint.
+
 ## Sample scripts (run via `execute_python_code`)
 
 - **`scripts/manipulate_actors.txt`** — list level actors, find by class, move/rotate by name.
