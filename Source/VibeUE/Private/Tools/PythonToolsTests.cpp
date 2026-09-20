@@ -73,4 +73,64 @@ bool FVibePythonAutoSaveReportTest::RunTest(const FString&)
 	return true;
 }
 
+// Issue #608: an ordinary Python exception must NOT be treated as an editor crash.
+// UPythonTools suppresses the next run's auto-save sweep after a "crash", on the reasoning that the
+// editor may hold half-mutated objects. That latch used to be set for any PYTHON_RUNTIME_ERROR —
+// which is also what a plain traceback returns — so a trivial AttributeError silently disabled
+// auto-save for the following call. Only a real SEH crash (PYTHON_EDITOR_CRASH) should do that.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibePythonExceptionIsNotACrashTest, "VibeUE.Python.ExceptionIsNotACrash",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVibePythonExceptionIsNotACrashTest::RunTest(const FString&)
+{
+	auto Run = [](const TCHAR* Code)
+	{
+		const FString Json = UPythonTools::ExecutePythonCode(Code, /*bAutoSave=*/true);
+		TSharedPtr<FJsonObject> Obj;
+		FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json), Obj);
+		return Obj;
+	};
+
+	// Start from a known-good state so the latch is definitely clear.
+	if (!TestTrue(TEXT("baseline run parses"), Run(TEXT("x = 1\n")).IsValid()))
+	{
+		return false;
+	}
+
+	// The interpreter prints the traceback through LogPython at Error verbosity (several lines:
+	// "Traceback (most recent call last):", the File/line frames, ...). That output is the POINT of
+	// this test, not a failure of it, so expect it. Matching on the category covers every line.
+	AddExpectedError(TEXT("LogPython"), EAutomationExpectedErrorFlags::Contains, 0);
+
+	// A script that raises: an ordinary, interpreter-caught exception.
+	{
+		const TSharedPtr<FJsonObject> Obj = Run(TEXT("raise RuntimeError('VibeUEIntentionalTestException')\n"));
+		if (!TestTrue(TEXT("failing run still returns JSON"), Obj.IsValid()))
+		{
+			return false;
+		}
+		TestFalse(TEXT("the raising script is reported as failed"), Obj->GetBoolField(TEXT("success")));
+		// It must be classified as a runtime error, NOT as an editor crash.
+		TestEqual(TEXT("an ordinary exception is PYTHON_RUNTIME_ERROR"),
+			Obj->GetStringField(TEXT("error_code")), FString(TEXT("PYTHON_RUNTIME_ERROR")));
+		TestNotEqual(TEXT("an ordinary exception is never PYTHON_EDITOR_CRASH"),
+			Obj->GetStringField(TEXT("error_code")), FString(TEXT("PYTHON_EDITOR_CRASH")));
+	}
+
+	// The next run must still sweep: the exception above must not have latched "crashed".
+	{
+		const TSharedPtr<FJsonObject> Obj = Run(TEXT("y = 2\n"));
+		if (!TestTrue(TEXT("follow-up run parses"), Obj.IsValid()))
+		{
+			return false;
+		}
+		TestTrue(TEXT("follow-up run succeeds"), Obj->GetBoolField(TEXT("success")));
+		TestNotEqual(TEXT("auto-save is NOT suppressed after an ordinary exception"),
+			Obj->GetStringField(TEXT("auto_save_note")), FString(TEXT("previous_run_crashed")));
+		TestTrue(TEXT("the auto-save sweep ran on the follow-up call"), Obj->GetBoolField(TEXT("auto_save")));
+	}
+
+	return true;
+}
+
 #endif // WITH_AUTOMATION_TESTS

@@ -499,8 +499,15 @@ namespace ErrorCodes
 	/** @brief Python syntax error in code */
 	constexpr const TCHAR* PYTHON_SYNTAX_ERROR = TEXT("PYTHON_SYNTAX_ERROR");
 
-	/** @brief Python runtime error or exception */
+	/** @brief Python runtime error or exception — an ordinary traceback the interpreter caught.
+	 *  The editor is fine and no state is suspect; see PYTHON_EDITOR_CRASH for the other case. */
 	constexpr const TCHAR* PYTHON_RUNTIME_ERROR = TEXT("PYTHON_RUNTIME_ERROR");
+
+	/** @brief The script took down native editor code — a structured (SEH) exception caught around
+	 *  the Python call, e.g. an access violation inside an engine API. Distinct from
+	 *  PYTHON_RUNTIME_ERROR because the editor may now hold half-mutated objects, which is what
+	 *  suppresses the next auto-save sweep (issue #608: an ordinary traceback used to do that too). */
+	constexpr const TCHAR* PYTHON_EDITOR_CRASH = TEXT("PYTHON_EDITOR_CRASH");
 
 	/** @brief Python code contains patterns known to crash the editor */
 	constexpr const TCHAR* PYTHON_UNSAFE_CODE = TEXT("PYTHON_UNSAFE_CODE");

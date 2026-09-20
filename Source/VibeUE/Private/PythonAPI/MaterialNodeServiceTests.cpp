@@ -263,4 +263,68 @@ bool FVibeMaterialNodeServiceOutputTest::RunTest(const FString&)
 	return true;
 }
 
+// Issue #611: every material output the WRITERS accept must also be visible to the READER.
+// Before the fix, StringToMaterialProperty accepted 19 properties while GetOutputConnections
+// reported a hand-maintained list of 16 — so ClearCoat, ClearCoatRoughness and Displacement could
+// be connected and internally verified, yet never showed up when reading the graph back. Both are
+// now driven from GetMaterialOutputProperties(), and this test pins that they cannot drift apart.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeMaterialOutputPropertyParityTest, "VibeUE.MaterialNodeService.OutputPropertyParity",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FVibeMaterialOutputPropertyParityTest::RunTest(const FString&)
+{
+	const TArray<TPair<FString, EMaterialProperty>>& Properties = UMaterialNodeService::GetMaterialOutputProperties();
+	TestTrue(TEXT("the shared property table is non-empty"), Properties.Num() > 0);
+
+	// 1. Every name in the table resolves through the writer-side mapper, to the same enum value.
+	for (const TPair<FString, EMaterialProperty>& Pair : Properties)
+	{
+		EMaterialProperty Resolved = MP_MAX;
+		if (TestTrue(FString::Printf(TEXT("writers accept '%s'"), *Pair.Key),
+			UMaterialNodeService::StringToMaterialProperty(Pair.Key, Resolved)))
+		{
+			TestEqual(FString::Printf(TEXT("'%s' maps to the table's enum value"), *Pair.Key),
+				static_cast<int32>(Resolved), static_cast<int32>(Pair.Value));
+		}
+	}
+
+	// 2. The reader reports one entry per table property, in the same order — so nothing the writers
+	//    accept is invisible. A scratch material is enough; connectedness is irrelevant here.
+	// Same in-memory fixture the other tests in this file use: the service resolves materials via
+	// UEditorAssetLibrary::LoadAsset, which will not see an RF_Transient object.
+	const FString Path = TEXT("/Game/__VibeUETest/M_OutputParity");
+	UMaterial* Material = CreateScratchMaterial(Path, TEXT("M_OutputParity"));
+	if (!TestNotNull(TEXT("created scratch material"), Material))
+	{
+		return false;
+	}
+	ON_SCOPE_EXIT
+	{
+		FAssetRegistryModule::AssetDeleted(Material);
+		Material->ClearFlags(RF_Standalone | RF_Public);
+	};
+
+	const TArray<FMaterialOutputConnectionInfo> Reported = UMaterialNodeService::GetOutputConnections(Path);
+	TestEqual(TEXT("reader reports exactly one entry per writable property"), Reported.Num(), Properties.Num());
+
+	TSet<FString> ReportedNames;
+	for (const FMaterialOutputConnectionInfo& Info : Reported)
+	{
+		ReportedNames.Add(Info.PropertyName);
+	}
+	for (const TPair<FString, EMaterialProperty>& Pair : Properties)
+	{
+		TestTrue(FString::Printf(TEXT("get_output_connections reports '%s'"), *Pair.Key),
+			ReportedNames.Contains(Pair.Key));
+	}
+
+	// 3. Name the three that regressed, explicitly, so the original bug can never come back quietly.
+	for (const TCHAR* Name : { TEXT("ClearCoat"), TEXT("ClearCoatRoughness"), TEXT("Displacement") })
+	{
+		TestTrue(FString::Printf(TEXT("previously-invisible property '%s' is reported"), Name),
+			ReportedNames.Contains(FString(Name)));
+	}
+
+	return true;
+}
+
 #endif // WITH_AUTOMATION_TESTS
