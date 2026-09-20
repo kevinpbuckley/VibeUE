@@ -115,6 +115,20 @@ public:
 	 */
 	static void Shutdown();
 
+	/**
+	 * Map worlds currently resident besides the open level, as full object paths.
+	 *
+	 * A map opened as an ASSET (unreal.load_asset("/Game/Maps/Foo"), EditorAssetLibrary.load_asset,
+	 * find_object, ...) stays loaded afterwards. The engine checks on every level load that no other
+	 * map package is still alive, and that check is FATAL, not a warning - so the crash lands on
+	 * whoever loads a level next, naming neither the script nor the tool that left it behind.
+	 * execute_python_code reports this after every run so the warning arrives with its cause.
+	 *
+	 * Excludes the open editor world, PIE worlds, and the transient preview worlds the editor keeps
+	 * alive for Blueprint/material/thumbnail previews. Empty when GEditor is unavailable.
+	 */
+	static TArray<FString> GetResidentMapWorlds();
+
 private:
 	static TSharedPtr<VibeUE::FPythonExecutionService> GetExecutionService();
 	static TSharedPtr<VibeUE::FPythonSchemaService> GetSchemaService();

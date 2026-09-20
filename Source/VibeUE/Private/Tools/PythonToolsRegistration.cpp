@@ -167,7 +167,7 @@ static FString MakeErrorJson(const FString& ErrorCode, const FString& ErrorMessa
 
 // Register execute_python_code tool
 REGISTER_VIBEUE_TOOL(execute_python_code,
-	"Execute Python code in Unreal Engine. IMPORTANT: Use 'import unreal' (lowercase). For subsystems use: unreal.get_editor_subsystem(unreal.LevelEditorSubsystem). Returns stdout, stderr, and execution status.",
+	"Execute Python code in Unreal Engine. IMPORTANT: Use 'import unreal' (lowercase). For subsystems use: unreal.get_editor_subsystem(unreal.LevelEditorSubsystem). Returns stdout, stderr, and execution status. A non-empty resident_maps in the reply means a map other than the open level is loaded in memory and the NEXT level load will crash the editor until it is released.",
 	"Python",
 	TOOL_PARAMS(
 		TOOL_PARAM("code", "Python code to execute. Must start with 'import unreal' (lowercase). For editor subsystems use unreal.get_editor_subsystem()", "string", true),
