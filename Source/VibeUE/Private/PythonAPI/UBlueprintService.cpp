@@ -835,6 +835,123 @@ namespace
 		return NAME_None;
 	}
 
+	// Does this property answer to the requested (already normalised) name? A menu name is the
+	// property's DISPLAY string, not its raw name — and for a bool the display string drops the
+	// Hungarian "b" prefix, so AActor::bCanBeDamaged surfaces in the menu as "Can Be Damaged".
+	// Matching the raw name alone therefore misses every boolean, which is exactly what made the
+	// qualified key "…|Get Can Be Damaged|Actor" fail. Try both spellings.
+	static bool PropertyMatchesSearchName(const FProperty* Property, const FString& NormRequested)
+	{
+		if (!Property)
+		{
+			return false;
+		}
+		if (NormalizeBlueprintNodeSearchText(Property->GetName()) == NormRequested)
+		{
+			return true;
+		}
+		const FString DisplayName = FName::NameToDisplayString(Property->GetName(), Property->IsA<FBoolProperty>());
+		return NormalizeBlueprintNodeSearchText(DisplayName) == NormRequested;
+	}
+
+	// Issue #609: the same action-database staleness that hid SCS component variables (see
+	// ResolveSelfComponentVariable above) also hides a member variable that was just added with
+	// add_member_variable — the DB has no spawner for it yet, so "SPAWN K2Node_VariableGet|Get My Var"
+	// returned an empty id and the natural "add a variable, then wire it up" flow failed on step two.
+	// This resolves any variable the TARGET Blueprint genuinely owns (its own NewVariables, or an
+	// inherited property on its class hierarchy) so it can be bound directly as a self member, using
+	// the same normalised-name matching as the component resolver ("My Var" <-> "MyVar").
+	// It deliberately does NOT widen what is reachable: a property owned by an unrelated class is not
+	// on this Blueprint's hierarchy and still falls through to the ownership check.
+	static FName ResolveSelfMemberVariable(UBlueprint* Blueprint, const FString& MenuOrVarName)
+	{
+		if (!Blueprint)
+		{
+			return NAME_None;
+		}
+
+		FString Requested = MenuOrVarName;
+		Requested.TrimStartAndEndInline();
+		if (Requested.StartsWith(TEXT("Get "), ESearchCase::IgnoreCase))
+			Requested = Requested.RightChop(4);
+		else if (Requested.StartsWith(TEXT("Set "), ESearchCase::IgnoreCase))
+			Requested = Requested.RightChop(4);
+
+		const FString NormRequested = NormalizeBlueprintNodeSearchText(Requested);
+		if (NormRequested.IsEmpty())
+		{
+			return NAME_None;
+		}
+
+		// 1. Variables declared on this Blueprint, including ones added moments ago that no compile
+		//    has reflected onto the generated class yet.
+		for (const FBPVariableDescription& Var : Blueprint->NewVariables)
+		{
+			if (Var.VarName.IsNone())
+			{
+				continue;
+			}
+			const FString RawName = Var.VarName.ToString();
+			// Same display-name rule as PropertyMatchesSearchName: a bool declared "bIsOpen" appears
+			// in the menu as "Is Open".
+			const bool bIsBool = (Var.VarType.PinCategory == UEdGraphSchema_K2::PC_Boolean);
+			if (NormalizeBlueprintNodeSearchText(RawName) == NormRequested
+				|| NormalizeBlueprintNodeSearchText(FName::NameToDisplayString(RawName, bIsBool)) == NormRequested)
+			{
+				return Var.VarName;
+			}
+		}
+
+		// 2. Any property on the generated class (covers inherited native/Blueprint variables).
+		if (UClass* GenClass = Blueprint->GeneratedClass)
+		{
+			for (TFieldIterator<FProperty> It(GenClass); It; ++It)
+			{
+				if (PropertyMatchesSearchName(*It, NormRequested))
+				{
+					return It->GetFName();
+				}
+			}
+		}
+
+		return NAME_None;
+	}
+
+	// Issue #610: bind a variable get/set to an EXPLICITLY named owning class, for the qualified-key
+	// form "SPAWN K2Node_VariableGet|Get Jump Max Count|Character". Returns the resolved property's
+	// name and fills OutOwnerClass, or NAME_None when the class or the property cannot be resolved.
+	static FName ResolveExplicitOwnerVariable(const FString& OwnerClassName, const FString& MenuOrVarName, UClass*& OutOwnerClass)
+	{
+		OutOwnerClass = ResolveClassByName(OwnerClassName);
+		if (!OutOwnerClass)
+		{
+			return NAME_None;
+		}
+
+		FString Requested = MenuOrVarName;
+		Requested.TrimStartAndEndInline();
+		if (Requested.StartsWith(TEXT("Get "), ESearchCase::IgnoreCase))
+			Requested = Requested.RightChop(4);
+		else if (Requested.StartsWith(TEXT("Set "), ESearchCase::IgnoreCase))
+			Requested = Requested.RightChop(4);
+
+		const FString NormRequested = NormalizeBlueprintNodeSearchText(Requested);
+		if (NormRequested.IsEmpty())
+		{
+			return NAME_None;
+		}
+
+		for (TFieldIterator<FProperty> It(OutOwnerClass); It; ++It)
+		{
+			if (PropertyMatchesSearchName(*It, NormRequested))
+			{
+				return It->GetFName();
+			}
+		}
+
+		return NAME_None;
+	}
+
 	static FString BuildEventSpawnerKey(const UBlueprintEventNodeSpawner* EventSpawner)
 	{
 		if (!EventSpawner)
@@ -7944,16 +8061,32 @@ FString UBlueprintService::CreateNodeByKey(
 	}
 	else if (KeyType.Equals(TEXT("SPAWN"), ESearchCase::IgnoreCase))
 	{
-		// SPAWN <NodeClassName>|<MenuName> — re-find the exact action-database spawner
+		// SPAWN <NodeClassName>|<MenuName>[|<OwnerClass>] — re-find the exact action-database spawner
 		// (matched by node class + primed menu name) and Invoke it, so template /
 		// variable / custom nodes are created fully bound exactly as the editor's
 		// Add-Node menu would (e.g. Get Subsystem's CustomClass, a variable's member
 		// reference). Split on the FIRST '|' only — node class names never contain it.
+		//
+		// The OPTIONAL third component is the qualified-key form (issue #610). The foreign-variable
+		// refusal below used to tell callers to "pass a fully qualified key" while no such syntax
+		// existed, leaving a legitimate cross-class variable getter (another class's property wired
+		// through the node's Target pin) unreachable. Naming the owning class explicitly states the
+		// intent, so the ownership heuristic is skipped for that call only.
 		FString NodeClassName, MenuName;
 		if (!KeyValue.Split(TEXT("|"), &NodeClassName, &MenuName))
 		{
 			UE_LOG(LogTemp, Error, TEXT("CreateNodeByKey: Invalid SPAWN key format: %s"), *KeyValue);
 			return FString();
+		}
+
+		FString ExplicitOwnerName;
+		{
+			FString MenuOnly, OwnerPart;
+			if (MenuName.Split(TEXT("|"), &MenuOnly, &OwnerPart))
+			{
+				MenuName = MenuOnly.TrimStartAndEnd();
+				ExplicitOwnerName = OwnerPart.TrimStartAndEnd();
+			}
 		}
 
 		// A friendly menu name (e.g. "Get Inventory Component") is NOT unique across Blueprints:
@@ -7984,40 +8117,72 @@ FString UBlueprintService::CreateNodeByKey(
 		UBlueprintNodeSpawner* MatchSpawner = nullptr;
 		const bool bIsVariableNode = NodeClassName == TEXT("K2Node_VariableGet") || NodeClassName == TEXT("K2Node_VariableSet");
 
+		// Build a variable get/set node bound to an already-resolved member. OwnerClass == nullptr
+		// means "self member" (this Blueprint or its hierarchy); a non-null OwnerClass produces the
+		// external-member form, which carries a Target pin the caller wires up.
+		auto MakeVariableNode = [&](FName MemberName, UClass* OwnerClass) -> UEdGraphNode*
+		{
+			UK2Node_Variable* VarNode = (NodeClassName == TEXT("K2Node_VariableGet"))
+				? static_cast<UK2Node_Variable*>(NewObject<UK2Node_VariableGet>(Graph))
+				: static_cast<UK2Node_Variable*>(NewObject<UK2Node_VariableSet>(Graph));
+
+			if (OwnerClass)
+			{
+				VarNode->VariableReference.SetExternalMember(MemberName, OwnerClass);
+			}
+			else
+			{
+				VarNode->VariableReference.SetSelfMember(MemberName);
+			}
+
+			Graph->AddNode(VarNode, false, false);
+			VarNode->CreateNewGuid();
+			VarNode->PostPlacedNewNode();
+			VarNode->AllocateDefaultPins();
+			VarNode->NodePosX = PosX;
+			VarNode->NodePosY = PosY;
+			return VarNode;
+		};
+
+		// Qualified key (issue #610): the caller named the owning class explicitly, so this is a
+		// deliberate cross-class get/set. Bind it and skip the ownership heuristic entirely — the
+		// whole point of the syntax is to say "yes, I mean that other class's property".
+		if (bIsVariableNode && !ExplicitOwnerName.IsEmpty())
+		{
+			UClass* OwnerClass = nullptr;
+			const FName OwnedVar = ResolveExplicitOwnerVariable(ExplicitOwnerName, MenuName, OwnerClass);
+			if (OwnedVar.IsNone())
+			{
+				UE_LOG(LogTemp, Error,
+					TEXT("CreateNodeByKey: qualified SPAWN key '%s' — %s. Expected '<NodeClass>|<MenuName>|<OwnerClass>', e.g. 'K2Node_VariableGet|Get Jump Max Count|Character'."),
+					*KeyValue,
+					OwnerClass ? TEXT("the class resolved but has no such property") : TEXT("the owner class could not be resolved"));
+				return FString();
+			}
+
+			// A self-owned variable does not need (and should not get) a Target pin: if the target
+			// Blueprint is actually a child of the named owner, bind it as a self member instead.
+			UClass* TargetClass = GetAuthoritativeClass(Blueprint->GeneratedClass ? Blueprint->GeneratedClass : Blueprint->ParentClass);
+			UClass* AuthoritativeOwner = GetAuthoritativeClass(OwnerClass);
+			const bool bIsSelf = TargetClass && AuthoritativeOwner && TargetClass->IsChildOf(AuthoritativeOwner);
+
+			NewNode = MakeVariableNode(OwnedVar, bIsSelf ? nullptr : OwnerClass);
+			UE_LOG(LogTemp, Log,
+				TEXT("CreateNodeByKey: Bound %s variable '%s' on '%s' via qualified SPAWN key '%s'"),
+				bIsSelf ? TEXT("self") : TEXT("external"), *OwnedVar.ToString(), *GetNameSafe(OwnerClass), *KeyValue);
+		}
+
 		// Item 16: a get/set for one of the target Blueprint's OWN SCS or inherited component
 		// variables binds directly, bypassing the action database. The action DB does not reliably
 		// register a spawner for SCS component variables (so this key returned an empty id and fell
 		// through below), and any same-named spawner it does surface may belong to another Blueprint.
 		// Resolve the member fully BEFORE adding a node so no failure path can leave an orphan.
-		if (bIsVariableNode)
+		if (!NewNode && bIsVariableNode)
 		{
 			const FName ComponentVar = ResolveSelfComponentVariable(Blueprint, MenuName);
 			if (!ComponentVar.IsNone())
 			{
-				if (NodeClassName == TEXT("K2Node_VariableGet"))
-				{
-					UK2Node_VariableGet* GetNode = NewObject<UK2Node_VariableGet>(Graph);
-					GetNode->VariableReference.SetSelfMember(ComponentVar);
-					Graph->AddNode(GetNode, false, false);
-					GetNode->CreateNewGuid();
-					GetNode->PostPlacedNewNode();
-					GetNode->AllocateDefaultPins();
-					GetNode->NodePosX = PosX;
-					GetNode->NodePosY = PosY;
-					NewNode = GetNode;
-				}
-				else
-				{
-					UK2Node_VariableSet* SetNode = NewObject<UK2Node_VariableSet>(Graph);
-					SetNode->VariableReference.SetSelfMember(ComponentVar);
-					Graph->AddNode(SetNode, false, false);
-					SetNode->CreateNewGuid();
-					SetNode->PostPlacedNewNode();
-					SetNode->AllocateDefaultPins();
-					SetNode->NodePosX = PosX;
-					SetNode->NodePosY = PosY;
-					NewNode = SetNode;
-				}
+				NewNode = MakeVariableNode(ComponentVar, nullptr);
 				UE_LOG(LogTemp, Log, TEXT("CreateNodeByKey: Bound self component variable '%s' directly for SPAWN key '%s'"), *ComponentVar.ToString(), *KeyValue);
 			}
 		}
@@ -8056,10 +8221,17 @@ FString UBlueprintService::CreateNodeByKey(
 
 				if (!MatchSpawner)
 				{
+					// Issue #610: name the syntax that actually exists. This used to say "pass a fully
+					// qualified key" while the key parser accepted only two components, so the advice
+					// could not be followed and there was no way to express a deliberate cross-class get/set.
 					UE_LOG(LogTemp, Warning,
 						TEXT("CreateNodeByKey: SPAWN key '%s' matched %d variable spawner(s), none owned by '%s' or a parent (candidate owners: %s). ")
-						TEXT("Refusing to bind an unrelated Blueprint's variable — use a variable that exists on this Blueprint or its parents, or pass a fully qualified key."),
-						*KeyValue, Matches.Num(), *GetNameSafe(TargetClass), *FString::Join(CandidateOwners, TEXT(", ")));
+						TEXT("Refusing to bind an unrelated Blueprint's variable. Use a variable that exists on this Blueprint or its parents, or — if you ")
+						TEXT("deliberately want another class's property wired through a Target pin — qualify the key with its owning class: '%s|%s|<OwnerClass>' ")
+						TEXT("(e.g. '%s|%s|%s')."),
+						*KeyValue, Matches.Num(), *GetNameSafe(TargetClass), *FString::Join(CandidateOwners, TEXT(", ")),
+						*NodeClassName, *MenuName,
+						*NodeClassName, *MenuName, CandidateOwners.Num() > 0 ? *CandidateOwners[0] : TEXT("Character"));
 					return FString();
 				}
 			}
@@ -8070,11 +8242,35 @@ FString UBlueprintService::CreateNodeByKey(
 
 			if (!MatchSpawner)
 			{
-				UE_LOG(LogTemp, Error, TEXT("CreateNodeByKey: No action-database spawner matched SPAWN key '%s'"), *KeyValue);
-				return FString();
+				// Issue #609: the action database has no spawner for a variable that was added moments
+				// ago (add_member_variable then create_node_by_key), so the natural two-step flow failed
+				// here with an empty id. Fall back to binding the Blueprint's OWN member directly — the
+				// same escape the component resolver above already provides. Only reached when NOTHING
+				// matched, so it cannot loosen the foreign-variable refusal, which returns above.
+				if (bIsVariableNode)
+				{
+					const FName SelfVar = ResolveSelfMemberVariable(Blueprint, MenuName);
+					if (!SelfVar.IsNone())
+					{
+						NewNode = MakeVariableNode(SelfVar, nullptr);
+						UE_LOG(LogTemp, Log,
+							TEXT("CreateNodeByKey: Bound self member variable '%s' directly for SPAWN key '%s' (no action-database spawner yet)"),
+							*SelfVar.ToString(), *KeyValue);
+					}
+				}
+
+				if (!NewNode)
+				{
+					UE_LOG(LogTemp, Error, TEXT("CreateNodeByKey: No action-database spawner matched SPAWN key '%s'"), *KeyValue);
+					return FString();
+				}
 			}
 
-			NewNode = MatchSpawner->Invoke(Graph, IBlueprintNodeBinder::FBindingSet(), FVector2D(PosX, PosY));
+			// MatchSpawner is null when the self-member fallback above already built the node.
+			if (MatchSpawner)
+			{
+				NewNode = MatchSpawner->Invoke(Graph, IBlueprintNodeBinder::FBindingSet(), FVector2D(PosX, PosY));
+			}
 		}
 	}
 	else if (KeyType.Equals(TEXT("STRUCT"), ESearchCase::IgnoreCase))
@@ -8944,6 +9140,103 @@ bool UBlueprintService::OverrideFunction(const FString& BlueprintPath, const FSt
 
 	UE_LOG(LogTemp, Log, TEXT("OverrideFunction: Created override function graph '%s' in %s"), *FunctionName, *BlueprintPath);
 	return true;
+}
+
+FString UBlueprintService::CreateFunctionGraph(const FString& BlueprintPath, const FString& FunctionName, bool bIsPure)
+{
+	// Issue #607: nothing exposed function-graph CREATION — override_function could only override an
+	// EXISTING inherited/interface function, so a Blueprint Interface (which is defined entirely by
+	// its function graphs) could never be authored from Python at all, and a plain Blueprint could
+	// not gain a new function. The engine call used below is the same one OverrideFunction and the
+	// plugin's own test fixtures already use; this just makes it reachable.
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("CreateFunctionGraph: Failed to load blueprint: %s"), *BlueprintPath);
+		return FString();
+	}
+
+	const FString Trimmed = FunctionName.TrimStartAndEnd();
+	if (Trimmed.IsEmpty())
+	{
+		UE_LOG(LogTemp, Error, TEXT("CreateFunctionGraph: function name is empty (%s)"), *BlueprintPath);
+		return FString();
+	}
+
+	// Refuse anything that is not a plain identifier — a name with spaces or punctuation produces a
+	// graph the compiler cannot emit a function for, which fails later and far from the cause.
+	for (int32 i = 0; i < Trimmed.Len(); ++i)
+	{
+		const TCHAR Ch = Trimmed[i];
+		const bool bValid = FChar::IsAlpha(Ch) || Ch == TEXT('_') || (i > 0 && FChar::IsDigit(Ch));
+		if (!bValid)
+		{
+			UE_LOG(LogTemp, Error,
+				TEXT("CreateFunctionGraph: '%s' is not a valid function name — use letters, digits and underscore, starting with a letter or underscore"),
+				*Trimmed);
+			return FString();
+		}
+	}
+
+	// Don't collide with an existing graph of any kind (function, macro, event graph, interface).
+	if (ResolveBlueprintGraph(Blueprint, Trimmed))
+	{
+		UE_LOG(LogTemp, Error, TEXT("CreateFunctionGraph: a graph named '%s' already exists in %s"), *Trimmed, *BlueprintPath);
+		return FString();
+	}
+
+	// Nor with a function the Blueprint already inherits — that is override_function's job, and
+	// creating a same-named new graph would shadow it and produce a duplicate-function compile error.
+	if (UClass* ParentClass = Blueprint->ParentClass)
+	{
+		if (ParentClass->FindFunctionByName(FName(*Trimmed), EIncludeSuperFlag::IncludeSuper))
+		{
+			UE_LOG(LogTemp, Error,
+				TEXT("CreateFunctionGraph: '%s' already exists on the parent hierarchy of %s — use override_function instead"),
+				*Trimmed, *BlueprintPath);
+			return FString();
+		}
+	}
+
+	UEdGraph* NewGraph = FBlueprintEditorUtils::CreateNewGraph(
+		Blueprint,
+		FName(*Trimmed),
+		UEdGraph::StaticClass(),
+		UEdGraphSchema_K2::StaticClass()
+	);
+
+	if (!NewGraph)
+	{
+		UE_LOG(LogTemp, Error, TEXT("CreateFunctionGraph: Failed to create graph '%s' in %s"), *Trimmed, *BlueprintPath);
+		return FString();
+	}
+
+	// bIsUserCreated=true gives the graph the user-function treatment (entry node, editable
+	// signature); the null owner class means "this Blueprint's own function", not an override.
+	FBlueprintEditorUtils::AddFunctionGraph<UClass>(Blueprint, NewGraph, /*bIsUserCreated*/ true, (UClass*)nullptr);
+
+	if (bIsPure)
+	{
+		// Pure is a flag on the entry node, which AddFunctionGraph has just created.
+		TArray<UK2Node_FunctionEntry*> EntryNodes;
+		NewGraph->GetNodesOfClass<UK2Node_FunctionEntry>(EntryNodes);
+		if (EntryNodes.Num() > 0 && EntryNodes[0])
+		{
+			EntryNodes[0]->AddExtraFlags(FUNC_BlueprintPure);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("CreateFunctionGraph: created '%s' but found no entry node to mark pure; it is an impure function"),
+				*Trimmed);
+		}
+	}
+
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+
+	UE_LOG(LogTemp, Log, TEXT("CreateFunctionGraph: created %s function graph '%s' in %s"),
+		bIsPure ? TEXT("pure") : TEXT("impure"), *Trimmed, *BlueprintPath);
+	return NewGraph->GetName();
 }
 
 bool UBlueprintService::RefreshBlueprintEditor(const FString& BlueprintPath)

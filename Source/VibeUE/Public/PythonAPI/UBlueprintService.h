@@ -3602,6 +3602,32 @@ public:
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints")
 	static bool RefreshBlueprintEditor(const FString& BlueprintPath);
 
+	/**
+	 * Create a NEW function graph on a Blueprint. This is the counterpart to override_function,
+	 * which can only override a function that already exists on a parent or an implemented
+	 * interface. Works on a normal Blueprint and on a Blueprint Interface — and on an interface it
+	 * is the only way to define anything at all, since a BPI is nothing but its function graphs.
+	 *
+	 * Add parameters and return values afterwards with add_function_parameter (pass is_output=True
+	 * for a return value).
+	 *
+	 * Refuses, returning "": an empty or non-identifier name; a name already used by any graph on
+	 * this Blueprint; and a name that already exists on the parent hierarchy (that is
+	 * override_function's job — creating a shadowing graph would be a duplicate-function compile
+	 * error).
+	 *
+	 * @param BlueprintPath - Full path to the Blueprint or Blueprint Interface
+	 * @param FunctionName  - New function name (letters, digits, underscore; must not start with a digit)
+	 * @param bIsPure       - Create it as a pure function (no exec pins)
+	 * @return The created graph's name, or "" on failure
+	 *
+	 * Example:
+	 *   unreal.BlueprintService.create_function_graph("/Game/AI/BPI_Interactable", "GetDisplayName")
+	 *   unreal.BlueprintService.add_function_parameter("/Game/AI/BPI_Interactable", "GetDisplayName", "Name", "string", True)
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints")
+	static FString CreateFunctionGraph(const FString& BlueprintPath, const FString& FunctionName, bool bIsPure = false);
+
 private:
 	/** Helper to load blueprint from path */
 	static UBlueprint* LoadBlueprint(const FString& BlueprintPath);
