@@ -138,6 +138,14 @@ struct VIBEUE_API FPythonExecutionResult
 
 	/** Names of the packages written to disk by the pre-execution auto-save sweep (empty if none). */
 	TArray<FString> SavedPackages;
+
+	/**
+	 * Map worlds left resident in memory besides the open level, as full object paths. A map opened
+	 * as an asset stays loaded, and any level load while one is resident fails the engine's stale-world
+	 * check and FATALS the editor ("World Memory Leaks", EditorServer.cpp). Non-empty is a warning that
+	 * the next level change will crash until the references are dropped and garbage is collected.
+	 */
+	TArray<FString> ResidentMaps;
 };
 
 /**

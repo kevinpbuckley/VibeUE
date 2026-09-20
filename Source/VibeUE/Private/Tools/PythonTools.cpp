@@ -9,6 +9,8 @@
 #include "Utils/VibeUEPythonResultLog.h" // signal-file path for the result JSON (B2 recovery)
 #include "HAL/PlatformProcess.h"
 #include "UObject/Package.h"
+#include "UObject/UObjectIterator.h" // TObjectIterator<UWorld> for the resident-map check
+#include "Engine/World.h"
 #include "FileHelpers.h" // FEditorFileUtils + UEditorLoadingAndSavingUtils (headless SavePackages)
 
 // Include service headers after PythonTypes
@@ -18,6 +20,60 @@
 #include "WorldPartition/WorldPartition.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogPythonTools, Log, All);
+
+TArray<FString> UPythonTools::GetResidentMapWorlds()
+{
+	// A map opened as an ASSET (unreal.load_asset("/Game/Maps/Foo"), EditorAssetLibrary.load_asset,
+	// find_object, ...) stays resident afterwards, and a resident map that is not the one currently
+	// open makes the engine's own "old level package cleaned up?" check fail the NEXT time any level
+	// is loaded. That check is a fatal, not a warning:
+	//
+	//   EditorServer.cpp:2544  World Memory Leaks: N leaks objects and packages
+	//   LogEditorServer: Error: Old level package /Game/Maps/Foo not cleaned up by garbage collection
+	//
+	// The crash therefore lands minutes later, on whoever calls load_level next, with nothing in the
+	// message pointing at the script that actually caused it. Listing the stragglers in the reply of
+	// the run that created them turns that into an immediate, attributable warning.
+	TArray<FString> Resident;
+
+	if (!GEditor)
+	{
+		return Resident;
+	}
+
+	const UWorld* EditorWorld = GEditor->GetEditorWorldContext().World();
+
+	for (TObjectIterator<UWorld> It; It; ++It)
+	{
+		UWorld* World = *It;
+		if (!World || World == EditorWorld || !IsValid(World))
+		{
+			continue;
+		}
+
+		// Only worlds that came from a real map package can block a level load. This drops the
+		// transient preview worlds the editor legitimately keeps alive in numbers (Blueprint,
+		// material and thumbnail previews all live in the transient package), and PIE worlds, whose
+		// lifetime EndPlayMap owns.
+		const UPackage* Package = World->GetPackage();
+		if (!Package || Package == GetTransientPackage())
+		{
+			continue;
+		}
+		if (World->WorldType != EWorldType::Editor && World->WorldType != EWorldType::Inactive)
+		{
+			continue;
+		}
+		if (!FPackageName::IsValidLongPackageName(Package->GetName()))
+		{
+			continue;
+		}
+
+		Resident.AddUnique(World->GetPathName());
+	}
+
+	return Resident;
+}
 
 using namespace VibeUE;
 
@@ -314,6 +370,31 @@ FString UPythonTools::ExecutePythonCode(const FString& Code, bool bAutoSave)
 
 	auto Result = Service->ExecuteCode(Code);
 
+	// Maps this run has left resident (see GetResidentMapWorlds). Computed here, BEFORE the error
+	// branch, because the run that strands a map is frequently the same run that raised - that was
+	// the shape of the crash this check exists to prevent - so the failing reply must carry it too.
+	const TArray<FString> ResidentMaps = GetResidentMapWorlds();
+	if (ResidentMaps.Num() > 0)
+	{
+		UE_LOG(LogPythonTools, Warning,
+			TEXT("RESIDENT_MAPS: %d map(s) other than the open level are loaded in memory (%s). Loading any level while they are resident ")
+			TEXT("fails the engine's stale-world check and TAKES THE EDITOR DOWN (EditorServer.cpp 'World Memory Leaks'). A map package loads ")
+			TEXT("RF_Standalone, and neither collect_garbage() nor EditorLoadingAndSavingUtils.unload_packages() releases it (both verified) - ")
+			TEXT("so RESTART THE EDITOR before the next level change, and do not open a map as an asset: read map metadata from the asset ")
+			TEXT("registry, and change level with LevelEditorSubsystem.load_level."),
+			ResidentMaps.Num(), *FString::Join(ResidentMaps, TEXT(", ")));
+	}
+
+	auto AddResidentInfo = [&ResidentMaps](const TSharedPtr<FJsonObject>& Obj)
+	{
+		TArray<TSharedPtr<FJsonValue>> Arr;
+		for (const FString& MapPath : ResidentMaps)
+		{
+			Arr.Add(MakeShared<FJsonValueString>(MapPath));
+		}
+		Obj->SetArrayField(TEXT("resident_maps"), Arr);
+	};
+
 	if (Result.IsError())
 	{
 		// Track crash state so the next auto-save is skipped (the editor may hold half-mutated
@@ -331,6 +412,7 @@ FString UPythonTools::ExecutePythonCode(const FString& Code, bool bAutoSave)
 		ErrorObj->SetStringField(TEXT("error_code"), Result.GetErrorCode());
 		ErrorObj->SetStringField(TEXT("error_message"), Result.GetErrorMessage());
 		AddSaveInfo(ErrorObj);
+		AddResidentInfo(ErrorObj);
 		FString JsonString;
 		TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
 		FJsonSerializer::Serialize(ErrorObj.ToSharedRef(), Writer);
@@ -345,6 +427,7 @@ FString UPythonTools::ExecutePythonCode(const FString& Code, bool bAutoSave)
 	Value.bAutoSave = bAutoSaveRan;
 	Value.AutoSaveNote = AutoSaveNote;
 	Value.SavedPackages = SavedPackageNames;
+	Value.ResidentMaps = ResidentMaps;
 	return ConvertExecutionResultToJson(Value);
 }
 
@@ -526,6 +609,15 @@ FString UPythonTools::ConvertExecutionResultToJson(const VibeUE::FPythonExecutio
 	// whenever it is false, so "opted out" is never confused with "ran, nothing was dirty".
 	JsonObj->SetBoolField(TEXT("auto_save"), Result.bAutoSave);
 	JsonObj->SetStringField(TEXT("auto_save_note"), Result.AutoSaveNote);
+
+	// Maps left loaded in memory besides the open level. Non-empty means the NEXT level load will
+	// fatal the editor on the engine's stale-world check, so this is a hard warning, not trivia.
+	TArray<TSharedPtr<FJsonValue>> ResidentArray;
+	for (const FString& MapPath : Result.ResidentMaps)
+	{
+		ResidentArray.Add(MakeShared<FJsonValueString>(MapPath));
+	}
+	JsonObj->SetArrayField(TEXT("resident_maps"), ResidentArray);
 	TArray<TSharedPtr<FJsonValue>> SavedArray;
 	for (const FString& Name : Result.SavedPackages)
 	{

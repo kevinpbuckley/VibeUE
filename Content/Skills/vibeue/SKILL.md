@@ -196,6 +196,47 @@ the script WITHOUT that sweep -- use it when you do not want in-flight editor ed
 or to keep a mutation you are about to make from being interleaved with an unrelated dirty package.
 The sweep is skipped anyway after a crashed run, when GEditor is missing, or in PIE.
 
+## Never leave a map loaded - it crashes the editor on the next level change
+
+Opening a map as an **asset** keeps it resident:
+
+```python
+w = unreal.load_asset("/Game/Maps/Foo")          # loads and KEEPS Foo
+unreal.EditorAssetLibrary.load_asset("/Game/Maps/Foo")
+unreal.find_object(None, "/Game/Maps/Foo.Foo")
+```
+
+The engine checks on every level load that no other map package is still alive. That check is a
+**fatal, not a warning** - the editor dies with `World Memory Leaks` (`EditorServer.cpp`) and
+`Old level package /Game/Maps/Foo not cleaned up by garbage collection`. The crash lands on whoever
+calls `load_level` next, which may be minutes later and a different tool entirely, and the message
+names neither the script nor the map that caused it.
+
+`execute_python_code` reports this in every reply so the warning arrives with its cause:
+
+```json
+"resident_maps": ["/Game/Maps/Foo.Foo"]
+```
+
+**Non-empty `resident_maps` means the next level load will crash the editor.**
+
+There is no reliable in-process cure. A map package loads with `RF_Standalone`, and **neither
+`unreal.SystemLibrary.collect_garbage()` nor `EditorLoadingAndSavingUtils.unload_packages()`
+releases it** - both were tried against a live editor and the world stayed resident. Once a map is
+stranded, **restart the editor** (`BuildAndLaunchGame.ps1`) before changing levels.
+
+So treat this as prevention, not repair:
+
+- To read a map's **metadata**, use the asset registry - it loads nothing:
+  ```python
+  ar = unreal.AssetRegistryHelpers.get_asset_registry()
+  maps = ar.get_assets_by_path("/Game/Maps", recursive=True)
+  ```
+- To **change level**, use `unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).load_level(path)`,
+  which swaps the open world properly. Never `load_asset` a map to "look at it".
+
+The open level is never reported - only stragglers.
+
 ## Tools â€” what each is for
 
 | Tool | Use it for |
