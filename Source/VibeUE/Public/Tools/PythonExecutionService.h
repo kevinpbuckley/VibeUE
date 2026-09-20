@@ -81,6 +81,19 @@ public:
 	 */
 	TResult<FString> GetPythonInfo();
 
+	/**
+	 * Check whether Code contains a pattern that would crash or hang the editor (input(), modal
+	 * dialogs, an infinite `while True:`). Comments and string-literal contents are ignored, so a
+	 * mention of the pattern in a comment or docstring does not count. Exposed static so the guard
+	 * can be unit-tested without actually executing Python.
+	 *
+	 * @param Code       Python source to inspect
+	 * @param OutPattern  Set to the matched pattern name when true is returned
+	 * @param OutReason   Set to a human-readable reason when true is returned
+	 * @return True if an unsafe pattern was found
+	 */
+	static bool ContainsUnsafePattern(const FString& Code, FString& OutPattern, FString& OutReason);
+
 private:
 	/**
 	 * Convert FPythonCommandEx result to our result structure

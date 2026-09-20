@@ -430,3 +430,29 @@ TArray<FActorPropertyData> UActorService::GetAllProperties(
 
 	return Properties;
 }
+
+// =================================================================
+// Construction Script
+// =================================================================
+
+bool UActorService::RerunConstructionScripts(const FString& ActorLabelOrPath)
+{
+	// Editor world only — refuse during PIE. RerunConstructionScripts on a play-world actor would
+	// stomp gameplay state; the caller wants the editor placement re-evaluated.
+	if (GEditor && GEditor->PlayWorld)
+	{
+		UE_LOG(LogTemp, Error, TEXT("RerunConstructionScripts: refused '%s' — a Play-In-Editor session is running; stop PIE first."), *ActorLabelOrPath);
+		return false;
+	}
+
+	AActor* Actor = FindActorByIdentifier(ActorLabelOrPath);
+	if (!Actor)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("RerunConstructionScripts: actor '%s' not found in the editor world"), *ActorLabelOrPath);
+		return false;
+	}
+
+	Actor->RerunConstructionScripts();
+	UE_LOG(LogTemp, Log, TEXT("RerunConstructionScripts: re-ran construction scripts for '%s'"), *Actor->GetActorLabel());
+	return true;
+}

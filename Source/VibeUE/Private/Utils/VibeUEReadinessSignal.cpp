@@ -101,11 +101,11 @@ bool FVibeUEReadinessSignal::Publish()
 
 	// MCP endpoint status for the signal (issue B6). Publish runs on the game thread (RegisterToolsets
 	// / OnMapOpened), so it is safe to read the ModelContextProtocol module here. The bind-probe
-	// cross-check logs a loud Error line once per publish if this editor lost the port fight.
+	// cross-check happens after the write (below), where it can open a bounded startup-grace window
+	// instead of logging a spurious error while the listener is still coming up.
 	uint32 McpPort = 0;
 	bool bMcpListening = false;
 	FVibeUEMcpStatus::Query(McpPort, bMcpListening);
-	FVibeUEMcpStatus::LogPortContradictionIfAny(McpPort, bMcpListening);
 
 	const FString Payload = BuildSignalJson(ProcessId, GetSessionStartUtc(), FDateTime::UtcNow(), GetCurrentMapPackageName(), McpPort, bMcpListening);
 
@@ -125,11 +125,21 @@ bool FVibeUEReadinessSignal::Publish()
 	}
 
 	UE_LOG(LogVibeUESignal, Display, TEXT("VibeUE: readiness signal published: %s"), *SignalPath);
+
+	// Cross-check MCP status now that the signal is on disk. During startup the listener has usually
+	// not bound yet, so this opens a bounded grace window that republishes the signal (flipping
+	// mcpListening to true) the moment the listener comes up, and only logs one error if the grace
+	// expires with no local server. Idempotent across republishes (map-open).
+	FVibeUEMcpStatus::OnReadinessPublished(McpPort, bMcpListening);
 	return true;
 }
 
 void FVibeUEReadinessSignal::Remove()
 {
+	// Never leave a startup-grace ticker running past a Remove() (module shutdown / editor pre-exit):
+	// its callback must not touch signal state after teardown. Safe no-op when none is pending.
+	FVibeUEMcpStatus::CancelStartupGraceTicker();
+
 	IFileManager& FileManager = IFileManager::Get();
 	const FString SignalPath = GetSignalPath();
 	FileManager.Delete(*SignalPath, /*RequireExists=*/false, /*EvenReadOnly=*/true, /*Quiet=*/true);

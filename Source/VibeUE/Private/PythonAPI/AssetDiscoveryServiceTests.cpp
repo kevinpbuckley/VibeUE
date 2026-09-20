@@ -5,6 +5,8 @@
 #if WITH_AUTOMATION_TESTS
 
 #include "PythonAPI/UAssetDiscoveryService.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "AssetRegistry/IAssetRegistry.h"
 #include "EditorAssetLibrary.h"
 #include "HAL/FileManager.h"
 #include "HAL/PlatformFileManager.h"
@@ -12,6 +14,7 @@
 #include "Misc/FileHelper.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
+#include "UObject/SoftObjectPath.h"
 #include "UObject/UnrealType.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeAssetReimportTest, "VibeUE.Assets.ReimportAsset",
@@ -188,6 +191,69 @@ bool FVibeDeleteAssetUnattendedResultStructTest::RunTest(const FString&)
 		TestTrue(TEXT("unreferenced asset deletes and reports success in the struct"), Res.bSuccess);
 		TestTrue(TEXT("success carries no error message"), Res.ErrorMessage.IsEmpty());
 		TestFalse(TEXT("asset is actually gone after delete"), UEditorAssetLibrary::DoesAssetExist(AssetPackagePath));
+	}
+
+	if (UEditorAssetLibrary::DoesAssetExist(AssetPackagePath))
+	{
+		UEditorAssetLibrary::DeleteAsset(AssetPackagePath);
+	}
+	IFileManager::Get().Delete(*SourcePng, false, true);
+	IFileManager::Get().DeleteDirectory(*TestDirectory, false, true);
+
+	return true;
+}
+
+// Regression guard for item 18: after an unattended delete, the asset registry must no longer know
+// about the object, so does_asset_exist / GetAssetByObjectPath return false/invalid. (At UE 5.8 the
+// notification is performed by the engine: ObjectTools::ForceDeleteObjects -> DeleteSingleObject calls
+// FAssetRegistryModule::AssetDeleted for every deleted object. This test locks that behaviour in so a
+// future rewrite of the delete path that stops going through ForceDeleteObjects is caught here.)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeDeleteAssetUnattendedNotifiesRegistryTest, "VibeUE.Assets.DeleteAssetUnattendedNotifiesRegistry",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVibeDeleteAssetUnattendedNotifiesRegistryTest::RunTest(const FString&)
+{
+	IAssetRegistry& AssetRegistry = IAssetRegistry::GetChecked();
+
+	const FString TestDirectory = FPaths::Combine(FPaths::ProjectIntermediateDir(), TEXT("VibeUE/DeleteAssetRegistryTest"));
+	const FString SourcePng = FPaths::Combine(TestDirectory, TEXT("pixel.png"));
+	const FString AssetPackagePath = TEXT("/Game/VibeUETests/T_DeleteAssetRegistryTest");
+
+	IFileManager::Get().MakeDirectory(*TestDirectory, true);
+	if (UEditorAssetLibrary::DoesAssetExist(AssetPackagePath))
+	{
+		UEditorAssetLibrary::DeleteAsset(AssetPackagePath);
+	}
+
+	TArray<uint8> PngBytes;
+	const bool bDecoded = FBase64::Decode(
+		TEXT("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="),
+		PngBytes);
+	TestTrue(TEXT("PNG fixture decoded"), bDecoded);
+	TestTrue(TEXT("PNG fixture written"), bDecoded && FFileHelper::SaveArrayToFile(PngBytes, *SourcePng));
+
+	FString ImportError;
+	const FString ImportedObjectPath = UAssetDiscoveryService::ImportAsset(
+		SourcePng, TEXT("/Game/VibeUETests"), TEXT("T_DeleteAssetRegistryTest"), ImportError);
+	TestFalse(TEXT("texture fixture imported"), ImportedObjectPath.IsEmpty());
+
+	if (!ImportedObjectPath.IsEmpty())
+	{
+		const FSoftObjectPath ObjectPath(ImportedObjectPath);
+
+		// Sanity: the create path registered it (ImportAsset calls FAssetRegistryModule::AssetCreated).
+		TestTrue(TEXT("registry knows the asset before the delete"),
+			AssetRegistry.GetAssetByObjectPath(ObjectPath).IsValid());
+
+		const FUnattendedDeleteResult Res = UAssetDiscoveryService::DeleteAssetUnattended(AssetPackagePath, false);
+		TestTrue(TEXT("unreferenced asset deletes and reports success"), Res.bSuccess);
+
+		// The whole point of item 18: the registry entry is gone, so does_asset_exist-equivalent lookups
+		// return false/invalid rather than reporting a phantom asset.
+		TestFalse(TEXT("registry no longer resolves the object path after the unattended delete"),
+			AssetRegistry.GetAssetByObjectPath(ObjectPath).IsValid());
+		TestFalse(TEXT("does_asset_exist is false after the unattended delete"),
+			UEditorAssetLibrary::DoesAssetExist(AssetPackagePath));
 	}
 
 	if (UEditorAssetLibrary::DoesAssetExist(AssetPackagePath))

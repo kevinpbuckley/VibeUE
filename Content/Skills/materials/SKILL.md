@@ -184,15 +184,28 @@ node_id = expr.id  # ← use .id, NOT expr itself
 
 ### ⚠️ Compile After Graph Changes
 
+Full graph workflow: **create nodes → connect nodes → connect to material output → compile → save.**
+
 ```python
-expr = unreal.MaterialNodeService.create_parameter(path, "Vector", "BaseColor", ...)
-# Engine: connect_to_output lives on MaterialTools; property is the MP_* name.
-call_tool(tool_name="connect_to_output",
-          toolset_name="editor_toolset.toolsets.material.MaterialTools",
-          arguments={"expression": expr.id, "output_name": "", "material_property": "MP_BaseColor"})  # use expr.id
-unreal.MaterialService.compile_material(path)  # REQUIRED
+mns = unreal.MaterialNodeService
+expr = mns.create_parameter(path, "Vector", "BaseColor", ...)
+
+# Wire an expression output straight into a material output (BaseColor, Normal, Roughness, ...).
+# output_name="" selects output 0; property accepts "BaseColor" or "MP_BaseColor" (case-insensitive).
+mns.connect_expression_to_output(path, expr.id, "", "BaseColor")   # returns True only after a read-back
+# ...and to clear it again:  mns.disconnect_output(path, "BaseColor")
+
+unreal.MaterialService.compile_material(path)  # REQUIRED after graph changes
 unreal.EditorAssetLibrary.save_asset(path)
 ```
+
+> ⚠️ **expr.id is session-specific** (`"<Class>_<pointer>"`) — it changes on editor restart. For a
+> durable reference use `expr.object_path`, which every id-based call (`connect_expression_to_output`,
+> `get_expression_details`, `set_expression_property`, ...) also accepts. Empty / bogus / foreign ids
+> are now rejected (they used to silently resolve to expression index 0).
+
+The engine's own `MaterialTools.connect_to_output` (`call_tool`, `material_property="MP_BaseColor"`) still
+works and is interchangeable — use whichever fits the surrounding code.
 
 ### ⚠️ Parameter Types
 

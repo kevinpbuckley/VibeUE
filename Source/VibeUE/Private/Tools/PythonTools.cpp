@@ -6,6 +6,9 @@
 #include "Json.h"
 #include "JsonUtilities.h"
 #include "Core/ErrorCodes.h"
+#include "Utils/VibeUEPythonResultLog.h" // signal-file path for the result JSON (B2 recovery)
+#include "HAL/PlatformProcess.h"
+#include "UObject/Package.h"
 #include "FileHelpers.h" // FEditorFileUtils + UEditorLoadingAndSavingUtils (headless SavePackages)
 
 // Include service headers after PythonTypes
@@ -149,7 +152,7 @@ void UPythonTools::Shutdown()
 	UE_LOG(LogPythonTools, Log, TEXT("UPythonTools::Shutdown - All service instances released"));
 }
 
-FString UPythonTools::ExecutePythonCode(const FString& Code)
+FString UPythonTools::ExecutePythonCode(const FString& Code, bool bAutoSave)
 {
 	// Efficient engine readiness check - once ready, never check again
 	static bool bEngineReady = false;
@@ -181,19 +184,40 @@ FString UPythonTools::ExecutePythonCode(const FString& Code)
 		}
 	}
 
-	// Auto-save all dirty packages (headless) before executing Python code, unless the previous
-	// run crashed (dirty assets may be corrupt), GEditor is missing, or we're in PIE.
+	// Names of the packages written by the pre-execution auto-save sweep. Reported in the result JSON
+	// (saved_packages) so an agent can see, and pass on, exactly what was flushed to disk before the
+	// script ran. Empty when auto_save is false, when the sweep is skipped, or when nothing was dirty.
+	TArray<FString> SavedPackageNames;
+
+	// Whether the sweep actually ran, and why not when it did not. Reported verbatim in the result
+	// JSON: the caller already knows what it PASSED as auto_save, so echoing the argument back tells
+	// it nothing — what it cannot otherwise tell is whether its unsaved editor edits reached disk.
+	bool bAutoSaveRan = false;
+	FString AutoSaveNote;
+
+	// Auto-save all dirty packages (headless) before executing Python code, unless the caller opted
+	// out (auto_save=false), the previous run crashed (dirty assets may be corrupt), GEditor is
+	// missing, or we're in PIE.
+	if (!bAutoSave)
+	{
+		AutoSaveNote = TEXT("opted_out");
+		UE_LOG(LogPythonTools, Verbose, TEXT("Auto-save skipped: auto_save=false — running the script without flushing dirty packages"));
+	}
+	else
 	{
 		if (bLastPythonExecutionCrashed)
 		{
+			AutoSaveNote = TEXT("previous_run_crashed");
 			UE_LOG(LogPythonTools, Warning, TEXT("Skipping auto-save: previous Python execution crashed — dirty assets may be corrupt"));
 		}
 		else if (!GEditor)
 		{
+			AutoSaveNote = TEXT("editor_unavailable");
 			UE_LOG(LogPythonTools, Warning, TEXT("Cannot auto-save: GEditor is not available"));
 		}
 		else if (GIsPlayInEditorWorld)
 		{
+			AutoSaveNote = TEXT("pie_active");
 			UE_LOG(LogPythonTools, Warning, TEXT("Cannot auto-save: Currently in PIE mode"));
 		}
 		else
@@ -210,12 +234,25 @@ FString UPythonTools::ExecutePythonCode(const FString& Code)
 			FEditorFileUtils::GetDirtyContentPackages(DirtyPackages);
 			FEditorFileUtils::GetDirtyWorldPackages(DirtyPackages);
 
+			// The sweep reached the point of inspecting the editor's dirty set — that is what
+			// "it ran" means, whether or not anything was dirty.
+			bAutoSaveRan = true;
+
 			if (DirtyPackages.Num() == 0)
 			{
 				UE_LOG(LogPythonTools, Verbose, TEXT("Auto-save: no dirty packages"));
 			}
 			else
 			{
+				// Record the names before the save so the report reflects what the sweep targeted.
+				for (const UPackage* DirtyPackage : DirtyPackages)
+				{
+					if (DirtyPackage)
+					{
+						SavedPackageNames.Add(DirtyPackage->GetName());
+					}
+				}
+
 				const bool bSaveSuccess = UEditorLoadingAndSavingUtils::SavePackages(DirtyPackages, /*bOnlyDirty=*/true);
 				if (bSaveSuccess)
 				{
@@ -223,11 +260,29 @@ FString UPythonTools::ExecutePythonCode(const FString& Code)
 				}
 				else
 				{
+					// Some or all of the targeted packages did not reach disk. Say so rather than
+					// letting SavedPackages imply a clean flush.
+					bAutoSaveRan = false;
+					AutoSaveNote = TEXT("save_failed");
 					UE_LOG(LogPythonTools, Warning, TEXT("Auto-save (headless) completed with warnings or errors"));
 				}
 			}
 		}
 	}
+
+	// Attach the auto-save report to any JSON result object returned below, so every reply (success
+	// or error) carries auto_save + saved_packages.
+	auto AddSaveInfo = [&bAutoSaveRan, &AutoSaveNote, &SavedPackageNames](const TSharedPtr<FJsonObject>& Obj)
+	{
+		Obj->SetBoolField(TEXT("auto_save"), bAutoSaveRan);
+		Obj->SetStringField(TEXT("auto_save_note"), AutoSaveNote);
+		TArray<TSharedPtr<FJsonValue>> SavedArray;
+		for (const FString& Name : SavedPackageNames)
+		{
+			SavedArray.Add(MakeShared<FJsonValueString>(Name));
+		}
+		Obj->SetArrayField(TEXT("saved_packages"), SavedArray);
+	};
 
 	auto Service = GetExecutionService();
 	if (!Service.IsValid() || !Service.Get())
@@ -236,6 +291,7 @@ FString UPythonTools::ExecutePythonCode(const FString& Code)
 		ErrorObj->SetBoolField(TEXT("success"), false);
 		ErrorObj->SetStringField(TEXT("error_code"), TEXT("PYTHON_SERVICE_UNAVAILABLE"));
 		ErrorObj->SetStringField(TEXT("error_message"), TEXT("Python execution service is not available"));
+		AddSaveInfo(ErrorObj);
 		FString JsonString;
 		TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
 		FJsonSerializer::Serialize(ErrorObj.ToSharedRef(), Writer);
@@ -249,6 +305,7 @@ FString UPythonTools::ExecutePythonCode(const FString& Code)
 		ErrorObj->SetBoolField(TEXT("success"), false);
 		ErrorObj->SetStringField(TEXT("error_code"), TEXT("SERVICE_CONTEXT_INVALID"));
 		ErrorObj->SetStringField(TEXT("error_message"), TEXT("Service context is not properly initialized"));
+		AddSaveInfo(ErrorObj);
 		FString JsonString;
 		TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
 		FJsonSerializer::Serialize(ErrorObj.ToSharedRef(), Writer);
@@ -269,6 +326,7 @@ FString UPythonTools::ExecutePythonCode(const FString& Code)
 		ErrorObj->SetBoolField(TEXT("success"), false);
 		ErrorObj->SetStringField(TEXT("error_code"), Result.GetErrorCode());
 		ErrorObj->SetStringField(TEXT("error_message"), Result.GetErrorMessage());
+		AddSaveInfo(ErrorObj);
 		FString JsonString;
 		TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
 		FJsonSerializer::Serialize(ErrorObj.ToSharedRef(), Writer);
@@ -278,7 +336,12 @@ FString UPythonTools::ExecutePythonCode(const FString& Code)
 	// Successful execution — safe to auto-save again
 	bLastPythonExecutionCrashed = false;
 
-	return ConvertExecutionResultToJson(Result.GetValue());
+	// Carry the auto-save report through to the success JSON alongside the execution result.
+	FPythonExecutionResult Value = Result.GetValue();
+	Value.bAutoSave = bAutoSaveRan;
+	Value.AutoSaveNote = AutoSaveNote;
+	Value.SavedPackages = SavedPackageNames;
+	return ConvertExecutionResultToJson(Value);
 }
 
 FString UPythonTools::DiscoverPythonModule(const FString& ModuleName)
@@ -444,8 +507,27 @@ FString UPythonTools::ConvertExecutionResultToJson(const VibeUE::FPythonExecutio
 	{
 		JsonObj->SetStringField(TEXT("error"), Result.ErrorMessage);
 	}
-	
+
 	JsonObj->SetNumberField(TEXT("execution_time_ms"), Result.ExecutionTimeMs);
+
+	// timed_out is true when the run finished successfully but overran the client timeout; the payload
+	// is still valid. signal_file_path is where this run's outcome is persisted, so a client that gave
+	// up can recover it with vibeue.last_python_result() (B2).
+	JsonObj->SetBoolField(TEXT("timed_out"), Result.bTimedOut);
+	JsonObj->SetStringField(TEXT("signal_file_path"),
+		FVibeUEPythonResultLog::GetLastResultPathForPid(FPlatformProcess::GetCurrentProcessId()));
+
+	// Auto-save report (issue #433 follow-up): whether the pre-execution sweep ran and what it wrote.
+	// auto_save is the OUTCOME, not an echo of the argument — auto_save_note names the reason
+	// whenever it is false, so "opted out" is never confused with "ran, nothing was dirty".
+	JsonObj->SetBoolField(TEXT("auto_save"), Result.bAutoSave);
+	JsonObj->SetStringField(TEXT("auto_save_note"), Result.AutoSaveNote);
+	TArray<TSharedPtr<FJsonValue>> SavedArray;
+	for (const FString& Name : Result.SavedPackages)
+	{
+		SavedArray.Add(MakeShared<FJsonValueString>(Name));
+	}
+	JsonObj->SetArrayField(TEXT("saved_packages"), SavedArray);
 
 	FString JsonString;
 	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);

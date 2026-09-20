@@ -227,8 +227,8 @@ unreal.BlueprintService.remove_timeline_track(bp, "RotateTimeline", "Offset")   
 unreal.BlueprintService.remove_timeline(bp, "RotateTimeline")                                 # deletes node + template
 
 for t in unreal.BlueprintService.get_timelines(bp):
-    print(t.parameter_name, "| tracks:", t.parameter_type, "|", t.default_value)
-    # parameter_type is "float:Name,vector:Name,color:Name,event:Name,..."; default_value has Length/LengthMode/AutoPlay/Loop/...
+    print(t.timeline_name, "| tracks:", t.track_count, "| len:", t.length, "| loop:", t.loop, "| auto_play:", t.auto_play)
+    # get_timelines returns FBlueprintTimelineInfo: timeline_name, track_count (all track types), length, loop, auto_play
 ```
 
 - Track names must be unique within a timeline (across all track types). Adding/removing/renaming a track or changing settings reconstructs the node, so re-read pins afterwards.

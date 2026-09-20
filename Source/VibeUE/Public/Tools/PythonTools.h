@@ -36,14 +36,19 @@ public:
 	 * Execute Python code in the Unreal Engine Python environment
 	 *
 	 * @param Code - Python code to execute
+	 * @param bAutoSave - When true (default) every dirty content and world package is saved headlessly
+	 *                    before the script runs; pass false to run the script without that sweep.
+	 *                    The result JSON always reports the OUTCOME: auto_save (true only when the
+	 *                    sweep really ran), auto_save_note and the saved_packages list.
 	 * @return Execution result including output, errors, and success status
 	 */
 	UFUNCTION(BlueprintCallable, Category="VibeUE|Python", meta=(
 		ToolName="execute_python_code",
 		ToolDescription="Execute Python code in Unreal Engine. Returns stdout, stderr, and execution status.",
-		ParamDescription_Code="Python code to execute"
+		ParamDescription_Code="Python code to execute",
+		ParamDescription_bAutoSave="Save all dirty content and world packages before running (default true). Pass false to skip the pre-run save sweep."
 	))
-	static FString ExecutePythonCode(const FString& Code);
+	static FString ExecutePythonCode(const FString& Code, bool bAutoSave = true);
 
 	/**
 	 * Discover a Python module and list its contents
