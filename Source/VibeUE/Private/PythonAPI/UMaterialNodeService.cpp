@@ -419,9 +419,14 @@ FMaterialExpressionInfo UMaterialNodeService::BuildExpressionInfo(UMaterialExpre
 	return Info;
 }
 
-bool UMaterialNodeService::StringToMaterialProperty(const FString& PropertyName, EMaterialProperty& OutProperty)
+const TArray<TPair<FString, EMaterialProperty>>& UMaterialNodeService::GetMaterialOutputProperties()
 {
-	static const TMap<FString, EMaterialProperty> PropertyMap = {
+	// THE single source of truth for "which material outputs this service understands". Both the
+	// writers (StringToMaterialProperty, used by connect_expression_to_output / disconnect_output)
+	// and the reader (GetOutputConnections) are driven from this list, so the two can never drift
+	// apart again — previously the writers accepted 19 properties while the getter reported only 16,
+	// leaving ClearCoat / ClearCoatRoughness / Displacement writable but invisible (issue #611).
+	static const TArray<TPair<FString, EMaterialProperty>> Properties = {
 		{TEXT("BaseColor"), MP_BaseColor},
 		{TEXT("Metallic"), MP_Metallic},
 		{TEXT("Specular"), MP_Specular},
@@ -442,7 +447,11 @@ bool UMaterialNodeService::StringToMaterialProperty(const FString& PropertyName,
 		{TEXT("ShadingModel"), MP_ShadingModel},
 		{TEXT("Displacement"), MP_Displacement},
 	};
+	return Properties;
+}
 
+bool UMaterialNodeService::StringToMaterialProperty(const FString& PropertyName, EMaterialProperty& OutProperty)
+{
 	// Normalise: trim, and accept the "MP_BaseColor" enum spelling by dropping the leading "MP_".
 	FString Key = PropertyName.TrimStartAndEnd();
 	if (Key.StartsWith(TEXT("MP_"), ESearchCase::IgnoreCase))
@@ -450,7 +459,7 @@ bool UMaterialNodeService::StringToMaterialProperty(const FString& PropertyName,
 		Key = Key.RightChop(3);
 	}
 
-	for (const TPair<FString, EMaterialProperty>& Pair : PropertyMap)
+	for (const TPair<FString, EMaterialProperty>& Pair : GetMaterialOutputProperties())
 	{
 		if (Pair.Key.Equals(Key, ESearchCase::IgnoreCase))
 		{
@@ -2726,36 +2735,23 @@ TArray<FMaterialOutputConnectionInfo> UMaterialNodeService::GetOutputConnections
 		return Results;
 	}
 	
-	auto CheckProperty = [&](EMaterialProperty Prop, const FString& Name) {
+	// Driven from the shared property table (issue #611) rather than a hand-maintained second list,
+	// so every output the writers accept is reported here. Adding a property in one place now adds it
+	// to both; the parity is pinned by VibeUE.MaterialNodeService.OutputPropertyParity.
+	for (const TPair<FString, EMaterialProperty>& Pair : GetMaterialOutputProperties())
+	{
 		FMaterialOutputConnectionInfo Info;
-		Info.PropertyName = Name;
-		
-		FExpressionInput* Input = Material->GetExpressionInputForProperty(Prop);
+		Info.PropertyName = Pair.Key;
+
+		FExpressionInput* Input = Material->GetExpressionInputForProperty(Pair.Value);
 		if (Input && Input->Expression)
 		{
 			Info.bIsConnected = true;
 			Info.ConnectedExpressionId = GetExpressionId(Input->Expression);
 		}
-		
+
 		Results.Add(Info);
-	};
-	
-	CheckProperty(MP_BaseColor, TEXT("BaseColor"));
-	CheckProperty(MP_Metallic, TEXT("Metallic"));
-	CheckProperty(MP_Specular, TEXT("Specular"));
-	CheckProperty(MP_Roughness, TEXT("Roughness"));
-	CheckProperty(MP_Anisotropy, TEXT("Anisotropy"));
-	CheckProperty(MP_EmissiveColor, TEXT("EmissiveColor"));
-	CheckProperty(MP_Opacity, TEXT("Opacity"));
-	CheckProperty(MP_OpacityMask, TEXT("OpacityMask"));
-	CheckProperty(MP_Normal, TEXT("Normal"));
-	CheckProperty(MP_Tangent, TEXT("Tangent"));
-	CheckProperty(MP_WorldPositionOffset, TEXT("WorldPositionOffset"));
-	CheckProperty(MP_SubsurfaceColor, TEXT("SubsurfaceColor"));
-	CheckProperty(MP_AmbientOcclusion, TEXT("AmbientOcclusion"));
-	CheckProperty(MP_Refraction, TEXT("Refraction"));
-	CheckProperty(MP_PixelDepthOffset, TEXT("PixelDepthOffset"));
-	CheckProperty(MP_ShadingModel, TEXT("ShadingModel"));
+	}
 
 	return Results;
 }

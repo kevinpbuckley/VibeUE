@@ -424,7 +424,11 @@ TResult<FPythonExecutionResult> FPythonExecutionService::ExecuteCode(
 		Result.bSuccess = false;
 		Result.ErrorMessage = CrashMessage;
 		Result.ExecutionTimeMs = ExecutionTimeMs;
-		OutErrorCode = ErrorCodes::PYTHON_RUNTIME_ERROR;
+		// A structured (SEH) exception took down native editor code — NOT the same thing as a Python
+		// traceback. Both used to report PYTHON_RUNTIME_ERROR, which left callers unable to tell them
+		// apart and made UPythonTools suppress the next auto-save after any ordinary exception
+		// (issue #608). Only this path warrants that suspicion.
+		OutErrorCode = ErrorCodes::PYTHON_EDITOR_CRASH;
 		OutErrorMessage = CrashMessage;
 	}
 	else

@@ -464,6 +464,30 @@ assert node_id, actor_get_location.spawner_key
 
 If a node-create call returns an empty ID, stop immediately. Re-read the graph, inspect the error output, and fix the lookup before creating anything else.
 
+#### Variable get/set keys: own variables, and the qualified form
+
+`SPAWN K2Node_VariableGet|<MenuName>` (and `...VariableSet`) binds a variable the Blueprint **owns** —
+one of its own variables, an inherited one, or an SCS component. A variable you just added with
+`add_member_variable()` works immediately; the action database has no spawner for it yet, so the
+service binds it as a self member directly. Menu names use the variable's *display* spelling, and a
+bool drops its `b` prefix: `bIsOpen` is `"Get Is Open"` (the raw `"Get bIsOpen"` is accepted too).
+
+A variable owned by an **unrelated** class is refused, because binding one silently produces a node
+that fails to compile with "uses an invalid target". When you deliberately want another class's
+property wired through the node's Target pin, qualify the key with its owning class:
+
+```python
+# Refused — ACharacter is not in this Actor Blueprint's hierarchy:
+unreal.BlueprintService.create_node_by_key(bp, "EventGraph", "SPAWN K2Node_VariableGet|Get Jump Max Count", 0, 0)   # -> ""
+
+# Deliberate cross-class read, wired through the Target pin:
+unreal.BlueprintService.create_node_by_key(
+    bp, "EventGraph", "SPAWN K2Node_VariableGet|Get Jump Max Count|Character", 0, 0)                                # -> node id
+```
+
+Format: `SPAWN <NodeClass>|<MenuName>|<OwnerClass>`. If the named class is one the Blueprint already
+derives from, the node is bound as a self member instead (no redundant Target pin).
+
 ### ⚠️ Standard Macro nodes (ForEachLoop, etc.) — do NOT use `create_node_by_key`
 
 Macro instances (`K2Node_MacroInstance`) have **no spawner key**, so `discover_nodes()` won't find them and `create_node_by_key()` **fails silently** (returns empty, no error). Use the dedicated method instead:

@@ -438,6 +438,28 @@ unreal.EditorAssetLibrary.save_asset(bp)
 - Both return `bool` (`True` on success). A `False` from `add_interface` means either the interface path could not be resolved, or it resolved to an asset that is **not a Blueprint Interface** (e.g. a normal Blueprint or one merely parented to `UInterface`) — check the log and pass a real Blueprint Interface asset path.
 - The interface must be a true Blueprint Interface (`BPTYPE_Interface`), created with `BlueprintInterfaceFactory`. `add_interface` validates this and returns `False` for non-interface classes rather than letting the compile fail.
 
+**Authoring the interface itself.** A Blueprint Interface is nothing but its function graphs, so an
+empty one contributes nothing when implemented. Use `create_function_graph()` to define it — it is
+the counterpart to `override_function()`, which can only override a function that already exists:
+
+```python
+BS = unreal.BlueprintService
+BS.create_function_graph(bpi_path, "Interact")                                  # void -> an event on implementers
+BS.create_function_graph(bpi_path, "GetDisplayName")                            # returns the graph name, "" on failure
+BS.add_function_parameter(bpi_path, "GetDisplayName", "Name", "string", True)   # is_output=True -> a return value
+
+BS.add_interface(bp_path, bpi_path)
+BS.override_function(bp_path, "Interact")   # void interface fn -> event node in the EventGraph
+```
+
+`create_function_graph()` also works on a normal Blueprint (pass `is_pure=True` for a pure function).
+It returns `""` and logs the reason for: an empty or non-identifier name, a name already used by any
+graph on the Blueprint, or a name that already exists on the parent hierarchy — that last case is
+`override_function()`'s job, and a shadowing graph would be a duplicate-function compile error.
+
+A return-valued interface function is materialised as a graph on the implementer and shows up in
+`list_graphs()` as `Interface (<InterfaceClass>)`.
+
 ---
 
 ## Task Index

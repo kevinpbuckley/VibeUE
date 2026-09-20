@@ -1160,6 +1160,21 @@ public:
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
 	static int32 CleanupUnusedExpressions(const FString& AssetPath);
 
+	/**
+	 * The single source of truth for the material outputs this service understands, as ordered
+	 * (friendly name -> EMaterialProperty) pairs. Both the writers (StringToMaterialProperty, behind
+	 * connect_expression_to_output / disconnect_output) and the reader (GetOutputConnections) are
+	 * driven from it, so a property can never be writable but invisible again (issue #611).
+	 * Not a UFUNCTION (TPair does not marshal); public so a regression test can assert that parity.
+	 */
+	static const TArray<TPair<FString, EMaterialProperty>>& GetMaterialOutputProperties();
+
+	/** Strict material-property mapper, driven by GetMaterialOutputProperties(). Accepts friendly
+	 *  ("BaseColor") and enum ("MP_BaseColor") spellings, case-insensitive. Returns false and leaves
+	 *  OutProperty untouched for unknown names — a bad name must never silently rewire another output.
+	 *  Not a UFUNCTION (EMaterialProperty out-param); public so the parity test can assert against it. */
+	static bool StringToMaterialProperty(const FString& PropertyName, EMaterialProperty& OutProperty);
+
 private:
 	// Helper methods
 	static UMaterial* LoadMaterialAsset(const FString& MaterialPath);
@@ -1173,9 +1188,6 @@ private:
 	static TArray<FString> GetExpressionOutputNames(UMaterialExpression* Expression);
 	static UClass* ResolveExpressionClass(const FString& ClassName);
 	static FMaterialExpressionInfo BuildExpressionInfo(UMaterialExpression* Expression);
-	/** Strict material-property mapper. Accepts friendly ("BaseColor") and enum ("MP_BaseColor")
-	 *  spellings, case-insensitive. Returns false and leaves OutProperty untouched for unknown names. */
-	static bool StringToMaterialProperty(const FString& PropertyName, EMaterialProperty& OutProperty);
 	static void RefreshMaterialGraph(UMaterial* Material);
 	static FString FunctionInputTypeToString(int32 InputType);
 	static int32 StringToFunctionInputType(const FString& TypeName);

@@ -316,8 +316,12 @@ FString UPythonTools::ExecutePythonCode(const FString& Code, bool bAutoSave)
 
 	if (Result.IsError())
 	{
-		// Track crash state so next auto-save is skipped (corrupt assets)
-		if (Result.GetErrorCode() == FString(ErrorCodes::PYTHON_RUNTIME_ERROR))
+		// Track crash state so the next auto-save is skipped (the editor may hold half-mutated
+		// objects). ONLY a real SEH crash counts: this used to trigger on PYTHON_RUNTIME_ERROR, which
+		// is also what an ordinary Python traceback returns, so a trivial AttributeError silently
+		// disabled auto-save for the following call (issue #608). A caught exception corrupts
+		// nothing — the interpreter handled it and the editor is fine.
+		if (Result.GetErrorCode() == FString(ErrorCodes::PYTHON_EDITOR_CRASH))
 		{
 			bLastPythonExecutionCrashed = true;
 		}
