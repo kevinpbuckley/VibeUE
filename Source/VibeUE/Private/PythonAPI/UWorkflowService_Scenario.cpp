@@ -70,6 +70,9 @@ namespace
 		bool bStopPIE = true;
 		bool bPreflighting = true;
 		bool bFinishRequested = false;
+		// A dispatched request is unresolved until its world is bound or its
+		// still-tagged queue is synchronously cancelled and read back.
+		bool bPIEHandoffPending = false;
 		bool bCancelPendingStart = false;
 		bool bEndInvoked = false;
 		bool bTerminal = false;
@@ -167,6 +170,7 @@ namespace
 		{
 			Scenario.OwnedWorld = State.World;
 			Scenario.bWorldBound = true;
+			Scenario.bPIEHandoffPending = false;
 		}
 	}
 
@@ -212,6 +216,12 @@ namespace
 		if (Scenario.PIEBeginFrame.IsSet() && ScenarioFrame() <= Scenario.PIEBeginFrame.GetValue()) { return EScenarioCleanup::Pending; }
 		FScenarioPIEState State = ReadPIEState();
 		BindPIEWorld(Scenario, State);
+		if (Scenario.bPIEHandoffPending && !OwnsQueuedPIE(Scenario, State))
+		{
+			// A consumed request can have a local startup continuation even if
+			// no session/world appears for multiple frames.
+			return EScenarioCleanup::Pending;
+		}
 		if (OwnsQueuedPIE(Scenario, State))
 		{
 #if WITH_DEV_AUTOMATION_TESTS
@@ -222,6 +232,13 @@ namespace
 			State = ReadPIEState(); // cancellation delegates may have queued a different request
 			if (OwnsQueuedPIE(Scenario, State)) { return EScenarioCleanup::Pending; }
 			BindPIEWorld(Scenario, State);
+			if (Scenario.bPIEHandoffPending)
+			{
+				if (State.Session.IsSet() || State.World.IsValid()) { return EScenarioCleanup::Pending; }
+				// We cancelled the still-tagged queue on this game-thread tick,
+				// and neither a session nor world was produced by cancellation.
+				Scenario.bPIEHandoffPending = false;
+			}
 		}
 		if (OwnsPIESession(Scenario, State))
 		{
@@ -467,7 +484,8 @@ namespace
 			BindPIEWorld(*Scenario, State);
 			if ((Scenario->bExclusivePIE && (!State.bEditorAvailable || HasForeignPIE(*Scenario, State))) ||
 				(Scenario->PIERequestSettings.IsValid() &&
-					(HasForeignPIE(*Scenario, State) || (!OwnsQueuedPIE(*Scenario, State) && !OwnsPIESession(*Scenario, State)) ||
+					(HasForeignPIE(*Scenario, State) ||
+						(!OwnsQueuedPIE(*Scenario, State) && !OwnsPIESession(*Scenario, State) && !Scenario->bPIEHandoffPending) ||
 					(Scenario->bWorldBound && !OwnsPIEWorld(*Scenario, State)))))
 			{
 				FinishScenario(Scenario, TEXT("failed"), TEXT("PIE ownership changed or foreign active/queued PIE appeared"));
@@ -514,6 +532,7 @@ namespace
 				if (GScenarioTestState)
 				{
 					++GScenarioTestState->StartCalls;
+					Scenario->bPIEHandoffPending = true;
 					GScenarioTestState->PlayRequest = Request;
 					if (GScenarioTestState->OnRequestQueued) { GScenarioTestState->OnRequestQueued(); }
 				}
@@ -529,6 +548,7 @@ namespace
 					{
 						if (const TSharedPtr<FWorkflowScenario> Pinned = WeakScenario.Pin()) { RecordPIEStarted(Pinned); }
 					});
+					Scenario->bPIEHandoffPending = true;
 					GEditor->RequestPlaySession(Request);
 				}
 				const FScenarioPIEState RequestedState = ReadPIEState();
@@ -672,6 +692,17 @@ namespace
 		return true;
 	}
 
+	bool IsExclusivePIEQualified()
+	{
+		// Public UE 5.8 state cannot yet prove the first world binding or an atomic
+		// cancellation receipt. Keep live use off until those ownership gaps close.
+#if WITH_DEV_AUTOMATION_TESTS
+		return GScenarioTestState && GScenarioTestState->bExclusivePIEQualified;
+#else
+		return false;
+#endif
+	}
+
 	FTSTicker::FDelegateHandle GScenarioTicker = FTSTicker::GetCoreTicker().AddTicker(
 		FTickerDelegate::CreateStatic(&TickWorkflowScenario), 0.01f);
 }
@@ -679,7 +710,9 @@ namespace
 FString UWorkflowService::GetScenarioCapabilities()
 {
 	// No editor access, scenario reservation, asset load, journal or disk write.
-	return TEXT("{\"success\":true,\"schema\":\"vibeue.scenario_capabilities.v1\",\"exclusive_pie\":true}");
+	return IsExclusivePIEQualified()
+		? TEXT("{\"success\":true,\"schema\":\"vibeue.scenario_capabilities.v1\",\"exclusive_pie\":true}")
+		: TEXT("{\"success\":true,\"schema\":\"vibeue.scenario_capabilities.v1\",\"exclusive_pie\":false}");
 }
 
 FString UWorkflowService::RunScenario(const FString& ScenarioJson)
@@ -746,6 +779,10 @@ FString UWorkflowService::RunScenario(const FString& ScenarioJson)
 		(!Spec->HasTypedField<EJson::Boolean>(TEXT("exclusive_pie")) || !Spec->TryGetBoolField(TEXT("exclusive_pie"), bExclusive)))
 	{
 		return ScenarioError(TEXT("exclusive_pie must be a boolean"));
+	}
+	if (bExclusive && !IsExclusivePIEQualified())
+	{
+		return ScenarioError(TEXT("exclusive PIE disabled pending live ownership qualification"));
 	}
 	for (const auto& Entry : GWorkflowScenarios)
 	{

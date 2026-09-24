@@ -45,7 +45,9 @@ public:
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Workflow|Journal")
 	static FString DeleteRun(const FString& RunId);
 
-	/** Read-only feature negotiation. Python: get_scenario_capabilities(). */
+	/** Read-only feature negotiation. Python: get_scenario_capabilities().
+	 * Live exclusive PIE remains false until ownership and teardown are qualified.
+	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Workflow|PIE")
 	static FString GetScenarioCapabilities();
 
@@ -96,6 +98,7 @@ public:
 struct FWorkflowScenarioTestState
 {
 	bool bEditorAvailable = true;
+	bool bExclusivePIEQualified = true;
 	TOptional<FRequestPlaySessionParams> PlayRequest;
 	TOptional<FPlayInEditorSessionInfo> PlaySession;
 	TWeakObjectPtr<UWorld> PlayWorld;
