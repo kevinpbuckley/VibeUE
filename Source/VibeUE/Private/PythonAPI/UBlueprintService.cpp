@@ -981,13 +981,16 @@ UBlueprint* UBlueprintService::LoadBlueprint(const FString& BlueprintPath)
 		return nullptr;
 	}
 
-	// Under Play-In-Editor the editor asset often will not resolve and BlueprintService edits are
-	// unsafe, so callers used to get an empty/False result with no explanation. Make the refusal
-	// visible with a fixed PIE_ACTIVE: prefix naming the Blueprint path (LoadBlueprint is the shared
-	// choke point every BlueprintService entry point funnels through). Return type is unchanged.
+	// BlueprintService edits are unsafe under Play-In-Editor, so refuse every load while PIE runs:
+	// log a fixed PIE_ACTIVE: prefix naming the Blueprint path and return nullptr (LoadBlueprint is
+	// the shared choke point every BlueprintService entry point funnels through). The early return
+	// matters for subobject (":") paths: UEditorAssetLibrary::LoadAsset already refuses during PIE,
+	// but StaticLoadObject below does not, so without it a Level Blueprint path would still resolve
+	// and be edited while the log claimed the call was refused.
 	if (GEditor && GEditor->PlayWorld)
 	{
 		UE_LOG(LogTemp, Error, TEXT("PIE_ACTIVE: LoadBlueprint refused '%s' — a Play-In-Editor session is running; stop PIE before using BlueprintService."), *BlueprintPath);
+		return nullptr;
 	}
 
 	// Subobject paths (":" present) don't load through the asset library — resolve them
