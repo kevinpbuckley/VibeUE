@@ -6493,10 +6493,22 @@ bool UBlueprintService::DeleteNode(
 		return false;
 	}
 
-	// Don't delete entry or result nodes
-	if (Node->IsA<UK2Node_FunctionEntry>() || Node->IsA<UK2Node_FunctionResult>())
+	// Never delete a function entry node — the graph cannot exist without one.
+	if (Node->IsA<UK2Node_FunctionEntry>())
 	{
-		UE_LOG(LogTemp, Error, TEXT("DeleteNode: Cannot delete function entry or result nodes"));
+		UE_LOG(LogTemp, Error, TEXT("DeleteNode: Cannot delete a function entry node ('%s')"), *NodeId);
+		return false;
+	}
+
+	// Result nodes follow the engine's own rule (UK2Node_FunctionResult::CanUserDeleteNode): an
+	// editable result can always go, and a fixed-signature one only while another result remains.
+	// Refusing every result node left an extra, unreachable "return" node impossible to remove.
+	const bool bIsResultNode = Node->IsA<UK2Node_FunctionResult>();
+	if (bIsResultNode && !Node->CanUserDeleteNode())
+	{
+		UE_LOG(LogTemp, Error,
+			TEXT("DeleteNode: Cannot delete function result node '%s' — it is the only result node of a fixed-signature function (CanUserDeleteNode is false)"),
+			*NodeId);
 		return false;
 	}
 
@@ -6511,7 +6523,17 @@ bool UBlueprintService::DeleteNode(
 
 	// Remove the node
 	Graph->RemoveNode(Node);
-	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+	if (bIsResultNode)
+	{
+		// A result node carries the function's output pins (UserDefinedPins); removing the last one
+		// changes the signature, so callers must be reconstructed — the same structural mark the
+		// editor's own delete (FBlueprintEditorUtils::RemoveNode) applies.
+		FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+	}
+	else
+	{
+		FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+	}
 
 	UE_LOG(LogTemp, Log, TEXT("DeleteNode: Deleted node '%s' from graph '%s'"), *NodeId, *GraphName);
 	return true;
