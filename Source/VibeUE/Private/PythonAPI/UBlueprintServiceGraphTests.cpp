@@ -1025,5 +1025,170 @@ bool FVibeActorServiceRerunConstructionTest::RunTest(const FString&)
 	return true;
 }
 
+// ============================================================================
+// B4: delete_node refused EVERY function result node, so an extra, unreachable "return" node in a
+// function graph could never be removed through the API. The engine's own rule
+// (UK2Node_FunctionResult::CanUserDeleteNode) allows deleting an editable result node. Builds a user
+// function with TWO result nodes, deletes the extra one by id, and asserts one result remains and
+// the Blueprint still compiles. Control: the function ENTRY node is still refused.
+// ============================================================================
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBlueprintServiceDeleteExtraFunctionResultTest, "VibeUE.BlueprintService.DeleteNodeRemovesExtraFunctionResult",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FVibeBlueprintServiceDeleteExtraFunctionResultTest::RunTest(const FString&)
+{
+	using namespace VibeBlueprintServiceTestUtil;
+
+	const FString PackageName = FString::Printf(TEXT("/Game/__VibeUETest/BP_DeleteExtraResult_%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+	UBlueprint* Blueprint = MakeRegisteredBlueprint(*this, PackageName, AActor::StaticClass());
+	if (!Blueprint)
+	{
+		return false;
+	}
+	ON_SCOPE_EXIT { ReleaseBlueprint(Blueprint); };
+
+	const FString Path = PackageName;
+
+	// A user function with one int output — the output parameter creates the primary result node.
+	const FString FuncName = UBlueprintService::CreateFunctionGraph(Path, TEXT("VibeTwoReturnsFunc"), /*bIsPure*/ false);
+	if (!TestFalse(TEXT("create_function_graph created the user function"), FuncName.IsEmpty()))
+	{
+		return false;
+	}
+	TestTrue(TEXT("added output parameter"),
+		UBlueprintService::AddFunctionParameter(Path, FuncName, TEXT("OutValue"), TEXT("int"), true, false, TEXT(""), false, TEXT("")));
+
+	UEdGraph* FuncGraph = nullptr;
+	for (UEdGraph* Graph : Blueprint->FunctionGraphs)
+	{
+		if (Graph && Graph->GetName() == FuncName)
+		{
+			FuncGraph = Graph;
+			break;
+		}
+	}
+	if (!TestNotNull(TEXT("found the new function graph"), FuncGraph))
+	{
+		return false;
+	}
+
+	TArray<UK2Node_FunctionEntry*> EntryNodes;
+	TArray<UK2Node_FunctionResult*> ResultNodes;
+	FuncGraph->GetNodesOfClass<UK2Node_FunctionEntry>(EntryNodes);
+	FuncGraph->GetNodesOfClass<UK2Node_FunctionResult>(ResultNodes);
+	if (!TestEqual(TEXT("function graph has one entry node"), EntryNodes.Num(), 1) ||
+		!TestEqual(TEXT("function graph starts with one result node"), ResultNodes.Num(), 1))
+	{
+		return false;
+	}
+	UK2Node_FunctionEntry* EntryNode = EntryNodes[0];
+	UK2Node_FunctionResult* PrimaryResult = ResultNodes[0];
+
+	// Add a SECOND result node the way the engine places one (PostPlacedNewNode syncs it with the
+	// entry node and the primary result's output pins). It is left unwired — the "extra return".
+	UK2Node_FunctionResult* ExtraResult = nullptr;
+	{
+		FGraphNodeCreator<UK2Node_FunctionResult> NodeCreator(*FuncGraph);
+		ExtraResult = NodeCreator.CreateNode(/*bSelectNewNode*/ false);
+		ExtraResult->NodePosX = PrimaryResult->NodePosX;
+		ExtraResult->NodePosY = PrimaryResult->NodePosY + 200;
+		NodeCreator.Finalize();
+	}
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+
+	ResultNodes.Reset();
+	FuncGraph->GetNodesOfClass<UK2Node_FunctionResult>(ResultNodes);
+	if (!TestEqual(TEXT("function graph now has two result nodes"), ResultNodes.Num(), 2))
+	{
+		return false;
+	}
+	TestTrue(TEXT("the engine itself allows deleting the extra result node"), ExtraResult->CanUserDeleteNode());
+
+	const FBlueprintCompileResult Before = UBlueprintService::CompileBlueprint(Path);
+	TestTrue(TEXT("the two-result function compiles"), Before.bSuccess);
+	TestEqual(TEXT("the two-result function compiles with no errors"), Before.NumErrors, 0);
+
+	// The fix: the extra result node can be deleted by id.
+	const FString ExtraId = ExtraResult->NodeGuid.ToString();
+	TestTrue(TEXT("delete_node removes the extra function result node"),
+		UBlueprintService::DeleteNode(Path, FuncName, ExtraId));
+
+	ResultNodes.Reset();
+	FuncGraph->GetNodesOfClass<UK2Node_FunctionResult>(ResultNodes);
+	TestEqual(TEXT("exactly one result node remains"), ResultNodes.Num(), 1);
+	TestTrue(TEXT("the remaining result node is the primary one"), ResultNodes.Num() == 1 && ResultNodes[0] == PrimaryResult);
+
+	const FBlueprintCompileResult After = UBlueprintService::CompileBlueprint(Path);
+	TestTrue(TEXT("the function still compiles after the delete"), After.bSuccess);
+	TestEqual(TEXT("the function compiles with no errors after the delete"), After.NumErrors, 0);
+
+	// Control: the function entry node is still refused. DeleteNode logs the refusal at Error
+	// verbosity; Occurrences = 1 means it must occur exactly once.
+	AddExpectedError(TEXT("DeleteNode: Cannot delete a function entry node"), EAutomationExpectedErrorFlags::Contains, 1);
+	TestFalse(TEXT("delete_node still refuses the function entry node"),
+		UBlueprintService::DeleteNode(Path, FuncName, EntryNode->NodeGuid.ToString()));
+
+	EntryNodes.Reset();
+	FuncGraph->GetNodesOfClass<UK2Node_FunctionEntry>(EntryNodes);
+	TestEqual(TEXT("the entry node is still in the graph"), EntryNodes.Num(), 1);
+
+	return true;
+}
+
+// ============================================================================
+// B4 control: a NON-editable result node (an interface implementation's fixed signature) that is
+// the ONLY result in its graph stays refused — the engine's CanUserDeleteNode returns false for it.
+// ============================================================================
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBlueprintServiceDeleteSoleFixedResultRefusedTest, "VibeUE.BlueprintService.DeleteNodeRefusesSoleFixedFunctionResult",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FVibeBlueprintServiceDeleteSoleFixedResultRefusedTest::RunTest(const FString&)
+{
+	UBlueprint* Interface = nullptr;
+	UBlueprint* Actor = nullptr;
+	FString ActorPath;
+	const bool bBuilt = VibeUETestHelpers::BuildInterfaceImplementer(*this, TEXT("SoleFixedResult"), Interface, Actor, ActorPath);
+	ON_SCOPE_EXIT{ VibeUETestHelpers::ForgetBlueprint(Actor); VibeUETestHelpers::ForgetBlueprint(Interface); };
+	if (!bBuilt)
+	{
+		return false;
+	}
+
+	// The return-valued interface function is materialised as an interface graph on the implementer.
+	UEdGraph* ImplGraph = nullptr;
+	for (const FBPInterfaceDescription& Desc : Actor->ImplementedInterfaces)
+	{
+		for (UEdGraph* Graph : Desc.Graphs)
+		{
+			if (Graph && Graph->GetName() == TEXT("GetValue"))
+			{
+				ImplGraph = Graph;
+				break;
+			}
+		}
+	}
+	if (!TestNotNull(TEXT("implementer has the GetValue interface graph"), ImplGraph))
+	{
+		return false;
+	}
+
+	TArray<UK2Node_FunctionResult*> ResultNodes;
+	ImplGraph->GetNodesOfClass<UK2Node_FunctionResult>(ResultNodes);
+	if (!TestEqual(TEXT("the interface graph has exactly one result node"), ResultNodes.Num(), 1))
+	{
+		return false;
+	}
+	UK2Node_FunctionResult* SoleResult = ResultNodes[0];
+	TestFalse(TEXT("the interface result node is not editable (fixed signature)"), SoleResult->IsEditable());
+	TestFalse(TEXT("the engine refuses deleting the sole fixed-signature result node"), SoleResult->CanUserDeleteNode());
+
+	AddExpectedError(TEXT("DeleteNode: Cannot delete function"), EAutomationExpectedErrorFlags::Contains, 1);
+	TestFalse(TEXT("delete_node refuses the sole fixed-signature result node"),
+		UBlueprintService::DeleteNode(ActorPath, TEXT("GetValue"), SoleResult->NodeGuid.ToString()));
+
+	ResultNodes.Reset();
+	ImplGraph->GetNodesOfClass<UK2Node_FunctionResult>(ResultNodes);
+	TestEqual(TEXT("the sole result node is still in the graph"), ResultNodes.Num(), 1);
+	return true;
+}
+
 
 #endif // WITH_AUTOMATION_TESTS
