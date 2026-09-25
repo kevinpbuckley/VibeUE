@@ -271,7 +271,11 @@ FString UPythonTools::ExecutePythonCode(const FString& Code, bool bAutoSave)
 			AutoSaveNote = TEXT("editor_unavailable");
 			UE_LOG(LogPythonTools, Warning, TEXT("Cannot auto-save: GEditor is not available"));
 		}
-		else if (GIsPlayInEditorWorld)
+		// GIsPlayInEditorWorld alone is not enough: the engine sets it only while the PIE world itself
+		// ticks (SetPlayInEditorWorld/RestoreEditorWorld), so a call dispatched from editor scope during
+		// a PIE or Simulate session sees it false. GEditor->PlayWorld is non-null for the whole session.
+		// Same test as the engine's EditorScriptingHelpers::CheckIfInEditorAndPIE.
+		else if (GEditor->PlayWorld || GIsPlayInEditorWorld)
 		{
 			AutoSaveNote = TEXT("pie_active");
 			UE_LOG(LogPythonTools, Warning, TEXT("Cannot auto-save: Currently in PIE mode"));
