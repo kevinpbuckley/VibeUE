@@ -6,6 +6,10 @@
 #include "EditorAssetLibrary.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
+#include "Engine/World.h"
+#include "Settings/LevelEditorPlaySettings.h"
+#include "UObject/StrongObjectPtr.h"
+#include "UObject/UnrealType.h"
 #include "EdGraphSchema_K2.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
@@ -14,6 +18,7 @@
 #include "HAL/FileManager.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 
@@ -223,6 +228,672 @@ bool FWorkflowScenarioEvidenceTest::RunTest(const FString&)
 	Queue(FString::Printf(TEXT(R"({"steps":[{"action":"assert_log","contains":"%s","not_contains":"%s-absent"}],"teardown":{"stop_pie":false}})"), *Marker, *Marker), TEXT("passed"));
 	UE_LOG(LogTemp, Display, TEXT("%s"), *Marker);
 	GLog->FlushThreadedLogs(); GLog->Flush();
+	return true;
+}
+
+// Test-first ownership regressions. The scoped seam replaces only editor/asset/I/O
+// boundaries; RunScenario, its ticker, CancelScenario and report transitions are real.
+// No fixture assigns GEditor->PlayWorld, starts PIE, loads assets or writes reports.
+namespace
+{
+	struct FWorkflowPIEFixture
+	{
+		FWorkflowScenarioTestState State;
+		FScopedWorkflowScenarioTest Scope{State};
+		TStrongObjectPtr<UWorld> OwnedWorld{NewObject<UWorld>(GetTransientPackage())};
+		TStrongObjectPtr<UWorld> ForeignWorld{NewObject<UWorld>(GetTransientPackage())};
+		TStrongObjectPtr<ULevelEditorPlaySettings> ForeignSettings{
+			NewObject<ULevelEditorPlaySettings>(GetTransientPackage())};
+
+		void ForeignQueue()
+		{
+			State.PlayRequest.Emplace();
+			State.PlayRequest->EditorPlaySettings = ForeignSettings.Get();
+		}
+
+		void ForeignSession(bool bWithWorld = true)
+		{
+			State.PlaySession.Emplace();
+			State.PlaySession->OriginalRequestParams.EditorPlaySettings = ForeignSettings.Get();
+			State.PlaySession->PlayRequestStartTime = 99.0;
+			State.PlayWorld = bWithWorld ? ForeignWorld.Get() : nullptr;
+		}
+
+		void ConsumeOwnedQueue(bool bWithWorld = true)
+		{
+			check(State.PlayRequest.IsSet());
+			State.PlaySession.Emplace();
+			State.PlaySession->OriginalRequestParams = State.PlayRequest.GetValue();
+			State.PlaySession->PlayRequestStartTime = 1.0;
+			State.PlayRequest.Reset();
+			State.PlayWorld = bWithWorld ? OwnedWorld.Get() : nullptr;
+			if (bWithWorld) { Scope.NotifyPIEStarted(); }
+		}
+
+		FString Queue(const FString& Json)
+		{
+			// Ownership fixtures exercise lifecycle rather than assertions. Upstream
+			// requires an explicit smoke marker when no assertion is requested.
+			const TSharedPtr<FJsonObject> Spec = ParseWorkflowJson(Json);
+			if (!Spec) { return FString(); }
+			Spec->SetBoolField(TEXT("smoke"), true);
+			FString ScenarioJson;
+			FJsonSerializer::Serialize(Spec.ToSharedRef(), TJsonWriterFactory<>::Create(&ScenarioJson));
+			const TSharedPtr<FJsonObject> Result = ParseWorkflowJson(UWorkflowService::RunScenario(ScenarioJson));
+			FString Id;
+			if (Result.IsValid()) { Result->TryGetStringField(TEXT("scenarioId"), Id); }
+			return Id;
+		}
+
+		TSharedPtr<FJsonObject> Report(const FString& Id)
+		{
+			return ParseWorkflowJson(UWorkflowService::GetScenario(Id));
+		}
+	};
+
+	const TCHAR* ExclusivePIESpec = TEXT("{\"exclusive_pie\":true,\"steps\":[{\"action\":\"start_pie\"},{\"action\":\"wait_for_pie\"},{\"action\":\"wait\",\"seconds\":300}]}");
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWorkflowScenarioCapabilitiesTest, "VibeUE.Workflow.Scenario.Ownership.CapabilitiesReadOnly",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FWorkflowScenarioCapabilitiesTest::RunTest(const FString&)
+{
+	FWorkflowPIEFixture F;
+	if (!TestTrue(TEXT("isolated fixture bound"), F.Scope.IsBound())) { return false; }
+	F.ForeignQueue(); F.ForeignSession();
+	const UFunction* Function = UWorkflowService::StaticClass()->FindFunctionByName(TEXT("GetScenarioCapabilities"));
+	TestTrue(TEXT("capabilities is a reflected static callable"), Function &&
+		Function->HasAllFunctionFlags(FUNC_Static | FUNC_BlueprintCallable));
+	const TSharedPtr<FJsonObject> Result = ParseWorkflowJson(UWorkflowService::GetScenarioCapabilities());
+	if (!TestTrue(TEXT("capabilities JSON"), Result.IsValid())) { return false; }
+	TestTrue(TEXT("capabilities query succeeds"), Result->GetBoolField(TEXT("success")));
+	TestEqual(TEXT("capability schema"), Result->GetStringField(TEXT("schema")), FString(TEXT("vibeue.scenario_capabilities.v1")));
+	TestTrue(TEXT("exclusive PIE contract advertised"), Result->GetBoolField(TEXT("exclusive_pie")));
+	TestEqual(TEXT("capability lookup never starts PIE"), F.State.StartCalls, 0);
+	TestEqual(TEXT("capability lookup never cancels PIE"), F.State.CancelCalls, 0);
+	TestEqual(TEXT("capability lookup never ends PIE"), F.State.EndCalls, 0);
+	TestEqual(TEXT("capability lookup writes no artifacts"), F.State.ReportWrites, 0);
+	TestTrue(TEXT("foreign request remains"), F.State.PlayRequest.IsSet());
+	TestTrue(TEXT("foreign world remains"), F.State.PlayWorld.Get() == F.ForeignWorld.Get());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWorkflowScenarioUnqualifiedGateTest, "VibeUE.Workflow.Scenario.Ownership.UnqualifiedExclusiveDisabled",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FWorkflowScenarioUnqualifiedGateTest::RunTest(const FString&)
+{
+	FWorkflowPIEFixture F;
+	if (!TestTrue(TEXT("isolated fixture bound"), F.Scope.IsBound())) { return false; }
+	F.State.bExclusivePIEQualified = false;
+	const TSharedPtr<FJsonObject> Capabilities = ParseWorkflowJson(UWorkflowService::GetScenarioCapabilities());
+	if (!TestTrue(TEXT("capabilities JSON"), Capabilities.IsValid())) { return false; }
+	TestFalse(TEXT("unqualified live ownership is not advertised"), Capabilities->GetBoolField(TEXT("exclusive_pie")));
+	const TSharedPtr<FJsonObject> Rejected = ParseWorkflowJson(UWorkflowService::RunScenario(
+		TEXT("{\"smoke\":true,\"exclusive_pie\":true,\"preflight\":{\"compile_blueprints\":[\"/Game/NotLoadedByFixture\"]},\"steps\":[{\"action\":\"start_pie\"}]}")));
+	if (!TestTrue(TEXT("rejection JSON"), Rejected.IsValid())) { return false; }
+	TestFalse(TEXT("unqualified exclusive run rejected"), Rejected->GetBoolField(TEXT("success")));
+	TestFalse(TEXT("no scenario reserved"), Rejected->HasField(TEXT("scenarioId")));
+	TestEqual(TEXT("no preflight mutation"), F.State.PreflightCalls, 0);
+	TestEqual(TEXT("no report written"), F.State.ReportWrites, 0);
+	TestEqual(TEXT("no PIE dispatched"), F.State.StartCalls, 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWorkflowScenarioLiveCapabilityGateTest, "VibeUE.Workflow.Scenario.Ownership.LiveExclusiveDisabled",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FWorkflowScenarioLiveCapabilityGateTest::RunTest(const FString&)
+{
+	const TSharedPtr<FJsonObject> Capabilities = ParseWorkflowJson(UWorkflowService::GetScenarioCapabilities());
+	if (!TestTrue(TEXT("live capabilities JSON"), Capabilities.IsValid())) { return false; }
+	TestTrue(TEXT("read-only capability lookup succeeds"), Capabilities->GetBoolField(TEXT("success")));
+	TestFalse(TEXT("unqualified real editor must not advertise exclusive PIE"), Capabilities->GetBoolField(TEXT("exclusive_pie")));
+	// A wait-only spec cannot launch PIE even if the admission gate regresses.
+	const TSharedPtr<FJsonObject> Rejected = ParseWorkflowJson(UWorkflowService::RunScenario(
+		TEXT("{\"smoke\":true,\"exclusive_pie\":true,\"steps\":[{\"action\":\"wait\",\"seconds\":0}]}")));
+	if (!TestTrue(TEXT("live rejection JSON"), Rejected.IsValid())) { return false; }
+	TestFalse(TEXT("unqualified real editor rejects direct exclusive calls"), Rejected->GetBoolField(TEXT("success")));
+	TestFalse(TEXT("direct rejection reserves no scenario"), Rejected->HasField(TEXT("scenarioId")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWorkflowScenarioForeignAdmissionTest, "VibeUE.Workflow.Scenario.Ownership.ForeignAdmission",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FWorkflowScenarioForeignAdmissionTest::RunTest(const FString&)
+{
+	for (int32 Mode = 0; Mode != 3; ++Mode)
+	{
+		FWorkflowPIEFixture F;
+		if (!TestTrue(TEXT("isolated fixture bound"), F.Scope.IsBound())) { return false; }
+		if (Mode == 0) { F.State.PlayWorld = F.ForeignWorld.Get(); }
+		else if (Mode == 1) { F.ForeignQueue(); }
+		else { F.ForeignSession(false); } // session startup is busy even without PlayWorld
+		const TSharedPtr<FJsonObject> Result = ParseWorkflowJson(UWorkflowService::RunScenario(
+			TEXT("{\"smoke\":true,\"exclusive_pie\":true,\"preflight\":{\"compile_blueprints\":[\"/Game/NotLoadedByFixture\"]},\"steps\":[{\"action\":\"start_pie\"}]}")));
+		if (!TestTrue(TEXT("admission returns JSON"), Result.IsValid())) { return false; }
+		TestFalse(TEXT("foreign active or queued PIE rejected"), Result->GetBoolField(TEXT("success")));
+		TestFalse(TEXT("rejection has no scenario id"), Result->HasField(TEXT("scenarioId")));
+		TestEqual(TEXT("admission checked before preflight mutation"), F.State.PreflightCalls, 0);
+		TestEqual(TEXT("rejected admission creates no report"), F.State.ReportWrites, 0);
+		F.Scope.Tick();
+		TestEqual(TEXT("foreign PIE never ended"), F.State.EndCalls, 0);
+		TestEqual(TEXT("foreign queued request never cancelled"), F.State.CancelCalls, 0);
+		TestEqual(TEXT("foreign queued request never overwritten"), F.State.StartCalls, 0);
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWorkflowScenarioExclusiveTypeTest, "VibeUE.Workflow.Scenario.Ownership.ExclusiveFlagType",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FWorkflowScenarioExclusiveTypeTest::RunTest(const FString&)
+{
+	FWorkflowPIEFixture F;
+	if (!TestTrue(TEXT("isolated fixture bound"), F.Scope.IsBound())) { return false; }
+	for (const TCHAR* Value : {TEXT("1"), TEXT("null"), TEXT("\"true\""), TEXT("\"false\"")})
+	{
+		const TSharedPtr<FJsonObject> Result = ParseWorkflowJson(UWorkflowService::RunScenario(FString::Printf(
+			TEXT("{\"smoke\":true,\"exclusive_pie\":%s,\"steps\":[{\"action\":\"start_pie\"}]}"), Value)));
+		if (!TestTrue(TEXT("invalid flag yields JSON"), Result.IsValid())) { return false; }
+		TestFalse(TEXT("exclusive flag is strictly boolean, not coercible"), Result->GetBoolField(TEXT("success")));
+	}
+	TestEqual(TEXT("invalid flag never writes or queues a scenario"), F.State.ReportWrites, 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWorkflowScenarioCompetingAdmissionTest, "VibeUE.Workflow.Scenario.Ownership.CompetingScenarios",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FWorkflowScenarioCompetingAdmissionTest::RunTest(const FString&)
+{
+	FWorkflowPIEFixture F;
+	if (!TestTrue(TEXT("isolated fixture bound"), F.Scope.IsBound())) { return false; }
+	const FString Observer = F.Queue(TEXT("{\"steps\":[{\"action\":\"wait\",\"seconds\":300}]}"));
+	TestFalse(TEXT("legacy observer admitted"), Observer.IsEmpty());
+	TestTrue(TEXT("exclusive rejects an already active observer"), F.Queue(ExclusivePIESpec).IsEmpty());
+	UWorkflowService::CancelScenario(Observer); F.Scope.Tick();
+	const FString Exclusive = F.Queue(ExclusivePIESpec);
+	TestFalse(TEXT("exclusive admitted after observer is terminal"), Exclusive.IsEmpty());
+	TestTrue(TEXT("second exclusive rejected"), F.Queue(ExclusivePIESpec).IsEmpty());
+	TestTrue(TEXT("legacy observer cannot enter exclusive reservation"),
+		F.Queue(TEXT("{\"steps\":[{\"action\":\"wait\",\"seconds\":0}]}")).IsEmpty());
+	UWorkflowService::CancelScenario(Exclusive); F.Scope.Tick();
+	TestEqual(TEXT("cancel before first tick never starts PIE"), F.State.StartCalls, 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWorkflowScenarioFirstTickRaceTest, "VibeUE.Workflow.Scenario.Ownership.ForeignBeforeFirstTick",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FWorkflowScenarioFirstTickRaceTest::RunTest(const FString&)
+{
+	for (bool bQueued : {false, true})
+	{
+		FWorkflowPIEFixture F;
+		if (!TestTrue(TEXT("isolated fixture bound"), F.Scope.IsBound())) { return false; }
+		const FString Id = F.Queue(ExclusivePIESpec);
+		if (!TestFalse(TEXT("scenario queued while idle"), Id.IsEmpty())) { return false; }
+		if (bQueued) { F.ForeignQueue(); } else { F.ForeignSession(); }
+		F.Scope.Tick(); F.Scope.Tick();
+		TestEqual(TEXT("late foreign PIE fails rather than adopts"), F.Report(Id)->GetStringField(TEXT("status")), FString(TEXT("failed")));
+		TestEqual(TEXT("start never called after race"), F.State.StartCalls, 0);
+		TestEqual(TEXT("late foreign world not stopped"), F.State.EndCalls, 0);
+		TestEqual(TEXT("late foreign request not cancelled"), F.State.CancelCalls, 0);
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWorkflowScenarioPendingCancelTest, "VibeUE.Workflow.Scenario.Ownership.CancelBeforeWorld",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FWorkflowScenarioPendingCancelTest::RunTest(const FString&)
+{
+	for (bool bConsumed : {false, true})
+	{
+		FWorkflowPIEFixture F;
+		if (!TestTrue(TEXT("isolated fixture bound"), F.Scope.IsBound())) { return false; }
+		const FString Id = F.Queue(ExclusivePIESpec);
+		if (!TestFalse(TEXT("scenario admitted"), Id.IsEmpty())) { return false; }
+		F.Scope.Tick();
+		if (!TestTrue(TEXT("start enqueued a tagged request"), F.State.PlayRequest.IsSet())) { return false; }
+		TestNotNull(TEXT("request carries private settings identity"), F.State.PlayRequest->EditorPlaySettings.Get());
+		TestTrue(TEXT("request never uses settings CDO as identity"),
+			F.State.PlayRequest->EditorPlaySettings.Get() != GetDefault<ULevelEditorPlaySettings>());
+		if (bConsumed) { F.ConsumeOwnedQueue(false); }
+		UWorkflowService::CancelScenario(Id); F.Scope.Tick();
+		if (bConsumed)
+		{
+			TestEqual(TEXT("not terminal while an owned startup can still create a world"), F.Report(Id)->GetStringField(TEXT("status")), FString(TEXT("running")));
+			TestEqual(TEXT("no unbound EndPlayMap during startup"), F.State.EndCalls, 0);
+			F.State.PlayWorld = F.OwnedWorld.Get(); F.Scope.NotifyPIEStarted(); F.Scope.Tick();
+		}
+		F.Scope.Tick();
+		TestEqual(TEXT("cancel reaches terminal after owned cleanup"), F.Report(Id)->GetStringField(TEXT("status")), FString(TEXT("cancelled")));
+		TestFalse(TEXT("no request can start PIE after terminal cancellation"), F.State.PlayRequest.IsSet());
+		TestFalse(TEXT("no owned startup remains after terminal cancellation"), F.State.PlaySession.IsSet());
+		TestEqual(TEXT("only queued start is cancelled"), F.State.CancelCalls, bConsumed ? 0 : 1);
+		TestEqual(TEXT("only materialized owned world is stopped"), F.State.EndCalls, bConsumed ? 1 : 0);
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWorkflowScenarioReplacementTest, "VibeUE.Workflow.Scenario.Ownership.ReplacementWorldAndQueue",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FWorkflowScenarioReplacementTest::RunTest(const FString&)
+{
+	for (const TCHAR* Action : {TEXT("inject_action"), TEXT("inject_key"), TEXT("console_command"), TEXT("stop_pie")})
+	{
+		for (int32 Replacement = 0; Replacement != 4; ++Replacement)
+		{
+			FWorkflowPIEFixture F;
+			if (!TestTrue(TEXT("isolated fixture bound"), F.Scope.IsBound())) { return false; }
+			// Historical ownership must not authorize any of these actions, even in legacy mode.
+			const FString Id = F.Queue(FString::Printf(TEXT("{\"steps\":[{\"action\":\"start_pie\"},{\"action\":\"wait_for_pie\"},{\"action\":\"%s\",\"path\":\"unused\",\"key\":\"W\",\"command\":\"unused\"}]}"), Action));
+			if (!TestFalse(TEXT("scenario admitted"), Id.IsEmpty())) { return false; }
+			F.Scope.Tick(); F.ConsumeOwnedQueue(); F.Scope.Tick();
+			if (Replacement == 0) { F.ForeignSession(); }
+			else if (Replacement == 1) { F.State.PlayWorld = F.ForeignWorld.Get(); }
+			else if (Replacement == 2) { F.State.PlaySession->PlayRequestStartTime = 2.0; }
+			else { F.ForeignQueue(); }
+			F.Scope.Tick(); F.Scope.Tick();
+			if (Replacement == 3)
+			{
+				TestEqual(TEXT("owned teardown waits while foreign queue is outstanding"), F.Report(Id)->GetStringField(TEXT("status")), FString(TEXT("running")));
+				F.State.PlayRequest.Reset(); F.ForeignSession(); F.Scope.Tick();
+			}
+			else if (Replacement == 1 || Replacement == 2)
+			{
+				TestEqual(TEXT("remaining bound world or tagged session keeps cleanup pending"), F.Report(Id)->GetStringField(TEXT("status")), FString(TEXT("running")));
+				TestTrue(TEXT("partial identity loss is not a cleanup acknowledgement"), F.Report(Id)->GetBoolField(TEXT("teardownPending")));
+				if (Replacement == 1) { F.State.PlaySession.Reset(); }
+				else { F.State.PlayWorld = F.ForeignWorld.Get(); }
+				F.Scope.Tick();
+			}
+			TestEqual(TEXT("replacement forbids the step"), F.Report(Id)->GetStringField(TEXT("status")), FString(TEXT("failed")));
+			TestEqual(TEXT("no input or command reaches replacement"), F.State.MutationCalls, 0);
+			TestEqual(TEXT("no global deferred stop or foreign EndPlayMap"), F.State.EndCalls, 0);
+			TestEqual(TEXT("replacement queue is never cancelled"), F.State.CancelCalls, 0);
+		}
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWorkflowScenarioTerminalReplacementTest, "VibeUE.Workflow.Scenario.Ownership.TerminalTeardown",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FWorkflowScenarioTerminalReplacementTest::RunTest(const FString&)
+{
+	for (bool bCancel : {false, true})
+	{
+		FWorkflowPIEFixture F;
+		if (!TestTrue(TEXT("isolated fixture bound"), F.Scope.IsBound())) { return false; }
+		const FString Id = F.Queue(TEXT("{\"steps\":[{\"action\":\"start_pie\"},{\"action\":\"wait_for_pie\"}]}"));
+		if (!TestFalse(TEXT("scenario admitted"), Id.IsEmpty())) { return false; }
+		F.Scope.Tick(); F.ConsumeOwnedQueue(); F.Scope.Tick();
+		F.ForeignSession();
+		if (bCancel) { UWorkflowService::CancelScenario(Id); }
+		F.Scope.Tick(); F.Scope.Tick();
+		TestTrue(TEXT("replacement world survives terminal path"), F.State.PlayWorld.Get() == F.ForeignWorld.Get());
+		TestEqual(TEXT("terminal teardown never stops replacement"), F.State.EndCalls, 0);
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWorkflowScenarioOwnedStopTest, "VibeUE.Workflow.Scenario.Ownership.OwnedStopAndObservation",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FWorkflowScenarioOwnedStopTest::RunTest(const FString&)
+{
+	for (bool bExplicitStop : {false, true})
+	{
+		FWorkflowPIEFixture F;
+		if (!TestTrue(TEXT("isolated fixture bound"), F.Scope.IsBound())) { return false; }
+		const FString Id = F.Queue(bExplicitStop
+			? TEXT("{\"exclusive_pie\":true,\"steps\":[{\"action\":\"start_pie\"},{\"action\":\"wait_for_pie\"},{\"action\":\"stop_pie\"}]}")
+			: TEXT("{\"exclusive_pie\":true,\"steps\":[{\"action\":\"start_pie\"},{\"action\":\"wait_for_pie\"}]}"));
+		if (!TestFalse(TEXT("scenario admitted"), Id.IsEmpty())) { return false; }
+		F.Scope.Tick(); F.ConsumeOwnedQueue(); F.Scope.Tick();
+		F.Scope.Tick(); F.Scope.Tick(); F.Scope.Tick();
+		TestEqual(TEXT("owned smoke session finishes"), F.Report(Id)->GetStringField(TEXT("status")), FString(TEXT("smoke_passed")));
+		TestTrue(TEXT("teardown acknowledged after readback"), F.Report(Id)->GetBoolField(TEXT("teardownSucceeded")));
+		TestEqual(TEXT("owned session ended exactly once"), F.State.EndCalls, 1);
+	}
+	{
+		FWorkflowPIEFixture F;
+		if (!TestTrue(TEXT("isolated fixture bound"), F.Scope.IsBound())) { return false; }
+		F.ForeignSession();
+		const FString Id = F.Queue(TEXT("{\"steps\":[{\"action\":\"start_pie\"},{\"action\":\"wait_for_pie\"}]}"));
+		if (!TestFalse(TEXT("legacy observation remains compatible"), Id.IsEmpty())) { return false; }
+		F.Scope.Tick(); F.Scope.Tick(); F.Scope.Tick(); F.Scope.Tick();
+		TestEqual(TEXT("observation completes as smoke"), F.Report(Id)->GetStringField(TEXT("status")), FString(TEXT("smoke_passed")));
+		TestEqual(TEXT("automatic teardown never owns observed PIE"), F.State.EndCalls, 0);
+		const FString StopId = F.Queue(TEXT("{\"steps\":[{\"action\":\"stop_pie\"}]}"));
+		if (!TestFalse(TEXT("legacy stop scenario admitted for execution-time guard"), StopId.IsEmpty())) { return false; }
+		F.Scope.Tick();
+		TestEqual(TEXT("explicit foreign stop fails"), F.Report(StopId)->GetStringField(TEXT("status")), FString(TEXT("failed")));
+		TestEqual(TEXT("explicit foreign stop does not end PIE"), F.State.EndCalls, 0);
+	}
+	{
+		FWorkflowPIEFixture F;
+		if (!TestTrue(TEXT("isolated fixture bound"), F.Scope.IsBound())) { return false; }
+		const FString Id = F.Queue(TEXT("{\"exclusive_pie\":true,\"steps\":[{\"action\":\"start_pie\"},{\"action\":\"stop_pie\"}]}"));
+		if (!TestFalse(TEXT("pending explicit stop admitted"), Id.IsEmpty())) { return false; }
+		F.Scope.Tick(); F.Scope.Tick(); F.Scope.Tick();
+		TestEqual(TEXT("explicit stop cancels own queued request"), F.State.CancelCalls, 1);
+		TestFalse(TEXT("explicit stop leaves nothing to start later"), F.State.PlayRequest.IsSet());
+		TestEqual(TEXT("explicit pending stop completes as smoke"), F.Report(Id)->GetStringField(TEXT("status")), FString(TEXT("smoke_passed")));
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWorkflowScenarioQueuedReplacementTest, "VibeUE.Workflow.Scenario.Ownership.QueuedReplacementAndOptOut",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FWorkflowScenarioQueuedReplacementTest::RunTest(const FString&)
+{
+	for (bool bReplace : {false, true})
+	{
+		FWorkflowPIEFixture F;
+		if (!TestTrue(TEXT("isolated fixture bound"), F.Scope.IsBound())) { return false; }
+		const FString Id = F.Queue(TEXT("{\"exclusive_pie\":true,\"teardown\":{\"stop_pie\":false},\"steps\":[{\"action\":\"start_pie\"},{\"action\":\"wait_for_pie\"}]}"));
+		if (!TestFalse(TEXT("scenario admitted"), Id.IsEmpty())) { return false; }
+		F.Scope.Tick();
+		if (!TestTrue(TEXT("own request queued"), F.State.PlayRequest.IsSet())) { return false; }
+		if (bReplace) { F.ForeignQueue(); }
+		UWorkflowService::CancelScenario(Id); F.Scope.Tick();
+		TestEqual(TEXT("only own pending request cancelled, including teardown opt-out"), F.State.CancelCalls, bReplace ? 0 : 1);
+		TestEqual(TEXT("no world-less stop"), F.State.EndCalls, 0);
+		TestEqual(TEXT("foreign queued request preserved"), F.State.PlayRequest.IsSet(), bReplace);
+		if (bReplace) { TestTrue(TEXT("foreign queue identity unchanged"), F.State.PlayRequest->EditorPlaySettings.Get() == F.ForeignSettings.Get()); }
+		TestEqual(TEXT("only positively cancelled ownership can finish"), F.Report(Id)->GetStringField(TEXT("status")),
+			FString(bReplace ? TEXT("running") : TEXT("cancelled")));
+		if (bReplace)
+		{
+			TestTrue(TEXT("unproven replaced request retains cleanup"), F.Report(Id)->GetBoolField(TEXT("teardownPending")));
+			TestFalse(TEXT("unproven replaced request has no teardown receipt"), F.Report(Id)->HasField(TEXT("teardownSucceeded")));
+			F.State.PlayRequest.Reset(); F.Scope.Tick();
+			TestEqual(TEXT("foreign withdrawal cannot prove our request was cancelled"),
+				F.Report(Id)->GetStringField(TEXT("status")), FString(TEXT("running")));
+		}
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWorkflowScenarioTapReplacementTest, "VibeUE.Workflow.Scenario.Ownership.ReentrantTapReplacement",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FWorkflowScenarioTapReplacementTest::RunTest(const FString&)
+{
+	FWorkflowPIEFixture F;
+	if (!TestTrue(TEXT("isolated fixture bound"), F.Scope.IsBound())) { return false; }
+	const FString Id = F.Queue(TEXT("{\"exclusive_pie\":true,\"steps\":[{\"action\":\"start_pie\"},{\"action\":\"wait_for_pie\"},{\"action\":\"inject_key\",\"key\":\"W\",\"event\":\"tap\"}]}"));
+	if (!TestFalse(TEXT("scenario admitted"), Id.IsEmpty())) { return false; }
+	F.Scope.Tick(); F.ConsumeOwnedQueue(); F.Scope.Tick();
+	F.State.OnMutation = [&F]() { F.ForeignSession(); };
+	F.Scope.Tick(); F.Scope.Tick();
+	TestEqual(TEXT("only the owned key-down is delivered, not foreign key-up"), F.State.MutationCalls, 1);
+	TestEqual(TEXT("tap fails when ownership changes in callback"), F.Report(Id)->GetStringField(TEXT("status")), FString(TEXT("failed")));
+	TestEqual(TEXT("reentrant replacement never stopped"), F.State.EndCalls, 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWorkflowScenarioCancelWithForeignQueueTest, "VibeUE.Workflow.Scenario.Ownership.CancelStartupWithForeignQueue",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FWorkflowScenarioCancelWithForeignQueueTest::RunTest(const FString&)
+{
+	FWorkflowPIEFixture F;
+	if (!TestTrue(TEXT("isolated fixture bound"), F.Scope.IsBound())) { return false; }
+	const FString Id = F.Queue(ExclusivePIESpec);
+	if (!TestFalse(TEXT("scenario admitted"), Id.IsEmpty())) { return false; }
+	F.Scope.Tick(); F.ConsumeOwnedQueue(false); F.ForeignQueue();
+	UWorkflowService::CancelScenario(Id); F.Scope.Tick();
+	F.State.PlayWorld = F.OwnedWorld.Get(); F.Scope.NotifyPIEStarted(); F.Scope.Tick();
+	TestEqual(TEXT("foreign queue delays owned teardown, not terminal abandonment"), F.Report(Id)->GetStringField(TEXT("status")), FString(TEXT("running")));
+	TestTrue(TEXT("cleanup remains explicitly pending"), F.Report(Id)->GetBoolField(TEXT("teardownPending")));
+	TestEqual(TEXT("foreign request not cancelled"), F.State.CancelCalls, 0);
+	TestEqual(TEXT("EndPlayMap not called while foreign request is queued"), F.State.EndCalls, 0);
+	F.State.PlayRequest.Reset(); // foreign caller withdraws its own request
+	F.Scope.Tick();
+	TestEqual(TEXT("owned world is cleaned up rather than orphaned"), F.State.EndCalls, 1);
+	TestEqual(TEXT("only now cancellation is terminal"), F.Report(Id)->GetStringField(TEXT("status")), FString(TEXT("cancelled")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWorkflowScenarioPartiallyStartedTest, "VibeUE.Workflow.Scenario.Ownership.CancelBeforePostPIEStarted",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FWorkflowScenarioPartiallyStartedTest::RunTest(const FString&)
+{
+	FWorkflowPIEFixture F;
+	if (!TestTrue(TEXT("isolated fixture bound"), F.Scope.IsBound())) { return false; }
+	const FString Id = F.Queue(TEXT("{\"exclusive_pie\":true,\"teardown\":{\"stop_pie\":false},\"steps\":[{\"action\":\"start_pie\"},{\"action\":\"wait_for_pie\"}]}"));
+	if (!TestFalse(TEXT("scenario admitted"), Id.IsEmpty())) { return false; }
+	F.Scope.Tick(); F.ConsumeOwnedQueue(false);
+	F.State.PlayWorld = F.OwnedWorld.Get(); // world exists, but BeginPlay/startup has not completed
+	F.Scope.Tick(); // bind the world without confusing existence with startup completion
+	UWorkflowService::CancelScenario(Id); F.Scope.Tick();
+	TestEqual(TEXT("no EndPlayMap inside partially initialized PIE"), F.State.EndCalls, 0);
+	TestEqual(TEXT("no premature cancellation acknowledgement"), F.Report(Id)->GetStringField(TEXT("status")), FString(TEXT("running")));
+	F.Scope.NotifyPIEStarted(); F.Scope.Tick(false);
+	TestEqual(TEXT("same-frame modal tick cannot end startup"), F.State.EndCalls, 0);
+	F.Scope.Tick();
+	TestEqual(TEXT("completed startup is then stopped"), F.State.EndCalls, 1);
+	TestEqual(TEXT("owned startup cannot survive terminal cancellation"), F.Report(Id)->GetStringField(TEXT("status")), FString(TEXT("cancelled")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWorkflowScenarioCleanupReadbackTest, "VibeUE.Workflow.Scenario.Ownership.CleanupReadback",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FWorkflowScenarioCleanupReadbackTest::RunTest(const FString&)
+{
+	FWorkflowPIEFixture F;
+	if (!TestTrue(TEXT("isolated fixture bound"), F.Scope.IsBound())) { return false; }
+	const FString Id = F.Queue(ExclusivePIESpec);
+	if (!TestFalse(TEXT("scenario admitted"), Id.IsEmpty())) { return false; }
+	F.Scope.Tick(); F.ConsumeOwnedQueue(); F.Scope.Tick();
+	F.State.bCompleteEndPlay = false;
+	UWorkflowService::CancelScenario(Id); F.Scope.Tick(); F.Scope.Tick();
+	TestEqual(TEXT("unacknowledged EndPlayMap is issued only once"), F.State.EndCalls, 1);
+	TestEqual(TEXT("successful call is not a cleanup acknowledgement"), F.Report(Id)->GetStringField(TEXT("status")), FString(TEXT("running")));
+	TestTrue(TEXT("pending cleanup retains exclusive reservation"), F.Queue(ExclusivePIESpec).IsEmpty());
+	F.State.PlaySession.Reset(); F.Scope.Tick();
+	TestEqual(TEXT("old PlayWorld must also disappear before acknowledgement"), F.Report(Id)->GetStringField(TEXT("status")), FString(TEXT("running")));
+	F.State.PlayWorld.Reset(); F.Scope.Tick();
+	TestEqual(TEXT("readback completes cancellation"), F.Report(Id)->GetStringField(TEXT("status")), FString(TEXT("cancelled")));
+	TestTrue(TEXT("cleanup acknowledgement is explicit"), F.Report(Id)->GetBoolField(TEXT("teardownSucceeded")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWorkflowScenarioCleanupIdentityTest, "VibeUE.Workflow.Scenario.Ownership.CleanupIdentityReadback",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FWorkflowScenarioCleanupIdentityTest::RunTest(const FString&)
+{
+	for (bool bReplacementWorld : {false, true})
+	{
+		for (bool bCancel : {false, true})
+		{
+			FWorkflowPIEFixture F;
+			if (!TestTrue(TEXT("isolated fixture bound"), F.Scope.IsBound())) { return false; }
+			const FString Id = F.Queue(bCancel ? ExclusivePIESpec :
+				TEXT("{\"exclusive_pie\":true,\"steps\":[{\"action\":\"start_pie\"},{\"action\":\"wait_for_pie\"}]}"));
+			if (!TestFalse(TEXT("scenario admitted"), Id.IsEmpty())) { return false; }
+			F.Scope.Tick(); F.ConsumeOwnedQueue(); F.Scope.Tick();
+			if (bCancel) { UWorkflowService::CancelScenario(Id); }
+			else { F.Scope.Tick(); } // all steps passed, but owned cleanup has not run
+			if (bReplacementWorld) { F.State.PlayWorld = F.ForeignWorld.Get(); }
+			else { F.State.PlaySession.Reset(); }
+			F.Scope.Tick(); F.Scope.Tick();
+			const TSharedPtr<FJsonObject> Pending = F.Report(Id);
+			TestEqual(bReplacementWorld ? TEXT("G2: tagged session prevents terminal cleanup") :
+				TEXT("G1: bound current world prevents terminal cleanup"), Pending->GetStringField(TEXT("status")), FString(TEXT("running")));
+			TestTrue(TEXT("partial identity loss keeps teardown pending"), Pending->GetBoolField(TEXT("teardownPending")));
+			TestFalse(TEXT("partial cleanup has no terminal teardown acknowledgement"), Pending->HasField(TEXT("teardownSucceeded")));
+			TestFalse(TEXT("partial cleanup has no finish timestamp"), Pending->HasField(TEXT("finishedAtIso")));
+			TestEqual(TEXT("unowned or unbound world is never stopped"), F.State.EndCalls, 0);
+			TestEqual(TEXT("cleanup never injects input"), F.State.MutationCalls, 0);
+			const FString Observer = F.Queue(TEXT("{\"steps\":[{\"action\":\"wait\",\"seconds\":300}]}"));
+			TestTrue(TEXT("pending cleanup retains reservation even against nonexclusive observers"), Observer.IsEmpty());
+			if (!Observer.IsEmpty()) { UWorkflowService::CancelScenario(Observer); }
+
+			// Simulate external teardown readback, never stop a replacement to force success.
+			if (bReplacementWorld) { F.State.PlaySession.Reset(); }
+			else { F.State.PlayWorld.Reset(); }
+			F.Scope.Tick();
+			const TSharedPtr<FJsonObject> Finished = F.Report(Id);
+			TestEqual(TEXT("only reconciled cleanup reaches the intended terminal status"),
+				Finished->GetStringField(TEXT("status")), FString(bCancel ? TEXT("cancelled") : TEXT("smoke_passed")));
+			TestTrue(TEXT("reconciled cleanup is explicitly acknowledged"), Finished->GetBoolField(TEXT("teardownSucceeded")));
+			TestFalse(TEXT("reconciled cleanup is no longer pending"), Finished->GetBoolField(TEXT("teardownPending")));
+			TestEqual(TEXT("no teardown of a replacement during reconciliation"), F.State.EndCalls, 0);
+			if (bReplacementWorld) { TestTrue(TEXT("replacement world remains untouched"), F.State.PlayWorld.Get() == F.ForeignWorld.Get()); }
+			const FString After = F.Queue(TEXT("{\"steps\":[{\"action\":\"wait\",\"seconds\":300}]}"));
+			TestFalse(TEXT("reconciled cleanup releases the exclusive reservation"), After.IsEmpty());
+			if (!After.IsEmpty()) { UWorkflowService::CancelScenario(After); }
+		}
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWorkflowScenarioStartupGapTest, "VibeUE.Workflow.Scenario.Ownership.CancelInStartupHandoff",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FWorkflowScenarioStartupGapTest::RunTest(const FString&)
+{
+	FWorkflowPIEFixture F;
+	if (!TestTrue(TEXT("isolated fixture bound"), F.Scope.IsBound())) { return false; }
+	const FString Id = F.Queue(ExclusivePIESpec);
+	if (!TestFalse(TEXT("scenario admitted"), Id.IsEmpty())) { return false; }
+	F.Scope.Tick();
+	if (!TestTrue(TEXT("owned request queued"), F.State.PlayRequest.IsSet())) { return false; }
+	const FRequestPlaySessionParams StartingRequest = F.State.PlayRequest.GetValue();
+	F.Scope.NotifyPIEBegin(); F.State.PlayRequest.Reset(); // engine has a local startup continuation
+	UWorkflowService::CancelScenario(Id); F.Scope.Tick(false);
+	TestEqual(TEXT("handoff gap is not mistaken for completed cleanup"), F.Report(Id)->GetStringField(TEXT("status")), FString(TEXT("running")));
+	TestEqual(TEXT("no cancellation of a consumed request"), F.State.CancelCalls, 0);
+	// PreBeginPIE's single-frame barrier is not enough: the queued request can
+	// disappear multiple ticks before the matching session/world is observable.
+	F.Scope.Tick(); F.Scope.Tick();
+	TestEqual(TEXT("multi-frame handoff stays pending"), F.Report(Id)->GetStringField(TEXT("status")), FString(TEXT("running")));
+	TestTrue(TEXT("multi-frame handoff retains reservation"), F.Report(Id)->GetBoolField(TEXT("teardownPending")));
+	TestFalse(TEXT("no premature multi-frame teardown receipt"), F.Report(Id)->HasField(TEXT("teardownSucceeded")));
+	F.State.PlaySession.Emplace();
+	F.State.PlaySession->OriginalRequestParams = StartingRequest;
+	F.State.PlaySession->PlayRequestStartTime = 1.0;
+	F.State.PlayWorld = F.OwnedWorld.Get(); F.Scope.NotifyPIEStarted(); F.Scope.Tick();
+	TestEqual(TEXT("continued owned startup is still stopped"), F.State.EndCalls, 1);
+	TestEqual(TEXT("only cleaned continuation is terminal"), F.Report(Id)->GetStringField(TEXT("status")), FString(TEXT("cancelled")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWorkflowScenarioRunningHandoffTest, "VibeUE.Workflow.Scenario.Ownership.StartInMultiFrameHandoff",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FWorkflowScenarioRunningHandoffTest::RunTest(const FString&)
+{
+	FWorkflowPIEFixture F;
+	if (!TestTrue(TEXT("isolated fixture bound"), F.Scope.IsBound())) { return false; }
+	const FString Id = F.Queue(TEXT("{\"exclusive_pie\":true,\"steps\":[{\"action\":\"start_pie\"},{\"action\":\"wait_for_pie\"}]}"));
+	if (!TestFalse(TEXT("scenario admitted"), Id.IsEmpty())) { return false; }
+	F.Scope.Tick();
+	if (!TestTrue(TEXT("owned request queued"), F.State.PlayRequest.IsSet())) { return false; }
+	const FRequestPlaySessionParams StartingRequest = F.State.PlayRequest.GetValue();
+	F.Scope.NotifyPIEBegin(); F.State.PlayRequest.Reset();
+	F.Scope.Tick(false); F.Scope.Tick(); F.Scope.Tick();
+	TestEqual(TEXT("startup handoff is still running"), F.Report(Id)->GetStringField(TEXT("status")), FString(TEXT("running")));
+	TestFalse(TEXT("temporary identity gap does not request failure cleanup"), F.Report(Id)->HasField(TEXT("teardownPending")));
+	F.State.PlaySession.Emplace();
+	F.State.PlaySession->OriginalRequestParams = StartingRequest;
+	F.State.PlaySession->PlayRequestStartTime = 1.0;
+	F.State.PlayWorld = F.OwnedWorld.Get(); F.Scope.NotifyPIEStarted();
+	F.Scope.Tick(); F.Scope.Tick(); F.Scope.Tick();
+	TestEqual(TEXT("owned continuation completes naturally"), F.Report(Id)->GetStringField(TEXT("status")), FString(TEXT("smoke_passed")));
+	TestEqual(TEXT("only the owned world is stopped"), F.State.EndCalls, 1);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWorkflowScenarioLostRequestTest, "VibeUE.Workflow.Scenario.Ownership.LostRequestUnattributedWorld",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FWorkflowScenarioLostRequestTest::RunTest(const FString&)
+{
+	FWorkflowPIEFixture F;
+	if (!TestTrue(TEXT("isolated fixture bound"), F.Scope.IsBound())) { return false; }
+	ULevelEditorPlaySettings* DispatchedSettings = nullptr;
+	F.State.OnRequestQueued = [&F, &DispatchedSettings]()
+	{
+		DispatchedSettings = F.State.PlayRequest->EditorPlaySettings.Get();
+		F.State.PlayRequest.Reset(); // Request was dispatched but no identity survives the immediate read.
+	};
+	const FString Id = F.Queue(ExclusivePIESpec);
+	if (!TestFalse(TEXT("scenario admitted"), Id.IsEmpty())) { return false; }
+	F.Scope.Tick();
+	TestEqual(TEXT("request was actually dispatched once"), F.State.StartCalls, 1);
+	TestNotNull(TEXT("request carried private settings"), DispatchedSettings);
+	const TSharedPtr<FJsonObject> Started = F.Report(Id);
+	if (!TestTrue(TEXT("start step reported"), Started.IsValid() &&
+		Started->GetArrayField(TEXT("steps")).Num() == 1)) { return false; }
+	TestEqual(TEXT("lost immediate tag is not success"),
+		Started->GetArrayField(TEXT("steps"))[0]->AsObject()->GetStringField(TEXT("error")),
+		FString(TEXT("owned PIE request was not retained")));
+	// The engine may not expose either identity until a later tick. Absence of a
+	// world now is not proof that the dispatched request cannot create one later.
+	F.Scope.Tick();
+	const TSharedPtr<FJsonObject> BeforeWorld = F.Report(Id);
+	TestEqual(TEXT("unconfirmed dispatch remains pending before a world appears"),
+		BeforeWorld->GetStringField(TEXT("status")), FString(TEXT("running")));
+	TestTrue(TEXT("unconfirmed dispatch retains teardown reservation"), BeforeWorld->GetBoolField(TEXT("teardownPending")));
+	TestFalse(TEXT("no premature teardown receipt before world appears"), BeforeWorld->HasField(TEXT("teardownSucceeded")));
+	TestTrue(TEXT("unconfirmed dispatch refuses competing ownership"), F.Queue(ExclusivePIESpec).IsEmpty());
+	F.State.PlayWorld = F.ForeignWorld.Get(); // It might have appeared later; never infer ownership.
+	UWorkflowService::CancelScenario(Id);
+	F.Scope.Tick();
+	const TSharedPtr<FJsonObject> Pending = F.Report(Id);
+	TestEqual(TEXT("unattributed live world must keep cleanup reserved"),
+		Pending->GetStringField(TEXT("status")), FString(TEXT("running")));
+	TestTrue(TEXT("cleanup remains pending"), Pending->GetBoolField(TEXT("teardownPending")));
+	TestFalse(TEXT("no terminal teardown acknowledgement"), Pending->HasField(TEXT("teardownSucceeded")));
+	TestFalse(TEXT("no premature finish timestamp"), Pending->HasField(TEXT("finishedAtIso")));
+	TestEqual(TEXT("unattributed world was not stopped"), F.State.EndCalls, 0);
+	TestEqual(TEXT("a vanished request was not cancelled"), F.State.CancelCalls, 0);
+	TestTrue(TEXT("unattributed world remains untouched"), F.State.PlayWorld.Get() == F.ForeignWorld.Get());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWorkflowScenarioPreflightFailureTest, "VibeUE.Workflow.Scenario.Ownership.PreflightFailureAndReservation",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FWorkflowScenarioPreflightFailureTest::RunTest(const FString&)
+{
+	FWorkflowPIEFixture F;
+	if (!TestTrue(TEXT("isolated fixture bound"), F.Scope.IsBound())) { return false; }
+	F.ForeignSession(); F.State.bPreflightSuccess = false;
+	const TSharedPtr<FJsonObject> Failure = ParseWorkflowJson(UWorkflowService::RunScenario(
+		TEXT("{\"smoke\":true,\"preflight\":{\"compile_blueprints\":[\"/Game/NotLoadedByFixture\"]},\"steps\":[{\"action\":\"wait\",\"seconds\":0}]}")));
+	if (!TestTrue(TEXT("failure report available"), Failure.IsValid())) { return false; }
+	const FString Id = Failure->GetStringField(TEXT("id"));
+	F.Scope.Tick();
+	TestEqual(TEXT("preflight fails through real finalization"), F.Report(Id)->GetStringField(TEXT("status")), FString(TEXT("failed")));
+	TestEqual(TEXT("preflight failure does not teardown foreign PIE"), F.State.EndCalls, 0);
+	F.State.PlaySession.Reset(); F.State.PlayWorld.Reset(); F.State.bPreflightSuccess = true;
+	F.State.OnPreflight = [&F, this](const FString&)
+	{
+		TestTrue(TEXT("reservation exists during reentrant preflight"), F.Queue(ExclusivePIESpec).IsEmpty());
+		F.ForeignQueue();
+	};
+	const TSharedPtr<FJsonObject> Refused = ParseWorkflowJson(UWorkflowService::RunScenario(
+		TEXT("{\"smoke\":true,\"exclusive_pie\":true,\"preflight\":{\"compile_blueprints\":[\"/Game/NotLoadedByFixture\",\"/Game/AlsoNotLoaded\"]},\"steps\":[{\"action\":\"start_pie\"}]}")));
+	if (!TestTrue(TEXT("preflight race yields a report"), Refused.IsValid())) { return false; }
+	TestEqual(TEXT("preflight race fails closed"), Refused->GetStringField(TEXT("status")), FString(TEXT("failed")));
+	F.Scope.Tick(); F.Scope.Tick();
+	TestEqual(TEXT("no second compile after foreign request appears"), F.State.PreflightCalls, 2);
+	TestEqual(TEXT("preflight race never starts PIE"), F.State.StartCalls, 0);
+	TestEqual(TEXT("preflight race preserves foreign queue"), F.State.CancelCalls, 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWorkflowScenarioPreflightCancelReservationTest, "VibeUE.Workflow.Scenario.Ownership.CancelDuringPreflight",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FWorkflowScenarioPreflightCancelReservationTest::RunTest(const FString&)
+{
+	FWorkflowPIEFixture F;
+	if (!TestTrue(TEXT("isolated fixture bound"), F.Scope.IsBound())) { return false; }
+	F.State.OnPreflight = [&F, this](const FString& Id)
+	{
+		UWorkflowService::CancelScenario(Id);
+		TestTrue(TEXT("cancelled preflight retains reservation until stack returns"), F.Queue(ExclusivePIESpec).IsEmpty());
+	};
+	const TSharedPtr<FJsonObject> Result = ParseWorkflowJson(UWorkflowService::RunScenario(
+		TEXT("{\"smoke\":true,\"exclusive_pie\":true,\"preflight\":{\"compile_blueprints\":[\"/Game/NotLoadedByFixture\",\"/Game/AlsoNotLoaded\"]},\"steps\":[{\"action\":\"start_pie\"}]}")));
+	if (!TestTrue(TEXT("cancelled preflight returns JSON"), Result.IsValid())) { return false; }
+	TestEqual(TEXT("preflight cancellation retained"), Result->GetStringField(TEXT("status")), FString(TEXT("cancelled")));
+	TestEqual(TEXT("no further compile after reentrant cancellation"), F.State.PreflightCalls, 1);
+	TestFalse(TEXT("reservation releases after preflight returns"), F.Queue(ExclusivePIESpec).IsEmpty());
 	return true;
 }
 
