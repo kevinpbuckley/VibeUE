@@ -2,6 +2,7 @@
 name: materials
 display_name: Material System
 description: Create and edit materials and material instances — graph nodes, parameters, functions, custom HLSL, and instance overrides (MaterialService + MaterialNodeService). Use when the user asks to create or edit a material/material instance, wire material nodes, add material parameters, set blend/shading modes, or recreate a material graph. For landscape materials load landscape-materials.
+  Also use for generated organic PBR detail, texture seams, projection coordinates, and surface-normal diagnosis.
 vibeue_classes:
   - MaterialService
   - MaterialNodeService
@@ -19,6 +20,11 @@ keywords:
 > 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "materials-and-shaders"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
 
 # Material System Skill
+
+For generated textures on large organic surfaces, seams after triplanar projection,
+or overly strong tissue relief, read [generated organic surfaces](references/generated-organic-surfaces.md).
+For gray/default surfaces after mesh reimport, use the asset-management skill's
+LOD-section mapping helper before changing the shader or buying new textures.
 
 ## Critical Rules
 

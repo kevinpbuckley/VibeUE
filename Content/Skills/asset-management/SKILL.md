@@ -2,6 +2,7 @@
 name: asset-management
 display_name: Asset Discovery & Management
 description: Import/export textures crash-safely, query the Content Browser selection, and check if an asset is open (AssetDiscoveryService). Search, load, save, move, rename, duplicate, and delete assets are handled by Unreal's native AssetTools toolset or EditorAssetLibrary. Use when the user asks to import an image from disk, export a texture, query the Content Browser selection, or check whether an asset is open in an editor.
+  Also use for static-mesh LOD reimport, section material mapping, or gray/default surfaces after reimport.
 vibeue_classes:
   - AssetDiscoveryService
 unreal_classes:
@@ -12,6 +13,11 @@ unreal_classes:
 > 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "asset-management"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
 
 # Asset Discovery & Management Skill
+
+For static-mesh LOD reimport, lost textures or gray/default surfaces despite a
+correct component material, read [mesh reimport material mappings](references/mesh-reimport-materials.md).
+The bundled `scripts/mesh_material_slots.py` exposes explicit section inspection
+and remapping through the existing engine Python API; no native service rebuild.
 
 > 🔀 **Engine owns general asset ops now.** In the Unreal 5.8 consolidation, searching, loading,
 > saving, moving, renaming, duplicating, and deleting assets moved to Unreal's native **`AssetTools`**
