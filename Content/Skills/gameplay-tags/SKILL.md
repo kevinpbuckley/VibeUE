@@ -48,7 +48,7 @@ Tags are written to INI config **and** registered at runtime — they appear imm
 
 ### ⚠️ Do NOT Use ProjectSettingsService for Gameplay Tags
 
-`ProjectSettingsService.set_ini_value()` writes to GConfig memory but does **NOT** register tags with `UGameplayTagsManager`. Tags created this way will not appear in tag pickers or dropdowns.
+`ProjectSettingsService.set_ini_value()` writes the ini file but does **NOT** register tags with `UGameplayTagsManager`. Tags created this way will not appear in tag pickers or dropdowns.
 
 Use the engine **`GameplayTagsToolset`** (single-tag CRUD) or `unreal.GameplayTagService.add_tags` (bulk) for gameplay tag operations.
 
