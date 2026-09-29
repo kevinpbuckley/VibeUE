@@ -239,7 +239,8 @@ struct FInputTypeDiscoveryResult
  * - get_available_modifier_types: Get available modifier types
  *
  * Trigger Management:
- * - add_trigger: Add a trigger to a key mapping
+ * - add_trigger: Add a trigger to a key mapping, optionally with its settings
+ * - add_action_trigger: Add a trigger to an Input Action itself, optionally with its settings
  * - remove_trigger: Remove a trigger from a key mapping
  * - get_triggers: Get triggers on a key mapping
  * - get_available_trigger_types: Get available trigger types
@@ -493,13 +494,36 @@ public:
 	 * @param ContextPath - Full path to the Mapping Context
 	 * @param MappingIndex - Index of the mapping
 	 * @param TriggerType - Type of trigger (e.g., "Pressed", "Released", "Down", "Hold")
+	 * @param PropertiesJson - Optional trigger settings as a JSON object, e.g.
+	 *        {"HoldTimeThreshold": 0.5, "bIsOneShot": true}. Names match the C++ property or its
+	 *        snake_case form (hold_time_threshold, is_one_shot). An unknown name fails the call and
+	 *        adds nothing. A running PIE session keeps its copy of the triggers: restart PIE to see it.
 	 * @return True if successful
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input")
 	static bool AddTrigger(
 		const FString& ContextPath,
 		int32 MappingIndex,
-		const FString& TriggerType);
+		const FString& TriggerType,
+		const FString& PropertiesJson = TEXT(""));
+
+	/**
+	 * Add a trigger to an Input Action's own trigger list (applies to every mapping of the action).
+	 *
+	 * @param ActionPath - Full path to the Input Action
+	 * @param TriggerType - Type of trigger (e.g., "Pressed", "Hold", "Tap")
+	 * @param PropertiesJson - Optional trigger settings as a JSON object, as for add_trigger
+	 * @return JSON: {success, action, trigger, trigger_index, note} or {success:false, error_code, error_message}
+	 *         error_code: ACTION_NOT_FOUND, TRIGGER_TYPE_NOT_FOUND, BAD_PROPERTIES
+	 *
+	 * Example:
+	 *   unreal.InputService.add_action_trigger("/Game/Input/IA_Block", "Hold", '{"hold_time_threshold": 0.4}')
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input")
+	static FString AddActionTrigger(
+		const FString& ActionPath,
+		const FString& TriggerType,
+		const FString& PropertiesJson = TEXT(""));
 
 	/**
 	 * Remove a trigger from a key mapping.
