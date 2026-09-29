@@ -7,13 +7,22 @@
 #include "IModelContextProtocolModule.h"
 #include "IModelContextProtocolTool.h"
 #include "ModelContextProtocolToolResults.h"
+#include "ModelContextProtocolSession.h" // FModelContextProtocolToolRequestId, for CancelAsync
 
 #include "Async/Async.h"
+#include "Core/VibeUEToolCancel.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
+
+// One current-call cancel token per thread (see Core/VibeUEToolCancel.h)
+FVibeUEToolCancel*& FVibeUEToolCancel::CurrentSlot()
+{
+	static thread_local FVibeUEToolCancel* Current = nullptr;
+	return Current;
+}
 
 namespace
 {
@@ -26,6 +35,80 @@ namespace
 		if (VibeType == TEXT("object")) { return TEXT("object"); }
 		if (VibeType == TEXT("array"))  { return TEXT("array"); }
 		return TEXT("string");
+	}
+
+	/**
+	 * Tools that may run on a worker thread. Only tools that touch no UObject and no editor
+	 * state qualify: deep_research makes one HTTP request (started on the game thread, see
+	 * DeepResearchTools.cpp) and parses text. On the game thread it blocked the editor for up to 45 s.
+	 */
+	bool RunsOffGameThread(const FString& ToolName)
+	{
+		return ToolName == TEXT("deep_research");
+	}
+
+	/** The running off-game-thread calls, by request id, for CancelAsync. */
+	FCriticalSection GRunningCallsLock;
+	TMap<FString, TSharedRef<FVibeUEToolCancel, ESPMode::ThreadSafe>> GRunningCalls;
+
+	FString RequestKey(const FModelContextProtocolToolRequestId& RequestId)
+	{
+		// The id's own operator== and hash are not exported; its JSON text is what Epic hashes too.
+		return RequestId.RequestId.IsValid() ? RequestId.RequestId->AsString() : FString();
+	}
+
+	/** Turn a tool's JSON string into the MCP result and hand it over (safe from any thread). */
+	void DeliverResult(const FString& Result, const IModelContextProtocolTool::FResultCallback& OnComplete)
+	{
+		// VibeUE tools report failure as {"success": false, ...}; surface that as an MCP error.
+		bool bIsError = false;
+		TSharedPtr<FJsonObject> ResultObj;
+		const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Result);
+		if (FJsonSerializer::Deserialize(Reader, ResultObj) && ResultObj.IsValid())
+		{
+			bool bSuccess = true;
+			if (ResultObj->TryGetBoolField(TEXT("success"), bSuccess) && !bSuccess)
+			{
+				bIsError = true;
+			}
+		}
+
+		// A tool can return one image alongside its JSON by embedding a reserved
+		// "vibeue_image": {"mime_type", "base64"} field — surfaced here as a real MCP image
+		// content block so clients render the picture instead of receiving a megabyte of
+		// base64 inside a text block (issue #544).
+		if (!bIsError && ResultObj.IsValid())
+		{
+			const TSharedPtr<FJsonObject>* ImageObj = nullptr;
+			FString MimeType, Base64;
+			if (ResultObj->TryGetObjectField(TEXT("vibeue_image"), ImageObj) && ImageObj && ImageObj->IsValid() &&
+				(*ImageObj)->TryGetStringField(TEXT("mime_type"), MimeType) &&
+				(*ImageObj)->TryGetStringField(TEXT("base64"), Base64) && !Base64.IsEmpty())
+			{
+				ResultObj->RemoveField(TEXT("vibeue_image"));
+				FString TextPart;
+				const TSharedRef<TJsonWriter<>> TextWriter = TJsonWriterFactory<>::Create(&TextPart);
+				FJsonSerializer::Serialize(ResultObj.ToSharedRef(), TextWriter);
+
+				TSharedPtr<FJsonObject> ImageContent = MakeShared<FJsonObject>();
+				ImageContent->SetStringField(TEXT("type"), TEXT("image"));
+				ImageContent->SetStringField(TEXT("data"), Base64);
+				ImageContent->SetStringField(TEXT("mimeType"), MimeType);
+
+				TArray<TSharedPtr<FJsonValue>> Content;
+				Content.Add(MakeShared<FJsonValueObject>(UE::ModelContextProtocol::MakeTextContentObject(TextPart)));
+				Content.Add(MakeShared<FJsonValueObject>(ImageContent));
+
+				TSharedPtr<FJsonObject> ResultRoot = MakeShared<FJsonObject>();
+				ResultRoot->SetArrayField(TEXT("content"), Content);
+				OnComplete(FModelContextProtocolToolResult(ResultRoot));
+				return;
+			}
+		}
+
+		OnComplete(bIsError
+			? UE::ModelContextProtocol::MakeErrorResult(Result)
+			: UE::ModelContextProtocol::MakeTextResult(Result));
 	}
 
 	/** Build an MCP JSON Schema object from a tool's parameter metadata. */
@@ -163,66 +246,66 @@ namespace
 		virtual FString GetDescription() const override { return Description; }
 		virtual TSharedPtr<FJsonObject> GetInputJsonSchema() const override { return InputSchema; }
 
-		virtual void RunAsync(const FModelContextProtocolToolRequestId& /*RequestId*/,
+		virtual void RunAsync(const FModelContextProtocolToolRequestId& RequestId,
 			const TSharedPtr<FJsonObject>& Params,
 			const FResultCallback& OnComplete) override
 		{
 			const FString ToolName = Name;
 			TMap<FString, FString> Args = JsonObjectToArgMap(Params);
 
-			auto Execute = [ToolName, Args = MoveTemp(Args), OnComplete]()
+			// Checks on the game thread, the work on a worker thread, the result from there
+			// (OnComplete may be called from any thread, IModelContextProtocolTool.h). The editor keeps ticking
+			// while the tool waits, and CancelAsync can wake it.
+			if (RunsOffGameThread(ToolName))
 			{
-				const FString Result = FToolRegistry::Get().ExecuteTool(ToolName, Args);
-
-				// VibeUE tools report failure as {"success": false, ...}; surface that as an MCP error.
-				bool bIsError = false;
-				TSharedPtr<FJsonObject> ResultObj;
-				const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Result);
-				if (FJsonSerializer::Deserialize(Reader, ResultObj) && ResultObj.IsValid())
+				auto Launch = [ToolName, Args = MoveTemp(Args), OnComplete, Key = RequestKey(RequestId)]() mutable
 				{
-					bool bSuccess = true;
-					if (ResultObj->TryGetBoolField(TEXT("success"), bSuccess) && !bSuccess)
+					FToolExecuteFunc Func;
+					FString ErrorJson;
+					if (!FToolRegistry::Get().PrepareToolCall(ToolName, Args, Func, ErrorJson))
 					{
-						bIsError = true;
-					}
-				}
-
-				// A tool can return one image alongside its JSON by embedding a reserved
-				// "vibeue_image": {"mime_type", "base64"} field — surfaced here as a real MCP image
-				// content block so clients render the picture instead of receiving a megabyte of
-				// base64 inside a text block (issue #544).
-				if (!bIsError && ResultObj.IsValid())
-				{
-					const TSharedPtr<FJsonObject>* ImageObj = nullptr;
-					FString MimeType, Base64;
-					if (ResultObj->TryGetObjectField(TEXT("vibeue_image"), ImageObj) && ImageObj && ImageObj->IsValid() &&
-						(*ImageObj)->TryGetStringField(TEXT("mime_type"), MimeType) &&
-						(*ImageObj)->TryGetStringField(TEXT("base64"), Base64) && !Base64.IsEmpty())
-					{
-						ResultObj->RemoveField(TEXT("vibeue_image"));
-						FString TextPart;
-						const TSharedRef<TJsonWriter<>> TextWriter = TJsonWriterFactory<>::Create(&TextPart);
-						FJsonSerializer::Serialize(ResultObj.ToSharedRef(), TextWriter);
-
-						TSharedPtr<FJsonObject> ImageContent = MakeShared<FJsonObject>();
-						ImageContent->SetStringField(TEXT("type"), TEXT("image"));
-						ImageContent->SetStringField(TEXT("data"), Base64);
-						ImageContent->SetStringField(TEXT("mimeType"), MimeType);
-
-						TArray<TSharedPtr<FJsonValue>> Content;
-						Content.Add(MakeShared<FJsonValueObject>(UE::ModelContextProtocol::MakeTextContentObject(TextPart)));
-						Content.Add(MakeShared<FJsonValueObject>(ImageContent));
-
-						TSharedPtr<FJsonObject> ResultRoot = MakeShared<FJsonObject>();
-						ResultRoot->SetArrayField(TEXT("content"), Content);
-						OnComplete(FModelContextProtocolToolResult(ResultRoot));
+						DeliverResult(ErrorJson, OnComplete);
 						return;
 					}
+					TSharedRef<FVibeUEToolCancel, ESPMode::ThreadSafe> Cancel = MakeShared<FVibeUEToolCancel, ESPMode::ThreadSafe>();
+					{
+						FScopeLock Guard(&GRunningCallsLock);
+						GRunningCalls.Add(Key, Cancel);
+					}
+					// The queued thread pool, not a task-graph worker: the tool may wait up to 45 s.
+					Async(EAsyncExecution::ThreadPool,
+						[Func = MoveTemp(Func), Args = MoveTemp(Args), OnComplete, Key, Cancel]()
+					{
+						FString Result;
+						{
+							FVibeUEToolCancel::FScope CurrentCall(&Cancel.Get());
+							Result = Func(Args);
+						}
+						{
+							FScopeLock Guard(&GRunningCallsLock);
+							const TSharedRef<FVibeUEToolCancel, ESPMode::ThreadSafe>* Running = GRunningCalls.Find(Key);
+							if (Running && &Running->Get() == &Cancel.Get())
+							{
+								GRunningCalls.Remove(Key);
+							}
+						}
+						DeliverResult(Result, OnComplete);
+					});
+				};
+				if (IsInGameThread())
+				{
+					Launch();
 				}
+				else
+				{
+					AsyncTask(ENamedThreads::GameThread, MoveTemp(Launch));
+				}
+				return;
+			}
 
-				OnComplete(bIsError
-					? UE::ModelContextProtocol::MakeErrorResult(Result)
-					: UE::ModelContextProtocol::MakeTextResult(Result));
+			auto Execute = [ToolName, Args = MoveTemp(Args), OnComplete]()
+			{
+				DeliverResult(FToolRegistry::Get().ExecuteTool(ToolName, Args), OnComplete);
 			};
 
 			// VibeUE tools must run on the game thread.
@@ -233,6 +316,23 @@ namespace
 			else
 			{
 				AsyncTask(ENamedThreads::GameThread, MoveTemp(Execute));
+			}
+		}
+
+		// Epic's server calls this on notifications/cancelled; it wakes an off-game-thread call.
+		virtual void CancelAsync(const FModelContextProtocolToolRequestId& RequestId) override
+		{
+			TSharedPtr<FVibeUEToolCancel, ESPMode::ThreadSafe> Cancel;
+			{
+				FScopeLock Guard(&GRunningCallsLock);
+				if (const TSharedRef<FVibeUEToolCancel, ESPMode::ThreadSafe>* Running = GRunningCalls.Find(RequestKey(RequestId)))
+				{
+					Cancel = *Running;
+				}
+			}
+			if (Cancel.IsValid())
+			{
+				Cancel->Cancel();
 			}
 		}
 

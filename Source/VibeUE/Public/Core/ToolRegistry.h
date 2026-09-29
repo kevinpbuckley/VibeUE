@@ -96,6 +96,18 @@ public:
 		const TMap<FString, FString>& Parameters
 	);
 
+	/**
+	 * The checks and lookup of ExecuteTool without running the tool, so a caller can check
+	 * on the game thread and run the returned function elsewhere (the MCP bridge runs deep_research on a
+	 * worker thread). On failure OutErrorJson holds the same JSON ExecuteTool would have returned.
+	 */
+	bool PrepareToolCall(
+		const FString& ToolName,
+		const TMap<FString, FString>& Parameters,
+		FToolExecuteFunc& OutFunc,
+		FString& OutErrorJson
+	);
+
 	/** Refresh tool registry (re-process registrations) */
 	void Refresh();
 

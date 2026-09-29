@@ -17,6 +17,10 @@
 #include "Interfaces/IHttpRequest.h"
 #include "Interfaces/IHttpResponse.h"
 #include "HAL/PlatformProcess.h"
+// Shared request state, a wait off the game thread, cancellation
+#include "Async/Async.h"
+#include "HAL/Event.h"
+#include "Core/VibeUEToolCancel.h"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -113,17 +117,21 @@ struct FResearchHttpResult
 struct FResearchHttpState
 {
 	FResearchHttpResult Result;
-	bool bComplete = false;
+	std::atomic<bool> bComplete{false};
+	std::atomic<bool> bCancelled{false};
+	FEventRef Done{EEventMode::ManualReset};
+	TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> Request; // touched on the game thread only
 };
+using FResearchHttpStateRef = TSharedRef<FResearchHttpState, ESPMode::ThreadSafe>;
 
-static FResearchHttpResult ResearchHttpGet(
+// Builds and starts the request. Game thread only.
+static void StartResearchRequest(
+	const FResearchHttpStateRef& State,
 	const FString& Url,
-	const FString& UserAgent = TEXT("VibeUE/1.0 (Unreal Engine plugin)"),
-	const TArray<TPair<FString, FString>>& ExtraHeaders = {},
-	float TimeoutSeconds = 30.0f)
+	const FString& UserAgent,
+	const TArray<TPair<FString, FString>>& ExtraHeaders,
+	float TimeoutSeconds)
 {
-	const TSharedRef<FResearchHttpState, ESPMode::ThreadSafe> State = MakeShared<FResearchHttpState, ESPMode::ThreadSafe>();
-
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
 	Request->SetURL(Url);
 	Request->SetVerb(TEXT("GET"));
@@ -139,7 +147,7 @@ static FResearchHttpResult ResearchHttpGet(
 			const TSharedPtr<FResearchHttpState, ESPMode::ThreadSafe> S = WeakState.Pin();
 			if (!S)
 			{
-				return; // the helper gave up and returned
+				return; // the caller gave up and is gone
 			}
 			if (!bConnected || !Resp.IsValid())
 			{
@@ -152,28 +160,88 @@ static FResearchHttpResult ResearchHttpGet(
 				S->Result.Body         = Resp->GetContentAsString();
 			}
 			S->bComplete = true;
+			S->Done->Trigger();
 		}
 	);
 
+	State->Request = Request;
 	Request->ProcessRequest();
+}
 
-	const double Start = FPlatformTime::Seconds();
-	while (!State->bComplete)
+// Unbinds the completion, then cancels. Game thread only.
+static void AbandonResearchRequest(const FResearchHttpStateRef& State)
+{
+	if (State->Request.IsValid())
 	{
-		FHttpModule::Get().GetHttpManager().Tick(0.0f);
-		FPlatformProcess::Sleep(0.01f);
-		if (FPlatformTime::Seconds() - Start > TimeoutSeconds)
+		State->Request->OnProcessRequestComplete().Unbind();
+		State->Request->CancelRequest();
+		State->Request.Reset();
+	}
+}
+
+static FResearchHttpResult ResearchHttpGet(
+	const FString& Url,
+	const FString& UserAgent = TEXT("VibeUE/1.0 (Unreal Engine plugin)"),
+	const TArray<TPair<FString, FString>>& ExtraHeaders = {},
+	float TimeoutSeconds = 30.0f)
+{
+	const FResearchHttpStateRef State = MakeShared<FResearchHttpState, ESPMode::ThreadSafe>();
+
+	if (IsInGameThread())
+	{
+		// On the game thread (a direct call, e.g. from Python): the original blocking wait, now safe.
+		StartResearchRequest(State, Url, UserAgent, ExtraHeaders, TimeoutSeconds);
+		const double Start = FPlatformTime::Seconds();
+		while (!State->bComplete)
 		{
-			// Unbind before cancelling: the cancelled request still completes later
-			Request->OnProcessRequestComplete().Unbind();
-			Request->CancelRequest();
-			FResearchHttpResult TimedOut;
-			TimedOut.ErrorMessage = TEXT("Request timed out");
-			return TimedOut;
+			FHttpModule::Get().GetHttpManager().Tick(0.0f);
+			FPlatformProcess::Sleep(0.01f);
+			if (FPlatformTime::Seconds() - Start > TimeoutSeconds)
+			{
+				AbandonResearchRequest(State);
+				FResearchHttpResult TimedOut;
+				TimedOut.ErrorMessage = TEXT("Request timed out");
+				return TimedOut;
+			}
 		}
+		return State->Result;
 	}
 
-	return State->Result;
+	// On a worker thread (the MCP bridge runs deep_research there) every HTTP call stays on the
+	// game thread and this thread only waits, so the editor keeps ticking. A cancel from the client wakes the wait.
+	FVibeUEToolCancel* Cancel = FVibeUEToolCancel::GetCurrent();
+	if (Cancel)
+	{
+		const TWeakPtr<FResearchHttpState, ESPMode::ThreadSafe> WeakState = State;
+		Cancel->SetOnCancel([WeakState]()
+		{
+			if (const TSharedPtr<FResearchHttpState, ESPMode::ThreadSafe> S = WeakState.Pin())
+			{
+				S->bCancelled = true;
+				S->Done->Trigger();
+			}
+		});
+	}
+	AsyncTask(ENamedThreads::GameThread, [State, Url, UserAgent, ExtraHeaders, TimeoutSeconds]()
+	{
+		if (!State->bCancelled)
+		{
+			StartResearchRequest(State, Url, UserAgent, ExtraHeaders, TimeoutSeconds);
+		}
+	});
+	const bool bSignalled = State->Done->Wait(FTimespan::FromSeconds(TimeoutSeconds + 1.0));
+	if (Cancel)
+	{
+		Cancel->ClearOnCancel();
+	}
+	if (bSignalled && State->bComplete && !State->bCancelled)
+	{
+		return State->Result;
+	}
+	AsyncTask(ENamedThreads::GameThread, [State]() { AbandonResearchRequest(State); });
+	FResearchHttpResult Failed;
+	Failed.ErrorMessage = State->bCancelled ? TEXT("Request cancelled") : TEXT("Request timed out");
+	return Failed;
 }
 
 // ---------------------------------------------------------------------------
@@ -875,6 +943,68 @@ bool FVibeUEResearchDirectFallbackParsingTest::RunTest(const FString& Parameters
 	// dev.epicgames.com puts JSON in a multi-line attribute of a custom element; none of it may leak.
 	const FString Attr = HtmlPageToText(TEXT("<nav links=\"[\n  {\n    &quot;id&quot;: &quot;notifications&quot;\n  }\n]\"></nav><!-- a > comment --><p>Body text</p>"));
 	TestEqual(TEXT("a multi-line attribute and a comment leave no text"), Attr, FString(TEXT("Body text\n")));
+	return true;
+}
+// On a worker thread the helper starts and cancels its request on the game thread and only waits; a cancel from the
+// client wakes the wait. Test path prefix VibeUE.Research.*
+#include "Tests/AutomationCommon.h"
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeUEResearchWorkerWaitIsCancellableTest, "VibeUE.Research.WorkerWaitIsCancellable",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVibeUEResearchWorkerWaitIsCancellableTest::RunTest(const FString& Parameters)
+{
+	struct FState
+	{
+		TSharedRef<FVibeUEToolCancel, ESPMode::ThreadSafe> Cancel = MakeShared<FVibeUEToolCancel, ESPMode::ThreadSafe>();
+		std::atomic<bool> bDone{false};
+		FResearchHttpResult Result;
+		double Started = 0.0;
+		double Finished = 0.0;
+		uint64 FrameAtStart = 0;
+		uint64 FrameAtCancel = 0;
+	};
+	const TSharedRef<FState, ESPMode::ThreadSafe> S = MakeShared<FState, ESPMode::ThreadSafe>();
+
+	// A non-routable address: the connection hangs, so only the cancel can end the wait early.
+	S->Started = FPlatformTime::Seconds();
+	S->FrameAtStart = GFrameCounter;
+	Async(EAsyncExecution::ThreadPool, [S]()
+	{
+		FVibeUEToolCancel::FScope CurrentCall(&S->Cancel.Get());
+		S->Result = ResearchHttpGet(TEXT("http://10.255.255.1/"), TEXT("VibeUE test"), {}, 10.0f);
+		S->Finished = FPlatformTime::Seconds();
+		S->bDone = true;
+	});
+
+	ADD_LATENT_AUTOMATION_COMMAND(FWaitLatentCommand(1.0f));
+	ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([this, S]()
+	{
+		TestFalse(TEXT("the worker is still waiting after 1 s"), S->bDone.load());
+		S->FrameAtCancel = GFrameCounter;
+		TestTrue(FString::Printf(TEXT("the game thread kept ticking while the worker waited (%llu frames)"), S->FrameAtCancel - S->FrameAtStart),
+			S->FrameAtCancel - S->FrameAtStart >= 5);
+		S->Cancel->Cancel();
+		return true;
+	}));
+	ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([this, S]()
+	{
+		if (!S->bDone.load())
+		{
+			if (FPlatformTime::Seconds() - S->Started > 15.0)
+			{
+				AddError(TEXT("The worker had not returned 15 s after the start."));
+				return true;
+			}
+			return false;
+		}
+		const double Elapsed = S->Finished - S->Started;
+		AddInfo(FString::Printf(TEXT("The cancelled wait returned %.2f s after the start (timeout 10 s)."), Elapsed));
+		TestTrue(FString::Printf(TEXT("the cancel woke the wait well before the 10 s timeout (%.2f s)"), Elapsed), Elapsed < 4.0);
+		TestFalse(TEXT("a cancelled request does not succeed"), S->Result.bSuccess);
+		TestEqual(TEXT("it says it was cancelled"), S->Result.ErrorMessage, FString(TEXT("Request cancelled")));
+		return true;
+	}));
 	return true;
 }
 #endif // WITH_AUTOMATION_TESTS
