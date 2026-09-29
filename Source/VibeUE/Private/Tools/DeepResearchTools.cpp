@@ -565,3 +565,40 @@ REGISTER_VIBEUE_TOOL(deep_research,
 			FString::Printf(TEXT("Unknown action: '%s'. Valid: search, fetch_page, geocode, reverse_geocode"), *Action));
 	}
 );
+
+#if WITH_AUTOMATION_TESTS
+#include "Misc/AutomationTest.h"
+
+// A request that times out is cancelled, and CancelRequest only schedules the abort: the completion still runs at a
+// later HTTP tick. It must write nothing the caller can see, because the helper has returned by then. The helper's
+// result object is returned by value (NRVO builds it in the caller's variable), so a late write shows up there.
+// Test path prefix VibeUE.Research.*
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeUEResearchTimeoutIsSafeTest, "VibeUE.Research.TimeoutIsSafe",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVibeUEResearchTimeoutIsSafeTest::RunTest(const FString& Parameters)
+{
+	// A non-routable address: the connection hangs, so the request times out.
+	const double Start = FPlatformTime::Seconds();
+	FResearchHttpResult Result = ResearchHttpGet(TEXT("http://10.255.255.1/"), TEXT("VibeUE test"), {}, 1.0f);
+	const double Elapsed = FPlatformTime::Seconds() - Start;
+	const bool bSuccessAtReturn = Result.bSuccess;
+	const FString MessageAtReturn = Result.ErrorMessage;
+	TestFalse(TEXT("the request did not succeed"), bSuccessAtReturn);
+	TestTrue(FString::Printf(TEXT("it gave up within its time (%.2f s)"), Elapsed), Elapsed < 3.0);
+	TestEqual(TEXT("it says why"), MessageAtReturn, FString(TEXT("Request timed out")));
+
+	// Let the cancelled request's late completion run, then check it changed nothing after the return.
+	const double PumpUntil = FPlatformTime::Seconds() + 2.0;
+	while (FPlatformTime::Seconds() < PumpUntil)
+	{
+		FHttpModule::Get().GetHttpManager().Tick(0.0f);
+		FPlatformProcess::Sleep(0.01f);
+	}
+	TestEqual(TEXT("the late completion did not write into the returned result (message)"), Result.ErrorMessage, MessageAtReturn);
+	TestEqual(TEXT("the late completion did not write into the returned result (success)"), Result.bSuccess, bSuccessAtReturn);
+	return true;
+}
+
+#endif // WITH_AUTOMATION_TESTS

@@ -788,3 +788,39 @@ REGISTER_VIBEUE_TOOL(terrain_data,
 			FString::Printf(TEXT("Unknown action: '%s'. Valid: generate_heightmap, preview_elevation, get_map_image, list_styles, get_water_features"), *Action));
 	}
 );
+
+#if WITH_AUTOMATION_TESTS
+#include "Misc/AutomationTest.h"
+
+// The same late-completion hazard as deep_research (VibeUE.Research.TimeoutIsSafe): a timed-out request is cancelled,
+// its completion runs at a later HTTP tick, and it must write nothing the caller can see. Test path prefix
+// VibeUE.TerrainData.*
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeUETerrainDataTimeoutIsSafeTest, "VibeUE.TerrainData.TimeoutIsSafe",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVibeUETerrainDataTimeoutIsSafeTest::RunTest(const FString& Parameters)
+{
+	// A non-routable address: the connection hangs, so the request times out.
+	const double Start = FPlatformTime::Seconds();
+	FTerrainHttpResult Result = TerrainHttpGet(TEXT("http://10.255.255.1/"), FString(), 1.0f);
+	const double Elapsed = FPlatformTime::Seconds() - Start;
+	const bool bSuccessAtReturn = Result.bSuccess;
+	const FString MessageAtReturn = Result.ErrorMessage;
+	TestFalse(TEXT("the request did not succeed"), bSuccessAtReturn);
+	TestTrue(FString::Printf(TEXT("it gave up within its time (%.2f s)"), Elapsed), Elapsed < 3.0);
+	TestEqual(TEXT("it says why"), MessageAtReturn, FString(TEXT("Request timed out")));
+
+	// Let the cancelled request's late completion run, then check it changed nothing after the return.
+	const double PumpUntil = FPlatformTime::Seconds() + 2.0;
+	while (FPlatformTime::Seconds() < PumpUntil)
+	{
+		FHttpModule::Get().GetHttpManager().Tick(0.0f);
+		FPlatformProcess::Sleep(0.01f);
+	}
+	TestEqual(TEXT("the late completion did not write into the returned result (message)"), Result.ErrorMessage, MessageAtReturn);
+	TestEqual(TEXT("the late completion did not write into the returned result (success)"), Result.bSuccess, bSuccessAtReturn);
+	return true;
+}
+
+#endif // WITH_AUTOMATION_TESTS
