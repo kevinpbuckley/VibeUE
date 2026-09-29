@@ -212,4 +212,76 @@ bool FVibePythonResidentMapsTest::RunTest(const FString&)
 	return true;
 }
 
+// In ExecuteFile mode the Python plugin takes any command whose first ".py" is followed by
+// whitespace or the end (or, when it starts with a quote, by a closing quote) as a FILE PATH, and
+// RunFile then fails "Could not load Python file". So code that merely mentioned a .py file in a
+// comment, a string or a docstring never ran, and the reply said only "Python execution failed".
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibePythonCodeMentioningPyFileTest, "VibeUE.Python.CodeMentioningPyFile",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVibePythonCodeMentioningPyFileTest::RunTest(const FString&)
+{
+	auto Run = [](const TCHAR* Code)
+	{
+		const FString Json = UPythonTools::ExecutePythonCode(Code, /*bAutoSave=*/false);
+		TSharedPtr<FJsonObject> Obj;
+		FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json), Obj);
+		return Obj;
+	};
+	auto ExpectRuns = [this, &Run](const TCHAR* What, const TCHAR* Code, const TCHAR* ExpectedOutput)
+	{
+		const TSharedPtr<FJsonObject> Obj = Run(Code);
+		if (!TestTrue(FString::Printf(TEXT("%s: reply parses"), What), Obj.IsValid()))
+		{
+			return;
+		}
+		FString Error;
+		Obj->TryGetStringField(TEXT("error_message"), Error);
+		TestTrue(FString::Printf(TEXT("%s: runs as code (error: '%s')"), What, *Error), Obj->GetBoolField(TEXT("success")));
+		TestTrue(FString::Printf(TEXT("%s: prints '%s'"), What, ExpectedOutput),
+			Obj->GetStringField(TEXT("output")).Contains(ExpectedOutput));
+	};
+
+	ExpectRuns(TEXT(".py then a line end, in a comment"),
+		TEXT("x = 1  # written by build.py\nprint('VibeUEPyFileComment', x)\n"), TEXT("VibeUEPyFileComment 1"));
+	ExpectRuns(TEXT(".py at the very end"),
+		TEXT("print('VibeUEPyFileEnd')  # see helper.py"), TEXT("VibeUEPyFileEnd"));
+	ExpectRuns(TEXT(".py then a space, in a string"),
+		TEXT("s = 'run tool.py now'\nprint('VibeUEPyFileString', len(s))\n"), TEXT("VibeUEPyFileString 15"));
+	ExpectRuns(TEXT("a leading docstring naming a .py file"),
+		TEXT("\"\"\"Helpers for make_level.py\"\"\"\nprint('VibeUEPyFileDocstring')\n"), TEXT("VibeUEPyFileDocstring"));
+
+	// Such code must run in the same globals as any other call: a function sees the module's names,
+	// and a name it binds is visible to the next call.
+	ExpectRuns(TEXT("module names inside a function"),
+		TEXT("vibeue_py_file_probe = 20  # set by probe.py\ndef twice():\n    return vibeue_py_file_probe * 2\nprint('VibeUEPyFileFunc', twice())\n"),
+		TEXT("VibeUEPyFileFunc 40"));
+	ExpectRuns(TEXT("a name bound by the previous call"),
+		TEXT("print('VibeUEPyFileNext', vibeue_py_file_probe + 1)\n"), TEXT("VibeUEPyFileNext 21"));
+
+	// Those shared globals may hold a caller's own compile or exec.
+	Run(TEXT("compile = exec = base64 = None\n"));
+	ExpectRuns(TEXT("after a call rebound compile, exec and base64"),
+		TEXT("print('VibeUEPyFileShadowed')  # see shadow.py"), TEXT("VibeUEPyFileShadowed"));
+	Run(TEXT("del compile, exec, base64, vibeue_py_file_probe\n"));
+
+	// An error must still name the caller's own line.
+	AddExpectedError(TEXT("LogPython"), EAutomationExpectedErrorFlags::Contains, 0);
+	{
+		const TSharedPtr<FJsonObject> Obj = Run(TEXT("# first line names check.py\ny = 2\nraise RuntimeError('VibeUEPyFileLine')\n"));
+		if (TestTrue(TEXT("raising run: reply parses"), Obj.IsValid()))
+		{
+			FString Error;
+			Obj->TryGetStringField(TEXT("error_message"), Error);
+			TestFalse(TEXT("raising run: reported as failed"), Obj->GetBoolField(TEXT("success")));
+			TestTrue(FString::Printf(TEXT("raising run: the error is the script's own (got '%s')"), *Error),
+				Error.Contains(TEXT("VibeUEPyFileLine")));
+			TestTrue(FString::Printf(TEXT("raising run: the error names line 3 (got '%s')"), *Error),
+				Error.Contains(TEXT("line 3")));
+		}
+	}
+
+	return true;
+}
+
 #endif // WITH_AUTOMATION_TESTS
