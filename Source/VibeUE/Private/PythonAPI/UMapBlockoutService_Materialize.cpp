@@ -297,6 +297,21 @@ FMapBlockoutMaterializeResult UMapBlockoutService::MaterializeForestAsFoliage(
 	const int32 TreelineStep = 5; // medium
 	const int32 ScrubStep = 6;    // sparse
 
+	// On a World Partition level a layer's AddFoliageInstances
+	// fails explicitly (e.g. a target cell's foliage actor is not loaded: nothing placed for that layer). Report it
+	// instead of bSuccess = Created > 0, and place no further layers after a failed one. Non-partitioned levels keep
+	// VibeUE's behaviour (LayerError stays empty).
+	const UWorld* MaterializeWorld = GetEditorWorld();
+	const bool bPartitionedWorld = MaterializeWorld && MaterializeWorld->IsPartitionedWorld();
+	FString LayerError;
+	auto RecordLayerResult = [bPartitionedWorld, &LayerError](const TCHAR* Layer, const FFoliageScatterResult& R)
+	{
+		if (bPartitionedWorld && !R.bSuccess)
+		{
+			LayerError = FString::Printf(TEXT("%s layer failed: %s"), Layer, *R.ErrorMessage);
+		}
+	};
+
 	if (!ForestFoliageTypePath.IsEmpty())
 	{
 		TArray<FVector> Pos; SampleMaskPositions(Foliage.ForestMask, Lo, Hi, ForestStep, Pos);
@@ -306,9 +321,10 @@ FMapBlockoutMaterializeResult UMapBlockoutService::MaterializeForestAsFoliage(
 				ForestFoliageTypePath, Pos, /*MinScale=*/0.8f, /*MaxScale=*/1.4f,
 				/*bAlignToNormal=*/true, /*bRandomYaw=*/true, /*bTraceToSurface=*/true);
 			Created += R.InstancesAdded;
+			RecordLayerResult(TEXT("Forest"), R);
 		}
 	}
-	if (!TreelineFoliageTypePath.IsEmpty())
+	if (LayerError.IsEmpty() && !TreelineFoliageTypePath.IsEmpty())
 	{
 		TArray<FVector> Pos; SampleMaskPositions(Foliage.TreelineMask, Lo, Hi, TreelineStep, Pos);
 		if (Pos.Num())
@@ -316,9 +332,10 @@ FMapBlockoutMaterializeResult UMapBlockoutService::MaterializeForestAsFoliage(
 			const FFoliageScatterResult R = UFoliageService::AddFoliageInstances(
 				TreelineFoliageTypePath, Pos, 0.7f, 1.2f, true, true, true);
 			Created += R.InstancesAdded;
+			RecordLayerResult(TEXT("Treeline"), R);
 		}
 	}
-	if (!ScrubFoliageTypePath.IsEmpty())
+	if (LayerError.IsEmpty() && !ScrubFoliageTypePath.IsEmpty())
 	{
 		TArray<FVector> Pos; SampleMaskPositions(Foliage.ScrubMask, Lo, Hi, ScrubStep, Pos);
 		if (Pos.Num())
@@ -326,10 +343,19 @@ FMapBlockoutMaterializeResult UMapBlockoutService::MaterializeForestAsFoliage(
 			const FFoliageScatterResult R = UFoliageService::AddFoliageInstances(
 				ScrubFoliageTypePath, Pos, 0.6f, 1.1f, true, true, true);
 			Created += R.InstancesAdded;
+			RecordLayerResult(TEXT("Scrub"), R);
 		}
 	}
 
 	Result.CreatedCount = Created;
+	if (!LayerError.IsEmpty())
+	{
+		Result.bSuccess = false;
+		Result.ErrorMessage = FString::Printf(TEXT("MaterializeForestAsFoliage: %s Later layers were not placed; %d instances from earlier layers stay (each layer is its own undo step)."),
+			*LayerError, Created);
+		UE_LOG(LogTemp, Error, TEXT("%s"), *Result.ErrorMessage);
+		return Result;
+	}
 	Result.bSuccess = (Created > 0);
 	if (!Result.bSuccess)
 	{
