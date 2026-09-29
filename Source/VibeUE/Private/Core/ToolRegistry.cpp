@@ -78,10 +78,12 @@ void FToolRegistry::Shutdown()
 
 void FToolRegistry::RegisterTool(const FToolRegistration& Registration)
 {
-	// If not initialized yet, queue for later
+	// Every registration is kept, so Refresh() can rebuild the registry from it
+	PendingRegistrations.Add(Registration);
+
+	// If not initialized yet, Initialize() registers it
 	if (!bInitialized)
 	{
-		PendingRegistrations.Add(Registration);
 		UE_LOG(LogToolRegistry, Verbose, TEXT("Queued tool for registration: %s"), *Registration.Name);
 		return;
 	}
@@ -140,8 +142,9 @@ void FToolRegistry::ProcessPendingRegistrations()
 		UE_LOG(LogToolRegistry, Log, TEXT("Registered tool: %s (Category: %s, InternalOnly: %s)"), 
 			*Registration.Name, *Registration.Category, Registration.bInternalOnly ? TEXT("Yes") : TEXT("No"));
 	}
-	
-	PendingRegistrations.Empty();
+
+	// PendingRegistrations is kept: Refresh() empties the registry and calls Initialize() again, which would
+	// otherwise find nothing to register and leave zero tools
 }
 
 void FToolRegistry::Refresh()
