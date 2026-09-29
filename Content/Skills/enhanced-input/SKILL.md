@@ -28,7 +28,7 @@ real API is below; you rarely need a discovery call at all:
 | Contexts | `create_mapping_context(name, path, priority=0)`, `list_mapping_contexts()`, `get_mapping_context_info(context_path)` → info or None, `mapping_context_exists(context_path)` |
 | Mappings | `get_mappings(context_path)`, `add_key_mapping(context_path, action_path, key_name)`, `remove_mapping(context_path, mapping_index)`, `key_mapping_exists(context_path, action_path)` |
 | Modifiers | `add_modifier(context_path, mapping_index, modifier_type)`, `remove_modifier(context_path, mapping_index, modifier_index)`, `get_modifiers(context_path, mapping_index)` |
-| Triggers | `add_trigger(context_path, mapping_index, trigger_type)`, `remove_trigger(context_path, mapping_index, trigger_index)`, `get_triggers(context_path, mapping_index)` |
+| Triggers | `add_trigger(context_path, mapping_index, trigger_type, properties_json="")`, `add_action_trigger(action_path, trigger_type, properties_json="")` → JSON, `remove_trigger(context_path, mapping_index, trigger_index)`, `get_triggers(context_path, mapping_index)` |
 
 `create_action` value types are the strings `discover_types()` returns: `"Boolean"`
 (alias `"Digital"`), `"Axis1D"`, `"Axis2D"`, `"Axis3D"`. Modifiers and triggers are
@@ -119,6 +119,28 @@ mapping_index = len(mappings) - 1
 unreal.InputService.add_trigger(context_path, mapping_index, "Pressed")
 unreal.InputService.add_modifier(context_path, mapping_index, "DeadZone")
 unreal.EditorAssetLibrary.save_asset(context_path)
+```
+
+### Trigger Settings
+
+`properties_json` sets the new trigger's settings, by C++ name or snake_case
+(`HoldTimeThreshold` or `hold_time_threshold`, `bIsOneShot` or `is_one_shot`). An unknown
+name or a bad value fails the call and adds nothing. `add_action_trigger` puts the trigger
+on the Input Action itself, so it applies to every mapping of the action. Neither saves the
+asset, and a running PIE session keeps its copy of the triggers: restart PIE to see a change.
+
+```python
+import unreal
+
+# Hold 0.4 s before the charged attack fires, once per hold
+unreal.InputService.add_trigger("/Game/Input/IMC_Default", 0, "Hold",
+    '{"hold_time_threshold": 0.4, "is_one_shot": true}')
+
+# A quick tap on the action itself, for every key bound to it
+result = unreal.InputService.add_action_trigger("/Game/Input/IA_Dash", "Tap",
+    '{"tap_release_time_threshold": 0.25}')
+print(result)   # {"success": true, "trigger_index": 0, ...} or an error_code
+unreal.EditorAssetLibrary.save_asset("/Game/Input/IA_Dash")
 ```
 
 ### Get Mappings Info
