@@ -22,6 +22,8 @@ namespace
 	{
 		if (VibeType == TEXT("int"))    { return TEXT("integer"); }
 		if (VibeType == TEXT("float"))  { return TEXT("number"); }
+		// Tools also declare the JSON Schema names themselves (capture_image max_width, deep_research lat/lng)
+		if (VibeType == TEXT("number") || VibeType == TEXT("integer") || VibeType == TEXT("boolean")) { return VibeType; }
 		if (VibeType == TEXT("bool"))   { return TEXT("boolean"); }
 		if (VibeType == TEXT("object")) { return TEXT("object"); }
 		if (VibeType == TEXT("array"))  { return TEXT("array"); }
