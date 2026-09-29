@@ -191,3 +191,21 @@ Add strafing to the movement system. It should be a 2D input bound to the right 
 I'm building a menu system. Create a new context for menus, make actions for pause, confirm, and back buttons, then bind Escape to pause, Enter to confirm, and Backspace to go back.
 
 ---
+
+## PIE Input Injection
+
+Start PIE. Press the fire action once, then check on a later call whether it fired. Tell me whether the reply said the input was queued or delivered.
+
+---
+
+Hold the fire action for a second and a half, like holding the button down, and tell me when it let go.
+
+---
+
+Start a ten second hold on the fire action, then stop it early. Confirm it was still active when you stopped it.
+
+---
+
+Hold the space bar for half a second in the running game. Then stop PIE.
+
+---
