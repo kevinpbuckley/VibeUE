@@ -486,7 +486,8 @@ FString UFabService::ImportAsset(const FString& AssetId, const FString& EngineVe
 
 	const bool bIsPlugin = A->DistributionMethod.ToLower().Contains(TEXT("plugin"));
 	FString SErr;
-	if (!FVibeFabImport::Start(AssetId, A->Title, bIsPlugin, Info, SErr))
+	const bool bProject = A->DistributionMethod.Contains(TEXT("complete_project"), ESearchCase::IgnoreCase);
+	if (!(bProject ? FVibeFabImport::StartProject(AssetId, A->Title, Info, SErr) : FVibeFabImport::Start(AssetId, A->Title, bIsPlugin, Info, SErr)))
 	{
 		return ErrJson(TEXT("IMPORT_START_FAILED"), SErr);
 	}
@@ -588,6 +589,11 @@ FString UFabService::ImportStatus(const FString& AssetId)
 		Obj->SetNumberField(TEXT("asset_count"), P->AssetPaths.Num());
 		break;
 	}
+	case FFabImportProgress::EPhase::Staged:
+		Obj->SetStringField(TEXT("status"), TEXT("staged"));
+		Obj->SetStringField(TEXT("staging_root"), P->InstallRoot);
+		Obj->SetStringField(TEXT("message"), TEXT("Complete project downloaded only. Merge approved content folders with the editor closed; host settings were not modified."));
+		break;
 	case FFabImportProgress::EPhase::Failed:
 		Obj->SetStringField(TEXT("status"), TEXT("failed"));
 		Obj->SetStringField(TEXT("error"), P->Error);

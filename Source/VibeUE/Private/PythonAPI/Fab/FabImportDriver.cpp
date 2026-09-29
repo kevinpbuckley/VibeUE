@@ -20,6 +20,13 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "FileUtilities/ZipArchiveReader.h"
+#include "HttpModule.h"
+#include "Interfaces/IHttpRequest.h"
+#include "Interfaces/IHttpResponse.h"
+#include "Interfaces/IBuildPatchServicesModule.h"
+#include "Interfaces/IBuildInstaller.h"
+#include "Interfaces/IBuildManifest.h"
+#include "BuildPatchSettings.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogFabImport, Log, All);
 
@@ -343,6 +350,77 @@ bool FVibeFabImport::Start(const FString& AssetId, const FString& AssetName, boo
 		});
 
 	Request->ExecuteRequest();
+	return true;
+}
+
+bool FVibeFabImport::StartProject(const FString& AssetId, const FString& AssetName, const FFabDownloadInfo& Info, FString& OutError)
+{
+	if (!Info.bIsBuildPatch || AssetId.IsEmpty() || AssetId.Contains(TEXT("/")) || AssetId.Contains(TEXT("\\")) || AssetId.Contains(TEXT("..")))
+	{
+		OutError = TEXT("Invalid complete-project download request.");
+		return false;
+	}
+	if (const auto Existing = Get(AssetId); Existing && Existing->Phase != FFabImportProgress::EPhase::Failed) return true;
+	const auto State = MakeShared<FFabImportProgress>();
+	State->AssetName = AssetName;
+	State->InstallRoot = FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("Fab/Projects"), AssetId));
+	GImports.Add(AssetId, State);
+	const auto Request = FHttpModule::Get().CreateRequest();
+	Request->SetURL(Info.ManifestOrFileUrl);
+	Request->SetTimeout(60.f);
+	Request->OnProcessRequestComplete().BindLambda([State, Clouds = Info.BaseUrls](FHttpRequestPtr, FHttpResponsePtr Response, bool bOk)
+	{
+		if (!bOk || !Response || Response->GetResponseCode() != 200)
+		{
+			State->Phase = FFabImportProgress::EPhase::Failed;
+			State->Error = TEXT("Complete-project manifest download failed.");
+			return;
+		}
+		auto& BPS = FModuleManager::LoadModuleChecked<IBuildPatchServicesModule>(TEXT("BuildPatchServices"));
+		const auto Manifest = BPS.MakeManifestFromData(Response->GetContent());
+		if (!Manifest)
+		{
+			State->Phase = FFabImportProgress::EPhase::Failed;
+			State->Error = TEXT("Invalid complete-project manifest.");
+			return;
+		}
+		for (FString File : Manifest->GetBuildFileList())
+		{
+			File.ReplaceInline(TEXT("\\"), TEXT("/"));
+			if (!FPaths::IsRelative(File) || File.Contains(TEXT(":")) || File.Contains(TEXT("../")) || File.EndsWith(TEXT("..")))
+			{
+				State->Phase = FFabImportProgress::EPhase::Failed;
+				State->Error = TEXT("Manifest contains a path outside its staging directory.");
+				return;
+			}
+		}
+		BuildPatchServices::FBuildInstallerConfiguration Config({BuildPatchServices::FInstallerAction::MakeInstall(Manifest.ToSharedRef())});
+		Config.InstallDirectory = State->InstallRoot;
+		Config.StagingDirectory = State->InstallRoot + TEXT("-chunks");
+		Config.CloudDirectories = Clouds;
+		Config.InstallMode = BuildPatchServices::EInstallMode::NonDestructiveInstall;
+		const auto Installer = BPS.CreateBuildInstaller(MoveTemp(Config), FBuildPatchInstallerDelegate::CreateLambda([State](const IBuildInstallerRef& Finished)
+		{
+			State->Percent = Finished->IsComplete() && !Finished->HasError() ? 100.f : State->Percent;
+			State->Phase = !Finished->HasError() && !Finished->IsCanceled() ? FFabImportProgress::EPhase::Staged : FFabImportProgress::EPhase::Failed;
+			if (State->Phase == FFabImportProgress::EPhase::Failed) State->Error = TEXT("Complete-project installation failed; see BuildPatchServices log.");
+		}));
+		FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([State, Installer, Start = FPlatformTime::Seconds()](float)
+		{
+			State->CompletedBytes = Installer->GetTotalDownloaded();
+			State->TotalBytes = Installer->GetTotalDownloadRequired();
+			State->Percent = Installer->GetUpdateProgress() * 100.f;
+			if (FPlatformTime::Seconds() - Start > 3600.0 && !Installer->IsComplete()) Installer->CancelInstall();
+			return State->Phase == FFabImportProgress::EPhase::Downloading;
+		}), 1.f);
+		Installer->StartInstallation();
+	});
+	if (!Request->ProcessRequest())
+	{
+		State->Phase = FFabImportProgress::EPhase::Failed;
+		State->Error = OutError = TEXT("Could not start manifest request.");
+		return false;
+	}
 	return true;
 }
 
