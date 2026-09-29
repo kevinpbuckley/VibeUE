@@ -107,13 +107,22 @@ struct FResearchHttpResult
 	FString ErrorMessage;
 };
 
+// The request's completion writes into this shared state, which it holds only weakly, never into the helper's
+// locals: a request that times out is cancelled, CancelRequest only schedules the abort, and the completion then runs
+// at a later HTTP tick, after the helper has returned.
+struct FResearchHttpState
+{
+	FResearchHttpResult Result;
+	bool bComplete = false;
+};
+
 static FResearchHttpResult ResearchHttpGet(
 	const FString& Url,
 	const FString& UserAgent = TEXT("VibeUE/1.0 (Unreal Engine plugin)"),
 	const TArray<TPair<FString, FString>>& ExtraHeaders = {},
 	float TimeoutSeconds = 30.0f)
 {
-	FResearchHttpResult Result;
+	const TSharedRef<FResearchHttpState, ESPMode::ThreadSafe> State = MakeShared<FResearchHttpState, ESPMode::ThreadSafe>();
 
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
 	Request->SetURL(Url);
@@ -123,40 +132,48 @@ static FResearchHttpResult ResearchHttpGet(
 	for (const auto& KV : ExtraHeaders)
 		Request->SetHeader(KV.Key, KV.Value);
 
-	bool bComplete = false;
+	const TWeakPtr<FResearchHttpState, ESPMode::ThreadSafe> WeakState = State;
 	Request->OnProcessRequestComplete().BindLambda(
-		[&Result, &bComplete](FHttpRequestPtr, FHttpResponsePtr Resp, bool bConnected)
+		[WeakState](FHttpRequestPtr, FHttpResponsePtr Resp, bool bConnected)
 		{
+			const TSharedPtr<FResearchHttpState, ESPMode::ThreadSafe> S = WeakState.Pin();
+			if (!S)
+			{
+				return; // the helper gave up and returned
+			}
 			if (!bConnected || !Resp.IsValid())
 			{
-				Result.ErrorMessage = TEXT("Connection failed");
+				S->Result.ErrorMessage = TEXT("Connection failed");
 			}
 			else
 			{
-				Result.bSuccess     = true;
-				Result.ResponseCode = Resp->GetResponseCode();
-				Result.Body         = Resp->GetContentAsString();
+				S->Result.bSuccess     = true;
+				S->Result.ResponseCode = Resp->GetResponseCode();
+				S->Result.Body         = Resp->GetContentAsString();
 			}
-			bComplete = true;
+			S->bComplete = true;
 		}
 	);
 
 	Request->ProcessRequest();
 
 	const double Start = FPlatformTime::Seconds();
-	while (!bComplete)
+	while (!State->bComplete)
 	{
 		FHttpModule::Get().GetHttpManager().Tick(0.0f);
 		FPlatformProcess::Sleep(0.01f);
 		if (FPlatformTime::Seconds() - Start > TimeoutSeconds)
 		{
+			// Unbind before cancelling: the cancelled request still completes later
+			Request->OnProcessRequestComplete().Unbind();
 			Request->CancelRequest();
-			Result.ErrorMessage = TEXT("Request timed out");
-			return Result;
+			FResearchHttpResult TimedOut;
+			TimedOut.ErrorMessage = TEXT("Request timed out");
+			return TimedOut;
 		}
 	}
 
-	return Result;
+	return State->Result;
 }
 
 // ---------------------------------------------------------------------------

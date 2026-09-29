@@ -125,27 +125,31 @@ struct FTerrainHttpResult
 	FString ErrorMessage;
 };
 
-static FTerrainHttpResult TerrainHttpPost(
-	const FString& Url,
-	const FString& ApiKey,
-	const FString& JsonBody,
-	float TimeoutSeconds = 30.0f)
+// The request's completion writes into this shared state, which it holds only weakly, never into the helper's
+// locals: a request that times out is cancelled, CancelRequest only schedules the abort, and the completion then runs
+// at a later HTTP tick, after the helper has returned (the same fix as deep_research's ResearchHttpGet).
+struct FTerrainHttpState
 {
 	FTerrainHttpResult Result;
-
-	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
-	Request->SetURL(Url);
-	Request->SetVerb(TEXT("POST"));
-	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
-	Request->SetHeader(TEXT("X-API-Key"), ApiKey);
-	Request->SetContentAsString(JsonBody);
-
 	bool bComplete = false;
+};
+
+static FTerrainHttpResult TerrainHttpRun(
+	const TSharedRef<IHttpRequest, ESPMode::ThreadSafe>& Request,
+	float TimeoutSeconds,
+	bool bKeepHeightmapHeaders)
+{
+	const TSharedRef<FTerrainHttpState, ESPMode::ThreadSafe> State = MakeShared<FTerrainHttpState, ESPMode::ThreadSafe>();
+	const TWeakPtr<FTerrainHttpState, ESPMode::ThreadSafe> WeakState = State;
 	Request->OnProcessRequestComplete().BindLambda(
-		[&Result, &bComplete](FHttpRequestPtr Req, FHttpResponsePtr Resp, bool bConnected)
+		[WeakState, bKeepHeightmapHeaders](FHttpRequestPtr Req, FHttpResponsePtr Resp, bool bConnected)
 		{
-			// Write all fields BEFORE setting bComplete — game thread polls bComplete
-			// and will return (destroying Result) the moment it sees true.
+			const TSharedPtr<FTerrainHttpState, ESPMode::ThreadSafe> S = WeakState.Pin();
+			if (!S)
+			{
+				return;
+			}
+			FTerrainHttpResult& Result = S->Result;
 			if (!bConnected || !Resp.IsValid())
 			{
 				Result.ErrorMessage = TEXT("Connection failed");
@@ -156,78 +160,61 @@ static FTerrainHttpResult TerrainHttpPost(
 				Result.ResponseCode = Resp->GetResponseCode();
 				Result.Content = Resp->GetContent();
 				Result.ContentType = Resp->GetContentType();
-				Result.Headers.Add(TEXT("X-Heightmap-Min-Height"), Resp->GetHeader(TEXT("X-Heightmap-Min-Height")));
-				Result.Headers.Add(TEXT("X-Heightmap-Max-Height"), Resp->GetHeader(TEXT("X-Heightmap-Max-Height")));
-				Result.Headers.Add(TEXT("X-Heightmap-Size"),       Resp->GetHeader(TEXT("X-Heightmap-Size")));
+				if (bKeepHeightmapHeaders)
+				{
+					Result.Headers.Add(TEXT("X-Heightmap-Min-Height"), Resp->GetHeader(TEXT("X-Heightmap-Min-Height")));
+					Result.Headers.Add(TEXT("X-Heightmap-Max-Height"), Resp->GetHeader(TEXT("X-Heightmap-Max-Height")));
+					Result.Headers.Add(TEXT("X-Heightmap-Size"),       Resp->GetHeader(TEXT("X-Heightmap-Size")));
+				}
 			}
-			bComplete = true; // signal last — Result is fully written
+			S->bComplete = true;
 		}
 	);
 
 	Request->ProcessRequest();
 
 	const double StartTime = FPlatformTime::Seconds();
-	while (!bComplete)
+	while (!State->bComplete)
 	{
 		// Tick the HTTP manager so it can dispatch the callback on the game thread.
 		FHttpModule::Get().GetHttpManager().Tick(0.0f);
 		FPlatformProcess::Sleep(0.01f);
 		if (FPlatformTime::Seconds() - StartTime > TimeoutSeconds)
 		{
+			Request->OnProcessRequestComplete().Unbind();
 			Request->CancelRequest();
-			Result.ErrorMessage = TEXT("Request timed out");
-			return Result;
+			FTerrainHttpResult TimedOut;
+			TimedOut.ErrorMessage = TEXT("Request timed out");
+			return TimedOut;
 		}
 	}
 
-	return Result;
+	return State->Result;
+}
+
+static FTerrainHttpResult TerrainHttpPost(
+	const FString& Url,
+	const FString& ApiKey,
+	const FString& JsonBody,
+	float TimeoutSeconds = 30.0f)
+{
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+	Request->SetURL(Url);
+	Request->SetVerb(TEXT("POST"));
+	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
+	Request->SetHeader(TEXT("X-API-Key"), ApiKey);
+	Request->SetContentAsString(JsonBody);
+	return TerrainHttpRun(Request, TimeoutSeconds, /*bKeepHeightmapHeaders=*/true);
 }
 
 static FTerrainHttpResult TerrainHttpGet(const FString& Url, const FString& ApiKey, float TimeoutSeconds = 15.0f)
 {
-	FTerrainHttpResult Result;
-
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
 	Request->SetURL(Url);
 	Request->SetVerb(TEXT("GET"));
 	if (!ApiKey.IsEmpty())
 		Request->SetHeader(TEXT("X-API-Key"), ApiKey);
-
-	bool bComplete = false;
-	Request->OnProcessRequestComplete().BindLambda(
-		[&Result, &bComplete](FHttpRequestPtr Req, FHttpResponsePtr Resp, bool bConnected)
-		{
-			if (!bConnected || !Resp.IsValid())
-			{
-				Result.ErrorMessage = TEXT("Connection failed");
-			}
-			else
-			{
-				Result.bSuccess = true;
-				Result.ResponseCode = Resp->GetResponseCode();
-				Result.Content = Resp->GetContent();
-				Result.ContentType = Resp->GetContentType();
-			}
-			bComplete = true; // signal last
-		}
-	);
-
-	Request->ProcessRequest();
-
-	const double StartTime = FPlatformTime::Seconds();
-	while (!bComplete)
-	{
-		FHttpModule::Get().GetHttpManager().Tick(0.0f);
-		FPlatformProcess::Sleep(0.01f);
-		if (FPlatformTime::Seconds() - StartTime > TimeoutSeconds)
-		{
-			Request->CancelRequest();
-			Result.ErrorMessage = TEXT("Request timed out");
-			return Result;
-		}
-	}
-
-	return Result;
+	return TerrainHttpRun(Request, TimeoutSeconds, /*bKeepHeightmapHeaders=*/false);
 }
 
 // ---------------------------------------------------------------------------
