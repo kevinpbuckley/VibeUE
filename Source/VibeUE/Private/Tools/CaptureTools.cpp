@@ -15,6 +15,7 @@
 #include "Engine/GameViewportClient.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Framework/Docking/TabManager.h"
+#include "Layout/WidgetPath.h"
 #include "Widgets/SWindow.h"
 #include "Widgets/SViewport.h"
 #include "UnrealClient.h"
@@ -46,6 +47,12 @@ namespace
 	// editor crashes with all-Slate callstacks while an automation client drove a
 	// minimized editor, 2026-09-01). Refuse with an actionable error instead — callers
 	// can restore the window (ShowWindow/AppActivate) and retry.
+	//
+	// The same hazard covers every window Slate will not draw. TakeScreenshot hands the renderer a pointer to the
+	// caller's pixel array and draws the window; the request is cleared only when that window is really drawn.
+	// DrawWindowAndChildren skips hidden and minimized windows, and while a modal window is open PrivateDrawWindows
+	// draws only that one. In those cases the request stays armed with a pointer into a freed array and is written at
+	// the next real draw.
 	bool EnsureWindowCapturable(const TSharedPtr<SWindow>& Window, FString& OutError)
 	{
 		if (!Window.IsValid())
@@ -58,10 +65,41 @@ namespace
 			OutError = TEXT("The editor window is minimized — Slate cannot capture a minimized window (and may crash trying). Restore the window (e.g. ShowWindow/AppActivate from the client) and retry.");
 			return false;
 		}
+		if (!Window->IsVisible())
+		{
+			OutError = TEXT("The target window is hidden — Slate would not draw it and would leave the screenshot request armed. Show the window and retry.");
+			return false;
+		}
 		const FVector2D WindowSize = Window->GetSizeInScreen();
 		if (WindowSize.X < 1.0f || WindowSize.Y < 1.0f)
 		{
 			OutError = TEXT("The editor window has zero size — nothing to capture.");
+			return false;
+		}
+		const FVector2D ViewportSize = Window->GetViewportSize();
+		if (ViewportSize.X < 1.0f || ViewportSize.Y < 1.0f)
+		{
+			OutError = TEXT("The target window's viewport has zero size — nothing would be drawn to capture.");
+			return false;
+		}
+		const TSharedPtr<SWindow> ModalWindow = FSlateApplication::Get().GetActiveModalWindow();
+		if (ModalWindow.IsValid() && ModalWindow != Window)
+		{
+			OutError = FString::Printf(TEXT("A modal window ('%s') is open — Slate draws only that window until it closes. Close it and retry."),
+				*ModalWindow->GetTitle().ToString());
+			return false;
+		}
+		return true;
+	}
+
+	// TakeScreenshot of a widget calls GeneratePathToWidgetChecked, which asserts when the widget has no visible
+	// path. FindPathToWidget only reports, so a widget that is not on screen is refused first.
+	bool EnsureWidgetOnScreen(const TSharedRef<SWidget>& Widget, FString& OutError)
+	{
+		FWidgetPath Path;
+		if (!FSlateApplication::Get().FindPathToWidget(Widget, Path))
+		{
+			OutError = TEXT("The capture target is not visible on screen (no widget path to it) — nothing to capture.");
 			return false;
 		}
 		return true;
@@ -80,7 +118,8 @@ namespace
 			OutError = TEXT("Game viewport widget unavailable.");
 			return false;
 		}
-		if (!EnsureWindowCapturable(FSlateApplication::Get().FindWidgetWindow(ViewportWidget.ToSharedRef()), OutError))
+		if (!EnsureWindowCapturable(FSlateApplication::Get().FindWidgetWindow(ViewportWidget.ToSharedRef()), OutError)
+			|| !EnsureWidgetOnScreen(ViewportWidget.ToSharedRef(), OutError))
 		{
 			return false;
 		}
@@ -216,7 +255,7 @@ REGISTER_VIBEUE_TOOL(capture_image,
 
 		const FString CapturesDir = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("VibeUE"), TEXT("Captures"));
 		const FString FilePath = FPaths::Combine(CapturesDir,
-			FString::Printf(TEXT("capture-%s-%s.png"), *Source.ToLower(), *FDateTime::Now().ToString(TEXT("%Y%m%d-%H%M%S"))));
+			FString::Printf(TEXT("capture-%s-%s.png"), *Source.ToLower(), *FDateTime::Now().ToString(TEXT("%Y%m%d-%H%M%S-%s"))));
 		const bool bSaved = FFileHelper::SaveArrayToFile(TArrayView<const uint8>(Png.GetData(), (int32)Png.Num()), *FilePath);
 
 		TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
@@ -241,6 +280,7 @@ REGISTER_VIBEUE_TOOL(capture_image,
 
 #if WITH_AUTOMATION_TESTS
 #include "Misc/AutomationTest.h"
+#include "Widgets/Layout/SBox.h"
 
 // TakeScreenshot arms a request that only a real draw of the target window clears. A window Slate will not draw must
 // be refused before anything is armed. Test path prefix VibeUE.Capture.*
@@ -261,6 +301,12 @@ bool FVibeUECaptureRefusesUndrawnWindowsTest::RunTest(const FString& Parameters)
 	FString Error;
 	TestFalse(TEXT("a window Slate will not draw is refused"), EnsureWindowCapturable(NeverShown, Error));
 	TestTrue(FString::Printf(TEXT("the refusal says why: '%s'"), *Error), Error.Contains(TEXT("hidden")));
+
+	// A widget in no window has no path on screen; TakeScreenshot would assert on it.
+	const TSharedRef<SWidget> Orphan = SNew(SBox);
+	Error.Reset();
+	TestFalse(TEXT("a widget with no path on screen is refused"), EnsureWidgetOnScreen(Orphan, Error));
+	TestTrue(FString::Printf(TEXT("the refusal says why: '%s'"), *Error), Error.Contains(TEXT("not visible on screen")));
 	return true;
 }
 
