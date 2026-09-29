@@ -238,3 +238,30 @@ REGISTER_VIBEUE_TOOL(capture_image,
 		return Out;
 	}
 );
+
+#if WITH_AUTOMATION_TESTS
+#include "Misc/AutomationTest.h"
+
+// TakeScreenshot arms a request that only a real draw of the target window clears. A window Slate will not draw must
+// be refused before anything is armed. Test path prefix VibeUE.Capture.*
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeUECaptureRefusesUndrawnWindowsTest, "VibeUE.Capture.RefusesUndrawnWindows",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVibeUECaptureRefusesUndrawnWindowsTest::RunTest(const FString& Parameters)
+{
+	// A window that was never shown has a size but no native window, so Slate never draws it.
+	const TSharedRef<SWindow> NeverShown = SNew(SWindow)
+		.Title(FText::FromString(TEXT("VibeUE capture test")))
+		.ClientSize(FVector2D(320.0, 240.0));
+	TestTrue(TEXT("precondition: the window has a size"), NeverShown->GetSizeInScreen().X >= 1.0f && NeverShown->GetSizeInScreen().Y >= 1.0f);
+	TestFalse(TEXT("precondition: the window is not minimized"), NeverShown->IsWindowMinimized());
+	TestFalse(TEXT("precondition: Slate does not see it as visible"), NeverShown->IsVisible());
+
+	FString Error;
+	TestFalse(TEXT("a window Slate will not draw is refused"), EnsureWindowCapturable(NeverShown, Error));
+	TestTrue(FString::Printf(TEXT("the refusal says why: '%s'"), *Error), Error.Contains(TEXT("hidden")));
+	return true;
+}
+
+#endif // WITH_AUTOMATION_TESTS
