@@ -126,4 +126,34 @@ bool FVibeSettingsIniArrayHonestTest::RunTest(const FString&)
 	return true;
 }
 
+// set_settings_property changes a settings class's CDO live and saves it the way the Settings window does; here
+// GeneralProjectSettings.Description, a defaultconfig property in DefaultGame.ini, put back afterwards.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeSettingsPropertySavesTest,
+	"VibeUE.ProjectSettings.SettingsPropertySaves", kSettingsTestFlags)
+bool FVibeSettingsPropertySavesTest::RunTest(const FString&)
+{
+	using namespace VibeSettingsTest;
+	const FString File = DefaultGameIni();
+	FScopedConfigFileRestore Restore(File);
+
+	const FString Class = TEXT("GeneralProjectSettings");
+	const FString Old = UProjectSettingsService::GetSettingsProperty(Class, TEXT("Description"));
+	const FString Value = FString(TEXT("VibeUETest")) + FGuid::NewGuid().ToString(EGuidFormats::Digits);
+
+	const FProjectSettingResult Result = UProjectSettingsService::SetSettingsProperty(Class, TEXT("description"), Value);
+	TestTrue(FString::Printf(TEXT("set_settings_property succeeded (%s)"), *Result.ErrorMessage), Result.bSuccess);
+	TestEqual(TEXT("the class default object holds it"), UProjectSettingsService::GetSettingsProperty(Class, TEXT("Description")), Value);
+	TestTrue(TEXT("DefaultGame.ini on disk holds it"), ReadDisk(File).Contains(TEXT("Description=") + Value));
+
+	const FProjectSettingResult Unknown = UProjectSettingsService::SetSettingsProperty(Class, TEXT("NoSuchSetting"), TEXT("1"));
+	TestFalse(TEXT("an unknown property is refused"), Unknown.bSuccess);
+	const FProjectSettingResult NotAClass = UProjectSettingsService::SetSettingsProperty(TEXT("NoSuchSettingsClass"), TEXT("Description"), TEXT("x"));
+	TestFalse(TEXT("an unknown class is refused"), NotAClass.bSuccess);
+
+	// put the live value back too (the file is restored by the guard)
+	TestTrue(TEXT("the old value goes back"), UProjectSettingsService::SetSettingsProperty(Class, TEXT("Description"), Old).bSuccess);
+	TestEqual(TEXT("the class default object is back"), UProjectSettingsService::GetSettingsProperty(Class, TEXT("Description")), Old);
+	return true;
+}
+
 #endif // WITH_AUTOMATION_TESTS
