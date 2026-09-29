@@ -5,6 +5,7 @@
 #if WITH_AUTOMATION_TESTS
 
 #include "Tools/PythonTools.h"
+#include "Tools/PythonExecutionService.h"
 #include "Engine/World.h"
 #include "UObject/Package.h"
 #include "Misc/ScopeExit.h"
@@ -221,6 +222,12 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibePythonCodeMentioningPyFileTest, "VibeUE.Py
 
 bool FVibePythonCodeMentioningPyFileTest::RunTest(const FString&)
 {
+	// The command handed to the plugin: other code unchanged, and never a ".py" for it to find.
+	const FString Plain = TEXT("x = 1\nprint(x)\n");
+	TestEqual(TEXT("code without .py is passed unchanged"), VibeUE::FPythonExecutionService::MakeCodeCommand(Plain), Plain);
+	TestFalse(TEXT("the command for code mentioning .py does not contain it"),
+		VibeUE::FPythonExecutionService::MakeCodeCommand(TEXT("# a.py\nb = 'c.PY '\n")).Contains(TEXT(".py")));
+
 	auto Run = [](const TCHAR* Code)
 	{
 		const FString Json = UPythonTools::ExecutePythonCode(Code, /*bAutoSave=*/false);
