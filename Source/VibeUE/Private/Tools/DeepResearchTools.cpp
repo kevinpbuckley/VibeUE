@@ -312,6 +312,197 @@ static TArray<FDDGResult> ParseMarkdownSearchResults(const FString& Markdown, in
 }
 
 // ---------------------------------------------------------------------------
+// A direct fallback when Jina Reader refuses the request. Jina answers 401 to anonymous requests from networks it
+// rates badly ("You have been blocked from performing anonymous queries due to bad network reputation"), which breaks
+// search and fetch_page there. Both then fetch the source directly (DuckDuckGo Lite answers the same query) and read
+// its HTML here.
+// ---------------------------------------------------------------------------
+
+// An optional Jina API key, from the JINA_API_KEY environment variable (read per call: it is thread-safe, and the
+// key never lands in a project file). With it Jina also serves the networks it refuses anonymously.
+static void AddJinaAuth(TArray<TPair<FString, FString>>& Headers)
+{
+	const FString Key = FPlatformMisc::GetEnvironmentVariable(TEXT("JINA_API_KEY")).TrimStartAndEnd();
+	if (!Key.IsEmpty())
+	{
+		Headers.Add(TPair<FString, FString>(TEXT("Authorization"), FString::Printf(TEXT("Bearer %s"), *Key)));
+	}
+}
+
+static bool IsReaderRefusal(const FResearchHttpResult& Http)
+{
+	return Http.bSuccess && (Http.ResponseCode == 401 || Http.ResponseCode == 402 || Http.ResponseCode == 403
+		|| Http.ResponseCode == 429 || Http.ResponseCode == 451);
+}
+
+static FString DecodeHtmlEntities(const FString& In)
+{
+	FString Out;
+	Out.Reserve(In.Len());
+	for (int32 i = 0; i < In.Len(); ++i)
+	{
+		if (In[i] == TEXT('&'))
+		{
+			const int32 Semi = In.Find(TEXT(";"), ESearchCase::CaseSensitive, ESearchDir::FromStart, i);
+			if (Semi != INDEX_NONE && Semi - i <= 10)
+			{
+				const FString Entity = In.Mid(i + 1, Semi - i - 1);
+				TCHAR Decoded = 0;
+				if (Entity == TEXT("amp")) Decoded = TEXT('&');
+				else if (Entity == TEXT("lt")) Decoded = TEXT('<');
+				else if (Entity == TEXT("gt")) Decoded = TEXT('>');
+				else if (Entity == TEXT("quot")) Decoded = TEXT('"');
+				else if (Entity == TEXT("apos")) Decoded = TEXT('\'');
+				else if (Entity == TEXT("nbsp")) Decoded = TEXT(' ');
+				else if (Entity.StartsWith(TEXT("#x")) || Entity.StartsWith(TEXT("#X"))) Decoded = (TCHAR)FParse::HexNumber(*Entity.Mid(2));
+				else if (Entity.StartsWith(TEXT("#"))) Decoded = (TCHAR)FCString::Atoi(*Entity.Mid(1));
+				if (Decoded != 0)
+				{
+					Out.AppendChar(Decoded);
+					i = Semi;
+					continue;
+				}
+			}
+		}
+		Out.AppendChar(In[i]);
+	}
+	return Out;
+}
+
+// Tags out, entities decoded, runs of whitespace collapsed to one space.
+static FString HtmlFragmentToText(const FString& Html)
+{
+	FString NoTags;
+	NoTags.Reserve(Html.Len());
+	bool bInTag = false;
+	for (const TCHAR Ch : Html)
+	{
+		if (Ch == TEXT('<')) { bInTag = true; continue; }
+		if (Ch == TEXT('>')) { bInTag = false; continue; }
+		if (!bInTag) NoTags.AppendChar(Ch);
+	}
+	const FString Decoded = DecodeHtmlEntities(NoTags);
+	FString Out;
+	Out.Reserve(Decoded.Len());
+	bool bSpace = false;
+	for (const TCHAR Ch : Decoded)
+	{
+		if (FChar::IsWhitespace(Ch))
+		{
+			bSpace = true;
+			continue;
+		}
+		if (bSpace && !Out.IsEmpty()) Out.AppendChar(TEXT(' '));
+		bSpace = false;
+		Out.AppendChar(Ch);
+	}
+	return Out;
+}
+
+// DuckDuckGo Lite's HTML: each result is <a ... href="//duckduckgo.com/l/?uddg=URL&amp;rut=..." class='result-link'>Title</a>,
+// followed by <td class='result-snippet'>Snippet</td>.
+static TArray<FDDGResult> ParseDDGLiteHtml(const FString& Html, int32 MaxResults = 15)
+{
+	TArray<FDDGResult> Results;
+	int32 Cursor = 0;
+	while (Results.Num() < MaxResults)
+	{
+		const int32 Marker = Html.Find(TEXT("class='result-link'"), ESearchCase::CaseSensitive, ESearchDir::FromStart, Cursor);
+		if (Marker == INDEX_NONE) break;
+		const int32 AnchorStart = Html.Find(TEXT("<a "), ESearchCase::CaseSensitive, ESearchDir::FromEnd, Marker);
+		const int32 TagEnd = Html.Find(TEXT(">"), ESearchCase::CaseSensitive, ESearchDir::FromStart, Marker);
+		const int32 AnchorEnd = TagEnd == INDEX_NONE ? INDEX_NONE : Html.Find(TEXT("</a>"), ESearchCase::CaseSensitive, ESearchDir::FromStart, TagEnd);
+		if (AnchorStart == INDEX_NONE || AnchorEnd == INDEX_NONE) break;
+		Cursor = AnchorEnd;
+
+		const FString Tag = Html.Mid(AnchorStart, TagEnd - AnchorStart);
+		const int32 HrefStart = Tag.Find(TEXT("href=\""));
+		if (HrefStart == INDEX_NONE) continue;
+		const int32 HrefEnd = Tag.Find(TEXT("\""), ESearchCase::CaseSensitive, ESearchDir::FromStart, HrefStart + 6);
+		if (HrefEnd == INDEX_NONE) continue;
+		const FString Href = DecodeHtmlEntities(Tag.Mid(HrefStart + 6, HrefEnd - HrefStart - 6));
+
+		FDDGResult R;
+		R.Title = HtmlFragmentToText(Html.Mid(TagEnd + 1, AnchorEnd - TagEnd - 1));
+		R.Url = ExtractDDGUrl(Href);
+
+		// The snippet belongs to this result only if it comes before the next result link.
+		const int32 NextLink = Html.Find(TEXT("class='result-link'"), ESearchCase::CaseSensitive, ESearchDir::FromStart, AnchorEnd);
+		const int32 SnippetMarker = Html.Find(TEXT("class='result-snippet'>"), ESearchCase::CaseSensitive, ESearchDir::FromStart, AnchorEnd);
+		if (SnippetMarker != INDEX_NONE && (NextLink == INDEX_NONE || SnippetMarker < NextLink))
+		{
+			const int32 SnippetStart = SnippetMarker + FCString::Strlen(TEXT("class='result-snippet'>"));
+			const int32 SnippetEnd = Html.Find(TEXT("</td>"), ESearchCase::CaseSensitive, ESearchDir::FromStart, SnippetStart);
+			if (SnippetEnd != INDEX_NONE)
+			{
+				R.Snippet = HtmlFragmentToText(Html.Mid(SnippetStart, SnippetEnd - SnippetStart));
+			}
+		}
+		if (!R.Title.IsEmpty() && !R.Url.IsEmpty())
+		{
+			Results.Add(R);
+		}
+	}
+	return Results;
+}
+
+// A readable text version of a whole page: no scripts, styles, comments or markup; block ends become line breaks.
+// Tags come out of the whole document before it is split into lines, so an attribute value that spans lines (pages
+// put JSON in them) never leaks into the text.
+static FString HtmlPageToText(const FString& Html, int32 MaxChars = 200000)
+{
+	FString Work = Html;
+	auto DropBetween = [&Work](const FString& Open, const FString& Close)
+	{
+		int32 Start;
+		while ((Start = Work.Find(Open, ESearchCase::IgnoreCase)) != INDEX_NONE)
+		{
+			const int32 End = Work.Find(Close, ESearchCase::IgnoreCase, ESearchDir::FromStart, Start + Open.Len());
+			Work.RemoveAt(Start, (End == INDEX_NONE ? Work.Len() : End + Close.Len()) - Start);
+		}
+	};
+	DropBetween(TEXT("<!--"), TEXT("-->"));
+	for (const TCHAR* Drop : { TEXT("script"), TEXT("style"), TEXT("noscript"), TEXT("svg"), TEXT("template") })
+	{
+		DropBetween(FString::Printf(TEXT("<%s"), Drop), FString::Printf(TEXT("</%s>"), Drop));
+	}
+	const TCHAR* LineBreak = TEXT("\x01");
+	for (const TCHAR* Block : { TEXT("</p>"), TEXT("<br>"), TEXT("<br/>"), TEXT("<br />"), TEXT("</div>"), TEXT("</li>"),
+		TEXT("</h1>"), TEXT("</h2>"), TEXT("</h3>"), TEXT("</h4>"), TEXT("</tr>"), TEXT("</pre>"), TEXT("</section>") })
+	{
+		Work.ReplaceInline(Block, LineBreak, ESearchCase::IgnoreCase);
+	}
+	FString NoTags;
+	NoTags.Reserve(Work.Len());
+	bool bInTag = false;
+	for (const TCHAR Ch : Work)
+	{
+		if (Ch == TEXT('<')) { bInTag = true; continue; }
+		if (Ch == TEXT('>')) { bInTag = false; continue; }
+		if (!bInTag) NoTags.AppendChar(Ch);
+	}
+	TArray<FString> Lines;
+	NoTags.ParseIntoArray(Lines, LineBreak, /*InCullEmpty=*/false);
+	FString Out;
+	for (const FString& Line : Lines)
+	{
+		const FString Text = HtmlFragmentToText(Line);
+		if (!Text.IsEmpty())
+		{
+			Out += Text;
+			Out += TEXT("\n");
+		}
+		if (Out.Len() >= MaxChars)
+		{
+			Out.LeftInline(MaxChars);
+			Out += TEXT("\n[truncated]");
+			break;
+		}
+	}
+	return Out;
+}
+
+// ---------------------------------------------------------------------------
 // Action: search  (DuckDuckGo via Jina Reader — real web results)
 // ---------------------------------------------------------------------------
 static FString ActionSearch(const TMap<FString, FString>& Params)
@@ -329,22 +520,46 @@ static FString ActionSearch(const TMap<FString, FString>& Params)
 	Headers.Add(TPair<FString, FString>(TEXT("Accept"), TEXT("text/markdown")));
 	Headers.Add(TPair<FString, FString>(TEXT("X-Return-Format"), TEXT("markdown")));
 
-	const FResearchHttpResult Http = ResearchHttpGet(
+	AddJinaAuth(Headers);
+
+	FResearchHttpResult Http = ResearchHttpGet(
 		JinaUrl,
 		TEXT("VibeUE/1.0 (Unreal Engine plugin)"),
 		Headers,
 		20.0f);
 
+	// Jina refused (e.g. 401 for a network it rates badly) -> ask DuckDuckGo Lite directly and read its HTML.
+	// DuckDuckGo may refuse a direct request too (a 202 bot check or a 403, depending on the client); then the
+	// error says how to make Jina work.
+	FString Source = TEXT("jina-reader");
+	int32 ReaderRefusalCode = 0;
+	if (IsReaderRefusal(Http))
+	{
+		ReaderRefusalCode = Http.ResponseCode;
+		Http = ResearchHttpGet(DDGUrl, TEXT("VibeUE/1.0 (Unreal Engine plugin)"), {}, 20.0f);
+		Source = TEXT("duckduckgo-lite-direct");
+	}
+	const FString RefusedBoth = FString::Printf(
+		TEXT("Jina Reader refused the search (HTTP %d; it refuses anonymous requests from networks it rates badly) and DuckDuckGo refused the direct request (HTTP %d, a bot check). Set a Jina API key (free at jina.ai) in the JINA_API_KEY environment variable and restart the editor."),
+		ReaderRefusalCode, Http.ResponseCode);
+
 	if (!Http.bSuccess)
 		return BuildResearchError(TEXT("HTTP_ERROR"), Http.ErrorMessage);
 
 	if (Http.ResponseCode != 200)
-		return BuildResearchError(
-			FString::Printf(TEXT("HTTP_%d"), Http.ResponseCode),
-			FString::Printf(TEXT("Search request returned %d"), Http.ResponseCode));
+		return ReaderRefusalCode
+			? BuildResearchError(TEXT("SEARCH_REFUSED"), RefusedBoth)
+			: BuildResearchError(
+				FString::Printf(TEXT("HTTP_%d"), Http.ResponseCode),
+				FString::Printf(TEXT("Search request returned %d"), Http.ResponseCode));
 
-	// Parse the markdown results
-	TArray<FDDGResult> ParsedResults = ParseMarkdownSearchResults(Http.Body, 15);
+	// Parse the markdown results (Jina) or the HTML (direct)
+	TArray<FDDGResult> ParsedResults = Source == TEXT("jina-reader")
+		? ParseMarkdownSearchResults(Http.Body, 15)
+		: ParseDDGLiteHtml(Http.Body, 15);
+
+	if (ParsedResults.Num() == 0 && ReaderRefusalCode)
+		return BuildResearchError(TEXT("SEARCH_REFUSED"), RefusedBoth);
 
 	if (ParsedResults.Num() == 0)
 		return BuildResearchError(TEXT("NO_RESULTS"),
@@ -354,6 +569,7 @@ static FString ActionSearch(const TMap<FString, FString>& Params)
 	TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
 	Out->SetBoolField(TEXT("success"), true);
 	Out->SetStringField(TEXT("query"), Query);
+	Out->SetStringField(TEXT("source"), Source);
 	Out->SetNumberField(TEXT("result_count"), ParsedResults.Num());
 
 	TArray<TSharedPtr<FJsonValue>> ResultsArray;
@@ -393,11 +609,23 @@ static FString ActionFetchPage(const TMap<FString, FString>& Params)
 	Headers.Add(TPair<FString, FString>(TEXT("Accept"), TEXT("text/markdown")));
 	Headers.Add(TPair<FString, FString>(TEXT("X-Return-Format"), TEXT("markdown")));
 
-	const FResearchHttpResult Http = ResearchHttpGet(
+	AddJinaAuth(Headers);
+
+	FResearchHttpResult Http = ResearchHttpGet(
 		JinaUrl,
 		TEXT("VibeUE/1.0 (Unreal Engine plugin)"),
 		Headers,
 		45.0f);
+
+	// Jina refused -> fetch the page itself and reduce its HTML to text here
+	bool bDirect = false;
+	if (IsReaderRefusal(Http))
+	{
+		TArray<TPair<FString, FString>> DirectHeaders;
+		DirectHeaders.Add(TPair<FString, FString>(TEXT("Accept"), TEXT("text/html,text/plain;q=0.9,*/*;q=0.5")));
+		Http = ResearchHttpGet(PageUrl, TEXT("VibeUE/1.0 (Unreal Engine plugin)"), DirectHeaders, 45.0f);
+		bDirect = true;
+	}
 
 	if (!Http.bSuccess)
 		return BuildResearchError(TEXT("HTTP_ERROR"), Http.ErrorMessage);
@@ -405,13 +633,14 @@ static FString ActionFetchPage(const TMap<FString, FString>& Params)
 	if (Http.ResponseCode != 200)
 		return BuildResearchError(
 			FString::Printf(TEXT("HTTP_%d"), Http.ResponseCode),
-			FString::Printf(TEXT("Jina Reader returned %d for URL: %s"), Http.ResponseCode, *PageUrl));
+			FString::Printf(TEXT("%s returned %d for URL: %s"), bDirect ? TEXT("The page") : TEXT("Jina Reader"), Http.ResponseCode, *PageUrl));
 
 	// Return the markdown content inside a JSON envelope
 	TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
 	Out->SetBoolField(TEXT("success"), true);
 	Out->SetStringField(TEXT("url"),     PageUrl);
-	Out->SetStringField(TEXT("content"), Http.Body);
+	Out->SetStringField(TEXT("source"),  bDirect ? TEXT("direct-html-to-text") : TEXT("jina-reader"));
+	Out->SetStringField(TEXT("content"), bDirect ? HtmlPageToText(Http.Body) : Http.Body);
 
 	FString OutStr;
 	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutStr);
@@ -618,4 +847,34 @@ bool FVibeUEResearchTimeoutIsSafeTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+// The direct fallback reads DuckDuckGo Lite's HTML and turns pages into text. Test path prefix VibeUE.Research.*
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeUEResearchDirectFallbackParsingTest, "VibeUE.Research.DirectFallbackParsing",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVibeUEResearchDirectFallbackParsingTest::RunTest(const FString& Parameters)
+{
+	// Two results in DuckDuckGo Lite's markup, as it answered on 2026-09-26; the second has no snippet.
+	const FString Html = TEXT(
+		"<td><a rel=\"nofollow\" href=\"//duckduckgo.com/l/?uddg=https%3A%2F%2Fdev.epicgames.com%2Fdocumentation%2Funreal%2Dengine%2Fenhanced%2Dinput%2Din%2Dunreal%2Dengine%3Flang%3Den%2DUS&amp;rut=abc\" class='result-link'>Enhanced Input in Unreal Engine | Unreal Engine 5.8 Documentation ...</a></td></tr>"
+		"<tr><td>&nbsp;&nbsp;&nbsp;</td><td class='result-snippet'>\n  For <b>Unreal</b> <b>Engine</b> 5 (UE5) projects\n</td></tr>"
+		"<tr><td><a rel=\"nofollow\" href=\"//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fb&amp;rut=x\" class='result-link'>Second &amp; last</a></td></tr>");
+	const TArray<FDDGResult> Results = ParseDDGLiteHtml(Html);
+	if (!TestEqual(TEXT("two results"), Results.Num(), 2))
+	{
+		return false;
+	}
+	TestEqual(TEXT("the uddg URL is decoded"), Results[0].Url, FString(TEXT("https://dev.epicgames.com/documentation/unreal-engine/enhanced-input-in-unreal-engine?lang=en-US")));
+	TestEqual(TEXT("the snippet loses its tags and extra spaces"), Results[0].Snippet, FString(TEXT("For Unreal Engine 5 (UE5) projects")));
+	TestEqual(TEXT("entities in a title are decoded"), Results[1].Title, FString(TEXT("Second & last")));
+	TestTrue(TEXT("a result without a snippet does not take the next one's"), Results[1].Snippet.IsEmpty());
+
+	const FString Page = HtmlPageToText(TEXT("<html><head><style>x{}</style><script>var a = 1;</script></head><body><h1>Title</h1><p>One &amp; two</p><div>Three</div></body></html>"));
+	TestEqual(TEXT("a page becomes its text, one block per line"), Page, FString(TEXT("Title\nOne & two\nThree\n")));
+
+	// dev.epicgames.com puts JSON in a multi-line attribute of a custom element; none of it may leak.
+	const FString Attr = HtmlPageToText(TEXT("<nav links=\"[\n  {\n    &quot;id&quot;: &quot;notifications&quot;\n  }\n]\"></nav><!-- a > comment --><p>Body text</p>"));
+	TestEqual(TEXT("a multi-line attribute and a comment leave no text"), Attr, FString(TEXT("Body text\n")));
+	return true;
+}
 #endif // WITH_AUTOMATION_TESTS
