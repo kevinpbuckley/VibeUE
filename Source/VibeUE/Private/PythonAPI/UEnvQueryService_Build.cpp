@@ -299,7 +299,7 @@ namespace VibeEQSBuild
 		TArray<FPendingWrite> PlainWrites;
 		TArray<FString> Errors;
 
-		for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Properties->Values)
+		for (const auto& Pair : Properties->Values)
 		{
 			FString ValueText;
 			if (!Pair.Value.IsValid() || !Pair.Value->TryGetString(ValueText))
