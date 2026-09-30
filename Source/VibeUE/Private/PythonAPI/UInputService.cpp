@@ -115,6 +115,27 @@ FInputTypeDiscoveryResult UInputService::DiscoverTypes()
 	return Result;
 }
 
+// The folder a create_* call writes into. A path that starts with its mount point (/Game/X, /MyPlugin/X) is kept;
+// only a bare folder goes under /Game. A folder under no mounted content root (/Temp/X) is refused with the reason:
+// passed on, AssetTools would open a modal "Path does not start with a valid root" message, which blocks every
+// MCP call until someone closes it.
+static bool NormalizeCreateFolder(const FString& AssetPath, FString& OutFolder, FString& OutError)
+{
+	OutFolder = AssetPath.StartsWith(TEXT("/")) ? AssetPath : TEXT("/Game/") + AssetPath;
+	if (OutFolder.EndsWith(TEXT("/")))
+	{
+		OutFolder = OutFolder.LeftChop(1);
+	}
+
+	FText Reason;
+	if (!FPackageName::IsValidLongPackageName(OutFolder, false, &Reason))
+	{
+		OutError = FString::Printf(TEXT("'%s' is not a content folder: %s"), *OutFolder, *Reason.ToString());
+		return false;
+	}
+	return true;
+}
+
 // =================================================================
 // Action Management
 // =================================================================
@@ -125,18 +146,13 @@ FInputCreateResult UInputService::CreateAction(
 	const FString& ValueType)
 {
 	FInputCreateResult Result;
-	
-	// Normalize path
-	FString BasePath = AssetPath;
-	if (!BasePath.StartsWith(TEXT("/Game")))
+
+	FString BasePath;
+	if (!NormalizeCreateFolder(AssetPath, BasePath, Result.ErrorMessage))
 	{
-		BasePath = TEXT("/Game/") + BasePath;
+		return Result;
 	}
-	if (BasePath.EndsWith(TEXT("/")))
-	{
-		BasePath = BasePath.LeftChop(1);
-	}
-	
+
 	FString FullPath = BasePath / ActionName;
 	
 	// Check if already exists
@@ -285,18 +301,13 @@ FInputCreateResult UInputService::CreateMappingContext(
 	int32 Priority)
 {
 	FInputCreateResult Result;
-	
-	// Normalize path
-	FString BasePath = AssetPath;
-	if (!BasePath.StartsWith(TEXT("/Game")))
+
+	FString BasePath;
+	if (!NormalizeCreateFolder(AssetPath, BasePath, Result.ErrorMessage))
 	{
-		BasePath = TEXT("/Game/") + BasePath;
+		return Result;
 	}
-	if (BasePath.EndsWith(TEXT("/")))
-	{
-		BasePath = BasePath.LeftChop(1);
-	}
-	
+
 	FString FullPath = BasePath / ContextName;
 	
 	// Check if already exists
