@@ -218,6 +218,10 @@ static FResearchHttpResult ResearchHttpGet(
 			if (const TSharedPtr<FResearchHttpState, ESPMode::ThreadSafe> S = WeakState.Pin())
 			{
 				S->bCancelled = true;
+				if (IsInGameThread()) // The exit sweep runs here, before HTTP shuts down
+				{
+					AbandonResearchRequest(S.ToSharedRef());
+				}
 				S->Done->Trigger();
 			}
 		});

@@ -39,17 +39,22 @@ namespace
 
 	/**
 	 * Tools that may run on a worker thread. Only tools that touch no UObject and no editor
-	 * state qualify: deep_research makes one HTTP request (started on the game thread, see
-	 * DeepResearchTools.cpp) and parses text. On the game thread it blocked the editor for up to 45 s.
+	 * state qualify: deep_research and terrain_data make HTTP requests (started on the game thread, see
+	 * DeepResearchTools.cpp and TerrainDataTools.cpp), parse text and write files. On the game thread they blocked
+	 * the editor for up to 45 s.
 	 */
 	bool RunsOffGameThread(const FString& ToolName)
 	{
-		return ToolName == TEXT("deep_research");
+		return ToolName == TEXT("deep_research") || ToolName == TEXT("terrain_data");
 	}
 
-	/** The running off-game-thread calls, by request id, for CancelAsync. */
+	/**
+	 * The running off-game-thread calls, by request id, for CancelAsync and the exit sweep. A multimap:
+	 * the id carries no session, so two clients' calls can share one, and neither may drop out of the table (a cancel
+	 * with that id reaches both).
+	 */
 	FCriticalSection GRunningCallsLock;
-	TMap<FString, TSharedRef<FVibeUEToolCancel, ESPMode::ThreadSafe>> GRunningCalls;
+	TMultiMap<FString, TSharedRef<FVibeUEToolCancel, ESPMode::ThreadSafe>> GRunningCalls;
 
 	FString RequestKey(const FModelContextProtocolToolRequestId& RequestId)
 	{
@@ -283,11 +288,7 @@ namespace
 						}
 						{
 							FScopeLock Guard(&GRunningCallsLock);
-							const TSharedRef<FVibeUEToolCancel, ESPMode::ThreadSafe>* Running = GRunningCalls.Find(Key);
-							if (Running && &Running->Get() == &Cancel.Get())
-							{
-								GRunningCalls.Remove(Key);
-							}
+							GRunningCalls.RemoveSingle(Key, Cancel); // Only this call's entry
 						}
 						DeliverResult(Result, OnComplete);
 					});
@@ -322,15 +323,12 @@ namespace
 		// Epic's server calls this on notifications/cancelled; it wakes an off-game-thread call.
 		virtual void CancelAsync(const FModelContextProtocolToolRequestId& RequestId) override
 		{
-			TSharedPtr<FVibeUEToolCancel, ESPMode::ThreadSafe> Cancel;
+			TArray<TSharedRef<FVibeUEToolCancel, ESPMode::ThreadSafe>> Cancels;
 			{
 				FScopeLock Guard(&GRunningCallsLock);
-				if (const TSharedRef<FVibeUEToolCancel, ESPMode::ThreadSafe>* Running = GRunningCalls.Find(RequestKey(RequestId)))
-				{
-					Cancel = *Running;
-				}
+				GRunningCalls.MultiFind(RequestKey(RequestId), Cancels); // Every call with this id
 			}
-			if (Cancel.IsValid())
+			for (const TSharedRef<FVibeUEToolCancel, ESPMode::ThreadSafe>& Cancel : Cancels)
 			{
 				Cancel->Cancel();
 			}
@@ -397,5 +395,21 @@ namespace VibeUEMCPToolBridge
 			}
 		}
 		GRegisteredTools.Empty();
+	}
+
+	// At editor exit, wake every worker still waiting on a request, so the thread pool's shutdown
+	// does not wait out each request's timeout, and no worker queues a request start after HTTP is gone. Not from
+	// UnregisterAll: that also runs on every ModelContextProtocol.RefreshTools, which must not cancel live calls.
+	void CancelAllRunning()
+	{
+		TArray<TSharedRef<FVibeUEToolCancel, ESPMode::ThreadSafe>> Cancels;
+		{
+			FScopeLock Guard(&GRunningCallsLock);
+			GRunningCalls.GenerateValueArray(Cancels);
+		}
+		for (const TSharedRef<FVibeUEToolCancel, ESPMode::ThreadSafe>& Cancel : Cancels)
+		{
+			Cancel->Cancel();
+		}
 	}
 }
