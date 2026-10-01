@@ -230,6 +230,24 @@ namespace
 		return nullptr;
 	}
 
+	/** The [section] a config class's settings live in, as LoadConfig/SaveConfig name it: the class path, unless the
+	 *  class redirects it with UObject::OverrideConfigSection. ProjectPackagingSettings moved to DeveloperToolSettings
+	 *  but still reads [/Script/UnrealEd.ProjectPackagingSettings] (BaseGame.ini and project files use that name), so
+	 *  reading [/Script/DeveloperToolSettings.ProjectPackagingSettings] found nothing. */
+	FString SettingsIniSectionOf(UClass* Class)
+	{
+		FString Section = Class->GetPathName();
+		Class->GetDefaultObject()->OverrideConfigSection(Section);
+		return Section;
+	}
+
+	/** Section as the caller named it, or, when it is a loaded config class's path, the section that class really uses */
+	FString SettingsIniSectionFor(const FString& Section)
+	{
+		UClass* Class = Section.StartsWith(TEXT("/Script/")) ? FindObject<UClass>(nullptr, *Section) : nullptr;
+		return Class && Class->HasAnyClassFlags(CLASS_Config) ? SettingsIniSectionOf(Class) : Section;
+	}
+
 	/** A property by its C++ name, case-insensitively, or by its Python name (display_units -> bDisplayUnits) */
 	FProperty* FindSettingsProperty(UClass* Class, const FString& Name)
 	{
@@ -273,7 +291,7 @@ namespace
 	 *  Current. OutNote explains a mismatch or a missing line. */
 	bool ConfigHoldsValue(UClass* Class, const FProperty* Property, const void* Current, FString& OutNote)
 	{
-		const FString Section = Class->GetPathName();
+		const FString Section = SettingsIniSectionOf(Class);
 		const FString Key = Property->GetName();
 		const FString IniName = Class->GetConfigName();
 		FScratchValue FromConfig(Property);
@@ -435,9 +453,10 @@ TArray<FString> UProjectSettingsService::ListIniSections(const FString& ConfigFi
 	return Sections;
 }
 
-TArray<FString> UProjectSettingsService::ListIniKeys(const FString& Section, const FString& ConfigFile)
+TArray<FString> UProjectSettingsService::ListIniKeys(const FString& InSection, const FString& ConfigFile)
 {
 	TArray<FString> Keys;
+	const FString Section = SettingsIniSectionFor(InSection);
 
 	FString ConfigPath = ::GetConfigFilePath(ConfigFile);
 	if (ConfigPath.IsEmpty())
@@ -486,8 +505,9 @@ TArray<FString> UProjectSettingsService::ListIniKeys(const FString& Section, con
 	return Keys;
 }
 
-FString UProjectSettingsService::GetIniValue(const FString& Section, const FString& Key, const FString& ConfigFile)
+FString UProjectSettingsService::GetIniValue(const FString& InSection, const FString& Key, const FString& ConfigFile)
 {
+	const FString Section = SettingsIniSectionFor(InSection);
 	FString ConfigPath = ::GetConfigFilePath(ConfigFile);
 	if (ConfigPath.IsEmpty())
 	{
@@ -514,9 +534,10 @@ FString UProjectSettingsService::GetIniValue(const FString& Section, const FStri
 	return FString();
 }
 
-FProjectSettingResult UProjectSettingsService::SetIniValue(const FString& Section, const FString& Key, const FString& Value, const FString& ConfigFile)
+FProjectSettingResult UProjectSettingsService::SetIniValue(const FString& InSection, const FString& Key, const FString& Value, const FString& ConfigFile)
 {
 	FProjectSettingResult Result;
+	const FString Section = SettingsIniSectionFor(InSection);
 
 	// Written ON DISK with the engine's single-property writer (keeps the rest of the file and its comments), then
 	// the branch is reloaded and the file read back. GConfig->SetString + Flush on a bare path reported success but
@@ -588,9 +609,10 @@ FProjectSettingResult UProjectSettingsService::SetIniValue(const FString& Sectio
 	return Result;
 }
 
-TArray<FString> UProjectSettingsService::GetIniArray(const FString& Section, const FString& Key, const FString& ConfigFile)
+TArray<FString> UProjectSettingsService::GetIniArray(const FString& InSection, const FString& Key, const FString& ConfigFile)
 {
 	TArray<FString> Values;
+	const FString Section = SettingsIniSectionFor(InSection);
 
 	FString ConfigPath = ::GetConfigFilePath(ConfigFile);
 	if (ConfigPath.IsEmpty())

@@ -108,6 +108,11 @@ whole array. Each value is one element in Unreal text format: an element of a st
 struct literal and goes in as written; an element of a string array is passed as the plain string and
 quoted for you; any other element containing a space, comma, parenthesis or quote is quoted for you.
 
+A section named by a config class's path is read and written in the section that class really uses.
+Some classes keep an older name through `OverrideConfigSection`: `ProjectPackagingSettings` lives in
+`/Script/DeveloperToolSettings` but its settings stay under `[/Script/UnrealEd.ProjectPackagingSettings]`,
+so `get_ini_value` / `get_ini_array` / `list_ini_keys` / `set_ini_value` given the new path use that section.
+
 ```python
 # struct array: elements are struct literals, passed as written
 result = unreal.ProjectSettingsService.set_ini_array(
