@@ -103,6 +103,11 @@ public:
 	 * the same globals, under the same "<string>" name and with the same line numbers; a traceback
 	 * gains one outer frame. Any other code is returned unchanged.
 	 *
+	 * This also means a bare script path passed as code (e.g. "C:/scripts/build.py"), which the plugin
+	 * used to run as a file, is now compiled as code and fails. That is deliberate: execute_python_code
+	 * takes source, and its "code" parameter description tells callers to run a file with
+	 * runpy.run_path(...) or exec(open(...).read()).
+	 *
 	 * @param Code Python source to run
 	 * @return The command text for FPythonCommandEx::Command
 	 */

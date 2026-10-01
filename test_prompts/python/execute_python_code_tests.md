@@ -38,3 +38,17 @@ raise RuntimeError("line three")
 ```
 
 Expected: failure, and the error names `line 3` and `line three`.
+
+---
+
+## Running a script file
+
+`code` is Python source, never a script path. Write a file `Saved/VibeUE/run_me.py` in the project containing
+`print("ran from file")`, then:
+
+1. Call execute_python_code with `code` set to just that file's absolute path.
+   Expected: failure (a SyntaxError or NameError); the file is not run.
+2. Call execute_python_code with `import unreal, runpy` followed by `runpy.run_path(r"<that path>")`.
+   Expected: success, and the output contains `ran from file`.
+
+Delete the file afterwards.
