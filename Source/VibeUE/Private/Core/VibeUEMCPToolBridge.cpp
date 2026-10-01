@@ -22,6 +22,8 @@ namespace
 	{
 		if (VibeType == TEXT("int"))    { return TEXT("integer"); }
 		if (VibeType == TEXT("float"))  { return TEXT("number"); }
+		// Tools also declare the JSON Schema names themselves (capture_image max_width, deep_research lat/lng)
+		if (VibeType == TEXT("number") || VibeType == TEXT("integer") || VibeType == TEXT("boolean")) { return VibeType; }
 		if (VibeType == TEXT("bool"))   { return TEXT("boolean"); }
 		if (VibeType == TEXT("object")) { return TEXT("object"); }
 		if (VibeType == TEXT("array"))  { return TEXT("array"); }
@@ -299,3 +301,54 @@ namespace VibeUEMCPToolBridge
 		GRegisteredTools.Empty();
 	}
 }
+
+#if WITH_AUTOMATION_TESTS
+#include "Misc/AutomationTest.h"
+
+// Tools declare parameter types both in VibeUE's own names ("int", "float", "bool") and in JSON Schema's
+// ("number", "integer", "boolean"). The schema names used to fall through to "string", so capture_image max_width,
+// deep_research lat/lng and execute_python_code auto_save were advertised as strings. BuildInputSchema lives in this
+// file's anonymous namespace, so the test does too. Test path prefix VibeUE.Bridge.*
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeUEBridgeSchemaTypesTest, "VibeUE.Bridge.SchemaTypes",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVibeUEBridgeSchemaTypesTest::RunTest(const FString& Parameters)
+{
+	FToolMetadata Meta;
+	Meta.Name = TEXT("schema_types_test");
+	Meta.Parameters.Add(FToolParameter(TEXT("count"), TEXT("VibeUE int"), TEXT("int"), false));
+	Meta.Parameters.Add(FToolParameter(TEXT("scale"), TEXT("VibeUE float"), TEXT("float"), false));
+	Meta.Parameters.Add(FToolParameter(TEXT("flag"), TEXT("VibeUE bool"), TEXT("bool"), false));
+	Meta.Parameters.Add(FToolParameter(TEXT("lat"), TEXT("JSON Schema number"), TEXT("number"), false));
+	Meta.Parameters.Add(FToolParameter(TEXT("max_items"), TEXT("JSON Schema integer"), TEXT("integer"), false));
+	Meta.Parameters.Add(FToolParameter(TEXT("auto_save"), TEXT("JSON Schema boolean"), TEXT("boolean"), false));
+	Meta.Parameters.Add(FToolParameter(TEXT("label"), TEXT("string"), TEXT("string"), true));
+
+	const TSharedPtr<FJsonObject> Schema = BuildInputSchema(Meta);
+	const TSharedPtr<FJsonObject>* Properties = nullptr;
+	if (!TestTrue(TEXT("the schema has properties"), Schema.IsValid() && Schema->TryGetObjectField(TEXT("properties"), Properties)))
+	{
+		return false;
+	}
+	auto TypeOf = [Properties](const TCHAR* ParamName)
+	{
+		const TSharedPtr<FJsonObject>* Prop = nullptr;
+		FString Type;
+		if ((*Properties)->TryGetObjectField(ParamName, Prop))
+		{
+			(*Prop)->TryGetStringField(TEXT("type"), Type);
+		}
+		return Type;
+	};
+	TestEqual(TEXT("int -> integer"), TypeOf(TEXT("count")), FString(TEXT("integer")));
+	TestEqual(TEXT("float -> number"), TypeOf(TEXT("scale")), FString(TEXT("number")));
+	TestEqual(TEXT("bool -> boolean"), TypeOf(TEXT("flag")), FString(TEXT("boolean")));
+	TestEqual(TEXT("number stays number"), TypeOf(TEXT("lat")), FString(TEXT("number")));
+	TestEqual(TEXT("integer stays integer"), TypeOf(TEXT("max_items")), FString(TEXT("integer")));
+	TestEqual(TEXT("boolean stays boolean"), TypeOf(TEXT("auto_save")), FString(TEXT("boolean")));
+	TestEqual(TEXT("string stays string"), TypeOf(TEXT("label")), FString(TEXT("string")));
+	return true;
+}
+
+#endif // WITH_AUTOMATION_TESTS
