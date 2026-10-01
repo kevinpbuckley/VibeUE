@@ -75,24 +75,26 @@ public:
 	static bool ImportTexture(const FString& SourceFilePath, const FString& DestinationPath);
 
 	/**
-	 * Import an image file from disk into the Content Browser as a Texture2D.
+	 * Import a file from disk into the Content Browser and save it: an image as a Texture2D, a mesh (FBX, OBJ, glTF, ...)
+	 * or any other format the editor's importers take as its asset. An existing asset of the same name is replaced.
 	 *
-	 * Uses the texture factory's direct binary path (FactoryCreateBinary) rather than
-	 * AssetTools::ImportAssets/ImportAssetTasks. The high-level import APIs pump the
-	 * game-thread task graph, which asserts (RecursionGuard) when invoked from inside an
-	 * MCP tool call (those run inside an AsyncTask on the game thread). This path is safe
-	 * to call from execute_python_code and from the manage_asset 'import' action.
+	 * Images use the texture factory's direct binary path (FactoryCreateBinary). Every other format goes
+	 * through AssetTools' AssetImportTask, automated and synchronous. Its wait pumps the game thread's task queue,
+	 * which asserts (RecursionGuard) only when the caller is itself a game-thread task; tool calls and
+	 * execute_python_code are not, and a call from inside such a task is refused with a message.
 	 *
-	 * Supported formats: png, jpg, jpeg, bmp, tga, dds, exr, hdr, tiff, tif, psd, pcx.
+	 * Image formats: png, jpg, jpeg, bmp, tga, dds, exr, hdr, tiff, tif, psd, pcx.
 	 *
 	 * @param SourceFilePath    - Absolute path to the image file on disk
 	 * @param DestinationFolder - Content Browser folder (e.g. "/Game/UI/Textures")
 	 * @param AssetName         - Optional asset name; if empty, derived from the file name
 	 * @param OutError          - Receives a human-readable error message on failure
-	 * @return The created asset's object path (e.g. "/Game/UI/Textures/T_Foo.T_Foo"), or empty on failure
+	 * @return The created asset's object path (e.g. "/Game/UI/Textures/T_Foo.T_Foo"), or empty on failure; for a file
+	 *         that brings several assets (an FBX with materials), the one named AssetName
 	 *
 	 * Example:
 	 *   path, err = unreal.AssetDiscoveryService.import_asset("C:/Images/rocks.jpg", "/Game/UI/Textures", "T_Rocks")
+	 *   path, err = unreal.AssetDiscoveryService.import_asset("C:/Art/crate.fbx", "/Game/Props", "SM_Crate")
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Assets")
 	static FString ImportAsset(
