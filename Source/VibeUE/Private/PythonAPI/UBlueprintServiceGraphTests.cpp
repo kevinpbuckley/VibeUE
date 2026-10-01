@@ -24,6 +24,9 @@
 #include "PythonAPI/UActorService.h"
 #include "Engine/StaticMeshActor.h"
 #include "Engine/World.h"
+#include "Engine/Level.h"
+#include "Engine/LevelScriptBlueprint.h"
+#include "Templates/UnrealTemplate.h"
 #include "Editor.h"
 #include "K2Node_Event.h"
 #include "K2Node_Timeline.h"
@@ -1022,6 +1025,136 @@ bool FVibeActorServiceRerunConstructionTest::RunTest(const FString&)
 	Actor->SetActorLabel(TEXT("VibeUE_RCS_Probe"));
 	TestTrue(TEXT("rerun_construction_scripts by label returns true"),
 		UActorService::RerunConstructionScripts(TEXT("VibeUE_RCS_Probe")));
+	return true;
+}
+
+// ============================================================================
+// B1: LoadBlueprint logged "PIE_ACTIVE: LoadBlueprint refused" under Play-In-Editor but did not
+// return, so a subobject (":") path such as a Level Blueprint still resolved through
+// StaticLoadObject and mutators like SetNodePosition edited the Blueprint during PIE. Asset paths
+// were only refused by accident (UEditorAssetLibrary::LoadAsset refuses during PIE itself).
+//
+// The Level Blueprint belongs to a throwaway /Temp world rather than the editor's current map, so
+// the test gets the real "<Pkg>.<World>:PersistentLevel.<Name>" path shape without dirtying the
+// user's map. PIE is simulated by pointing GEditor->PlayWorld at a transient PIE world (a real PIE
+// session needs latent commands and a viewport, which the -nullrhi suite does not have); the guard
+// restores the previous value before any assertion runs, and both worlds are destroyed on exit.
+// ============================================================================
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBlueprintServiceLoadBlueprintRefusesDuringPIETest, "VibeUE.BlueprintService.LoadBlueprintRefusesDuringPIE",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FVibeBlueprintServiceLoadBlueprintRefusesDuringPIETest::RunTest(const FString&)
+{
+	if (!GEditor)
+	{
+		AddError(TEXT("GEditor is null; this test needs a full editor"));
+		return false;
+	}
+	if (!TestNull(TEXT("no real PIE session is running (the control call needs PIE off)"), GEditor->PlayWorld.Get()))
+	{
+		return false;
+	}
+
+	const FString PackageName = MakeUniqueObjectName(nullptr, UPackage::StaticClass(), FName(TEXT("/Temp/VibeUE_B1LevelScriptPIE"))).ToString();
+	UPackage* LevelPackage = CreatePackage(*PackageName);
+	if (!TestNotNull(TEXT("created a /Temp package for the throwaway level world"), LevelPackage))
+	{
+		return false;
+	}
+
+	UWorld* LevelWorld = UWorld::CreateWorld(EWorldType::Inactive, /*bInformEngineOfWorld*/ false, FName(TEXT("VibeUE_B1LevelScriptPIE")), LevelPackage);
+	UWorld* FakePieWorld = UWorld::CreateWorld(EWorldType::PIE, /*bInformEngineOfWorld*/ false);
+
+	// CreateWorld roots both worlds; tear them down on every exit path. The node edits below dirty the
+	// level world's package, so clear that before handing it to GC.
+	ON_SCOPE_EXIT
+	{
+		if (LevelWorld)
+		{
+			LevelWorld->DestroyWorld(/*bInformEngineOfWorld*/ false);
+			LevelWorld->RemoveFromRoot();
+		}
+		LevelPackage->SetDirtyFlag(false);
+		if (FakePieWorld)
+		{
+			FakePieWorld->DestroyWorld(/*bInformEngineOfWorld*/ false);
+			FakePieWorld->RemoveFromRoot();
+		}
+	};
+
+	if (!TestNotNull(TEXT("created the throwaway level world"), LevelWorld) ||
+		!TestNotNull(TEXT("created the transient PIE world"), FakePieWorld) ||
+		!TestNotNull(TEXT("level world has a persistent level"), LevelWorld->PersistentLevel.Get()))
+	{
+		return false;
+	}
+
+	ULevelScriptBlueprint* LevelBlueprint = LevelWorld->PersistentLevel->GetLevelScriptBlueprint(/*bDontCreate*/ false);
+	if (!TestNotNull(TEXT("level world produced a Level Blueprint"), LevelBlueprint) ||
+		!TestTrue(TEXT("Level Blueprint has an event graph"), LevelBlueprint->UbergraphPages.Num() > 0 && LevelBlueprint->UbergraphPages[0] != nullptr))
+	{
+		return false;
+	}
+
+	const FString Path = LevelBlueprint->GetPathName();
+	if (!TestTrue(FString::Printf(TEXT("Level Blueprint path is a subobject (':') path: %s"), *Path), Path.Contains(TEXT(":"))))
+	{
+		return false;
+	}
+
+	UEdGraph* Graph = LevelBlueprint->UbergraphPages[0];
+	const FString GraphName = Graph->GetName();
+
+	const FString NodeId = UBlueprintService::CreateNodeByKey(Path, GraphName, TEXT("FUNC KismetSystemLibrary::PrintString"), 100.0f, 200.0f);
+	if (!TestFalse(TEXT("service created a node in the Level Blueprint via its ':' path"), NodeId.IsEmpty()))
+	{
+		return false;
+	}
+	// Declared after the world teardown, so it runs first (while the world is still alive).
+	ON_SCOPE_EXIT
+	{
+		UBlueprintService::DeleteNode(Path, GraphName, NodeId);
+	};
+
+	FGuid NodeGuid;
+	FGuid::Parse(NodeId, NodeGuid);
+	UEdGraphNode* Node = nullptr;
+	for (UEdGraphNode* Candidate : Graph->Nodes)
+	{
+		if (Candidate && Candidate->NodeGuid == NodeGuid)
+		{
+			Node = Candidate;
+			break;
+		}
+	}
+	if (!TestNotNull(TEXT("created node is in the Level Blueprint's event graph"), Node))
+	{
+		return false;
+	}
+
+	// Control (PIE off): the ':' path resolves and the move lands, so the PIE assertion below is not
+	// vacuous.
+	TestTrue(TEXT("control: SetNodePosition on the ':' path succeeds with PIE off"),
+		UBlueprintService::SetNodePosition(Path, GraphName, NodeId, 300.0f, 400.0f));
+	TestEqual(TEXT("control: node X moved"), Node->NodePosX, 300);
+	TestEqual(TEXT("control: node Y moved"), Node->NodePosY, 400);
+
+	const int32 PosXBeforePie = Node->NodePosX;
+	const int32 PosYBeforePie = Node->NodePosY;
+
+	// The refusal logs at Error verbosity, and SetNodePosition then logs its own load failure.
+	AddExpectedError(TEXT("PIE_ACTIVE: LoadBlueprint refused"), EAutomationExpectedErrorFlags::Contains, 1);
+	AddExpectedError(TEXT("SetNodePosition: Failed to load blueprint"), EAutomationExpectedErrorFlags::Contains, 1);
+
+	bool bMovedDuringPie = false;
+	{
+		TGuardValue<TObjectPtr<UWorld>> PlayWorldGuard(GEditor->PlayWorld, FakePieWorld);
+		bMovedDuringPie = UBlueprintService::SetNodePosition(Path, GraphName, NodeId, 777.0f, 888.0f);
+	}
+
+	TestNull(TEXT("GEditor->PlayWorld restored after the simulated PIE call"), GEditor->PlayWorld.Get());
+	TestFalse(TEXT("SetNodePosition on a ':' path is refused while PIE runs"), bMovedDuringPie);
+	TestEqual(TEXT("node X unchanged by the refused PIE call"), Node->NodePosX, PosXBeforePie);
+	TestEqual(TEXT("node Y unchanged by the refused PIE call"), Node->NodePosY, PosYBeforePie);
 	return true;
 }
 
