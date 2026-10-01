@@ -26,6 +26,89 @@
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 
+// Trigger settings
+#include "JsonObjectConverter.h"
+#include "UObject/UnrealType.h"
+
+namespace VibeUEInputTriggers
+{
+	// Property names match the C++ name or its snake_case form ("hold_time_threshold" for
+	// HoldTimeThreshold, "is_one_shot" for bIsOneShot), case-insensitively.
+	static FString NormalizeName(const FString& In)
+	{
+		return In.Replace(TEXT("_"), TEXT("")).ToLower();
+	}
+
+	static FProperty* FindPropertyLoose(UClass* Class, const FString& Key)
+	{
+		const FString Wanted = NormalizeName(Key);
+		for (TFieldIterator<FProperty> It(Class); It; ++It)
+		{
+			const FString Name = It->GetName();
+			if (NormalizeName(Name) == Wanted)
+			{
+				return *It;
+			}
+			if (It->IsA<FBoolProperty>() && Name.StartsWith(TEXT("b")) && NormalizeName(Name.RightChop(1)) == Wanted)
+			{
+				return *It;
+			}
+		}
+		return nullptr;
+	}
+
+	// Apply {"Property": value, ...} to a freshly created trigger by reflection. An unknown name or a
+	// value of the wrong type fails the whole call.
+	static bool ApplyPropertiesJson(UObject* Target, const FString& PropertiesJson, FString& OutError)
+	{
+		if (PropertiesJson.TrimStartAndEnd().IsEmpty())
+		{
+			return true;
+		}
+		TSharedPtr<FJsonObject> Obj;
+		const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(PropertiesJson);
+		if (!FJsonSerializer::Deserialize(Reader, Obj) || !Obj.IsValid())
+		{
+			OutError = FString::Printf(TEXT("properties are not a JSON object: %s"), *PropertiesJson);
+			return false;
+		}
+		for (const auto& Pair : Obj->Values)
+		{
+			const FString Key = *Pair.Key;
+			FProperty* Prop = FindPropertyLoose(Target->GetClass(), Key);
+			if (!Prop)
+			{
+				OutError = FString::Printf(TEXT("%s has no property '%s'"), *Target->GetClass()->GetName(), *Key);
+				return false;
+			}
+			FText Reason;
+			if (!FJsonObjectConverter::JsonValueToUProperty(Pair.Value, Prop, Prop->ContainerPtrToValuePtr<void>(Target), 0, 0, false, &Reason))
+			{
+				OutError = FString::Printf(TEXT("could not set %s: %s"), *Prop->GetName(), *Reason.ToString());
+				return false;
+			}
+		}
+		return true;
+	}
+
+	static UClass* FindTriggerClass(const FString& TriggerType)
+	{
+		const FString ClassName = TEXT("InputTrigger") + TriggerType;
+		for (TObjectIterator<UClass> It; It; ++It)
+		{
+			UClass* Class = *It;
+			if (Class->IsChildOf(UInputTrigger::StaticClass()) &&
+				!Class->HasAnyClassFlags(CLASS_Abstract) &&
+				(Class->GetName().Equals(ClassName, ESearchCase::IgnoreCase) ||
+				 Class->GetName().Equals(TriggerType, ESearchCase::IgnoreCase)))
+			{
+				return Class;
+			}
+		}
+		return nullptr;
+	}
+}
+
 // =================================================================
 // Helper Methods
 // =================================================================
@@ -663,7 +746,8 @@ TArray<FString> UInputService::GetAvailableModifierTypes()
 bool UInputService::AddTrigger(
 	const FString& ContextPath,
 	int32 MappingIndex,
-	const FString& TriggerType)
+	const FString& TriggerType,
+	const FString& PropertiesJson)
 {
 	UInputMappingContext* MappingContext = LoadMappingContext(ContextPath);
 	if (!MappingContext)
@@ -671,43 +755,31 @@ bool UInputService::AddTrigger(
 		return false;
 	}
 
-	TArray<FEnhancedActionKeyMapping>& Mappings = const_cast<TArray<FEnhancedActionKeyMapping>&>(MappingContext->GetMappings());
-	if (MappingIndex < 0 || MappingIndex >= Mappings.Num())
+	if (MappingIndex < 0 || MappingIndex >= MappingContext->GetMappings().Num())
 	{
 		UE_LOG(LogTemp, Warning, TEXT("UInputService::AddTrigger: Invalid mapping index: %d"), MappingIndex);
 		return false;
 	}
 
-	// Find the trigger class
-	FString ClassName = TEXT("InputTrigger") + TriggerType;
-	UClass* TriggerClass = nullptr;
-	
-	for (TObjectIterator<UClass> It; It; ++It)
-	{
-		UClass* Class = *It;
-		if (Class->IsChildOf(UInputTrigger::StaticClass()) && 
-			!Class->HasAnyClassFlags(CLASS_Abstract) &&
-			(Class->GetName().Equals(ClassName, ESearchCase::IgnoreCase) ||
-			 Class->GetName().Equals(TriggerType, ESearchCase::IgnoreCase)))
-		{
-			TriggerClass = Class;
-			break;
-		}
-	}
-	
+	UClass* TriggerClass = VibeUEInputTriggers::FindTriggerClass(TriggerType);
 	if (!TriggerClass)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("UInputService::AddTrigger: Trigger type not found: %s"), *TriggerType);
 		return false;
 	}
 
-	MappingContext->Modify();
-	
-	UInputTrigger* NewTrigger = NewObject<UInputTrigger>(MappingContext, TriggerClass);
-	if (NewTrigger)
+	// Settings go on the new trigger before it is added, so a bad property changes nothing.
+	UInputTrigger* NewTrigger = NewObject<UInputTrigger>(MappingContext, TriggerClass, NAME_None, RF_Transactional);
+	FString PropertyError;
+	if (!NewTrigger || !VibeUEInputTriggers::ApplyPropertiesJson(NewTrigger, PropertiesJson, PropertyError))
 	{
-		Mappings[MappingIndex].Triggers.Add(NewTrigger);
+		UE_LOG(LogTemp, Warning, TEXT("UInputService::AddTrigger: %s"), *PropertyError);
+		return false;
 	}
+
+	MappingContext->Modify();
+	MappingContext->GetMapping(MappingIndex).Triggers.Add(NewTrigger);
+	MappingContext->PostEditChange();
 
 	// Save
 	UPackage* Package = MappingContext->GetOutermost();
@@ -717,6 +789,62 @@ bool UInputService::AddTrigger(
 	}
 
 	return true;
+}
+
+FString UInputService::AddActionTrigger(
+	const FString& ActionPath,
+	const FString& TriggerType,
+	const FString& PropertiesJson)
+{
+	// An Input Action's own triggers apply to every mapping of the action.
+	auto Fail = [](const TCHAR* Code, const FString& Message)
+	{
+		TSharedRef<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetBoolField(TEXT("success"), false);
+		Obj->SetStringField(TEXT("error_code"), Code);
+		Obj->SetStringField(TEXT("error_message"), Message);
+		FString Out;
+		const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Out);
+		FJsonSerializer::Serialize(Obj, Writer);
+		return Out;
+	};
+
+	UInputAction* Action = LoadInputAction(ActionPath);
+	if (!Action)
+	{
+		return Fail(TEXT("ACTION_NOT_FOUND"), FString::Printf(TEXT("Input Action not found: %s"), *ActionPath));
+	}
+	UClass* TriggerClass = VibeUEInputTriggers::FindTriggerClass(TriggerType);
+	if (!TriggerClass)
+	{
+		return Fail(TEXT("TRIGGER_TYPE_NOT_FOUND"), FString::Printf(TEXT("Trigger type not found: %s (see get_available_trigger_types)"), *TriggerType));
+	}
+
+	UInputTrigger* NewTrigger = NewObject<UInputTrigger>(Action, TriggerClass, NAME_None, RF_Transactional);
+	FString PropertyError;
+	if (!NewTrigger || !VibeUEInputTriggers::ApplyPropertiesJson(NewTrigger, PropertiesJson, PropertyError))
+	{
+		return Fail(TEXT("BAD_PROPERTIES"), PropertyError);
+	}
+
+	Action->Modify();
+	const int32 TriggerIndex = Action->Triggers.Add(NewTrigger);
+	// As an edit in the editor would: Enhanced Input's Blueprint nodes listen for OnTriggersChanged.
+	FProperty* TriggersProperty = FindFProperty<FProperty>(UInputAction::StaticClass(), GET_MEMBER_NAME_CHECKED(UInputAction, Triggers));
+	FPropertyChangedEvent ChangedEvent(TriggersProperty, EPropertyChangeType::ArrayAdd);
+	Action->PostEditChangeProperty(ChangedEvent);
+	Action->GetOutermost()->MarkPackageDirty();
+
+	TSharedRef<FJsonObject> R = MakeShared<FJsonObject>();
+	R->SetBoolField(TEXT("success"), true);
+	R->SetStringField(TEXT("action"), Action->GetName());
+	R->SetStringField(TEXT("trigger"), TriggerClass->GetName());
+	R->SetNumberField(TEXT("trigger_index"), TriggerIndex);
+	R->SetStringField(TEXT("note"), TEXT("The asset is modified, not saved. A running PIE session keeps its copy of the triggers: restart PIE to see the change."));
+	FString Out;
+	const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Out);
+	FJsonSerializer::Serialize(R, Writer);
+	return Out;
 }
 
 bool UInputService::RemoveTrigger(

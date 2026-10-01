@@ -178,6 +178,18 @@ Remove the first trigger from the gameplay context. Let's try a different approa
 
 ---
 
+Add another hold trigger to the first combat binding, this time needing 0.4 seconds and firing only once per hold.
+
+---
+
+Make the fire action itself a quick tap, released within a quarter second, for every key bound to it.
+
+---
+
+Try giving a hold trigger a setting it doesn't have, like "charge_speed", and tell me what happened. Nothing should have changed.
+
+---
+
 ## Complete Input Setups
 
 I need a reload mechanic for the shooter. Create the action, bind R to it in combat, and make it trigger on press.
