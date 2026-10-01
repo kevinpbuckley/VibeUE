@@ -16,8 +16,9 @@ unreal_classes:
 > it with `call_tool` (run `describe_toolset` on `ConfigSettingsToolset` for its actions/params).
 > VibeUE's `ProjectSettingsService` was trimmed to the delta the engine doesn't cover:
 > **`discover_settings_classes` + direct INI read/write (`get_ini_value` / `set_ini_value` /
-> `*_ini_array` / `list_ini_sections` / `list_ini_keys`) + config save**. Use those from
-> `execute_python_code` as shown below.
+> `*_ini_array` / `list_ini_sections` / `list_ini_keys`) + config save**, plus
+> **`set_settings_property` / `get_settings_property`** for one property of a settings class by
+> name. Use those from `execute_python_code` as shown below.
 
 ## Critical Rules
 
@@ -29,11 +30,13 @@ unreal_classes:
 # ❌ WRONG — will fail
 discover_python_class('unreal.EditorStyleSettings')  # NOT FOUND
 
-# ✅ CORRECT — engine ConfigSettingsToolset (registered settings) via call_tool, OR raw INI:
-result = unreal.ProjectSettingsService.set_ini_value(
-    "/Script/EditorStyle.EditorStyleSettings",
-    "AssetEditorOpenLocation", "MainWindow", "EditorPerProjectUserSettings.ini")
+# ✅ CORRECT — engine ConfigSettingsToolset (registered settings) via call_tool, OR the class by name:
+result = unreal.ProjectSettingsService.set_settings_property(
+    "EditorStyleSettings", "AssetEditorOpenLocation", "MainWindow")
 ```
+
+`set_ini_value` writes a project `Config/Default*.ini` file on disk; it cannot reach a user-layer
+file such as `EditorPerProjectUserSettings.ini`, which lives under `Saved/Config`.
 
 ### ⚠️ Category vs Raw INI
 
@@ -45,6 +48,7 @@ the engine **`ConfigSettingsToolset`**. From VibeUE you instead address settings
 |------|-----|
 | Project info, maps, any registered category by name | engine `ConfigSettingsToolset` via `call_tool` |
 | Read/write a known INI section+key | `ProjectSettingsService.get_ini_value` / `set_ini_value` |
+| Set one property of a settings class, live and saved as the Settings window saves it | `ProjectSettingsService.set_settings_property(class, property, value)` |
 | Discover which classes/sections exist | `ProjectSettingsService.discover_settings_classes()` |
 
 ### ⚠️ Map Paths Must Be Full Asset Paths
@@ -69,6 +73,14 @@ result = unreal.ProjectSettingsService.set_ini_value(
 if not result.success:
     print(f"Failed: {result.error_message}")
 ```
+
+`set_ini_value` writes the key into the file on disk (the rest of the file, comments included, is
+kept), reloads that config branch, and reads the file back: `success` is false when the value did not
+land. A settings object read its config at startup, so it sees the new value after a restart
+(`requires_restart` is true); `set_settings_property` applies the value live as well.
+`set_ini_array` works only on a settings class section (`/Script/Module.Class`), through
+`set_settings_property`: an array in a layered project file needs `!Key=ClearArray` / `+Key=`
+lines relative to the lower layers, which only a settings object writes correctly.
 
 (Registered-setting writes via the engine `ConfigSettingsToolset` return their own result — check it the same way.)
 

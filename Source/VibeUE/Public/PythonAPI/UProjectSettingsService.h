@@ -123,6 +123,36 @@ public:
 	static TArray<FSettingsClassInfo> DiscoverSettingsClasses();
 
 	// =================================================================
+	// Settings objects
+	// =================================================================
+	// GConfig->SetString / Flush on a bare project path ("DefaultEditor.ini") changes nothing on disk: GConfig saves
+	// only its config branches, and loads another path as a NoSave single file. The supported way to save a project
+	// setting is the one the editor's Settings window uses (Developer/Settings SettingsSection.cpp Save()): change the
+	// settings object's CDO with Pre/PostEditChange, then TryUpdateDefaultConfigFile() for defaultconfig classes,
+	// UpdateGlobalUserConfigFile() / UpdateProjectUserConfigFile() for user config classes, SaveConfig() otherwise.
+	// These two functions do exactly that.
+
+	/**
+	 * Set one config property of a settings class the way the editor's Settings window does: the value applies live
+	 * (PostEditChangeProperty runs) and is saved to the class's own config file, then read back from the reloaded
+	 * config to verify it.
+	 *
+	 * @param SettingsClass - Class path ("/Script/UnrealEd.EditorProjectAppearanceSettings") or name
+	 *                        ("EditorProjectAppearanceSettings", a leading U is accepted)
+	 * @param PropertyName - C++ name ("bDisplayUnits"), case-insensitive; Python style ("display_units") also works
+	 * @param Value - Unreal text format: "True", "12.5", "Feet", arrays as "(Feet,Inches)", structs as "(X=1,Y=2)"
+	 * @return Operation result; ModifiedSettings lists "[Section] Property: old -> new (file)"
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|ProjectSettings")
+	static FProjectSettingResult SetSettingsProperty(const FString& SettingsClass, const FString& PropertyName, const FString& Value);
+
+	/**
+	 * Current value of a settings class property (its CDO), in Unreal text format. Empty if not found.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|ProjectSettings")
+	static FString GetSettingsProperty(const FString& SettingsClass, const FString& PropertyName);
+
+	// =================================================================
 	// Direct INI Access
 	// =================================================================
 
@@ -158,6 +188,10 @@ public:
 
 	/**
 	 * Set a value directly in an INI config file.
+	 * Writes the key into the file ON DISK with Epic's FConfigFile::UpdateSinglePropertyInSection (the
+	 * rest of the file, comments included, is kept), reloads that config branch so the editor's config cache sees it,
+	 * and reads the file back; bSuccess is false when the value did not land. For a property of a settings class
+	 * prefer SetSettingsProperty (it also applies the value live).
 	 *
 	 * @param Section - INI section
 	 * @param Key - Key name within the section
@@ -182,6 +216,11 @@ public:
 
 	/**
 	 * Set an array of values in an INI config file.
+	 * An array in a layered project file needs the engine's array commands (!Key=ClearArray, +Key=...)
+	 * relative to the lower layers, which only the settings-object path writes correctly. When Section is a settings
+	 * class section ("/Script/Module.Class") this forwards to SetSettingsProperty (the array applies live and is saved
+	 * the Settings-window way); any other section fails with an explanation instead of reporting a success that
+	 * never reached the disk.
 	 *
 	 * @param Section - INI section
 	 * @param Key - Key name within the section
@@ -206,6 +245,9 @@ public:
 
 	/**
 	 * Save a specific config file.
+	 * SetIniValue / SetSettingsProperty write to disk immediately, so for a project Default*.ini
+	 * there is nothing pending and this returns true; for a config branch name ("Engine", "Editor", "Game") it
+	 * flushes that branch's user layer (Saved/Config).
 	 *
 	 * @param ConfigFile - Config file name (e.g., "DefaultEngine.ini")
 	 * @return True if successful
