@@ -47,7 +47,8 @@ lists, counts and removes through those cell actors. There the foliage type must
 `<Mesh>_FoliageType` next to the mesh, or the one other foliage type asset for that mesh (several: the call asks for
 a foliage type path), and creates `<Mesh>_FoliageType` when there is none, saved only when the call places
 something and refused while PIE runs. A call that would touch a cell whose foliage actor exists but is not loaded fails and changes nothing:
-load that region first. Builds that do this define the read-only console variable `vibeue.Foliage.WorldPartitionCells`.
+load that region first. Placement only counts the cell actor of the editor's current data layer / content bundle
+context, as the engine does: an unloaded cell actor of another data layer does not block placing into that cell. Builds that do this define the read-only console variable `vibeue.Foliage.WorldPartitionCells`.
 
 ### Seed for Reproducibility
 

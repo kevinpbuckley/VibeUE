@@ -10,6 +10,7 @@
 #include "ActorPartition/PartitionActor.h"
 #include "Editor.h"
 #include "EngineUtils.h"
+#include "FileHelpers.h"
 #include "InstancedFoliage.h"
 #include "InstancedFoliageActor.h"
 #include "Misc/ScopeExit.h"
@@ -23,7 +24,8 @@ using VibeAITest::FScopedFixtureReset;
 // On a World Partition level the engine keeps foliage in one InstancedFoliageActor per grid cell. Placing, counting and
 // removing through the service must use those cell actors: no actor may hold instances from more than one cell.
 // The test opens a new, unsaved World Partition map and ends on a new plain map, as a fresh editor starts; no map file
-// is written.
+// is written. Replacing the open map discards whatever it holds, so the test skips itself while any map has unsaved
+// changes rather than throw the user's level edits away.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeFoliageWorldPartitionCellsTest,
 	"VibeUE.Foliage.WorldPartitionCells", kFoliageTestFlags)
 bool FVibeFoliageWorldPartitionCellsTest::RunTest(const FString&)
@@ -32,6 +34,22 @@ bool FVibeFoliageWorldPartitionCellsTest::RunTest(const FString&)
 	{
 		AddError(TEXT("Needs the editor with no PIE session running."));
 		return false;
+	}
+
+	// The same set the editor offers to save before File > New Level: the world packages, their built data and their
+	// external (one-file-per-actor) packages.
+	TArray<UPackage*> DirtyMapPackages;
+	FEditorFileUtils::GetDirtyWorldPackages(DirtyMapPackages);
+	if (DirtyMapPackages.Num() > 0)
+	{
+		TArray<FString> Names;
+		for (const UPackage* Package : DirtyMapPackages)
+		{
+			Names.Add(Package->GetName());
+		}
+		AddWarning(FString::Printf(TEXT("SKIPPED: this test replaces the open map with a new one, which would discard "
+			"unsaved level changes in %s. Save or revert the level, then run it again."), *FString::Join(Names, TEXT(", "))));
+		return true;
 	}
 
 	const FString Dir = TEXT("/Game/Developers/VibeUEFoliageTests");

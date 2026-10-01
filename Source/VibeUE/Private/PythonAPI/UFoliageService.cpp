@@ -26,6 +26,12 @@
 #include "WorldPartition/WorldPartitionHelpers.h"
 #include "WorldPartition/WorldPartitionActorDescInstance.h"
 #include "WorldPartition/ActorPartition/PartitionActorDesc.h"
+#include "WorldPartition/ContentBundle/ContentBundleEngineSubsystem.h"
+#include "WorldPartition/DataLayer/DataLayerEditorContext.h"
+#include "WorldPartition/DataLayer/DataLayerManager.h"
+#include "WorldPartition/DataLayer/DataLayerInstance.h"
+#include "WorldPartition/DataLayer/WorldDataLayers.h"
+#include "Misc/Crc.h"
 #include "HAL/IConsoleManager.h"
 #include "UObject/Package.h"
 #include "Misc/FeedbackContext.h" // GWarn as FSavePackageArgs::Error (complete type needed for FOutputDevice*)
@@ -64,7 +70,55 @@ namespace VibeUEFoliageWP
 		FBox Bounds = FBox(ForceInit); // XY footprint for overlap tests (cell box + editor bounds); invalid = unknown
 		bool bIsGridCell = false;
 		FCellKey Cell;
+		uint32 ContextHash = 0; // actor partition context (content bundle + data layers) of a grid cell actor
 	};
+
+	/** The engine's file-local FActorPartitionContextHash::Get (ActorPartitionSubsystem.cpp), reproduced */
+	uint32 CombineFoliagePartitionContextHash(const FGuid& ContentBundleGuid, uint32 DataLayerEditorContextHash)
+	{
+		return ContentBundleGuid.IsValid() ? FCrc::TypeCrc32(ContentBundleGuid, DataLayerEditorContextHash) : DataLayerEditorContextHash;
+	}
+
+	/**
+	 * The context a foliage actor looked up or created right now gets: UActorPartitionSubsystem::GetActor builds it from
+	 * the editing content bundle and UDataLayerManager::GetDataLayerEditorContextHash. That one is private, so its body
+	 * (the actor editor context data layers of the world's AWorldDataLayers and, when another level is current, of that
+	 * level's: GetActorEditorContextWorldDataLayers) is reproduced through the public accessors it uses.
+	 */
+	uint32 GetEditingFoliagePartitionContextHash(UWorld* World)
+	{
+		UContentBundleEngineSubsystem* ContentBundles = UContentBundleEngineSubsystem::Get();
+		const FGuid ContentBundleGuid = ContentBundles ? ContentBundles->GetEditingContentBundleGuid() : FGuid();
+
+		uint32 DataLayerHash = FDataLayerEditorContext::EmptyHash;
+		if (UDataLayerManager::GetDataLayerManager(World))
+		{
+			TArray<const AWorldDataLayers*> ContextWorldDataLayers;
+			if (const AWorldDataLayers* WorldDataLayers = World->GetWorldDataLayers())
+			{
+				ContextWorldDataLayers.Add(WorldDataLayers);
+			}
+			const ULevel* CurrentLevel = World->GetCurrentLevel();
+			if (CurrentLevel && CurrentLevel != World->PersistentLevel)
+			{
+				if (const AWorldDataLayers* LevelWorldDataLayers = CurrentLevel->GetWorldDataLayers())
+				{
+					ContextWorldDataLayers.Add(LevelWorldDataLayers);
+				}
+			}
+
+			TArray<FName> ContextDataLayerNames;
+			for (const AWorldDataLayers* WorldDataLayers : ContextWorldDataLayers)
+			{
+				for (const UDataLayerInstance* DataLayerInstance : WorldDataLayers->GetActorEditorContextDataLayers())
+				{
+					ContextDataLayerNames.Add(DataLayerInstance->GetFName());
+				}
+			}
+			DataLayerHash = FDataLayerEditorContext(World, ContextDataLayerNames).GetHash();
+		}
+		return CombineFoliagePartitionContextHash(ContentBundleGuid, DataLayerHash);
+	}
 
 	bool IsPartitioned(const UWorld* World)
 	{
@@ -103,7 +157,7 @@ namespace VibeUEFoliageWP
 		const uint32 GridSize = GetFoliageGridSize(World);
 
 		FWorldPartitionHelpers::ForEachActorDescInstance(WorldPartition, AInstancedFoliageActor::StaticClass(),
-			[&Out, GridSize](const FWorldPartitionActorDescInstance* Desc)
+			[&Out, GridSize, World](const FWorldPartitionActorDescInstance* Desc)
 			{
 				// same "loaded" test as the partition subsystem's lookup
 				if (Desc->GetActor())
@@ -120,6 +174,8 @@ namespace VibeUEFoliageWP
 				{
 					Entry.bIsGridCell = true;
 					Entry.Cell = FCellKey(PartitionDesc->GridIndexX, PartitionDesc->GridIndexY, PartitionDesc->GridIndexZ);
+					Entry.ContextHash = CombineFoliagePartitionContextHash(Desc->GetContentBundleGuid(),
+						FDataLayerEditorContext(World, Desc->GetDataLayerInstanceNames().ToArray()).GetHash());
 					Entry.Bounds = Desc->GetEditorBounds() + UActorPartitionSubsystem::FCellCoord::GetCellBounds(
 						UActorPartitionSubsystem::FCellCoord(PartitionDesc->GridIndexX, PartitionDesc->GridIndexY, PartitionDesc->GridIndexZ, nullptr), GridSize);
 				}
@@ -454,22 +510,34 @@ namespace VibeUEFoliageWP
 	 * run before the call opens its transaction, so a refused call never has to cancel one (FScopedTransaction::Cancel on
 	 * a transaction nested in the caller's cancels the caller's whole transaction: UTransBuffer::Cancel). Fails, naming
 	 * the cells, when
-	 * - an instance's grid cell has a foliage actor that exists but is not loaded, or
-	 * - a candidate whose surface trace found nothing lies in the XY footprint of such a cell (that region's terrain is
-	 *   almost certainly unloaded too, so the candidate was dropped for that reason, not for having no surface).
+	 * - an instance's grid cell has a foliage actor of the editor's current data layer / content bundle context that
+	 *   exists but is not loaded, or
+	 * - a candidate whose surface trace found nothing lies in the XY footprint of an unloaded cell foliage actor of any
+	 *   context (that region's terrain is almost certainly unloaded too, so the candidate was dropped for that reason,
+	 *   not for having no surface).
 	 */
 	bool ValidatePartitionedPlacement(UWorld* World, const TArray<FFoliageInstance>& NewInstances, const TArray<FVector2D>& TraceMisses, FString& OutError)
 	{
 		const TArray<FUnloadedFoliageActor> Unloaded = CollectUnloadedFoliageActors(World);
+		// An unloaded cell actor blocks a cell only when it is the one the partition subsystem's own lookup would pick
+		// (UActorPartitionSubsystem::GetActor): same cell, same grid (no GridGuid; checked when collecting) and the same
+		// content bundle / data layer context as the editor's current one. One of another data layer or content bundle
+		// does not stop the engine from using or creating this context's actor for that cell.
+		const uint32 EditingContextHash = GetEditingFoliagePartitionContextHash(World);
+		bool bAnyUnloadedGridCell = false;
 		TMap<FCellKey, FString> UnloadedCells;
 		for (const FUnloadedFoliageActor& Entry : Unloaded)
 		{
 			if (Entry.bIsGridCell)
 			{
-				UnloadedCells.Add(Entry.Cell, Entry.Name);
+				bAnyUnloadedGridCell = true;
+				if (Entry.ContextHash == EditingContextHash)
+				{
+					UnloadedCells.Add(Entry.Cell, Entry.Name);
+				}
 			}
 		}
-		if (UnloadedCells.Num() == 0)
+		if (!bAnyUnloadedGridCell)
 		{
 			return true;
 		}
