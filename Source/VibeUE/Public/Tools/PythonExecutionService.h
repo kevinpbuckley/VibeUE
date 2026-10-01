@@ -94,6 +94,20 @@ public:
 	 */
 	static bool ContainsUnsafePattern(const FString& Code, FString& OutPattern, FString& OutReason);
 
+	/**
+	 * The command to hand the Python plugin so that Code always runs as code. In ExecuteFile mode the
+	 * plugin takes a command whose first ".py" is followed by whitespace or the end (or, when it starts
+	 * with a quote, by a closing quote) as a file path to run, so code that merely mentions a .py file
+	 * in a comment or string failed "Could not load Python file". Code that mentions ".py" is passed
+	 * base64-encoded (no '.' in its alphabet) to a one-line exec(compile(...)) instead, which runs it in
+	 * the same globals, under the same "<string>" name and with the same line numbers; a traceback
+	 * gains one outer frame. Any other code is returned unchanged.
+	 *
+	 * @param Code Python source to run
+	 * @return The command text for FPythonCommandEx::Command
+	 */
+	static FString MakeCodeCommand(const FString& Code);
+
 private:
 	/**
 	 * Convert FPythonCommandEx result to our result structure
