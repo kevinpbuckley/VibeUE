@@ -1323,5 +1323,70 @@ bool FVibeBlueprintServiceDeleteSoleFixedResultRefusedTest::RunTest(const FStrin
 	return true;
 }
 
+// ============================================================================
+// B4 follow-up: the ONLY result node of an editable function can still be deleted (the editor allows
+// it), but that takes the function's outputs with it, so DeleteNode must say so with a Warning that
+// names the function instead of succeeding silently.
+// ============================================================================
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBlueprintServiceDeleteLastResultWarnsTest, "VibeUE.BlueprintService.DeleteNodeWarnsOnLastFunctionResult",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FVibeBlueprintServiceDeleteLastResultWarnsTest::RunTest(const FString&)
+{
+	using namespace VibeBlueprintServiceTestUtil;
+
+	const FString PackageName = FString::Printf(TEXT("/Game/__VibeUETest/BP_DeleteLastResult_%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+	UBlueprint* Blueprint = MakeRegisteredBlueprint(*this, PackageName, AActor::StaticClass());
+	if (!Blueprint)
+	{
+		return false;
+	}
+	ON_SCOPE_EXIT { ReleaseBlueprint(Blueprint); };
+
+	const FString Path = PackageName;
+
+	const FString FuncName = UBlueprintService::CreateFunctionGraph(Path, TEXT("VibeLastReturnFunc"), /*bIsPure*/ false);
+	if (!TestFalse(TEXT("create_function_graph created the user function"), FuncName.IsEmpty()))
+	{
+		return false;
+	}
+	TestTrue(TEXT("added output parameter"),
+		UBlueprintService::AddFunctionParameter(Path, FuncName, TEXT("OutValue"), TEXT("int"), true, false, TEXT(""), false, TEXT("")));
+
+	UEdGraph* FuncGraph = nullptr;
+	for (UEdGraph* Graph : Blueprint->FunctionGraphs)
+	{
+		if (Graph && Graph->GetName() == FuncName)
+		{
+			FuncGraph = Graph;
+			break;
+		}
+	}
+	if (!TestNotNull(TEXT("found the new function graph"), FuncGraph))
+	{
+		return false;
+	}
+
+	TArray<UK2Node_FunctionResult*> ResultNodes;
+	FuncGraph->GetNodesOfClass<UK2Node_FunctionResult>(ResultNodes);
+	if (!TestEqual(TEXT("function graph has exactly one result node"), ResultNodes.Num(), 1))
+	{
+		return false;
+	}
+	UK2Node_FunctionResult* SoleResult = ResultNodes[0];
+	TestTrue(TEXT("the user function's result node is editable"), SoleResult->IsEditable());
+	TestTrue(TEXT("the engine allows deleting the sole editable result node"), SoleResult->CanUserDeleteNode());
+
+	// Exactly one Warning, and it names the function whose outputs went away.
+	AddExpectedMessagePlain(FString::Printf(TEXT("was the last result node of function '%s'"), *FuncName),
+		ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+	TestTrue(TEXT("delete_node removes the sole editable result node"),
+		UBlueprintService::DeleteNode(Path, FuncName, SoleResult->NodeGuid.ToString()));
+
+	ResultNodes.Reset();
+	FuncGraph->GetNodesOfClass<UK2Node_FunctionResult>(ResultNodes);
+	TestEqual(TEXT("no result node remains"), ResultNodes.Num(), 0);
+	return true;
+}
+
 
 #endif // WITH_AUTOMATION_TESTS
