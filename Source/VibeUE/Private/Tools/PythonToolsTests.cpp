@@ -77,6 +77,75 @@ bool FVibePythonAutoSaveReportTest::RunTest(const FString&)
 	return true;
 }
 
+// The pre-run auto-save sweep must skip during a PIE / Simulate session. It used to test only
+// GIsPlayInEditorWorld, which the engine sets only while the PIE world itself ticks — an MCP call
+// dispatched from editor scope during PIE saw it false and flushed every dirty package through
+// UEditorLoadingAndSavingUtils::SavePackages (which has no PIE guard of its own). GEditor->PlayWorld
+// is what is non-null for the whole session.
+//
+// A real PIE session needs latent commands and a renderer; the suite runs headless under -nullrhi.
+// So PIE is simulated by pointing GEditor->PlayWorld at a transient PIE-type world that the engine
+// is never told about (bInformEngineOfWorld=false: no world context, nothing ticks it). The guard
+// restores the previous PlayWorld on every exit path, then the world is destroyed and un-rooted.
+//
+// Deliberately, NO sweep runs outside simulated PIE: a real auto_save=true run writes whatever other
+// tests left dirty (it once saved a project's startup map mid-suite). The non-PIE branch is covered
+// by VibeUE.Python.AutoSaveReport, and this test failing before the fix is what shows it is not
+// vacuous (that pre-fix run does sweep - it is the bug being proven).
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibePythonAutoSaveSkippedDuringPIETest, "VibeUE.Python.AutoSaveSkippedDuringPIE",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVibePythonAutoSaveSkippedDuringPIETest::RunTest(const FString&)
+{
+	if (!GEditor)
+	{
+		AddError(TEXT("No GEditor; cannot simulate a PIE session."));
+		return false;
+	}
+	if (!TestNull(TEXT("no real PIE session is running"), GEditor->PlayWorld.Get()))
+	{
+		return false;
+	}
+
+	// CreateWorld roots the world by default (bAddToRoot=true), hence the RemoveFromRoot below.
+	UWorld* FakePlayWorld = UWorld::CreateWorld(EWorldType::PIE, /*bInformEngineOfWorld=*/false);
+	if (!TestNotNull(TEXT("created the transient PIE world"), FakePlayWorld))
+	{
+		return false;
+	}
+	// Declared before the guard so it runs AFTER it: PlayWorld is restored first, then the world dies.
+	ON_SCOPE_EXIT
+	{
+		FakePlayWorld->DestroyWorld(/*bInformEngineOfWorld=*/false);
+		FakePlayWorld->RemoveFromRoot();
+	};
+	TGuardValue<TObjectPtr<UWorld>> PlayWorldGuard(GEditor->PlayWorld, FakePlayWorld);
+
+	// The skip is logged as a Warning; it is the expected outcome here.
+	AddExpectedMessage(TEXT("Cannot auto-save: Currently in PIE mode"), ELogVerbosity::Warning,
+		EAutomationExpectedMessageFlags::Contains, 1, /*IsRegex=*/false);
+
+	const FString Json = UPythonTools::ExecutePythonCode(TEXT("x = 1\n"), /*bAutoSave=*/true);
+	TSharedPtr<FJsonObject> Obj;
+	FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json), Obj);
+	if (!TestTrue(TEXT("PIE reply parses as JSON"), Obj.IsValid()))
+	{
+		return false;
+	}
+	TestTrue(TEXT("the script itself still runs during PIE"), Obj->GetBoolField(TEXT("success")));
+	TestFalse(TEXT("auto_save reports the sweep did NOT run during PIE"), Obj->GetBoolField(TEXT("auto_save")));
+	// A set crash latch would report "previous_run_crashed" here and fail this check - correctly.
+	TestEqual(TEXT("auto_save_note names PIE"), Obj->GetStringField(TEXT("auto_save_note")), FString(TEXT("pie_active")));
+
+	const TArray<TSharedPtr<FJsonValue>>* Saved = nullptr;
+	if (TestTrue(TEXT("saved_packages present"), Obj->TryGetArrayField(TEXT("saved_packages"), Saved)))
+	{
+		TestEqual(TEXT("nothing written during PIE"), Saved->Num(), 0);
+	}
+
+	return true;
+}
+
 // Issue #608: an ordinary Python exception must NOT be treated as an editor crash.
 // UPythonTools suppresses the next run's auto-save sweep after a "crash", on the reasoning that the
 // editor may hold half-mutated objects. That latch used to be set for any PYTHON_RUNTIME_ERROR —
