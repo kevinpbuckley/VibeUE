@@ -100,7 +100,21 @@ bool FVibeInputInjectionGuardsTest::RunTest(const FString&)
 // instance number); while a hold (or a held key) runs, one extra throttling delegate keeps the editor off its
 // background frame rate, and it is gone after the release grace; a second hold of a held key extends it;
 // ending PIE drops every hold and the throttling delegate at once.
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeInputHoldInPIETest,
+//
+// PIE runs the host project's game code in whatever map is open, and its own Error logs (a game's BeginPlay
+// complaints; Proteus' PlaytestSandbox logs five on PIE start) are not what this test is about: every outcome
+// here is asserted explicitly, so log errors are not recorded as failures.
+class FVibeInputPieTestBase : public FAutomationTestBase
+{
+public:
+	FVibeInputPieTestBase(const FString& InName, const bool bInComplexTask)
+		: FAutomationTestBase(InName, bInComplexTask)
+	{
+	}
+	virtual bool SuppressLogErrors() override { return true; }
+};
+
+IMPLEMENT_CUSTOM_SIMPLE_AUTOMATION_TEST(FVibeInputHoldInPIETest, FVibeInputPieTestBase,
 	"VibeUE.Input.HoldInPIE", kInjectTestFlags)
 bool FVibeInputHoldInPIETest::RunTest(const FString&)
 {

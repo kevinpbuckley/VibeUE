@@ -1267,6 +1267,23 @@ namespace VibeUEInputInjection
 	static TMap<FString, FHeldInjection> GHeldInjections;
 	// One pending release per held key: holding a key that is already held extends that hold.
 	static TMap<FKey, FTSTicker::FDelegateHandle> GHeldKeys;
+
+	// Runs Release once Seconds of wall-clock time have passed, checked every frame. A ticker delay is not
+	// used: it counts from the ticker clock at the START of the frame that made the hold, so on slow PIE
+	// frames (~250 ms measured on a busy level, 2026-10-01) a 1 s hold was released at 0.74 s.
+	static FTSTicker::FDelegateHandle AddWallClockRelease(float Seconds, TFunction<void()> Release)
+	{
+		const double Deadline = FPlatformTime::Seconds() + Seconds;
+		return FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Deadline, Release = MoveTemp(Release)](float)
+		{
+			if (FPlatformTime::Seconds() < Deadline)
+			{
+				return true;
+			}
+			Release();
+			return false;
+		}));
+	}
 	static FDelegateHandle GThrottleHandle;
 	static FDelegateHandle GEndPieHandle;
 	// Half a second at full rate after a release, so the release itself is processed promptly: measured
@@ -1477,11 +1494,10 @@ FString UInputService::InjectActionFor(const FString& ActionPath, float Seconds,
 	VibeUEInputInjection::FHeldInjection Held;
 	Held.Subsystem = Subsystem;
 	Held.Action = Action;
-	Held.Release = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Id](float)
+	Held.Release = VibeUEInputInjection::AddWallClockRelease(Seconds, [Id]()
 	{
 		VibeUEInputInjection::ReleaseHeld(Id, /*bFromTicker=*/true);
-		return false;
-	}), Seconds);
+	});
 	VibeUEInputInjection::GHeldInjections.Add(Id, Held);
 	VibeUEInputInjection::UpdateThrottleScope();
 
@@ -1593,11 +1609,10 @@ FString UInputService::InjectKey(const FString& KeyName, const FString& EventTyp
 	{
 		// The release, later. The editor stays off its background frame rate meanwhile, and ending PIE first
 		// cancels it (see OnEndPie).
-		const FTSTicker::FDelegateHandle Release = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Key](float)
+		const FTSTicker::FDelegateHandle Release = VibeUEInputInjection::AddWallClockRelease(HoldSeconds, [Key]()
 		{
 			VibeUEInputInjection::ReleaseHeldKey(Key, /*bSendKeyUp=*/true, /*bFromTicker=*/true);
-			return false;
-		}), HoldSeconds);
+		});
 		VibeUEInputInjection::GHeldKeys.Add(Key, Release);
 		VibeUEInputInjection::UpdateThrottleScope();
 	}
