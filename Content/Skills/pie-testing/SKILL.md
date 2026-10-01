@@ -263,16 +263,25 @@ inject input directly; no OS window focus needed:
 ```python
 import unreal
 
-# Fire an Enhanced Input action once (value applies for one input tick; loop to hold).
+# Fire an Enhanced Input action once: QUEUED for the next input tick, released on the tick after.
 # X/Y/Z map onto the action's value type; Boolean uses X != 0.
 print(unreal.InputService.inject_action("/Game/Input/IA_Fire_Secondary"))
 
-# Or send a raw key to the game viewport through Slate ("tap" = down+up; also "down"/"up").
+# Hold it for 1.5 s of real time, then release (returns at once; stop_injection releases early).
+print(unreal.InputService.inject_action_for("/Game/Input/IA_Fire_Secondary", 1.5))
+
+# Or send a raw key to the game viewport through Slate ("tap" = down+up; also "down"/"up",
+# and "hold" with a duration: inject_key("RightMouseButton", "hold", 1.5)).
 print(unreal.InputService.inject_key("SpaceBar"))
 ```
 
-Both return JSON with `success` and an `error_code` naming the problem (PIE not running, no player
-controller yet, unknown key, ...). `inject_key` additionally rejects a **Simulate In Editor** session
+A Python call blocks the game thread, so PIE does not tick while it runs: inject in one call and
+read the game state in a LATER call, two or more frames on. While a hold is active the editor stays
+off its background frame rate, so an unfocused editor does not starve the hold. The action calls
+take `pie_instance` to pick a PIE world (-1, the default, is the first).
+
+All return JSON with `success` and an `error_code` naming the problem (PIE not running, no local
+player yet, unknown key, ...). `inject_key` additionally rejects a **Simulate In Editor** session
 with `SIMULATE_NOT_PLAY`: Simulate has no player game viewport, so the Slate key events would be
 dropped. Use `StartPIE` (Play), not Simulate, when driving keys. Its `handled_down` / `handled_up`
 fields report whether a Slate widget *consumed* the event, not whether the key reached the player — a
