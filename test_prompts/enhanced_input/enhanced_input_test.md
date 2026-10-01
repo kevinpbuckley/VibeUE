@@ -74,6 +74,14 @@ Add a description to the interact action saying it handles player object interac
 
 ---
 
+Make a dodge action in a folder just called "Input/Folders", without /Game in front, and tell me the full path it ended up at.
+
+---
+
+Try creating a jump action in /Temp/Input. It should be refused with the reason, and nothing should appear under /Game/Temp.
+
+---
+
 ## Input Mapping Context Setup
 
 Show me all the mapping contexts in the project.

@@ -294,7 +294,9 @@ public:
 	 * Maps to action="action_create"
 	 *
 	 * @param ActionName - Name for the new action
-	 * @param AssetPath - Path where to create the asset (e.g., "/Game/Input")
+	 * @param AssetPath - Folder to create the asset in (e.g., "/Game/Input"). A path that starts with its mount point
+	 *                    is kept; a bare folder ("Input") goes under /Game; a folder under no mounted content root
+	 *                    (/Temp/X) is refused with the reason
 	 * @param ValueType - Value type: "Boolean" (alias "Digital"), "Axis1D", "Axis2D", "Axis3D" — same names discover_types returns
 	 * @return Create result with asset path
 	 */
@@ -350,7 +352,7 @@ public:
 	 * Maps to action="mapping_create_context"
 	 *
 	 * @param ContextName - Name for the new context
-	 * @param AssetPath - Path where to create the asset
+	 * @param AssetPath - Folder to create the asset in, taken as create_action takes it
 	 * @param Priority - Context priority (higher = processed first)
 	 * @return Create result with asset path
 	 */
