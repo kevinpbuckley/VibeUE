@@ -239,3 +239,27 @@ Fetch https://dev.epicgames.com/documentation/en-us/unreal-engine/landscape-tech
 Import the heightmap as a new landscape called "GrindelwaldTerrain" using the settings recommended from step 7.
 
 ---
+
+---
+
+## Reader refusal fallback
+
+Run these on a network Jina Reader refuses anonymously (search and fetch_page return HTTP_401 without the fallback),
+with no `JINA_API_KEY` set.
+
+Fetch https://example.com/ and tell me which `source` served it.
+
+Expected: success, `source` is `direct-html-to-text`, and the content is the page's text with no markup.
+
+---
+
+Search for "Unreal Engine enhanced input" and tell me which `source` served it.
+
+Expected: results with `source` `duckduckgo-lite-direct`, or, if DuckDuckGo also refuses the direct request, a
+`SEARCH_REFUSED` error that says to set `JINA_API_KEY`.
+
+---
+
+Set `JINA_API_KEY` to a Jina key, restart the editor, and run the same search.
+
+Expected: results with `source` `jina-reader`.

@@ -16,6 +16,10 @@
 #include "HAL/PlatformProcess.h"
 #include "HAL/PlatformFileManager.h"
 #include "Settings/VibeUEEditorSettings.h"
+// Shared request state, a wait off the game thread, cancellation
+#include "Async/Async.h"
+#include "HAL/Event.h"
+#include "Core/VibeUEToolCancel.h"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -112,12 +116,18 @@ static FString BuildSuccessJson(const TSharedRef<FJsonObject>& Data)
 	return Out;
 }
 
+static const TCHAR* NoApiKeyMessage()
+{
+	return TEXT("No VibeUE API key configured. Set it in Editor Preferences > Plugins > VibeUE (get a free key at https://www.vibeue.com/login).");
+}
+
 // ---------------------------------------------------------------------------
 // HTTP helper — blocking POST with JSON body, returns response bytes
 // ---------------------------------------------------------------------------
 struct FTerrainHttpResult
 {
 	bool bSuccess = false;
+	bool bNoApiKey = false; // The key is read where the request starts, on the game thread
 	int32 ResponseCode = 0;
 	TArray<uint8> Content;
 	TMap<FString, FString> Headers;
@@ -125,78 +135,71 @@ struct FTerrainHttpResult
 	FString ErrorMessage;
 };
 
-static FTerrainHttpResult TerrainHttpPost(
-	const FString& Url,
-	const FString& ApiKey,
-	const FString& JsonBody,
-	float TimeoutSeconds = 30.0f)
+// What one request needs, built on any thread. The request itself is made on the game thread, which also reads the
+// API key (a settings CDO field, written there).
+struct FTerrainHttpRequestSpec
+{
+	FString Url;
+	FString Verb = TEXT("GET");
+	FString JsonBody;           // POST only
+	bool bSendApiKey = false;   // when none is configured, the request is not made and the result says bNoApiKey
+	bool bKeepHeightmapHeaders = false;
+	float TimeoutSeconds = 30.0f;
+};
+
+// The request's completion writes into this shared state, which it holds only weakly, never into the helper's
+// locals: a request that times out is cancelled, CancelRequest only schedules the abort, and the completion then runs
+// at a later HTTP tick, after the helper has returned (the same fix as deep_research's ResearchHttpGet).
+struct FTerrainHttpState
 {
 	FTerrainHttpResult Result;
+	std::atomic<bool> bComplete{false};
+	std::atomic<bool> bCancelled{false};
+	FEventRef Done{EEventMode::ManualReset};
+	TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> Request; // touched on the game thread only
+};
+using FTerrainHttpStateRef = TSharedRef<FTerrainHttpState, ESPMode::ThreadSafe>;
 
-	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
-	Request->SetURL(Url);
-	Request->SetVerb(TEXT("POST"));
-	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
-	Request->SetHeader(TEXT("X-API-Key"), ApiKey);
-	Request->SetContentAsString(JsonBody);
-
-	bool bComplete = false;
-	Request->OnProcessRequestComplete().BindLambda(
-		[&Result, &bComplete](FHttpRequestPtr Req, FHttpResponsePtr Resp, bool bConnected)
-		{
-			// Write all fields BEFORE setting bComplete — game thread polls bComplete
-			// and will return (destroying Result) the moment it sees true.
-			if (!bConnected || !Resp.IsValid())
-			{
-				Result.ErrorMessage = TEXT("Connection failed");
-			}
-			else
-			{
-				Result.bSuccess = true;
-				Result.ResponseCode = Resp->GetResponseCode();
-				Result.Content = Resp->GetContent();
-				Result.ContentType = Resp->GetContentType();
-				Result.Headers.Add(TEXT("X-Heightmap-Min-Height"), Resp->GetHeader(TEXT("X-Heightmap-Min-Height")));
-				Result.Headers.Add(TEXT("X-Heightmap-Max-Height"), Resp->GetHeader(TEXT("X-Heightmap-Max-Height")));
-				Result.Headers.Add(TEXT("X-Heightmap-Size"),       Resp->GetHeader(TEXT("X-Heightmap-Size")));
-			}
-			bComplete = true; // signal last — Result is fully written
-		}
-	);
-
-	Request->ProcessRequest();
-
-	const double StartTime = FPlatformTime::Seconds();
-	while (!bComplete)
+// Builds and starts the request. Game thread only.
+static void StartTerrainRequest(const FTerrainHttpStateRef& State, const FTerrainHttpRequestSpec& Spec)
+{
+	FString ApiKey;
+	if (Spec.bSendApiKey)
 	{
-		// Tick the HTTP manager so it can dispatch the callback on the game thread.
-		FHttpModule::Get().GetHttpManager().Tick(0.0f);
-		FPlatformProcess::Sleep(0.01f);
-		if (FPlatformTime::Seconds() - StartTime > TimeoutSeconds)
+		ApiKey = GetVibeUEApiKey();
+		if (ApiKey.IsEmpty())
 		{
-			Request->CancelRequest();
-			Result.ErrorMessage = TEXT("Request timed out");
-			return Result;
+			State->Result.bNoApiKey = true;
+			State->Result.ErrorMessage = NoApiKeyMessage();
+			State->bComplete = true;
+			State->Done->Trigger();
+			return;
 		}
 	}
 
-	return Result;
-}
-
-static FTerrainHttpResult TerrainHttpGet(const FString& Url, const FString& ApiKey, float TimeoutSeconds = 15.0f)
-{
-	FTerrainHttpResult Result;
-
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
-	Request->SetURL(Url);
-	Request->SetVerb(TEXT("GET"));
+	Request->SetURL(Spec.Url);
+	Request->SetVerb(Spec.Verb);
+	if (Spec.Verb == TEXT("POST"))
+	{
+		Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
+		Request->SetContentAsString(Spec.JsonBody);
+	}
 	if (!ApiKey.IsEmpty())
 		Request->SetHeader(TEXT("X-API-Key"), ApiKey);
+	Request->SetTimeout(Spec.TimeoutSeconds);
 
-	bool bComplete = false;
+	const TWeakPtr<FTerrainHttpState, ESPMode::ThreadSafe> WeakState = State;
+	const bool bKeepHeightmapHeaders = Spec.bKeepHeightmapHeaders;
 	Request->OnProcessRequestComplete().BindLambda(
-		[&Result, &bComplete](FHttpRequestPtr Req, FHttpResponsePtr Resp, bool bConnected)
+		[WeakState, bKeepHeightmapHeaders](FHttpRequestPtr Req, FHttpResponsePtr Resp, bool bConnected)
 		{
+			const TSharedPtr<FTerrainHttpState, ESPMode::ThreadSafe> S = WeakState.Pin();
+			if (!S)
+			{
+				return; // the caller gave up and is gone
+			}
+			FTerrainHttpResult& Result = S->Result;
 			if (!bConnected || !Resp.IsValid())
 			{
 				Result.ErrorMessage = TEXT("Connection failed");
@@ -207,27 +210,119 @@ static FTerrainHttpResult TerrainHttpGet(const FString& Url, const FString& ApiK
 				Result.ResponseCode = Resp->GetResponseCode();
 				Result.Content = Resp->GetContent();
 				Result.ContentType = Resp->GetContentType();
+				if (bKeepHeightmapHeaders)
+				{
+					Result.Headers.Add(TEXT("X-Heightmap-Min-Height"), Resp->GetHeader(TEXT("X-Heightmap-Min-Height")));
+					Result.Headers.Add(TEXT("X-Heightmap-Max-Height"), Resp->GetHeader(TEXT("X-Heightmap-Max-Height")));
+					Result.Headers.Add(TEXT("X-Heightmap-Size"),       Resp->GetHeader(TEXT("X-Heightmap-Size")));
+				}
 			}
-			bComplete = true; // signal last
+			S->bComplete = true;
+			S->Done->Trigger();
 		}
 	);
 
+	State->Request = Request;
 	Request->ProcessRequest();
+}
 
-	const double StartTime = FPlatformTime::Seconds();
-	while (!bComplete)
+// Unbinds the completion, then cancels. Game thread only.
+static void AbandonTerrainRequest(const FTerrainHttpStateRef& State)
+{
+	if (State->Request.IsValid())
 	{
-		FHttpModule::Get().GetHttpManager().Tick(0.0f);
-		FPlatformProcess::Sleep(0.01f);
-		if (FPlatformTime::Seconds() - StartTime > TimeoutSeconds)
+		State->Request->OnProcessRequestComplete().Unbind();
+		State->Request->CancelRequest();
+		State->Request.Reset();
+	}
+}
+
+static FTerrainHttpResult TerrainHttpRun(const FTerrainHttpRequestSpec& Spec)
+{
+	const FTerrainHttpStateRef State = MakeShared<FTerrainHttpState, ESPMode::ThreadSafe>();
+
+	if (IsInGameThread())
+	{
+		// On the game thread (a direct call, e.g. from Python or the VibeUE console): the original blocking wait.
+		StartTerrainRequest(State, Spec);
+		const double StartTime = FPlatformTime::Seconds();
+		while (!State->bComplete)
 		{
-			Request->CancelRequest();
-			Result.ErrorMessage = TEXT("Request timed out");
-			return Result;
+			// Tick the HTTP manager so it can dispatch the callback on the game thread.
+			FHttpModule::Get().GetHttpManager().Tick(0.0f);
+			FPlatformProcess::Sleep(0.01f);
+			if (FPlatformTime::Seconds() - StartTime > Spec.TimeoutSeconds)
+			{
+				AbandonTerrainRequest(State);
+				FTerrainHttpResult TimedOut;
+				TimedOut.ErrorMessage = TEXT("Request timed out");
+				return TimedOut;
+			}
 		}
+		return State->Result;
 	}
 
-	return Result;
+	// On a worker thread (the MCP bridge runs terrain_data there) the request is made, started and
+	// abandoned on the game thread and this thread only waits, so the editor keeps ticking. A cancel from the client,
+	// or the exit sweep (VibeUEMCPToolBridge::CancelAllRunning), wakes the wait; on the game thread it also abandons
+	// the request at once, so nothing is left for HTTP's shutdown to find.
+	FVibeUEToolCancel* Cancel = FVibeUEToolCancel::GetCurrent();
+	if (Cancel)
+	{
+		const TWeakPtr<FTerrainHttpState, ESPMode::ThreadSafe> WeakState = State;
+		Cancel->SetOnCancel([WeakState]()
+		{
+			if (const TSharedPtr<FTerrainHttpState, ESPMode::ThreadSafe> S = WeakState.Pin())
+			{
+				S->bCancelled = true;
+				if (IsInGameThread())
+				{
+					AbandonTerrainRequest(S.ToSharedRef());
+				}
+				S->Done->Trigger();
+			}
+		});
+	}
+	AsyncTask(ENamedThreads::GameThread, [State, Spec]()
+	{
+		if (!State->bCancelled)
+		{
+			StartTerrainRequest(State, Spec);
+		}
+	});
+	const bool bSignalled = State->Done->Wait(FTimespan::FromSeconds(Spec.TimeoutSeconds + 1.0));
+	if (Cancel)
+	{
+		Cancel->ClearOnCancel();
+	}
+	if (bSignalled && State->bComplete && !State->bCancelled)
+	{
+		return State->Result;
+	}
+	AsyncTask(ENamedThreads::GameThread, [State]() { AbandonTerrainRequest(State); });
+	FTerrainHttpResult Failed;
+	Failed.ErrorMessage = State->bCancelled ? TEXT("Request cancelled") : TEXT("Request timed out");
+	return Failed;
+}
+
+static FTerrainHttpResult TerrainHttpPost(const FString& Path, const FString& JsonBody, float TimeoutSeconds = 30.0f)
+{
+	FTerrainHttpRequestSpec Spec;
+	Spec.Url = GetTerrainBaseUrl() + Path; // GConfig reads take the config lock, safe on a worker
+	Spec.Verb = TEXT("POST");
+	Spec.JsonBody = JsonBody;
+	Spec.bSendApiKey = true;
+	Spec.bKeepHeightmapHeaders = true;
+	Spec.TimeoutSeconds = TimeoutSeconds;
+	return TerrainHttpRun(Spec);
+}
+
+static FTerrainHttpResult TerrainHttpGet(const FString& Path, float TimeoutSeconds = 15.0f)
+{
+	FTerrainHttpRequestSpec Spec;
+	Spec.Url = GetTerrainBaseUrl() + Path;
+	Spec.TimeoutSeconds = TimeoutSeconds;
+	return TerrainHttpRun(Spec);
 }
 
 // ---------------------------------------------------------------------------
@@ -266,10 +361,6 @@ static FString ResolveSavePath(const FString& RequestedPath, const FString& File
 // ---------------------------------------------------------------------------
 static FString ActionGetWaterFeatures(const TMap<FString, FString>& Params)
 {
-	const FString ApiKey = GetVibeUEApiKey();
-	if (ApiKey.IsEmpty())
-		return BuildErrorJson(TEXT("NO_API_KEY"), TEXT("No VibeUE API key configured. Set it in Editor Preferences > Plugins > VibeUE (get a free key at https://www.vibeue.com/login)."));
-
 	const double Lng = ExtractTerrainDouble(Params, TEXT("lng"), 0.0);
 	const double Lat = ExtractTerrainDouble(Params, TEXT("lat"), 0.0);
 	if (ExtractTerrainParam(Params, TEXT("lat")).IsEmpty())
@@ -286,10 +377,11 @@ static FString ActionGetWaterFeatures(const TMap<FString, FString>& Params)
 	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&BodyStr);
 	FJsonSerializer::Serialize(Body, Writer);
 
-	const FString Url = GetTerrainBaseUrl() + TEXT("/api/terrain/water-features");
 	// Use a longer timeout — PBF tiles may be fetched across multiple HTTP round-trips
-	const FTerrainHttpResult HttpResult = TerrainHttpPost(Url, ApiKey, BodyStr, 45.0f);
+	const FTerrainHttpResult HttpResult = TerrainHttpPost(TEXT("/api/terrain/water-features"), BodyStr, 45.0f);
 
+	if (HttpResult.bNoApiKey) // Read where the request starts
+		return BuildErrorJson(TEXT("NO_API_KEY"), NoApiKeyMessage());
 	if (!HttpResult.bSuccess)
 		return BuildErrorJson(TEXT("HTTP_ERROR"), HttpResult.ErrorMessage);
 
@@ -513,10 +605,6 @@ static FString ActionGetWaterFeatures(const TMap<FString, FString>& Params)
 // ---------------------------------------------------------------------------
 static FString ActionGenerateHeightmap(const TMap<FString, FString>& Params)
 {
-	const FString ApiKey = GetVibeUEApiKey();
-	if (ApiKey.IsEmpty())
-		return BuildErrorJson(TEXT("NO_API_KEY"), TEXT("No VibeUE API key configured. Set it in Editor Preferences > Plugins > VibeUE (get a free key at https://www.vibeue.com/login)."));
-
 	const double Lng = ExtractTerrainDouble(Params, TEXT("lng"), 0.0);
 	const double Lat = ExtractTerrainDouble(Params, TEXT("lat"), 0.0);
 	if (Lat == 0.0 && Lng == 0.0 && ExtractTerrainParam(Params, TEXT("lat")).IsEmpty())
@@ -564,9 +652,10 @@ static FString ActionGenerateHeightmap(const TMap<FString, FString>& Params)
 	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&BodyStr);
 	FJsonSerializer::Serialize(Body, Writer);
 
-	const FString Url = GetTerrainBaseUrl() + TEXT("/api/terrain/heightmap");
-	const FTerrainHttpResult HttpResult = TerrainHttpPost(Url, ApiKey, BodyStr);
+	const FTerrainHttpResult HttpResult = TerrainHttpPost(TEXT("/api/terrain/heightmap"), BodyStr);
 
+	if (HttpResult.bNoApiKey) // Read where the request starts
+		return BuildErrorJson(TEXT("NO_API_KEY"), NoApiKeyMessage());
 	if (!HttpResult.bSuccess)
 		return BuildErrorJson(TEXT("HTTP_ERROR"), HttpResult.ErrorMessage);
 
@@ -618,10 +707,6 @@ static FString ActionGenerateHeightmap(const TMap<FString, FString>& Params)
 // ---------------------------------------------------------------------------
 static FString ActionPreviewElevation(const TMap<FString, FString>& Params)
 {
-	const FString ApiKey = GetVibeUEApiKey();
-	if (ApiKey.IsEmpty())
-		return BuildErrorJson(TEXT("NO_API_KEY"), TEXT("No VibeUE API key configured. Set it in Editor Preferences > Plugins > VibeUE."));
-
 	const double Lng = ExtractTerrainDouble(Params, TEXT("lng"), 0.0);
 	const double Lat = ExtractTerrainDouble(Params, TEXT("lat"), 0.0);
 	if (ExtractTerrainParam(Params, TEXT("lat")).IsEmpty())
@@ -638,9 +723,10 @@ static FString ActionPreviewElevation(const TMap<FString, FString>& Params)
 	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&BodyStr);
 	FJsonSerializer::Serialize(Body, Writer);
 
-	const FString Url = GetTerrainBaseUrl() + TEXT("/api/terrain/preview");
-	const FTerrainHttpResult HttpResult = TerrainHttpPost(Url, ApiKey, BodyStr);
+	const FTerrainHttpResult HttpResult = TerrainHttpPost(TEXT("/api/terrain/preview"), BodyStr);
 
+	if (HttpResult.bNoApiKey) // Read where the request starts
+		return BuildErrorJson(TEXT("NO_API_KEY"), NoApiKeyMessage());
 	if (!HttpResult.bSuccess)
 		return BuildErrorJson(TEXT("HTTP_ERROR"), HttpResult.ErrorMessage);
 
@@ -660,10 +746,6 @@ static FString ActionPreviewElevation(const TMap<FString, FString>& Params)
 // ---------------------------------------------------------------------------
 static FString ActionGetMapImage(const TMap<FString, FString>& Params)
 {
-	const FString ApiKey = GetVibeUEApiKey();
-	if (ApiKey.IsEmpty())
-		return BuildErrorJson(TEXT("NO_API_KEY"), TEXT("No VibeUE API key configured. Set it in Editor Preferences > Plugins > VibeUE."));
-
 	const double Lng     = ExtractTerrainDouble(Params, TEXT("lng"),      0.0);
 	const double Lat     = ExtractTerrainDouble(Params, TEXT("lat"),      0.0);
 	const double MapSize = ExtractTerrainDouble(Params, TEXT("map_size"), 17.28);
@@ -687,9 +769,10 @@ static FString ActionGetMapImage(const TMap<FString, FString>& Params)
 	TSharedRef<TJsonWriter<>> BodyWriter = TJsonWriterFactory<>::Create(&BodyStr);
 	FJsonSerializer::Serialize(Body, BodyWriter);
 
-	const FString Url = GetTerrainBaseUrl() + TEXT("/api/terrain/map-image");
-	const FTerrainHttpResult HttpResult = TerrainHttpPost(Url, ApiKey, BodyStr);
+	const FTerrainHttpResult HttpResult = TerrainHttpPost(TEXT("/api/terrain/map-image"), BodyStr);
 
+	if (HttpResult.bNoApiKey) // Read where the request starts
+		return BuildErrorJson(TEXT("NO_API_KEY"), NoApiKeyMessage());
 	if (!HttpResult.bSuccess)
 		return BuildErrorJson(TEXT("HTTP_ERROR"), HttpResult.ErrorMessage);
 
@@ -720,8 +803,7 @@ static FString ActionGetMapImage(const TMap<FString, FString>& Params)
 // ---------------------------------------------------------------------------
 static FString ActionListStyles()
 {
-	const FString Url = GetTerrainBaseUrl() + TEXT("/api/terrain/styles");
-	const FTerrainHttpResult HttpResult = TerrainHttpGet(Url, FString());
+	const FTerrainHttpResult HttpResult = TerrainHttpGet(TEXT("/api/terrain/styles"));
 
 	if (!HttpResult.bSuccess || HttpResult.ResponseCode != 200)
 		return BuildErrorJson(TEXT("HTTP_ERROR"), TEXT("Failed to fetch styles list."));
@@ -788,3 +870,102 @@ REGISTER_VIBEUE_TOOL(terrain_data,
 			FString::Printf(TEXT("Unknown action: '%s'. Valid: generate_heightmap, preview_elevation, get_map_image, list_styles, get_water_features"), *Action));
 	}
 );
+
+#if WITH_AUTOMATION_TESTS
+#include "Misc/AutomationTest.h"
+#include "Async/TaskGraphInterfaces.h"
+
+// The same late-completion hazard as deep_research (VibeUE.Research.TimeoutIsSafe): a timed-out request is cancelled,
+// its completion runs at a later HTTP tick, and it must write nothing the caller can see. Off the game thread, as the
+// MCP bridge runs terrain_data, a cancel arriving on the game thread must wake the waiting worker at once. Test path
+// prefix VibeUE.TerrainData.*
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeUETerrainDataTimeoutIsSafeTest, "VibeUE.TerrainData.TimeoutIsSafe",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVibeUETerrainDataTimeoutIsSafeTest::RunTest(const FString& Parameters)
+{
+	// A non-routable address: the connection hangs, so the request times out (a network that rejects the address
+	// outright fails it as "Connection failed" instead).
+	FTerrainHttpRequestSpec Spec;
+	Spec.Url = TEXT("http://10.255.255.1/");
+	Spec.TimeoutSeconds = 1.0f;
+	const double Start = FPlatformTime::Seconds();
+	FTerrainHttpResult Result = TerrainHttpRun(Spec);
+	const double Elapsed = FPlatformTime::Seconds() - Start;
+	const bool bSuccessAtReturn = Result.bSuccess;
+	const FString MessageAtReturn = Result.ErrorMessage;
+	TestFalse(TEXT("the request did not succeed"), bSuccessAtReturn);
+	TestTrue(FString::Printf(TEXT("it gave up within its time (%.2f s)"), Elapsed), Elapsed < 3.0);
+	TestTrue(FString::Printf(TEXT("it says why: '%s'"), *MessageAtReturn),
+		MessageAtReturn == TEXT("Request timed out") || MessageAtReturn == TEXT("Connection failed"));
+
+	// Let the cancelled request's late completion run, then check it changed nothing after the return.
+	const double PumpUntil = FPlatformTime::Seconds() + 2.0;
+	while (FPlatformTime::Seconds() < PumpUntil)
+	{
+		FHttpModule::Get().GetHttpManager().Tick(0.0f);
+		FPlatformProcess::Sleep(0.01f);
+	}
+	TestEqual(TEXT("the late completion did not write into the returned result (message)"), Result.ErrorMessage, MessageAtReturn);
+	TestEqual(TEXT("the late completion did not write into the returned result (success)"), Result.bSuccess, bSuccessAtReturn);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeUETerrainDataCancelWakesWorkerTest, "VibeUE.TerrainData.CancelWakesWorker",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVibeUETerrainDataCancelWakesWorkerTest::RunTest(const FString& Parameters)
+{
+	if (FTaskGraphInterface::Get().IsThreadProcessingTasks(ENamedThreads::GameThread))
+	{
+		AddWarning(TEXT("Skipped: this runs inside a game-thread task, where pumping the game thread's queue would assert."));
+		return true;
+	}
+
+	const TSharedRef<FVibeUEToolCancel, ESPMode::ThreadSafe> Cancel = MakeShared<FVibeUEToolCancel, ESPMode::ThreadSafe>();
+	FTerrainHttpRequestSpec Spec;
+	Spec.Url = TEXT("http://10.255.255.1/");
+	Spec.TimeoutSeconds = 10.0f;
+	TFuture<FTerrainHttpResult> Future = Async(EAsyncExecution::ThreadPool, [Cancel, Spec]()
+	{
+		FVibeUEToolCancel::FScope CurrentCall(&Cancel.Get());
+		return TerrainHttpRun(Spec);
+	});
+
+	// Pump the game thread so the worker's request starts, then cancel from here after half a second, as the client's
+	// notifications/cancelled and the exit sweep arrive.
+	const double Start = FPlatformTime::Seconds();
+	bool bCancelSent = false;
+	while (!Future.IsReady() && FPlatformTime::Seconds() - Start < 5.0)
+	{
+		FTaskGraphInterface::Get().ProcessThreadUntilIdle(ENamedThreads::GameThread);
+		FHttpModule::Get().GetHttpManager().Tick(0.0f);
+		if (!bCancelSent && FPlatformTime::Seconds() - Start > 0.5)
+		{
+			Cancel->Cancel();
+			bCancelSent = true;
+		}
+		FPlatformProcess::Sleep(0.01f);
+	}
+	const double Elapsed = FPlatformTime::Seconds() - Start;
+	if (!TestTrue(FString::Printf(TEXT("the worker woke after the cancel (%.2f s)"), Elapsed), Future.IsReady()))
+	{
+		return false;
+	}
+	const FTerrainHttpResult Result = Future.Get();
+	TestEqual(TEXT("it says it was cancelled"), Result.ErrorMessage, FString(TEXT("Request cancelled")));
+	TestTrue(FString::Printf(TEXT("well before the request's own 10 s timeout (%.2f s)"), Elapsed), Elapsed < 3.0);
+
+	// Let the worker's queued abandon and any late completion run while this frame is still alive.
+	const double PumpUntil = FPlatformTime::Seconds() + 1.0;
+	while (FPlatformTime::Seconds() < PumpUntil)
+	{
+		FTaskGraphInterface::Get().ProcessThreadUntilIdle(ENamedThreads::GameThread);
+		FHttpModule::Get().GetHttpManager().Tick(0.0f);
+		FPlatformProcess::Sleep(0.01f);
+	}
+	return true;
+}
+
+#endif // WITH_AUTOMATION_TESTS

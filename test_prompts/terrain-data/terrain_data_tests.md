@@ -323,3 +323,21 @@ Fetch water features for a larger area around Auburn, NH. Are there additional p
 
 Get a satellite image and water features for the same area. Do the water bodies match what's visible in the satellite image?
 
+---
+
+## The Editor Keeps Running
+
+terrain_data waits for the terrain server off the game thread, so the editor and other tool calls go on meanwhile.
+
+### Another Call Meanwhile
+
+From a second MCP client, while "Preview the elevation around Tokyo" runs in the first, ask for the name of the open level.
+
+Expected: the level name comes back at once, not after the preview finishes.
+
+### Cancel
+
+Start a 2017 x 2017 heightmap for Mount Rainier and cancel the call from the client before it finishes.
+
+Expected: the call ends at once with "Request cancelled", and the next terrain_data call works normally.
+

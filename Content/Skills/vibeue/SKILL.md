@@ -248,7 +248,7 @@ The open level is never reported - only stragglers.
 | `discover_python_class` / `discover_python_function` / `discover_python_module` | Get live signatures before writing code |
 | `list_python_subsystems` | Enumerate editor subsystems for `unreal.get_editor_subsystem(...)` |
 | `terrain_data` | Real-world heightmaps + water splines (see `terrain-data` skill) |
-| `deep_research` | Web research / page fetch / geocoding |
+| `deep_research` | Web research / page fetch / geocoding. If Jina Reader refuses your network (HTTP 401), set a free Jina key in the `JINA_API_KEY` environment variable and restart the editor |
 
 ## Engine toolsets replace the old VibeUE tools
 

@@ -526,6 +526,8 @@ void FModule::ShutdownModule()
 void FModule::OnPreExit()
 {
 	UE_LOG(LogTemp, Display, TEXT("VibeUE OnPreExit - cleaning up Python services"));
+	// Wake the tool calls waiting off the game thread while HTTP and the thread pool still run
+	VibeUEMCPToolBridge::CancelAllRunning();
 	UWorkflowService::ShutdownJournal();
 	FVibeUEHealthSignal::Stop();
 	FVibeUEReadinessSignal::Remove();
