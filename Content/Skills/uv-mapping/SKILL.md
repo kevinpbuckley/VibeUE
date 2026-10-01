@@ -30,6 +30,12 @@ keywords:
 
 # UV Mapping Skill
 
+For seams on imported organic assets, first distinguish UV boundaries from split
+corner normals, image-border wrapping and invalid material-section indices. See
+the materials skill's `references/generated-organic-surfaces.md` and the
+asset-management skill's `references/mesh-reimport-materials.md`. Do not unwrap
+an approved mesh merely because its shading has a sharp band.
+
 `UVMappingService` provides automation-grade UV channel manipulation for StaticMesh assets in UE 5.7+. The service is built around mesh-description editing and post-build commits — every mutation marks the package dirty and rebuilds render data, but **does not save**. Follow with `unreal.EditorAssetLibrary.save_asset(mesh_path)` once you finish a batch.
 
 ## When NOT to Use This Service

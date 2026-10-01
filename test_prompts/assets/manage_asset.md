@@ -86,7 +86,7 @@ Saved/Screenshots folder. (If none exist, take an editor screenshot to disk firs
 ---
 
 Import that image file into /Game/ImportTest as a texture called T_ImportSmoke. Use the asset
-manager's import — do NOT use Python import_asset_tasks (that crashes the editor).
+manager's import (AssetDiscoveryService.import_asset), not Python import_asset_tasks.
 
 ---
 
@@ -99,15 +99,35 @@ not crash.
 
 ---
 
-Try to import a .txt (non-image) file. It should fail gracefully and report that the file type is
-unsupported.
+Try to import a .txt file. No importer takes it, so it should fail gracefully and say that
+nothing was imported.
+
+---
+
+## Importing a Mesh From Disk
+
+Write a small OBJ mesh (one quad is enough) to a file in the project's Saved folder, then import
+it into /Game/ImportTest as SM_ImportSmoke with the asset manager's import. It should come back as a
+saved Static Mesh at /Game/ImportTest/SM_ImportSmoke.
+
+---
+
+Import the same file again under the same name. The existing mesh should be replaced, not
+duplicated.
+
+---
+
+Write an OBJ quad that uses a material from an MTL file next to it (`mtllib` + `usemtl`, one red
+material), and import it into the empty folder /Game/ImportTest/WithMaterial as SM_ImportSmokeMat.
+The call should return the Static Mesh's path, not the material's, and the material should land in
+the same folder.
 
 ---
 
 ## Cleanup
 
-Delete the test assets created above (AssetSearchTest, AssetWidgetTest, their Backups, and
-T_ImportSmoke).
+Delete the test assets created above (AssetSearchTest, AssetWidgetTest, their Backups,
+T_ImportSmoke, SM_ImportSmoke and the /Game/ImportTest/WithMaterial folder).
 
 ---
 

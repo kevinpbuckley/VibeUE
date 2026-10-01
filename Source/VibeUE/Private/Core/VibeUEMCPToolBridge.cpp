@@ -7,13 +7,24 @@
 #include "IModelContextProtocolModule.h"
 #include "IModelContextProtocolTool.h"
 #include "ModelContextProtocolToolResults.h"
+#include "ModelContextProtocolSession.h" // FModelContextProtocolToolRequestId, for CancelAsync
 
 #include "Async/Async.h"
+#include "Core/VibeUEToolCancel.h" // Private/Core: module-private
+#include "Misc/IQueuedWork.h"
+#include "Misc/QueuedThreadPool.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
+
+// One current-call cancel token per thread (see Core/VibeUEToolCancel.h)
+FVibeUEToolCancel*& FVibeUEToolCancel::CurrentSlot()
+{
+	static thread_local FVibeUEToolCancel* Current = nullptr;
+	return Current;
+}
 
 namespace
 {
@@ -22,11 +33,194 @@ namespace
 	{
 		if (VibeType == TEXT("int"))    { return TEXT("integer"); }
 		if (VibeType == TEXT("float"))  { return TEXT("number"); }
+		// Tools also declare the JSON Schema names themselves (capture_image max_width, deep_research lat/lng)
+		if (VibeType == TEXT("number") || VibeType == TEXT("integer") || VibeType == TEXT("boolean")) { return VibeType; }
 		if (VibeType == TEXT("bool"))   { return TEXT("boolean"); }
 		if (VibeType == TEXT("object")) { return TEXT("object"); }
 		if (VibeType == TEXT("array"))  { return TEXT("array"); }
 		return TEXT("string");
 	}
+
+	/**
+	 * Tools that may run on a worker thread. Only tools that touch no UObject and no editor
+	 * state qualify: deep_research and terrain_data make HTTP requests (started on the game thread, see
+	 * DeepResearchTools.cpp and TerrainDataTools.cpp), parse text and write files. On the game thread they blocked
+	 * the editor for up to 45 s.
+	 */
+	bool RunsOffGameThread(const FString& ToolName)
+	{
+		return ToolName == TEXT("deep_research") || ToolName == TEXT("terrain_data");
+	}
+
+	/**
+	 * The off-game-thread calls, running or waiting for a thread, by request id, for CancelAsync, the exit sweep and the
+	 * cap on calls in flight. A multimap: the id carries no session, so two clients' calls can share one, and neither
+	 * may drop out of the table.
+	 *
+	 * Known limitation, cross-session cancel: JSON-RPC ids are unique only within one MCP session (clients number them
+	 * 1, 2, 3...), and CancelAsync gets the id but no session. Epic's server calls CancelAsync only when the cancelling
+	 * session has an active request with that id, but this table is shared by every session and every bridged tool, so
+	 * a notifications/cancelled from client A also cancels client B's deep_research or terrain_data call that carries
+	 * the same id. Telling them apart needs the session in CancelAsync (or in the request id) from Epic's interface.
+	 */
+	FCriticalSection GRunningCallsLock;
+	TMultiMap<FString, TSharedRef<FVibeUEToolCancel, ESPMode::ThreadSafe>> GRunningCalls;
+
+	FString RequestKey(const FModelContextProtocolToolRequestId& RequestId)
+	{
+		// The id's own operator== and hash are not exported; its JSON text is what Epic hashes too.
+		return RequestId.RequestId.IsValid() ? RequestId.RequestId->AsString() : FString();
+	}
+
+	/** Turn a tool's JSON string into the MCP result and hand it over (safe from any thread). */
+	void DeliverResult(const FString& Result, const IModelContextProtocolTool::FResultCallback& OnComplete)
+	{
+		// VibeUE tools report failure as {"success": false, ...}; surface that as an MCP error.
+		bool bIsError = false;
+		TSharedPtr<FJsonObject> ResultObj;
+		const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Result);
+		if (FJsonSerializer::Deserialize(Reader, ResultObj) && ResultObj.IsValid())
+		{
+			bool bSuccess = true;
+			if (ResultObj->TryGetBoolField(TEXT("success"), bSuccess) && !bSuccess)
+			{
+				bIsError = true;
+			}
+		}
+
+		// A tool can return one image alongside its JSON by embedding a reserved
+		// "vibeue_image": {"mime_type", "base64"} field — surfaced here as a real MCP image
+		// content block so clients render the picture instead of receiving a megabyte of
+		// base64 inside a text block (issue #544).
+		if (!bIsError && ResultObj.IsValid())
+		{
+			const TSharedPtr<FJsonObject>* ImageObj = nullptr;
+			FString MimeType, Base64;
+			if (ResultObj->TryGetObjectField(TEXT("vibeue_image"), ImageObj) && ImageObj && ImageObj->IsValid() &&
+				(*ImageObj)->TryGetStringField(TEXT("mime_type"), MimeType) &&
+				(*ImageObj)->TryGetStringField(TEXT("base64"), Base64) && !Base64.IsEmpty())
+			{
+				ResultObj->RemoveField(TEXT("vibeue_image"));
+				FString TextPart;
+				const TSharedRef<TJsonWriter<>> TextWriter = TJsonWriterFactory<>::Create(&TextPart);
+				FJsonSerializer::Serialize(ResultObj.ToSharedRef(), TextWriter);
+
+				TSharedPtr<FJsonObject> ImageContent = MakeShared<FJsonObject>();
+				ImageContent->SetStringField(TEXT("type"), TEXT("image"));
+				ImageContent->SetStringField(TEXT("data"), Base64);
+				ImageContent->SetStringField(TEXT("mimeType"), MimeType);
+
+				TArray<TSharedPtr<FJsonValue>> Content;
+				Content.Add(MakeShared<FJsonValueObject>(UE::ModelContextProtocol::MakeTextContentObject(TextPart)));
+				Content.Add(MakeShared<FJsonValueObject>(ImageContent));
+
+				TSharedPtr<FJsonObject> ResultRoot = MakeShared<FJsonObject>();
+				ResultRoot->SetArrayField(TEXT("content"), Content);
+				OnComplete(FModelContextProtocolToolResult(ResultRoot));
+				return;
+			}
+		}
+
+		OnComplete(bIsError
+			? UE::ModelContextProtocol::MakeErrorResult(Result)
+			: UE::ModelContextProtocol::MakeTextResult(Result));
+	}
+
+	/**
+	 * The threads the off-game-thread calls run on: a small pool of their own, not the engine's shared GThreadPool.
+	 * Each call parks its thread while it waits on a request (deep_research up to ~46 s per request, and fetch_page's
+	 * fallback makes two; terrain_data up to ~46 s), and in the editor GThreadPool runs at most one job per worker
+	 * core, so a few slow calls there would hold up the engine's own background work. Calls past the pool's size wait
+	 * in its queue; past MaxOffGameThreadCalls, running and waiting together, a call is refused at once with BUSY.
+	 * Made on first use and destroyed by CancelAllRunning, both on the game thread.
+	 */
+	constexpr int32 OffGameThreadPoolSize = 4;
+	constexpr int32 MaxOffGameThreadCalls = 16;
+	FQueuedThreadPool* GOffGameThreadPool = nullptr;
+	bool bOffGameThreadPoolShutDown = false; // Set by CancelAllRunning: no pool is made again, later calls are refused
+
+	/** A failure in FToolRegistry's error shape, for calls the bridge answers without running the tool. */
+	FString MakeOffGameThreadError(const TCHAR* ErrorCode, const FString& Message)
+	{
+		TSharedRef<FJsonObject> ErrorResult = MakeShared<FJsonObject>();
+		ErrorResult->SetBoolField(TEXT("success"), false);
+		ErrorResult->SetStringField(TEXT("error"), Message);
+		ErrorResult->SetStringField(TEXT("error_code"), ErrorCode);
+		FString Out;
+		const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Out);
+		FJsonSerializer::Serialize(ErrorResult, Writer);
+		return Out;
+	}
+
+	FQueuedThreadPool* GetOffGameThreadPool()
+	{
+		check(IsInGameThread());
+		if (!GOffGameThreadPool && !bOffGameThreadPoolShutDown)
+		{
+			FQueuedThreadPool* Pool = FQueuedThreadPool::Allocate();
+			// 1 MB stacks, as the editor gives its own pool threads
+			if (Pool->Create(OffGameThreadPoolSize, 1024 * 1024, TPri_Normal, TEXT("VibeUE Tool Calls")))
+			{
+				GOffGameThreadPool = Pool;
+			}
+			else
+			{
+				delete Pool;
+			}
+		}
+		return GOffGameThreadPool;
+	}
+
+	/** One off-game-thread call, queued on GOffGameThreadPool. Deletes itself once it has delivered its result. */
+	class FVibeUEOffGameThreadCall final : public IQueuedWork
+	{
+	public:
+		FVibeUEOffGameThreadCall(FToolExecuteFunc InFunc, TMap<FString, FString> InArgs,
+			IModelContextProtocolTool::FResultCallback InOnComplete, FString InKey,
+			TSharedRef<FVibeUEToolCancel, ESPMode::ThreadSafe> InCancel)
+			: Func(MoveTemp(InFunc))
+			, Args(MoveTemp(InArgs))
+			, OnComplete(MoveTemp(InOnComplete))
+			, Key(MoveTemp(InKey))
+			, Cancel(MoveTemp(InCancel))
+		{
+		}
+
+		virtual void DoThreadedWork() override
+		{
+			FString Result;
+			{
+				FVibeUEToolCancel::FScope CurrentCall(&Cancel.Get());
+				Result = Func(Args);
+			}
+			Finish(Result);
+		}
+
+		// The pool is being destroyed (CancelAllRunning) before this call got a thread: answer it without running it.
+		virtual void Abandon() override
+		{
+			Finish(MakeOffGameThreadError(TEXT("CANCELLED"), TEXT("The editor is shutting down; the call was cancelled before it started.")));
+		}
+
+		virtual const TCHAR* GetDebugName() const override { return TEXT("VibeUE tool call"); }
+
+	private:
+		void Finish(const FString& Result)
+		{
+			{
+				FScopeLock Guard(&GRunningCallsLock);
+				GRunningCalls.RemoveSingle(Key, Cancel); // Only this call's entry
+			}
+			DeliverResult(Result, OnComplete); // Epic's server takes the result to the game thread itself
+			delete this;
+		}
+
+		FToolExecuteFunc Func;
+		TMap<FString, FString> Args;
+		IModelContextProtocolTool::FResultCallback OnComplete;
+		FString Key;
+		TSharedRef<FVibeUEToolCancel, ESPMode::ThreadSafe> Cancel;
+	};
 
 	/** Build an MCP JSON Schema object from a tool's parameter metadata. */
 	TSharedPtr<FJsonObject> BuildInputSchema(const FToolMetadata& Meta)
@@ -163,66 +357,69 @@ namespace
 		virtual FString GetDescription() const override { return Description; }
 		virtual TSharedPtr<FJsonObject> GetInputJsonSchema() const override { return InputSchema; }
 
-		virtual void RunAsync(const FModelContextProtocolToolRequestId& /*RequestId*/,
+		virtual void RunAsync(const FModelContextProtocolToolRequestId& RequestId,
 			const TSharedPtr<FJsonObject>& Params,
 			const FResultCallback& OnComplete) override
 		{
 			const FString ToolName = Name;
 			TMap<FString, FString> Args = JsonObjectToArgMap(Params);
 
-			auto Execute = [ToolName, Args = MoveTemp(Args), OnComplete]()
+			// Checks on the game thread, the work on a worker thread, the result from there
+			// (OnComplete may be called from any thread, IModelContextProtocolTool.h). The editor keeps ticking
+			// while the tool waits, and CancelAsync can wake it.
+			if (RunsOffGameThread(ToolName))
 			{
-				const FString Result = FToolRegistry::Get().ExecuteTool(ToolName, Args);
-
-				// VibeUE tools report failure as {"success": false, ...}; surface that as an MCP error.
-				bool bIsError = false;
-				TSharedPtr<FJsonObject> ResultObj;
-				const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Result);
-				if (FJsonSerializer::Deserialize(Reader, ResultObj) && ResultObj.IsValid())
+				auto Launch = [ToolName, Args = MoveTemp(Args), OnComplete, Key = RequestKey(RequestId)]() mutable
 				{
-					bool bSuccess = true;
-					if (ResultObj->TryGetBoolField(TEXT("success"), bSuccess) && !bSuccess)
+					FToolExecuteFunc Func;
+					FString ErrorJson;
+					if (!FToolRegistry::Get().PrepareToolCall(ToolName, Args, Func, ErrorJson))
 					{
-						bIsError = true;
-					}
-				}
-
-				// A tool can return one image alongside its JSON by embedding a reserved
-				// "vibeue_image": {"mime_type", "base64"} field — surfaced here as a real MCP image
-				// content block so clients render the picture instead of receiving a megabyte of
-				// base64 inside a text block (issue #544).
-				if (!bIsError && ResultObj.IsValid())
-				{
-					const TSharedPtr<FJsonObject>* ImageObj = nullptr;
-					FString MimeType, Base64;
-					if (ResultObj->TryGetObjectField(TEXT("vibeue_image"), ImageObj) && ImageObj && ImageObj->IsValid() &&
-						(*ImageObj)->TryGetStringField(TEXT("mime_type"), MimeType) &&
-						(*ImageObj)->TryGetStringField(TEXT("base64"), Base64) && !Base64.IsEmpty())
-					{
-						ResultObj->RemoveField(TEXT("vibeue_image"));
-						FString TextPart;
-						const TSharedRef<TJsonWriter<>> TextWriter = TJsonWriterFactory<>::Create(&TextPart);
-						FJsonSerializer::Serialize(ResultObj.ToSharedRef(), TextWriter);
-
-						TSharedPtr<FJsonObject> ImageContent = MakeShared<FJsonObject>();
-						ImageContent->SetStringField(TEXT("type"), TEXT("image"));
-						ImageContent->SetStringField(TEXT("data"), Base64);
-						ImageContent->SetStringField(TEXT("mimeType"), MimeType);
-
-						TArray<TSharedPtr<FJsonValue>> Content;
-						Content.Add(MakeShared<FJsonValueObject>(UE::ModelContextProtocol::MakeTextContentObject(TextPart)));
-						Content.Add(MakeShared<FJsonValueObject>(ImageContent));
-
-						TSharedPtr<FJsonObject> ResultRoot = MakeShared<FJsonObject>();
-						ResultRoot->SetArrayField(TEXT("content"), Content);
-						OnComplete(FModelContextProtocolToolResult(ResultRoot));
+						DeliverResult(ErrorJson, OnComplete);
 						return;
 					}
+					// The bridge's own pool, not a task-graph worker nor GThreadPool: the tool may wait up to ~46 s.
+					FQueuedThreadPool* Pool = GetOffGameThreadPool();
+					if (!Pool)
+					{
+						DeliverResult(MakeOffGameThreadError(TEXT("UNAVAILABLE"), bOffGameThreadPoolShutDown
+							? FString::Printf(TEXT("'%s' was not run: the editor is shutting down."), *ToolName)
+							: FString::Printf(TEXT("'%s' was not run: its worker threads could not be started."), *ToolName)), OnComplete);
+						return;
+					}
+					TSharedRef<FVibeUEToolCancel, ESPMode::ThreadSafe> Cancel = MakeShared<FVibeUEToolCancel, ESPMode::ThreadSafe>();
+					bool bBusy = false;
+					{
+						FScopeLock Guard(&GRunningCallsLock);
+						bBusy = GRunningCalls.Num() >= MaxOffGameThreadCalls;
+						if (!bBusy)
+						{
+							GRunningCalls.Add(Key, Cancel);
+						}
+					}
+					if (bBusy)
+					{
+						DeliverResult(MakeOffGameThreadError(TEXT("BUSY"), FString::Printf(
+							TEXT("'%s' was not run: %d deep_research / terrain_data calls are already running or waiting, the most the editor takes at once. Try again when one has finished."),
+							*ToolName, MaxOffGameThreadCalls)), OnComplete);
+						return;
+					}
+					Pool->AddQueuedWork(new FVibeUEOffGameThreadCall(MoveTemp(Func), MoveTemp(Args), OnComplete, Key, Cancel));
+				};
+				if (IsInGameThread())
+				{
+					Launch();
 				}
+				else
+				{
+					AsyncTask(ENamedThreads::GameThread, MoveTemp(Launch));
+				}
+				return;
+			}
 
-				OnComplete(bIsError
-					? UE::ModelContextProtocol::MakeErrorResult(Result)
-					: UE::ModelContextProtocol::MakeTextResult(Result));
+			auto Execute = [ToolName, Args = MoveTemp(Args), OnComplete]()
+			{
+				DeliverResult(FToolRegistry::Get().ExecuteTool(ToolName, Args), OnComplete);
 			};
 
 			// VibeUE tools must run on the game thread.
@@ -233,6 +430,21 @@ namespace
 			else
 			{
 				AsyncTask(ENamedThreads::GameThread, MoveTemp(Execute));
+			}
+		}
+
+		// Epic's server calls this on notifications/cancelled; it wakes an off-game-thread call. It gets no session, so
+		// it reaches every call with that id, other clients' too (see GRunningCalls).
+		virtual void CancelAsync(const FModelContextProtocolToolRequestId& RequestId) override
+		{
+			TArray<TSharedRef<FVibeUEToolCancel, ESPMode::ThreadSafe>> Cancels;
+			{
+				FScopeLock Guard(&GRunningCallsLock);
+				GRunningCalls.MultiFind(RequestKey(RequestId), Cancels); // Every call with this id
+			}
+			for (const TSharedRef<FVibeUEToolCancel, ESPMode::ThreadSafe>& Cancel : Cancels)
+			{
+				Cancel->Cancel();
 			}
 		}
 
@@ -298,4 +510,85 @@ namespace VibeUEMCPToolBridge
 		}
 		GRegisteredTools.Empty();
 	}
+
+	// At editor exit (OnPreExit) and module shutdown, wake every worker still waiting on a request, so no worker
+	// queues a request start after HTTP is gone, then stop the bridge's threads. Destroy() answers the calls still
+	// waiting for a thread (Abandon) and waits for the running ones: cancelled, they return at once and need nothing
+	// from the game thread (their request aborts and their result are only queued to it). Not from UnregisterAll: that
+	// also runs on every ModelContextProtocol.RefreshTools, which must not cancel live calls.
+	void CancelAllRunning()
+	{
+		if (bOffGameThreadPoolShutDown)
+		{
+			return; // Done already (OnPreExit, then ShutdownModule): no call is left and no pool is made after it
+		}
+		check(IsInGameThread()); // The pool is made and destroyed on the game thread only
+		bOffGameThreadPoolShutDown = true;
+		TArray<TSharedRef<FVibeUEToolCancel, ESPMode::ThreadSafe>> Cancels;
+		{
+			FScopeLock Guard(&GRunningCallsLock);
+			GRunningCalls.GenerateValueArray(Cancels);
+		}
+		for (const TSharedRef<FVibeUEToolCancel, ESPMode::ThreadSafe>& Cancel : Cancels)
+		{
+			Cancel->Cancel();
+		}
+		if (GOffGameThreadPool)
+		{
+			GOffGameThreadPool->Destroy();
+			delete GOffGameThreadPool;
+			GOffGameThreadPool = nullptr;
+		}
+	}
 }
+
+#if WITH_AUTOMATION_TESTS
+#include "Misc/AutomationTest.h"
+
+// Tools declare parameter types both in VibeUE's own names ("int", "float", "bool") and in JSON Schema's
+// ("number", "integer", "boolean"). The schema names used to fall through to "string", so capture_image max_width,
+// deep_research lat/lng and execute_python_code auto_save were advertised as strings. BuildInputSchema lives in this
+// file's anonymous namespace, so the test does too. Test path prefix VibeUE.Bridge.*
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeUEBridgeSchemaTypesTest, "VibeUE.Bridge.SchemaTypes",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVibeUEBridgeSchemaTypesTest::RunTest(const FString& Parameters)
+{
+	FToolMetadata Meta;
+	Meta.Name = TEXT("schema_types_test");
+	Meta.Parameters.Add(FToolParameter(TEXT("count"), TEXT("VibeUE int"), TEXT("int"), false));
+	Meta.Parameters.Add(FToolParameter(TEXT("scale"), TEXT("VibeUE float"), TEXT("float"), false));
+	Meta.Parameters.Add(FToolParameter(TEXT("flag"), TEXT("VibeUE bool"), TEXT("bool"), false));
+	Meta.Parameters.Add(FToolParameter(TEXT("lat"), TEXT("JSON Schema number"), TEXT("number"), false));
+	Meta.Parameters.Add(FToolParameter(TEXT("max_items"), TEXT("JSON Schema integer"), TEXT("integer"), false));
+	Meta.Parameters.Add(FToolParameter(TEXT("auto_save"), TEXT("JSON Schema boolean"), TEXT("boolean"), false));
+	Meta.Parameters.Add(FToolParameter(TEXT("label"), TEXT("string"), TEXT("string"), true));
+
+	const TSharedPtr<FJsonObject> Schema = BuildInputSchema(Meta);
+	const TSharedPtr<FJsonObject>* Properties = nullptr;
+	if (!TestTrue(TEXT("the schema has properties"), Schema.IsValid() && Schema->TryGetObjectField(TEXT("properties"), Properties)))
+	{
+		return false;
+	}
+	auto TypeOf = [Properties](const TCHAR* ParamName)
+	{
+		const TSharedPtr<FJsonObject>* Prop = nullptr;
+		FString Type;
+		if ((*Properties)->TryGetObjectField(ParamName, Prop))
+		{
+			(*Prop)->TryGetStringField(TEXT("type"), Type);
+		}
+		return Type;
+	};
+	TestEqual(TEXT("int -> integer"), TypeOf(TEXT("count")), FString(TEXT("integer")));
+	TestEqual(TEXT("float -> number"), TypeOf(TEXT("scale")), FString(TEXT("number")));
+	TestEqual(TEXT("bool -> boolean"), TypeOf(TEXT("flag")), FString(TEXT("boolean")));
+	TestEqual(TEXT("number stays number"), TypeOf(TEXT("lat")), FString(TEXT("number")));
+	TestEqual(TEXT("integer stays integer"), TypeOf(TEXT("max_items")), FString(TEXT("integer")));
+	TestEqual(TEXT("boolean stays boolean"), TypeOf(TEXT("auto_save")), FString(TEXT("boolean")));
+	TestEqual(TEXT("string stays string"), TypeOf(TEXT("label")), FString(TEXT("string")));
+	return true;
+}
+
+#endif // WITH_AUTOMATION_TESTS

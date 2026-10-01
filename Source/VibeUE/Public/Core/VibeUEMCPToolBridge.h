@@ -16,4 +16,10 @@ namespace VibeUEMCPToolBridge
 
 	/** Remove the tools registered by RegisterAll(). */
 	VIBEUE_API void UnregisterAll();
+
+	/**
+	 * Cancel every call still running off the game thread (deep_research, terrain_data), then stop the threads they
+	 * run on; later calls are refused. Game thread, at exit and module shutdown only (a second call does nothing).
+	 */
+	VIBEUE_API void CancelAllRunning();
 }

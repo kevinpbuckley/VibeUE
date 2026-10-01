@@ -7,6 +7,7 @@
 #include "HAL/PlatformMisc.h"
 #include "HAL/PlatformProcess.h"
 #include "Internationalization/Regex.h"
+#include "Misc/Base64.h"
 
 // For SEH exception handling on Windows
 #if PLATFORM_WINDOWS
@@ -278,6 +279,22 @@ FPythonExecutionService::FPythonExecutionService(TSharedPtr<FServiceContext> Con
 {
 }
 
+FString FPythonExecutionService::MakeCodeCommand(const FString& Code)
+{
+	// Any case, anywhere: wrapping code the plugin would have run anyway changes nothing.
+	if (!Code.Contains(TEXT(".py")))
+	{
+		return Code;
+	}
+	// Bytes, as the plugin compiles them, so a coding cookie reads the same. builtins, because an
+	// earlier call may have rebound compile or exec in the console globals every call shares.
+	const FTCHARToUTF8 Utf8(*Code);
+	const FString Encoded = FBase64::Encode(reinterpret_cast<const uint8*>(Utf8.Get()), Utf8.Length());
+	return FString::Printf(
+		TEXT("__import__('builtins').exec(__import__('builtins').compile(__import__('base64').b64decode('%s'), '<string>', 'exec', dont_inherit=True))"),
+		*Encoded);
+}
+
 bool FPythonExecutionService::ContainsUnsafePattern(const FString& Code, FString& OutPattern, FString& OutReason)
 {
 	return ContainsDangerousPattern(Code, OutPattern, OutReason);
@@ -323,9 +340,10 @@ TResult<FPythonExecutionResult> FPythonExecutionService::ExecuteCode(
 	const int64 RunId = FVibeUEPythonResultLog::NextRunId();
 	const FDateTime StartedUtc = FDateTime::UtcNow();
 
-	// Setup command
+	// Setup command. ExecuteFile is the only mode that runs several statements, and it would take
+	// code mentioning a .py file for a file path: MakeCodeCommand keeps such code running as code.
 	FPythonCommandEx Command;
-	Command.Command = Code;
+	Command.Command = MakeCodeCommand(Code);
 	Command.ExecutionMode = EPythonCommandExecutionMode::ExecuteFile;
 	Command.FileExecutionScope = ExecutionScope;
 	Command.Flags = EPythonCommandFlags::None;
@@ -438,7 +456,11 @@ TResult<FPythonExecutionResult> FPythonExecutionService::ExecuteCode(
 		if (!bSuccess || !Result.bSuccess)
 		{
 			OutErrorCode = ErrorCodes::PYTHON_RUNTIME_ERROR;
-			OutErrorMessage = Result.ErrorMessage.IsEmpty() ? TEXT("Python execution failed") : Result.ErrorMessage;
+			// The plugin can refuse a command without logging anything (e.g. "Could not load Python
+			// file"); its CommandResult is then the only reason given.
+			OutErrorMessage = !Result.ErrorMessage.IsEmpty() ? Result.ErrorMessage
+				: !Command.CommandResult.IsEmpty() ? Command.CommandResult
+				: FString(TEXT("Python execution failed"));
 		}
 		else if (TimeoutMs > 0 && ExecutionTimeMs > TimeoutMs)
 		{

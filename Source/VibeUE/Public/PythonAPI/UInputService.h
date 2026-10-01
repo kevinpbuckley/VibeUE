@@ -239,13 +239,16 @@ struct FInputTypeDiscoveryResult
  * - get_available_modifier_types: Get available modifier types
  *
  * Trigger Management:
- * - add_trigger: Add a trigger to a key mapping
+ * - add_trigger: Add a trigger to a key mapping, optionally with its settings
+ * - add_action_trigger: Add a trigger to an Input Action itself, optionally with its settings
  * - remove_trigger: Remove a trigger from a key mapping
  * - get_triggers: Get triggers on a key mapping
  * - get_available_trigger_types: Get available trigger types
  *
  * PIE Input Injection (issue #550):
- * - inject_action: Inject an Enhanced Input action value into the running PIE session
+ * - inject_action: Queue an Enhanced Input action value for the next input tick of the running PIE session
+ * - inject_action_for: Hold an Enhanced Input action value for a number of seconds, then release it
+ * - stop_injection: Release an action that inject_action_for is holding
  * - inject_key: Send a key press to the PIE game viewport via Slate (no OS focus needed)
  *
  * Python Usage:
@@ -292,8 +295,12 @@ public:
 	 * Create a new Input Action asset.
 	 * Maps to action="action_create"
 	 *
-	 * @param ActionName - Name for the new action
-	 * @param AssetPath - Path where to create the asset (e.g., "/Game/Input")
+	 * @param ActionName - Name for the new action. An invalid asset name (empty, or with a space, '.', '/' or another
+	 *                     character asset names cannot hold) is refused with the reason
+	 * @param AssetPath - Folder to create the asset in (e.g., "/Game/Input"). A path that starts with its mount point
+	 *                    is kept; a bare folder ("Input") goes under /Game; a folder under no mounted content root
+	 *                    (/Temp/X) is refused with the reason, and so are /Engine (the installed engine's content) and
+	 *                    /Script. Plugin content roots are allowed
 	 * @param ValueType - Value type: "Boolean" (alias "Digital"), "Axis1D", "Axis2D", "Axis3D" — same names discover_types returns
 	 * @return Create result with asset path
 	 */
@@ -348,8 +355,8 @@ public:
 	 * Create a new Input Mapping Context.
 	 * Maps to action="mapping_create_context"
 	 *
-	 * @param ContextName - Name for the new context
-	 * @param AssetPath - Path where to create the asset
+	 * @param ContextName - Name for the new context, checked as create_action checks its name
+	 * @param AssetPath - Folder to create the asset in, taken as create_action takes it
 	 * @param Priority - Context priority (higher = processed first)
 	 * @return Create result with asset path
 	 */
@@ -493,13 +500,40 @@ public:
 	 * @param ContextPath - Full path to the Mapping Context
 	 * @param MappingIndex - Index of the mapping
 	 * @param TriggerType - Type of trigger (e.g., "Pressed", "Released", "Down", "Hold")
+	 * @param PropertiesJson - Optional trigger settings as a JSON object, e.g.
+	 *        {"HoldTimeThreshold": 0.5, "bIsOneShot": true}. Names match the C++ property or its
+	 *        snake_case form (hold_time_threshold, is_one_shot). Only the settings the trigger's Details
+	 *        panel shows can be set: runtime state (HeldDuration, LastValue, bShouldAlwaysTick, ...) is
+	 *        refused, and a number outside the property's ClampMin/ClampMax (HoldTimeThreshold >= 0) is
+	 *        refused, naming the range. An unknown name, a refused setting or a bad value fails the call
+	 *        and adds nothing. A running PIE session keeps its copy of the triggers: restart PIE to see it.
 	 * @return True if successful
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input")
 	static bool AddTrigger(
 		const FString& ContextPath,
 		int32 MappingIndex,
-		const FString& TriggerType);
+		const FString& TriggerType,
+		const FString& PropertiesJson = TEXT(""));
+
+	/**
+	 * Add a trigger to an Input Action's own trigger list (applies to every mapping of the action).
+	 *
+	 * @param ActionPath - Full path to the Input Action
+	 * @param TriggerType - Type of trigger (e.g., "Pressed", "Hold", "Tap")
+	 * @param PropertiesJson - Optional trigger settings as a JSON object, as for add_trigger
+	 * @return JSON: {success, action, trigger, trigger_index, note} or {success:false, error_code, error_message}
+	 *         error_code: PIE_ACTIVE (stop PIE first: assets cannot be loaded for editing during a play session),
+	 *         ACTION_NOT_FOUND, TRIGGER_TYPE_NOT_FOUND, BAD_PROPERTIES
+	 *
+	 * Example:
+	 *   unreal.InputService.add_action_trigger("/Game/Input/IA_Block", "Hold", '{"hold_time_threshold": 0.4}')
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input")
+	static FString AddActionTrigger(
+		const FString& ActionPath,
+		const FString& TriggerType,
+		const FString& PropertiesJson = TEXT(""));
 
 	/**
 	 * Remove a trigger from a key mapping.
@@ -587,21 +621,58 @@ public:
 	// =================================================================
 
 	/**
-	 * Inject an Enhanced Input action value into the running PIE session's first local player.
+	 * Queue an Enhanced Input action value for the next input tick of a PIE world's local player.
 	 * Removes the need to remap game input assets and send OS keystrokes just to test a mechanic.
 	 *
-	 * The value applies for one input tick — a Pressed/Triggered action fires once per call; call
-	 * repeatedly (once per ~frame) to simulate holding. X/Y/Z map onto the action's value type
-	 * (Boolean uses X != 0). Requires PIE; no OS window focus needed.
+	 * The value is QUEUED: it applies on the next input tick and is released on the tick after, so a
+	 * press fires Started and Completed almost at once. The world does not tick while a Python call runs,
+	 * so read the result in a LATER call, two or more frames on. To hold an action (a guard, a charge,
+	 * a Hold trigger) use inject_action_for. X/Y/Z map onto the action's value type (Boolean uses X != 0).
 	 *
 	 * @param ActionPath - Input Action asset path (/Game/Input/IA_Fire or full object path)
-	 * @return JSON: {success, action, value_type, injected:[x,y,z]} or {success:false, error_code, error_message}
+	 * @param PieInstance - Which PIE world (its PIE instance number); -1 = the first PIE world with a local
+	 *        player (lowest instance number: the listen server's window, or client 1 under a dedicated server)
+	 * @return JSON: {success, queued, action, value_type, injected:[x,y,z], pie_instance (the instance used)} or
+	 *         {success:false, error_code, error_message}
+	 *         error_code: PIE_NOT_RUNNING, NO_PIE_INSTANCE, NO_LOCAL_PLAYER, NO_PLAYER_CONTROLLER (PIE start or a
+	 *         client's join is still in progress: retry on a later tick), NO_ENHANCED_INPUT, ACTION_NOT_FOUND
 	 *
 	 * Example:
 	 *   unreal.InputService.inject_action("/Game/Input/IA_Fire_Secondary")   # fire once
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Input|PIE")
-	static FString InjectAction(const FString& ActionPath, float X = 1.0f, float Y = 0.0f, float Z = 0.0f);
+	static FString InjectAction(const FString& ActionPath, float X = 1.0f, float Y = 0.0f, float Z = 0.0f, int32 PieInstance = -1);
+
+	/**
+	 * Hold an Enhanced Input action value for Seconds of real time, then release it. Returns at once;
+	 * the injection runs on the following ticks. While any injection or held key is active the editor
+	 * does not drop to its background frame rate, so the hold is not starved when the editor is unfocused.
+	 * A second call for the same action and PIE world (any spelling of the path) restarts the hold.
+	 * Ending PIE drops every hold.
+	 *
+	 * @param ActionPath - Input Action asset path
+	 * @param Seconds - How long to hold, 0.05 to 60
+	 * @param PieInstance - Which PIE world, as for inject_action; -1 = the first PIE world with a local player
+	 * @return JSON: {success, action, seconds, pie_instance (the instance used)} or
+	 *         {success:false, error_code, error_message} with inject_action's error codes, plus BAD_DURATION
+	 *
+	 * Example:
+	 *   unreal.InputService.inject_action_for("/Game/Input/IA_Block", 1.5)   # hold the guard 1.5 s
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Input|PIE")
+	static FString InjectActionFor(const FString& ActionPath, float Seconds = 1.0f, float X = 1.0f, float Y = 0.0f, float Z = 0.0f, int32 PieInstance = -1);
+
+	/**
+	 * Release an action that inject_action_for is holding, before its time is up. The hold is found by
+	 * the action it names and the PIE world, so /Game/Input/IA_X and /Game/Input/IA_X.IA_X are the same hold.
+	 *
+	 * @param ActionPath - Input Action asset path
+	 * @param PieInstance - Which PIE world, as for inject_action; -1 = the first PIE world with a local player
+	 * @return JSON: {success, action, was_active, pie_instance (the instance used)} or
+	 *         {success:false, error_code, error_message}. was_active is false once PIE has ended.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Input|PIE")
+	static FString StopInjection(const FString& ActionPath, int32 PieInstance = -1);
 
 	/**
 	 * Send a key event to the running PIE game viewport through Slate (no OS focus, no SendKeys).
@@ -616,15 +687,21 @@ public:
 	 * state, not from these flags.
 	 *
 	 * @param KeyName - FKey name, e.g. "SpaceBar", "W", "LeftMouseButton" (see get_available_keys)
-	 * @param EventType - "tap" (down then up, default), "down", or "up"
-	 * @return JSON: {success, key, event, handled_down, handled_up} or {success:false, error_code, error_message}
-	 *         error_code: PIE_NOT_RUNNING, SIMULATE_NOT_PLAY, NO_SLATE, UNKNOWN_KEY, BAD_EVENT
+	 * @param EventType - "tap" (down then up in the same frame, default), "down", "up", or "hold"
+	 *        (down now, up after HoldSeconds of real time; the call returns at once). A "hold" of a key that is
+	 *        already held extends it (no second key-down, reply extended: true, released HoldSeconds from now);
+	 *        an "up" or "tap" ends a pending hold. Ending PIE cancels a pending hold without sending its key-up.
+	 * @param HoldSeconds - For "hold": how long, 0.05 to 60
+	 * @return JSON: {success, key, event, handled_down, handled_up, [extended, hold_seconds]} or
+	 *         {success:false, error_code, error_message}
+	 *         error_code: PIE_NOT_RUNNING, SIMULATE_NOT_PLAY, NO_SLATE, UNKNOWN_KEY, BAD_EVENT, BAD_DURATION
 	 *
 	 * Example:
-	 *   unreal.InputService.inject_key("SpaceBar")            # tap space in PIE
+	 *   unreal.InputService.inject_key("SpaceBar")                          # tap space in PIE
+	 *   unreal.InputService.inject_key("RightMouseButton", "hold", 1.5)     # hold it 1.5 s
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Input|PIE")
-	static FString InjectKey(const FString& KeyName, const FString& EventType = TEXT("tap"));
+	static FString InjectKey(const FString& KeyName, const FString& EventType = TEXT("tap"), float HoldSeconds = 0.0f);
 
 private:
 	/** Helper to load an Input Action */

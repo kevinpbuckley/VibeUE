@@ -63,6 +63,18 @@ listing is currently free and provides a supported source format.
 
 ## Rules
 
+### Owned complete projects
+
+Owned `COMPLETE_PROJECT` products are downloaded into `Saved/Fab/Projects/<asset-id>`.
+Poll until `status: "staged"` or `failed`; `staged` is a terminal download state,
+not an import into the active project. Inspect the returned `staging_root`, source
+`.uproject` engine association, and vendor merge instructions. Save and close Unreal
+before copying approved content folders into the host. Preserve vendor package paths,
+check destination collisions, and do not merge the sample project's config or `.uproject`.
+The remote build-service version string alone does not establish asset compatibility.
+
+### Import rules
+
 - Never purchase, claim, call add-to-library, or accept a license on the user's behalf.
 - Never treat a search filter as proof of price. `import_free_asset` performs the authoritative
   zero-price check immediately before download.

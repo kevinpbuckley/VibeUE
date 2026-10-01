@@ -28,10 +28,13 @@ real API is below; you rarely need a discovery call at all:
 | Contexts | `create_mapping_context(name, path, priority=0)`, `list_mapping_contexts()`, `get_mapping_context_info(context_path)` → info or None, `mapping_context_exists(context_path)` |
 | Mappings | `get_mappings(context_path)`, `add_key_mapping(context_path, action_path, key_name)`, `remove_mapping(context_path, mapping_index)`, `key_mapping_exists(context_path, action_path)` |
 | Modifiers | `add_modifier(context_path, mapping_index, modifier_type)`, `remove_modifier(context_path, mapping_index, modifier_index)`, `get_modifiers(context_path, mapping_index)` |
-| Triggers | `add_trigger(context_path, mapping_index, trigger_type)`, `remove_trigger(context_path, mapping_index, trigger_index)`, `get_triggers(context_path, mapping_index)` |
+| Triggers | `add_trigger(context_path, mapping_index, trigger_type, properties_json="")`, `add_action_trigger(action_path, trigger_type, properties_json="")` → JSON, `remove_trigger(context_path, mapping_index, trigger_index)`, `get_triggers(context_path, mapping_index)` |
 
 `create_action` value types are the strings `discover_types()` returns: `"Boolean"`
-(alias `"Digital"`), `"Axis1D"`, `"Axis2D"`, `"Axis3D"`. Modifiers and triggers are
+(alias `"Digital"`), `"Axis1D"`, `"Axis2D"`, `"Axis3D"`. The `create_*` folder may be a bare
+folder (`"Input"` goes under `/Game`) or start with its mount point (`/Game/...`, a plugin root);
+`/Engine`, `/Script` and `/Temp` are refused, and so is an invalid asset name (empty, a space,
+`.`), each with the reason in `error_message`. Modifiers and triggers are
 addressed by **index on the mapping**, so `get_mappings` / `get_modifiers` /
 `get_triggers` first, then add/remove by index.
 
@@ -121,6 +124,33 @@ unreal.InputService.add_modifier(context_path, mapping_index, "DeadZone")
 unreal.EditorAssetLibrary.save_asset(context_path)
 ```
 
+### Trigger Settings
+
+`properties_json` sets the new trigger's settings, by C++ name or snake_case
+(`HoldTimeThreshold` or `hold_time_threshold`, `bIsOneShot` or `is_one_shot`). Only the
+settings the trigger's Details panel shows can be set: runtime state such as `HeldDuration`,
+`LastValue` or `bShouldAlwaysTick` is refused ("not a trigger setting"), and a number outside
+the property's `ClampMin`/`ClampMax` is refused with the allowed range (`hold_time_threshold`
+must be >= 0). An unknown name, a refused setting or a bad value fails the call and adds
+nothing. `add_action_trigger` puts the trigger on the Input Action itself, so it applies to
+every mapping of the action; it returns `PIE_ACTIVE` while a play session runs (stop PIE
+first). Neither saves the asset, and a running PIE session keeps its copy of the triggers:
+restart PIE to see a change.
+
+```python
+import unreal
+
+# Hold 0.4 s before the charged attack fires, once per hold
+unreal.InputService.add_trigger("/Game/Input/IMC_Default", 0, "Hold",
+    '{"hold_time_threshold": 0.4, "is_one_shot": true}')
+
+# A quick tap on the action itself, for every key bound to it
+result = unreal.InputService.add_action_trigger("/Game/Input/IA_Dash", "Tap",
+    '{"tap_release_time_threshold": 0.25}')
+print(result)   # {"success": true, "trigger_index": 0, ...} or an error_code
+unreal.EditorAssetLibrary.save_asset("/Game/Input/IA_Dash")
+```
+
 ### Get Mappings Info
 
 ```python
@@ -160,12 +190,24 @@ into the running PIE session (no OS window focus needed):
 ```python
 import unreal
 
-# Enhanced Input action, one input tick per call (loop to hold). X/Y/Z map to the value type.
+# Enhanced Input action, QUEUED for the next input tick and released on the one after.
+# X/Y/Z map to the value type. Read the result in a later call: nothing ticks while this one runs.
 print(unreal.InputService.inject_action("/Game/Input/IA_Fire", 1.0))
 
-# Raw key through Slate to the game viewport: "tap" (default), "down", or "up".
+# Hold an action for 1.5 s of real time (a guard, a charge, a Hold trigger); returns at once.
+print(unreal.InputService.inject_action_for("/Game/Input/IA_Block", 1.5))
+print(unreal.InputService.stop_injection("/Game/Input/IA_Block"))   # release early
+
+# Raw key through Slate to the game viewport: "tap" (default), "down", "up", or "hold".
 print(unreal.InputService.inject_key("SpaceBar"))
+print(unreal.InputService.inject_key("RightMouseButton", "hold", 1.5))
 ```
 
-Both return JSON with `success`/`error_code` (PIE not running, no player controller yet, unknown
-key). See the `pie-testing` skill for the full verification loop.
+All return JSON with `success`/`error_code` (PIE not running, `NO_LOCAL_PLAYER` /
+`NO_PLAYER_CONTROLLER` while PIE or a client's join is still starting — retry on a later call —,
+unknown key, `BAD_DURATION` outside 0.05 to 60 s). `inject_action` reports `queued: true`: it was
+queued, not yet applied. The action calls take `pie_instance` to pick a PIE world: -1, the default,
+is the first PIE world with a local player (the lowest instance number), and replies report the
+instance actually used. A hold is one hold per action and PIE world whatever the path spelling, so
+`stop_injection` finds it either way; holding a held key again extends it (`extended: true`); ending
+PIE drops every hold. See the `pie-testing` skill for the full verification loop.

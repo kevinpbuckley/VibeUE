@@ -36,13 +36,13 @@ struct FUnattendedDeleteResult
  * Asset import/export and Content Browser service exposed directly to Python.
  *
  * Asset search and general CRUD are provided by the engine's AssetTools toolset.
- * This service owns crash-safe image import, texture export, Content Browser
- * selection, and open-editor checks.
+ * This service owns file import (images, meshes, any format the editor imports),
+ * texture export, Content Browser selection, and open-editor checks.
  *
  * Python Usage:
  *   import unreal
  *
- *   # Import an image without pumping the task graph inside an MCP call
+ *   # Import an image (a mesh or any other importable file takes the same call)
  *   path, error = unreal.AssetDiscoveryService.import_asset(
  *       "C:/Images/rocks.jpg", "/Game/UI/Textures", "T_Rocks")
  *
@@ -63,6 +63,8 @@ public:
 
 	/**
 	 * Import a texture from the file system into the project.
+	 * Same importer as ImportAsset (DestinationPath split into folder + name), so a non-image file is imported as
+	 * its own asset type rather than refused.
 	 *
 	 * @param SourceFilePath - Absolute path to the texture file (PNG, JPG, TGA, etc.)
 	 * @param DestinationPath - Asset path where texture will be created (e.g., "/Game/Textures/MyTexture")
@@ -75,24 +77,29 @@ public:
 	static bool ImportTexture(const FString& SourceFilePath, const FString& DestinationPath);
 
 	/**
-	 * Import an image file from disk into the Content Browser as a Texture2D.
+	 * Import a file from disk into the Content Browser and save it: an image as a Texture2D, a mesh (FBX, OBJ, glTF, ...)
+	 * or any other format the editor's importers take as its asset. An existing asset of the same name is replaced,
+	 * and so is any same-named asset in DestinationFolder that a multi-asset file brings along (an FBX's materials and
+	 * textures), without a prompt: import such files into a folder of their own.
 	 *
-	 * Uses the texture factory's direct binary path (FactoryCreateBinary) rather than
-	 * AssetTools::ImportAssets/ImportAssetTasks. The high-level import APIs pump the
-	 * game-thread task graph, which asserts (RecursionGuard) when invoked from inside an
-	 * MCP tool call (those run inside an AsyncTask on the game thread). This path is safe
-	 * to call from execute_python_code and from the manage_asset 'import' action.
+	 * Images use the texture factory's direct binary path (FactoryCreateBinary). Every other format goes
+	 * through AssetTools' AssetImportTask, automated and synchronous. Its wait pumps the game thread's task queue,
+	 * which asserts (RecursionGuard) only when the caller is itself a game-thread task; tool calls and
+	 * execute_python_code are not, and a call from inside such a task is refused with a message.
 	 *
-	 * Supported formats: png, jpg, jpeg, bmp, tga, dds, exr, hdr, tiff, tif, psd, pcx.
+	 * Image formats: png, jpg, jpeg, bmp, tga, dds, exr, hdr, tiff, tif, psd, pcx.
 	 *
-	 * @param SourceFilePath    - Absolute path to the image file on disk
+	 * @param SourceFilePath    - Absolute path to the file on disk
 	 * @param DestinationFolder - Content Browser folder (e.g. "/Game/UI/Textures")
 	 * @param AssetName         - Optional asset name; if empty, derived from the file name
 	 * @param OutError          - Receives a human-readable error message on failure
-	 * @return The created asset's object path (e.g. "/Game/UI/Textures/T_Foo.T_Foo"), or empty on failure
+	 * @return The created asset's object path (e.g. "/Game/UI/Textures/T_Foo.T_Foo"), or empty on failure. For a file
+	 *         that brings several assets, the main one: the mesh over its materials, textures, skeleton and physics
+	 *         asset (named AssetName when the importer used it; otherwise the importer's name is in the path)
 	 *
 	 * Example:
 	 *   path, err = unreal.AssetDiscoveryService.import_asset("C:/Images/rocks.jpg", "/Game/UI/Textures", "T_Rocks")
+	 *   path, err = unreal.AssetDiscoveryService.import_asset("C:/Art/crate.fbx", "/Game/Props", "SM_Crate")
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Assets")
 	static FString ImportAsset(

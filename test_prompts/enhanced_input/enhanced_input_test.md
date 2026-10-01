@@ -6,7 +6,7 @@
 - DO NOT stop after completing one section - continue to the next
 - Create any required assets if they don't exist
 - Each `---` separator marks a new task to execute, NOT a place to stop
-- Complete ALL 42 tasks from Discovery through Complete Input Setups
+- Complete ALL 58 tasks from Discovery through PIE Input Injection
 
 ---
 
@@ -71,6 +71,22 @@ The interact action should consume input so other things don't trigger at the sa
 ---
 
 Add a description to the interact action saying it handles player object interaction.
+
+---
+
+Make a dodge action in a folder just called "Input/Folders", without /Game in front, and tell me the full path it ended up at.
+
+---
+
+Try creating a jump action in /Temp/Input. It should be refused with the reason, and nothing should appear under /Game/Temp.
+
+---
+
+Try creating a jump action in /Engine/Input. It should be refused because that is the engine's own content, and nothing should be created there.
+
+---
+
+Try creating an action called "Quick Dodge", with the space in the name. It should be refused with the reason, and no dialog should pop up in the editor.
 
 ---
 
@@ -178,6 +194,22 @@ Remove the first trigger from the gameplay context. Let's try a different approa
 
 ---
 
+Add another hold trigger to the first combat binding, this time needing 0.4 seconds and firing only once per hold.
+
+---
+
+Make the fire action itself a quick tap, released within a quarter second, for every key bound to it.
+
+---
+
+Try giving a hold trigger a setting it doesn't have, like "charge_speed", and tell me what happened. Nothing should have changed.
+
+---
+
+Try a hold trigger with a negative hold time, then one that sets its held duration directly. Both should be refused with the reason (the allowed range for the first, "not a setting" for the second), and nothing should have changed.
+
+---
+
 ## Complete Input Setups
 
 I need a reload mechanic for the shooter. Create the action, bind R to it in combat, and make it trigger on press.
@@ -189,5 +221,39 @@ Add strafing to the movement system. It should be a 2D input bound to the right 
 ---
 
 I'm building a menu system. Create a new context for menus, make actions for pause, confirm, and back buttons, then bind Escape to pause, Enter to confirm, and Backspace to go back.
+
+---
+
+## PIE Input Injection
+
+Start PIE. Press the fire action once, then check on a later call whether it fired. Tell me whether the reply said the input was queued or delivered.
+
+---
+
+Hold the fire action for a second and a half, like holding the button down, and tell me when it let go.
+
+---
+
+Start a ten second hold on the fire action, then stop it early. Confirm it was still active when you stopped it.
+
+---
+
+Start another ten second hold on the fire action, then stop it using the action's full object path (with the ".Name" suffix) and PIE instance 0 instead of how you started it. It should still be found and reported active. Which PIE instance did the replies say they used?
+
+---
+
+While PIE is running, try adding a Pressed trigger to the fire action itself. It should be refused because PIE is running, not because the action is missing.
+
+---
+
+Hold the space bar for two seconds, and before that ends hold it again for half a second. Tell me whether the second call extended the first hold.
+
+---
+
+Hold the space bar for half a second in the running game.
+
+---
+
+Start a ten second hold on the fire action and stop PIE while it is still held. Then ask stop_injection about the fire action: it should report that nothing is active.
 
 ---

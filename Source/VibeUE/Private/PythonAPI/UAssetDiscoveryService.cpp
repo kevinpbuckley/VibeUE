@@ -27,6 +27,107 @@
 #include "BlueprintAssetHandler.h"     // A13: engine fallback for a non-Blueprint asset that still owns a UBlueprint
 #include "Engine/Blueprint.h"          // A13: complete UBlueprint type for the UBlueprint* -> UObject* base conversion above
 #include "UObject/GCObject.h"          // A13: UGCObjectReferencer — the native GC root a Python global appears as (refusal signal)
+#include "AssetImportTask.h"           // Meshes and other non-image files through AssetImportTask
+#include "Async/TaskGraphInterfaces.h" // IsThreadProcessingTasks, the RecursionGuard check
+#include "Engine/StaticMesh.h"         // ranking what a multi-asset import returns
+#include "Engine/SkeletalMesh.h"
+#include "Animation/Skeleton.h"
+#include "PhysicsEngine/PhysicsAsset.h"
+#include "Materials/MaterialInterface.h"
+#include "UObject/SoftObjectPath.h"
+
+namespace
+{
+	// How likely an imported object is the asset the file IS, for a file that brings several: a mesh first, then
+	// anything else (animations, sounds, data), and last the side assets a mesh import creates next to the mesh
+	// (materials, textures, its skeleton and physics asset).
+	int32 RankImportedObjectForImportAsset(const UObject* Object)
+	{
+		if (!Object)
+		{
+			return 0;
+		}
+		if (Object->IsA<UStaticMesh>() || Object->IsA<USkeletalMesh>())
+		{
+			return 3;
+		}
+		if (Object->IsA<UMaterialInterface>() || Object->IsA<UTexture>() || Object->IsA<USkeleton>() || Object->IsA<UPhysicsAsset>())
+		{
+			return 1;
+		}
+		return 2;
+	}
+
+	// Every non-image format (FBX, OBJ, glTF, ...) goes through Epic's AssetImportTask, run synchronously.
+	// Interchange waits for the import by pumping the game thread's task queue (ProcessThreadUntilIdle), which asserts
+	// (TaskGraph RecursionGuard) only when the caller is itself running as a game-thread task. MCP tool calls and
+	// execute_python_code run from the core ticker, not as a task, so the wait is safe there; a call made from inside a
+	// game-thread task is refused instead of asserting.
+	// bReplaceExisting replaces an asset of the requested name, and also any same-named asset in the folder that a
+	// multi-asset file brings along (an FBX's materials and textures). The names of those are only known once the
+	// importer ran, so there is no pre-check; the asset-management skill tells callers to use a dedicated folder.
+	FString ImportThroughAssetTools(const FString& SourceFilePath, const FString& Folder, const FString& FinalName, FString& OutError)
+	{
+		if (!IsInGameThread())
+		{
+			OutError = TEXT("import_asset must run on the game thread");
+			return FString();
+		}
+
+		if (FTaskGraphInterface::Get().IsThreadProcessingTasks(ENamedThreads::GameThread))
+		{
+			OutError = TEXT("Refused: this call runs inside a game-thread task, where a synchronous import would assert (TaskGraph RecursionGuard). Call import_asset from execute_python_code or a tool call.");
+			return FString();
+		}
+
+		UAssetImportTask* Task = NewObject<UAssetImportTask>();
+		Task->AddToRoot();
+		Task->Filename = SourceFilePath;
+		Task->DestinationPath = Folder;
+		Task->DestinationName = FinalName;
+		Task->bAutomated = true;  // no option dialogs, unattended for the import's scope
+		Task->bReplaceExisting = true;
+		Task->bSave = true;
+		Task->bAsync = false;
+
+		IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
+		AssetTools.ImportAssetTasks({ Task });
+
+		const TArray<FString> Imported = Task->ImportedObjectPaths;
+		Task->RemoveFromRoot();
+
+		if (Imported.Num() == 0)
+		{
+			OutError = FString::Printf(TEXT("AssetTools imported nothing from '%s' (unsupported format, or the importer failed: see the Output Log)"), *SourceFilePath);
+			return FString();
+		}
+
+		// A file can bring several assets (an FBX: the mesh plus its materials, textures, skeleton and physics asset), and
+		// the importer does not always give the main one the requested name. Return the asset the file is: the best
+		// ranked, among equals the one named as asked, else the first the importer reported.
+		FString Best;
+		int32 BestRank = -1;
+		bool bBestNamed = false;
+		for (const FString& Path : Imported)
+		{
+			const int32 Rank = RankImportedObjectForImportAsset(FSoftObjectPath(Path).ResolveObject());
+			const bool bNamed = FPackageName::ObjectPathToObjectName(Path) == FinalName;
+			if (Rank > BestRank || (Rank == BestRank && bNamed && !bBestNamed))
+			{
+				Best = Path;
+				BestRank = Rank;
+				bBestNamed = bNamed;
+			}
+		}
+
+		if (!bBestNamed)
+		{
+			UE_LOG(LogTemp, Log, TEXT("UAssetDiscoveryService::ImportAsset: the importer named the main asset '%s', not '%s'"),
+				*FPackageName::ObjectPathToObjectName(Best), *FinalName);
+		}
+		return Best;
+	}
+}
 
 // ========== Texture Operations ==========
 
@@ -95,7 +196,7 @@ FString UAssetDiscoveryService::ImportAsset(
 		return FString();
 	}
 
-	// Only image formats are handled by this fast factory path.
+	// Image formats take the fast texture-factory path; everything else goes through AssetImportTask.
 	const FString Ext = FPaths::GetExtension(SourceFilePath).ToLower();
 	static const TSet<FString> ImageExts = {
 		TEXT("png"), TEXT("jpg"), TEXT("jpeg"), TEXT("bmp"), TEXT("tga"),
@@ -104,15 +205,16 @@ FString UAssetDiscoveryService::ImportAsset(
 	};
 	if (!ImageExts.Contains(Ext))
 	{
-		OutError = FString::Printf(
-			TEXT("Unsupported file type '.%s'. Supported image formats: png, jpg, jpeg, bmp, tga, dds, exr, hdr, tiff, tif, psd, pcx."),
-			*Ext);
-		return FString();
+		const FString Imported = ImportThroughAssetTools(SourceFilePath, Folder, FinalName, OutError);
+		if (!Imported.IsEmpty())
+		{
+			UE_LOG(LogTemp, Log, TEXT("UAssetDiscoveryService::ImportAsset: imported '%s' -> '%s'"), *SourceFilePath, *Imported);
+		}
+		return Imported;
 	}
 
-	// Read the file into memory and feed it straight to the texture factory. We deliberately
-	// avoid IAssetTools::ImportAssets / ImportAssetTasks: those pump the game-thread task graph,
-	// which trips a RecursionGuard assertion when called from inside an MCP tool's AsyncTask.
+	// Read the file into memory and feed it straight to the texture factory (images keep this
+	// path, which saves each texture itself; other formats take AssetImportTask above).
 	TArray<uint8> FileData;
 	if (!FFileHelper::LoadFileToArray(FileData, *SourceFilePath) || FileData.Num() == 0)
 	{

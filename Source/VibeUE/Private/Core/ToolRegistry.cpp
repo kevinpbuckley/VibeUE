@@ -78,10 +78,12 @@ void FToolRegistry::Shutdown()
 
 void FToolRegistry::RegisterTool(const FToolRegistration& Registration)
 {
-	// If not initialized yet, queue for later
+	// Every registration is kept, so Refresh() can rebuild the registry from it
+	PendingRegistrations.Add(Registration);
+
+	// If not initialized yet, Initialize() registers it
 	if (!bInitialized)
 	{
-		PendingRegistrations.Add(Registration);
 		UE_LOG(LogToolRegistry, Verbose, TEXT("Queued tool for registration: %s"), *Registration.Name);
 		return;
 	}
@@ -140,8 +142,9 @@ void FToolRegistry::ProcessPendingRegistrations()
 		UE_LOG(LogToolRegistry, Log, TEXT("Registered tool: %s (Category: %s, InternalOnly: %s)"), 
 			*Registration.Name, *Registration.Category, Registration.bInternalOnly ? TEXT("Yes") : TEXT("No"));
 	}
-	
-	PendingRegistrations.Empty();
+
+	// PendingRegistrations is kept: Refresh() empties the registry and calls Initialize() again, which would
+	// otherwise find nothing to register and leave zero tools
 }
 
 void FToolRegistry::Refresh()
@@ -224,33 +227,49 @@ FString FToolRegistry::ExecuteTool(
 	const FString& ToolName,
 	const TMap<FString, FString>& Parameters)
 {
+	// The checks are in PrepareToolCall, unchanged, so the bridge can split them off
+	FToolExecuteFunc ExecuteFunc;
+	FString ErrorJson;
+	if (!PrepareToolCall(ToolName, Parameters, ExecuteFunc, ErrorJson))
+	{
+		return ErrorJson;
+	}
+	UE_LOG(LogToolRegistry, Verbose, TEXT("Executing tool: %s"), *ToolName);
+	return ExecuteFunc(Parameters);
+}
+
+bool FToolRegistry::PrepareToolCall(
+	const FString& ToolName,
+	const TMap<FString, FString>& Parameters,
+	FToolExecuteFunc& OutFunc,
+	FString& OutErrorJson)
+{
+	auto Fail = [&OutErrorJson](const TSharedPtr<FJsonObject>& ErrorResult)
+	{
+		TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutErrorJson);
+		FJsonSerializer::Serialize(ErrorResult.ToSharedRef(), Writer);
+		return false;
+	};
+
 	// Check if tool is disabled FIRST
 	if (!IsToolEnabled(ToolName))
 	{
 		UE_LOG(LogToolRegistry, Warning, TEXT("Attempted to execute disabled tool: %s"), *ToolName);
-		
+
 		TSharedPtr<FJsonObject> ErrorResult = MakeShareable(new FJsonObject);
 		ErrorResult->SetBoolField(TEXT("success"), false);
 		ErrorResult->SetStringField(TEXT("error"), FString::Printf(TEXT("Tool '%s' is disabled"), *ToolName));
 		ErrorResult->SetStringField(TEXT("error_code"), TEXT("TOOL_DISABLED"));
-
-		FString OutputString;
-		TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutputString);
-		FJsonSerializer::Serialize(ErrorResult.ToSharedRef(), Writer);
-		return OutputString;
+		return Fail(ErrorResult);
 	}
-	
+
 	const FToolMetadata* Tool = FindTool(ToolName);
 	if (!Tool)
 	{
 		TSharedPtr<FJsonObject> ErrorResult = MakeShareable(new FJsonObject);
 		ErrorResult->SetBoolField(TEXT("success"), false);
 		ErrorResult->SetStringField(TEXT("error"), FString::Printf(TEXT("Tool '%s' not found"), *ToolName));
-
-		FString OutputString;
-		TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutputString);
-		FJsonSerializer::Serialize(ErrorResult.ToSharedRef(), Writer);
-		return OutputString;
+		return Fail(ErrorResult);
 	}
 
 	// Validate parameters
@@ -260,29 +279,20 @@ FString FToolRegistry::ExecuteTool(
 		TSharedPtr<FJsonObject> ErrorResult = MakeShareable(new FJsonObject);
 		ErrorResult->SetBoolField(TEXT("success"), false);
 		ErrorResult->SetStringField(TEXT("error"), ValidationError);
-
-		FString OutputString;
-		TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutputString);
-		FJsonSerializer::Serialize(ErrorResult.ToSharedRef(), Writer);
-		return OutputString;
+		return Fail(ErrorResult);
 	}
 
-	// Execute
 	FToolExecuteFunc* ExecuteFunc = ToolExecuteFuncs.Find(ToolName);
 	if (ExecuteFunc && *ExecuteFunc)
 	{
-		UE_LOG(LogToolRegistry, Verbose, TEXT("Executing tool: %s"), *ToolName);
-		return (*ExecuteFunc)(Parameters);
+		OutFunc = *ExecuteFunc;
+		return true;
 	}
 
 	TSharedPtr<FJsonObject> ErrorResult = MakeShareable(new FJsonObject);
 	ErrorResult->SetBoolField(TEXT("success"), false);
 	ErrorResult->SetStringField(TEXT("error"), FString::Printf(TEXT("Tool '%s' has no execute function"), *ToolName));
-
-	FString OutputString;
-	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutputString);
-	FJsonSerializer::Serialize(ErrorResult.ToSharedRef(), Writer);
-	return OutputString;
+	return Fail(ErrorResult);
 }
 
 TArray<FToolMetadata> FToolRegistry::GetEnabledTools() const

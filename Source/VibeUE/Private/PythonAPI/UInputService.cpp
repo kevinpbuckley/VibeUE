@@ -7,6 +7,7 @@
 #include "AssetToolsModule.h"
 #include "IAssetTools.h"
 #include "Kismet2/BlueprintEditorUtils.h"
+#include "BehaviorTreeServiceInternal.h" // VibeBT::CheckWritableAssetPath / CheckNameLength, the shared create-path rule
 
 // Enhanced Input includes
 #include "InputAction.h"
@@ -20,11 +21,158 @@
 #include "EnhancedInputSubsystems.h"
 #include "Engine/LocalPlayer.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/PlayerInput.h"
 #include "Framework/Application/SlateApplication.h"
+#include "Containers/Ticker.h"
+#include "Editor/EditorEngine.h"
+#include "Engine/Engine.h"
+#include "Engine/GameInstance.h"
 #include "Misc/PackageName.h"
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
+
+// Trigger settings
+#include "JsonObjectConverter.h"
+#include "UObject/UnrealType.h"
+
+namespace VibeUEInputTriggers
+{
+	// Property names match the C++ name or its snake_case form ("hold_time_threshold" for
+	// HoldTimeThreshold, "is_one_shot" for bIsOneShot), case-insensitively.
+	static FString NormalizeName(const FString& In)
+	{
+		return In.Replace(TEXT("_"), TEXT("")).ToLower();
+	}
+
+	// A trigger setting is what the Details panel lets a user change: EditAnywhere / EditInstanceOnly, not
+	// EditConst, not Transient (not saved with the asset). Runtime state the trigger keeps for itself
+	// (HeldDuration, LastValue, bShouldAlwaysTick, the Repeated Tap counters) has no Edit flag and is refused,
+	// so it can never be written into the asset.
+	static bool IsTriggerSetting(const FProperty* Prop)
+	{
+		return Prop->HasAnyPropertyFlags(CPF_Edit) &&
+			!Prop->HasAnyPropertyFlags(CPF_EditConst | CPF_Transient | CPF_Deprecated);
+	}
+
+	// An editable match wins over a non-editable one of the same normalized name.
+	static FProperty* FindPropertyLoose(UClass* Class, const FString& Key)
+	{
+		const FString Wanted = NormalizeName(Key);
+		FProperty* NonSetting = nullptr;
+		for (TFieldIterator<FProperty> It(Class); It; ++It)
+		{
+			const FString Name = It->GetName();
+			const bool bMatches = NormalizeName(Name) == Wanted ||
+				(It->IsA<FBoolProperty>() && Name.StartsWith(TEXT("b")) && NormalizeName(Name.RightChop(1)) == Wanted);
+			if (!bMatches)
+			{
+				continue;
+			}
+			if (IsTriggerSetting(*It))
+			{
+				return *It;
+			}
+			NonSetting = NonSetting ? NonSetting : *It;
+		}
+		return NonSetting;
+	}
+
+	// The editor clamps a numeric setting to its ClampMin / ClampMax metadata (HoldTimeThreshold >= 0,
+	// NumberOfTapsWhichTriggerRepeat >= 1); a value outside that range is refused rather than saved.
+	static bool CheckClampMetadata(const FProperty* Prop, const void* ValuePtr, FString& OutError)
+	{
+		const FNumericProperty* Numeric = CastField<FNumericProperty>(Prop);
+		if (!Numeric || Numeric->IsEnum())
+		{
+			return true;
+		}
+		const FString MinText = Prop->GetMetaData(TEXT("ClampMin"));
+		const FString MaxText = Prop->GetMetaData(TEXT("ClampMax"));
+		if (MinText.IsEmpty() && MaxText.IsEmpty())
+		{
+			return true;
+		}
+		const bool bFloat = Numeric->IsFloatingPoint();
+		const double Value = bFloat ? Numeric->GetFloatingPointPropertyValue(ValuePtr) : static_cast<double>(Numeric->GetSignedIntPropertyValue(ValuePtr));
+		const bool bBelow = !MinText.IsEmpty() && Value < FCString::Atod(*MinText);
+		const bool bAbove = !MaxText.IsEmpty() && Value > FCString::Atod(*MaxText);
+		if (!bBelow && !bAbove)
+		{
+			return true;
+		}
+		const FString Range = MinText.IsEmpty() ? FString::Printf(TEXT("<= %s"), *MaxText)
+			: MaxText.IsEmpty() ? FString::Printf(TEXT(">= %s"), *MinText)
+			: FString::Printf(TEXT("between %s and %s"), *MinText, *MaxText);
+		const FString ValueText = bFloat ? FString::SanitizeFloat(Value) : FString::Printf(TEXT("%lld"), Numeric->GetSignedIntPropertyValue(ValuePtr));
+		OutError = FString::Printf(TEXT("%s = %s is out of range: it must be %s (ClampMin/ClampMax, as the editor enforces)"),
+			*Prop->GetName(), *ValueText, *Range);
+		return false;
+	}
+
+	// Apply {"Property": value, ...} to a freshly created trigger by reflection. An unknown name, a
+	// property that is not an editable setting, a value of the wrong type or a value outside the
+	// property's ClampMin/ClampMax fails the whole call.
+	static bool ApplyPropertiesJson(UObject* Target, const FString& PropertiesJson, FString& OutError)
+	{
+		if (PropertiesJson.TrimStartAndEnd().IsEmpty())
+		{
+			return true;
+		}
+		TSharedPtr<FJsonObject> Obj;
+		const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(PropertiesJson);
+		if (!FJsonSerializer::Deserialize(Reader, Obj) || !Obj.IsValid())
+		{
+			OutError = FString::Printf(TEXT("properties are not a JSON object: %s"), *PropertiesJson);
+			return false;
+		}
+		for (const auto& Pair : Obj->Values)
+		{
+			const FString Key = *Pair.Key;
+			FProperty* Prop = FindPropertyLoose(Target->GetClass(), Key);
+			if (!Prop)
+			{
+				OutError = FString::Printf(TEXT("%s has no property '%s'"), *Target->GetClass()->GetName(), *Key);
+				return false;
+			}
+			if (!IsTriggerSetting(Prop))
+			{
+				OutError = FString::Printf(TEXT("%s.%s is not a trigger setting: it is runtime state or read-only in the editor, and cannot be set"),
+					*Target->GetClass()->GetName(), *Prop->GetName());
+				return false;
+			}
+			FText Reason;
+			void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(Target);
+			if (!FJsonObjectConverter::JsonValueToUProperty(Pair.Value, Prop, ValuePtr, 0, 0, false, &Reason))
+			{
+				OutError = FString::Printf(TEXT("could not set %s: %s"), *Prop->GetName(), *Reason.ToString());
+				return false;
+			}
+			if (!CheckClampMetadata(Prop, ValuePtr, OutError))
+			{
+				return false;
+			}
+		}
+		return true;
+	}
+
+	static UClass* FindTriggerClass(const FString& TriggerType)
+	{
+		const FString ClassName = TEXT("InputTrigger") + TriggerType;
+		for (TObjectIterator<UClass> It; It; ++It)
+		{
+			UClass* Class = *It;
+			if (Class->IsChildOf(UInputTrigger::StaticClass()) &&
+				!Class->HasAnyClassFlags(CLASS_Abstract) &&
+				(Class->GetName().Equals(ClassName, ESearchCase::IgnoreCase) ||
+				 Class->GetName().Equals(TriggerType, ESearchCase::IgnoreCase)))
+			{
+				return Class;
+			}
+		}
+		return nullptr;
+	}
+}
 
 // =================================================================
 // Helper Methods
@@ -115,6 +263,57 @@ FInputTypeDiscoveryResult UInputService::DiscoverTypes()
 	return Result;
 }
 
+// The folder a create_* call writes into. A path that starts with its mount point (/Game/X, /MyPlugin/X) is kept;
+// only a bare folder goes under /Game. A folder under no mounted content root (/Temp/X) is refused with the reason:
+// passed on, AssetTools would open a modal "Path does not start with a valid root" message, which blocks every
+// MCP call until someone closes it.
+static bool NormalizeCreateFolder(const FString& AssetPath, FString& OutFolder, FString& OutError)
+{
+	OutFolder = AssetPath.StartsWith(TEXT("/")) ? AssetPath : TEXT("/Game/") + AssetPath;
+	if (OutFolder.EndsWith(TEXT("/")))
+	{
+		OutFolder = OutFolder.LeftChop(1);
+	}
+
+	FText Reason;
+	if (!FPackageName::IsValidLongPackageName(OutFolder, false, &Reason))
+	{
+		OutError = FString::Printf(TEXT("'%s' is not a content folder: %s"), *OutFolder, *Reason.ToString());
+		return false;
+	}
+	return true;
+}
+
+namespace VibeUEInputCreate
+{
+	// The new asset's name and full path, checked before AssetTools sees them: AssetTools answers an invalid
+	// name with a modal "invalid name" dialog (CanCreateAsset), which wedges an unattended editor. The name
+	// becomes both the object name and the last package path segment, so it must be valid as either.
+	// /Engine is a writable mount point but the installed engine's content, so the shared VibeUE rule
+	// (no /Engine, /Script, /Temp; plugin roots allowed) applies to the full path.
+	static bool CheckNewAssetTarget(const FString& AssetName, const FString& FullPath, FString& OutError)
+	{
+		if (AssetName.TrimStartAndEnd().IsEmpty())
+		{
+			OutError = TEXT("The asset name is empty.");
+			return false;
+		}
+		OutError = VibeBT::CheckNameLength(AssetName, TEXT("The asset name"));
+		if (!OutError.IsEmpty())
+		{
+			return false;
+		}
+		FText Reason;
+		if (!FName::IsValidXName(AssetName, FString(INVALID_OBJECTNAME_CHARACTERS) + INVALID_LONGPACKAGE_CHARACTERS, &Reason))
+		{
+			OutError = FString::Printf(TEXT("'%s' is not a valid asset name: %s"), *AssetName, *Reason.ToString());
+			return false;
+		}
+		OutError = VibeBT::CheckWritableAssetPath(FullPath);
+		return OutError.IsEmpty();
+	}
+}
+
 // =================================================================
 // Action Management
 // =================================================================
@@ -125,20 +324,19 @@ FInputCreateResult UInputService::CreateAction(
 	const FString& ValueType)
 {
 	FInputCreateResult Result;
-	
-	// Normalize path
-	FString BasePath = AssetPath;
-	if (!BasePath.StartsWith(TEXT("/Game")))
+
+	FString BasePath;
+	if (!NormalizeCreateFolder(AssetPath, BasePath, Result.ErrorMessage))
 	{
-		BasePath = TEXT("/Game/") + BasePath;
+		return Result;
 	}
-	if (BasePath.EndsWith(TEXT("/")))
-	{
-		BasePath = BasePath.LeftChop(1);
-	}
-	
+
 	FString FullPath = BasePath / ActionName;
-	
+	if (!VibeUEInputCreate::CheckNewAssetTarget(ActionName, FullPath, Result.ErrorMessage))
+	{
+		return Result;
+	}
+
 	// Check if already exists
 	if (UEditorAssetLibrary::DoesAssetExist(FullPath))
 	{
@@ -285,20 +483,19 @@ FInputCreateResult UInputService::CreateMappingContext(
 	int32 Priority)
 {
 	FInputCreateResult Result;
-	
-	// Normalize path
-	FString BasePath = AssetPath;
-	if (!BasePath.StartsWith(TEXT("/Game")))
+
+	FString BasePath;
+	if (!NormalizeCreateFolder(AssetPath, BasePath, Result.ErrorMessage))
 	{
-		BasePath = TEXT("/Game/") + BasePath;
+		return Result;
 	}
-	if (BasePath.EndsWith(TEXT("/")))
-	{
-		BasePath = BasePath.LeftChop(1);
-	}
-	
+
 	FString FullPath = BasePath / ContextName;
-	
+	if (!VibeUEInputCreate::CheckNewAssetTarget(ContextName, FullPath, Result.ErrorMessage))
+	{
+		return Result;
+	}
+
 	// Check if already exists
 	if (UEditorAssetLibrary::DoesAssetExist(FullPath))
 	{
@@ -663,7 +860,8 @@ TArray<FString> UInputService::GetAvailableModifierTypes()
 bool UInputService::AddTrigger(
 	const FString& ContextPath,
 	int32 MappingIndex,
-	const FString& TriggerType)
+	const FString& TriggerType,
+	const FString& PropertiesJson)
 {
 	UInputMappingContext* MappingContext = LoadMappingContext(ContextPath);
 	if (!MappingContext)
@@ -671,43 +869,31 @@ bool UInputService::AddTrigger(
 		return false;
 	}
 
-	TArray<FEnhancedActionKeyMapping>& Mappings = const_cast<TArray<FEnhancedActionKeyMapping>&>(MappingContext->GetMappings());
-	if (MappingIndex < 0 || MappingIndex >= Mappings.Num())
+	if (MappingIndex < 0 || MappingIndex >= MappingContext->GetMappings().Num())
 	{
 		UE_LOG(LogTemp, Warning, TEXT("UInputService::AddTrigger: Invalid mapping index: %d"), MappingIndex);
 		return false;
 	}
 
-	// Find the trigger class
-	FString ClassName = TEXT("InputTrigger") + TriggerType;
-	UClass* TriggerClass = nullptr;
-	
-	for (TObjectIterator<UClass> It; It; ++It)
-	{
-		UClass* Class = *It;
-		if (Class->IsChildOf(UInputTrigger::StaticClass()) && 
-			!Class->HasAnyClassFlags(CLASS_Abstract) &&
-			(Class->GetName().Equals(ClassName, ESearchCase::IgnoreCase) ||
-			 Class->GetName().Equals(TriggerType, ESearchCase::IgnoreCase)))
-		{
-			TriggerClass = Class;
-			break;
-		}
-	}
-	
+	UClass* TriggerClass = VibeUEInputTriggers::FindTriggerClass(TriggerType);
 	if (!TriggerClass)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("UInputService::AddTrigger: Trigger type not found: %s"), *TriggerType);
 		return false;
 	}
 
-	MappingContext->Modify();
-	
-	UInputTrigger* NewTrigger = NewObject<UInputTrigger>(MappingContext, TriggerClass);
-	if (NewTrigger)
+	// Settings go on the new trigger before it is added, so a bad property changes nothing.
+	UInputTrigger* NewTrigger = NewObject<UInputTrigger>(MappingContext, TriggerClass, NAME_None, RF_Transactional);
+	FString PropertyError;
+	if (!NewTrigger || !VibeUEInputTriggers::ApplyPropertiesJson(NewTrigger, PropertiesJson, PropertyError))
 	{
-		Mappings[MappingIndex].Triggers.Add(NewTrigger);
+		UE_LOG(LogTemp, Warning, TEXT("UInputService::AddTrigger: %s"), *PropertyError);
+		return false;
 	}
+
+	MappingContext->Modify();
+	MappingContext->GetMapping(MappingIndex).Triggers.Add(NewTrigger);
+	MappingContext->PostEditChange();
 
 	// Save
 	UPackage* Package = MappingContext->GetOutermost();
@@ -717,6 +903,69 @@ bool UInputService::AddTrigger(
 	}
 
 	return true;
+}
+
+FString UInputService::AddActionTrigger(
+	const FString& ActionPath,
+	const FString& TriggerType,
+	const FString& PropertiesJson)
+{
+	// An Input Action's own triggers apply to every mapping of the action.
+	auto Fail = [](const TCHAR* Code, const FString& Message)
+	{
+		TSharedRef<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetBoolField(TEXT("success"), false);
+		Obj->SetStringField(TEXT("error_code"), Code);
+		Obj->SetStringField(TEXT("error_message"), Message);
+		FString Out;
+		const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Out);
+		FJsonSerializer::Serialize(Obj, Writer);
+		return Out;
+	};
+
+	// UEditorAssetLibrary::LoadAsset refuses during PIE, which would otherwise surface as ACTION_NOT_FOUND
+	// for an action that exists. Same refusal and code as BlueprintService's LoadBlueprint.
+	if (GEditor && GEditor->PlayWorld)
+	{
+		return Fail(TEXT("PIE_ACTIVE"), FString::Printf(TEXT("add_action_trigger refused '%s' — a Play-In-Editor session is running; stop PIE before editing Input Action assets."), *ActionPath));
+	}
+
+	UInputAction* Action = LoadInputAction(ActionPath);
+	if (!Action)
+	{
+		return Fail(TEXT("ACTION_NOT_FOUND"), FString::Printf(TEXT("Input Action not found: %s"), *ActionPath));
+	}
+	UClass* TriggerClass = VibeUEInputTriggers::FindTriggerClass(TriggerType);
+	if (!TriggerClass)
+	{
+		return Fail(TEXT("TRIGGER_TYPE_NOT_FOUND"), FString::Printf(TEXT("Trigger type not found: %s (see get_available_trigger_types)"), *TriggerType));
+	}
+
+	UInputTrigger* NewTrigger = NewObject<UInputTrigger>(Action, TriggerClass, NAME_None, RF_Transactional);
+	FString PropertyError;
+	if (!NewTrigger || !VibeUEInputTriggers::ApplyPropertiesJson(NewTrigger, PropertiesJson, PropertyError))
+	{
+		return Fail(TEXT("BAD_PROPERTIES"), PropertyError);
+	}
+
+	Action->Modify();
+	const int32 TriggerIndex = Action->Triggers.Add(NewTrigger);
+	// As an edit in the editor would: Enhanced Input's Blueprint nodes listen for OnTriggersChanged.
+	FProperty* TriggersProperty = FindFProperty<FProperty>(UInputAction::StaticClass(), GET_MEMBER_NAME_CHECKED(UInputAction, Triggers));
+	FPropertyChangedEvent ChangedEvent(TriggersProperty, EPropertyChangeType::ArrayAdd);
+	Action->PostEditChangeProperty(ChangedEvent);
+	Action->GetOutermost()->MarkPackageDirty();
+
+	TSharedRef<FJsonObject> R = MakeShared<FJsonObject>();
+	R->SetBoolField(TEXT("success"), true);
+	R->SetStringField(TEXT("action"), Action->GetName());
+	R->SetStringField(TEXT("trigger"), TriggerClass->GetName());
+	R->SetNumberField(TEXT("trigger_index"), TriggerIndex);
+	R->SetStringField(TEXT("note"), TEXT("The asset is modified, not saved. A running PIE session keeps its copy of the triggers: restart PIE to see the change."));
+	FString Out;
+	const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Out);
+	FJsonSerializer::Serialize(R, Writer);
+	return Out;
 }
 
 bool UInputService::RemoveTrigger(
@@ -885,56 +1134,326 @@ static FString InjectionOkJson(const TSharedRef<FJsonObject>& Obj)
 	return Out;
 }
 
-FString UInputService::InjectAction(const FString& ActionPath, float X, float Y, float Z)
+namespace VibeUEInputInjection
 {
-	if (!GEditor || !GEditor->PlayWorld)
+	static ULocalPlayer* FirstLocalPlayerOf(const UWorld* World)
 	{
-		return InjectionErrorJson(TEXT("PIE_NOT_RUNNING"), TEXT("PIE is not running — start it first (inject_action drives the live PIE session)."));
+		const UGameInstance* GameInstance = World ? World->GetGameInstance() : nullptr;
+		return GameInstance ? GameInstance->GetFirstGamePlayer() : nullptr;
 	}
 
-	UWorld* PlayWorld = GEditor->PlayWorld.Get();
-	APlayerController* PC = PlayWorld->GetFirstPlayerController();
-	if (!PC)
+	// One PIE world by its PIE instance number. -1 is the first PIE world that has a local player (the lowest
+	// instance number among them): the server's window in a listen-server session, client 1 under a
+	// dedicated server. Not GEditor->PlayWorld, which the editor re-points at each PIE world in turn every
+	// tick, so it names whichever world happened to tick last. Falls back to the lowest-numbered PIE world
+	// when none has a local player yet, so the caller gets NO_LOCAL_PLAYER rather than NO_PIE_INSTANCE.
+	static UWorld* FindPieWorld(int32 PieInstance, int32& OutInstance)
 	{
-		return InjectionErrorJson(TEXT("NO_PLAYER_CONTROLLER"), TEXT("PIE world has no player controller yet — PIE start is asynchronous, retry on a later tick."));
+		UWorld* Found = nullptr;
+		bool bFoundHasPlayer = false;
+		OutInstance = PieInstance;
+		for (const FWorldContext& Context : GEngine->GetWorldContexts())
+		{
+			UWorld* World = Context.World();
+			if (Context.WorldType != EWorldType::PIE || !World)
+			{
+				continue;
+			}
+			if (PieInstance >= 0)
+			{
+				if (Context.PIEInstance == PieInstance)
+				{
+					return World;
+				}
+				continue;
+			}
+			const bool bHasPlayer = FirstLocalPlayerOf(World) != nullptr;
+			const bool bBetter = !Found || (bHasPlayer && !bFoundHasPlayer) ||
+				(bHasPlayer == bFoundHasPlayer && Context.PIEInstance < OutInstance);
+			if (bBetter)
+			{
+				Found = World;
+				bFoundHasPlayer = bHasPlayer;
+				OutInstance = Context.PIEInstance;
+			}
+		}
+		return Found;
 	}
-	ULocalPlayer* LocalPlayer = PC->GetLocalPlayer();
-	if (!LocalPlayer)
+
+	// The local player's input subsystem of one PIE world (see FindPieWorld; OutInstance is the instance
+	// actually used). The local player comes from that world's game instance, never from "the first player
+	// controller", which on a server world need not be a local one. The subsystem is only returned once that
+	// player has a controller with Enhanced Input's player input: before that (early PIE, a client still
+	// joining) InjectInputForAction does nothing at all, so reporting success would be a lie.
+	static UEnhancedInputLocalPlayerSubsystem* ResolvePieSubsystem(int32 PieInstance, int32& OutInstance, FString& OutCode, FString& OutMessage)
 	{
-		return InjectionErrorJson(TEXT("NO_LOCAL_PLAYER"), TEXT("First player controller has no local player."));
-	}
-	UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(LocalPlayer);
-	if (!Subsystem)
-	{
-		return InjectionErrorJson(TEXT("NO_ENHANCED_INPUT"), TEXT("EnhancedInputLocalPlayerSubsystem unavailable — is the project using Enhanced Input?"));
+		OutInstance = PieInstance;
+		if (!GEditor || !GEditor->PlayWorld)
+		{
+			OutCode = TEXT("PIE_NOT_RUNNING");
+			OutMessage = TEXT("PIE is not running — start it first (injection drives the live PIE session).");
+			return nullptr;
+		}
+		UWorld* World = FindPieWorld(PieInstance, OutInstance);
+		if (!World)
+		{
+			OutCode = TEXT("NO_PIE_INSTANCE");
+			OutMessage = FString::Printf(TEXT("No PIE world with instance %d."), PieInstance);
+			return nullptr;
+		}
+		ULocalPlayer* LocalPlayer = FirstLocalPlayerOf(World);
+		if (!LocalPlayer)
+		{
+			OutCode = TEXT("NO_LOCAL_PLAYER");
+			OutMessage = FString::Printf(TEXT("PIE instance %d has no local player yet — PIE start is asynchronous, retry on a later tick (a dedicated server world never has one: pass a client's pie_instance)."), OutInstance);
+			return nullptr;
+		}
+		APlayerController* PlayerController = LocalPlayer->GetPlayerController(World);
+		if (!PlayerController || !PlayerController->PlayerInput)
+		{
+			OutCode = TEXT("NO_PLAYER_CONTROLLER");
+			OutMessage = FString::Printf(TEXT("PIE instance %d's local player has no player controller with input yet — PIE start (or a client's join) is asynchronous, retry on a later tick."), OutInstance);
+			return nullptr;
+		}
+		UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(LocalPlayer);
+		if (!Subsystem || !Subsystem->GetPlayerInput())
+		{
+			OutCode = TEXT("NO_ENHANCED_INPUT");
+			OutMessage = Subsystem
+				? FString::Printf(TEXT("The player controller's input is %s, not EnhancedPlayerInput — set Default Player Input Class to EnhancedPlayerInput."), *PlayerController->PlayerInput->GetClass()->GetName())
+				: FString(TEXT("EnhancedInputLocalPlayerSubsystem unavailable — is the project using Enhanced Input?"));
+			return nullptr;
+		}
+		return Subsystem;
 	}
 
 	// UEditorAssetLibrary::LoadAsset returns null during PIE, so resolve the object path directly
 	// (same pattern as WidgetService::SpawnWidgetInPIE).
-	FString ObjectPath = ActionPath;
-	if (!ObjectPath.Contains(TEXT(".")))
+	static const UInputAction* LoadActionForPie(const FString& ActionPath, uint32 LoadFlags = LOAD_None)
 	{
-		ObjectPath = FString::Printf(TEXT("%s.%s"), *ActionPath, *FPackageName::GetShortName(ActionPath));
+		FString ObjectPath = ActionPath;
+		if (!ObjectPath.Contains(TEXT(".")))
+		{
+			ObjectPath = FString::Printf(TEXT("%s.%s"), *ActionPath, *FPackageName::GetShortName(ActionPath));
+		}
+		return LoadObject<UInputAction>(nullptr, *ObjectPath, {}, LoadFlags);
 	}
-	const UInputAction* Action = LoadObject<UInputAction>(nullptr, *ObjectPath);
+
+	static FInputActionValue MakeValue(const UInputAction* Action, float X, float Y, float Z)
+	{
+		switch (Action->ValueType)
+		{
+		case EInputActionValueType::Boolean: return FInputActionValue(X != 0.0f);
+		case EInputActionValueType::Axis1D:  return FInputActionValue(X);
+		case EInputActionValueType::Axis2D:  return FInputActionValue(FVector2D(X, Y));
+		case EInputActionValueType::Axis3D:  return FInputActionValue(FVector(X, Y, Z));
+		default:                             return FInputActionValue(X);
+		}
+	}
+
+	// Held injections and held keys. While any is active, a scoped entry in
+	// ShouldDisableCPUThrottlingDelegates keeps the editor off its background frame rate (about 3 FPS,
+	// measured 2026-09-26), without touching the user's saved "use less CPU in the background" setting.
+	// For the same span an EndPIE handler is bound, so nothing outlives the PIE session it was made for.
+	struct FHeldInjection
+	{
+		TWeakObjectPtr<UEnhancedInputLocalPlayerSubsystem> Subsystem;
+		TWeakObjectPtr<const UInputAction> Action;
+		FTSTicker::FDelegateHandle Release;
+	};
+	// Keyed as the engine keys its continuous injections: by the action object (its path name, so
+	// /Game/IA_X and /Game/IA_X.IA_X are one hold), in the PIE instance actually used (so -1 and 0 are one
+	// hold when they resolve to the same world).
+	static TMap<FString, FHeldInjection> GHeldInjections;
+	// One pending release per held key: holding a key that is already held extends that hold.
+	static TMap<FKey, FTSTicker::FDelegateHandle> GHeldKeys;
+
+	// Runs Release once Seconds of wall-clock time have passed, checked every frame. A ticker delay is not
+	// used: it counts from the ticker clock at the START of the frame that made the hold, so on slow PIE
+	// frames (~250 ms measured on a busy level, 2026-10-01) a 1 s hold was released at 0.74 s.
+	static FTSTicker::FDelegateHandle AddWallClockRelease(float Seconds, TFunction<void()> Release)
+	{
+		const double Deadline = FPlatformTime::Seconds() + Seconds;
+		return FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Deadline, Release = MoveTemp(Release)](float)
+		{
+			if (FPlatformTime::Seconds() < Deadline)
+			{
+				return true;
+			}
+			Release();
+			return false;
+		}));
+	}
+	static FDelegateHandle GThrottleHandle;
+	static FDelegateHandle GEndPieHandle;
+	// Half a second at full rate after a release, so the release itself is processed promptly: measured
+	// 2026-09-26, a minimized editor dropped back to 3 FPS at the release and the action stayed active ~1 s longer.
+	// Timed only by the core ticker that times the holds: compared with wall-clock time, a fixed timestep
+	// could end the grace ticker first and leave the override in place with nothing left to remove it.
+	static bool GReleaseGraceActive = false;
+	static FTSTicker::FDelegateHandle GReleaseGraceTicker;
+
+	static void OnEndPie(const bool bIsSimulating);
+
+	static void UpdateThrottleScope()
+	{
+		if (!GEditor)
+		{
+			return;
+		}
+		const bool bActive = GHeldInjections.Num() > 0 || GHeldKeys.Num() > 0 || GReleaseGraceActive;
+		if (bActive && !GThrottleHandle.IsValid())
+		{
+			UEditorEngine::FShouldDisableCPUThrottling Delegate = UEditorEngine::FShouldDisableCPUThrottling::CreateLambda([]() { return true; });
+			GThrottleHandle = Delegate.GetHandle();
+			GEditor->ShouldDisableCPUThrottlingDelegates.Add(MoveTemp(Delegate));
+		}
+		else if (!bActive && GThrottleHandle.IsValid())
+		{
+			const FDelegateHandle Handle = GThrottleHandle;
+			GEditor->ShouldDisableCPUThrottlingDelegates.RemoveAll(
+				[Handle](const UEditorEngine::FShouldDisableCPUThrottling& D) { return D.GetHandle() == Handle; });
+			GThrottleHandle.Reset();
+		}
+		// Removing it from inside the EndPIE broadcast is safe: the delegate only unbinds the entry mid-broadcast.
+		if (bActive && !GEndPieHandle.IsValid())
+		{
+			GEndPieHandle = FEditorDelegates::EndPIE.AddStatic(&OnEndPie);
+		}
+		else if (!bActive && GEndPieHandle.IsValid())
+		{
+			FEditorDelegates::EndPIE.Remove(GEndPieHandle);
+			GEndPieHandle.Reset();
+		}
+	}
+
+	static void StartReleaseGrace()
+	{
+		GReleaseGraceActive = true;
+		if (GReleaseGraceTicker.IsValid())
+		{
+			FTSTicker::RemoveTicker(GReleaseGraceTicker);
+		}
+		GReleaseGraceTicker = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([](float)
+		{
+			GReleaseGraceTicker.Reset();
+			GReleaseGraceActive = false;
+			UpdateThrottleScope();
+			return false;
+		}), 0.5f);
+	}
+
+	static FString HoldId(const UInputAction* Action, int32 PieInstance)
+	{
+		return FString::Printf(TEXT("%s#%d"), *Action->GetPathName(), PieInstance);
+	}
+
+	// bFromTicker: called by the release ticker itself, which removes itself by returning false.
+	static bool ReleaseHeld(const FString& Id, bool bFromTicker = false)
+	{
+		FHeldInjection Held;
+		if (!GHeldInjections.RemoveAndCopyValue(Id, Held))
+		{
+			return false;
+		}
+		if (!bFromTicker && Held.Release.IsValid())
+		{
+			FTSTicker::RemoveTicker(Held.Release);
+		}
+		if (UEnhancedInputLocalPlayerSubsystem* Subsystem = Held.Subsystem.Get())
+		{
+			if (const UInputAction* Action = Held.Action.Get())
+			{
+				Subsystem->StopContinuousInputInjectionForAction(Action);
+			}
+		}
+		StartReleaseGrace();
+		UpdateThrottleScope();
+		return true;
+	}
+
+	// Ends a held key. bSendKeyUp: send its key-up to the PIE game viewport, and only while PIE runs — with no
+	// session it would land on whichever editor widget has focus. Without it the caller sends its own key-up.
+	static bool ReleaseHeldKey(const FKey& Key, bool bSendKeyUp, bool bFromTicker = false)
+	{
+		FTSTicker::FDelegateHandle Release;
+		if (!GHeldKeys.RemoveAndCopyValue(Key, Release))
+		{
+			return false;
+		}
+		if (!bFromTicker && Release.IsValid())
+		{
+			FTSTicker::RemoveTicker(Release);
+		}
+		if (bSendKeyUp && GEditor && GEditor->PlayWorld && FSlateApplication::IsInitialized())
+		{
+			FSlateApplication& SlateApp = FSlateApplication::Get();
+			SlateApp.SetAllUserFocusToGameViewport();
+			FKeyEvent UpEvent(Key, FModifierKeysState(), /*UserIndex=*/0, /*bIsRepeat=*/false, /*CharacterCode=*/0, /*KeyCode=*/0);
+			SlateApp.ProcessKeyUpEvent(UpEvent);
+		}
+		StartReleaseGrace();
+		UpdateThrottleScope();
+		return true;
+	}
+
+	// PIE ended, and every hold belonged to it: stop the injections, cancel the pending releases (no key-up is
+	// sent: the game viewport is going away) and drop the throttle override now, with no grace — there is no
+	// session left to process a release. A later stop_injection then truthfully reports was_active: false.
+	static void OnEndPie(const bool /*bIsSimulating*/)
+	{
+		for (const TPair<FString, FHeldInjection>& Pair : GHeldInjections)
+		{
+			if (Pair.Value.Release.IsValid())
+			{
+				FTSTicker::RemoveTicker(Pair.Value.Release);
+			}
+			UEnhancedInputLocalPlayerSubsystem* Subsystem = Pair.Value.Subsystem.Get();
+			const UInputAction* Action = Pair.Value.Action.Get();
+			if (Subsystem && Action)
+			{
+				Subsystem->StopContinuousInputInjectionForAction(Action);
+			}
+		}
+		GHeldInjections.Empty();
+		for (const TPair<FKey, FTSTicker::FDelegateHandle>& Pair : GHeldKeys)
+		{
+			if (Pair.Value.IsValid())
+			{
+				FTSTicker::RemoveTicker(Pair.Value);
+			}
+		}
+		GHeldKeys.Empty();
+		if (GReleaseGraceTicker.IsValid())
+		{
+			FTSTicker::RemoveTicker(GReleaseGraceTicker);
+			GReleaseGraceTicker.Reset();
+		}
+		GReleaseGraceActive = false;
+		UpdateThrottleScope();
+	}
+}
+
+FString UInputService::InjectAction(const FString& ActionPath, float X, float Y, float Z, int32 PieInstance)
+{
+	// The PIE world's local player (PieInstance), not the first player controller
+	FString Code, Message;
+	int32 UsedInstance = PieInstance;
+	UEnhancedInputLocalPlayerSubsystem* Subsystem = VibeUEInputInjection::ResolvePieSubsystem(PieInstance, UsedInstance, Code, Message);
+	if (!Subsystem)
+	{
+		return InjectionErrorJson(Code, Message);
+	}
+	const UInputAction* Action = VibeUEInputInjection::LoadActionForPie(ActionPath);
 	if (!Action)
 	{
 		return InjectionErrorJson(TEXT("ACTION_NOT_FOUND"), FString::Printf(TEXT("Input Action not found: %s"), *ActionPath));
 	}
 
-	FInputActionValue Value;
-	switch (Action->ValueType)
-	{
-	case EInputActionValueType::Boolean: Value = FInputActionValue(X != 0.0f); break;
-	case EInputActionValueType::Axis1D:  Value = FInputActionValue(X); break;
-	case EInputActionValueType::Axis2D:  Value = FInputActionValue(FVector2D(X, Y)); break;
-	case EInputActionValueType::Axis3D:  Value = FInputActionValue(FVector(X, Y, Z)); break;
-	default:                             Value = FInputActionValue(X); break;
-	}
-
-	Subsystem->InjectInputForAction(Action, Value, TArray<UInputModifier*>(), TArray<UInputTrigger*>());
+	Subsystem->InjectInputForAction(Action, VibeUEInputInjection::MakeValue(Action, X, Y, Z), TArray<UInputModifier*>(), TArray<UInputTrigger*>());
 
 	TSharedRef<FJsonObject> R = MakeShared<FJsonObject>();
+	R->SetBoolField(TEXT("queued"), true);
 	R->SetStringField(TEXT("action"), Action->GetName());
 	R->SetStringField(TEXT("value_type"), UEnum::GetValueAsString(Action->ValueType));
 	TArray<TSharedPtr<FJsonValue>> Injected;
@@ -942,11 +1461,80 @@ FString UInputService::InjectAction(const FString& ActionPath, float X, float Y,
 	Injected.Add(MakeShared<FJsonValueNumber>(Y));
 	Injected.Add(MakeShared<FJsonValueNumber>(Z));
 	R->SetArrayField(TEXT("injected"), Injected);
-	R->SetStringField(TEXT("note"), TEXT("Value applies for one input tick; call repeatedly to hold."));
+	R->SetNumberField(TEXT("pie_instance"), UsedInstance);
+	R->SetStringField(TEXT("note"), TEXT("Queued for the next input tick and released on the tick after; nothing runs while this call blocks the game thread. Read the result in a later call, two or more frames on. To hold an action use inject_action_for."));
 	return InjectionOkJson(R);
 }
 
-FString UInputService::InjectKey(const FString& KeyName, const FString& EventType)
+FString UInputService::InjectActionFor(const FString& ActionPath, float Seconds, float X, float Y, float Z, int32 PieInstance)
+{
+	// Holds the value with Enhanced Input's continuous injection, then releases it.
+	if (!(Seconds >= 0.05f && Seconds <= 60.0f))
+	{
+		return InjectionErrorJson(TEXT("BAD_DURATION"), TEXT("seconds must be between 0.05 and 60."));
+	}
+	FString Code, Message;
+	int32 UsedInstance = PieInstance;
+	UEnhancedInputLocalPlayerSubsystem* Subsystem = VibeUEInputInjection::ResolvePieSubsystem(PieInstance, UsedInstance, Code, Message);
+	if (!Subsystem)
+	{
+		return InjectionErrorJson(Code, Message);
+	}
+	const UInputAction* Action = VibeUEInputInjection::LoadActionForPie(ActionPath);
+	if (!Action)
+	{
+		return InjectionErrorJson(TEXT("ACTION_NOT_FOUND"), FString::Printf(TEXT("Input Action not found: %s"), *ActionPath));
+	}
+
+	const FString Id = VibeUEInputInjection::HoldId(Action, UsedInstance);
+	VibeUEInputInjection::ReleaseHeld(Id); // a second call restarts the hold
+
+	Subsystem->StartContinuousInputInjectionForAction(Action, VibeUEInputInjection::MakeValue(Action, X, Y, Z), TArray<UInputModifier*>(), TArray<UInputTrigger*>());
+
+	VibeUEInputInjection::FHeldInjection Held;
+	Held.Subsystem = Subsystem;
+	Held.Action = Action;
+	Held.Release = VibeUEInputInjection::AddWallClockRelease(Seconds, [Id]()
+	{
+		VibeUEInputInjection::ReleaseHeld(Id, /*bFromTicker=*/true);
+	});
+	VibeUEInputInjection::GHeldInjections.Add(Id, Held);
+	VibeUEInputInjection::UpdateThrottleScope();
+
+	TSharedRef<FJsonObject> R = MakeShared<FJsonObject>();
+	R->SetStringField(TEXT("action"), Action->GetName());
+	R->SetNumberField(TEXT("seconds"), Seconds);
+	R->SetNumberField(TEXT("pie_instance"), UsedInstance);
+	R->SetStringField(TEXT("note"), TEXT("Held from the next input tick for the given real time, then released. Read game state in later calls; stop early with stop_injection. Ending PIE drops the hold."));
+	return InjectionOkJson(R);
+}
+
+FString UInputService::StopInjection(const FString& ActionPath, int32 PieInstance)
+{
+	// The hold is found the way inject_action_for filed it: by the action object and the PIE instance -1
+	// resolves to, so any spelling of the path that names the same action finds it.
+	bool bWasActive = false;
+	int32 UsedInstance = PieInstance;
+	if (VibeUEInputInjection::GHeldInjections.Num() > 0)
+	{
+		if (PieInstance < 0 && GEngine)
+		{
+			VibeUEInputInjection::FindPieWorld(PieInstance, UsedInstance);
+		}
+		// A held action is in memory; a quiet load finds it without warning about one that does not exist.
+		if (const UInputAction* Action = VibeUEInputInjection::LoadActionForPie(ActionPath, LOAD_NoWarn | LOAD_Quiet))
+		{
+			bWasActive = VibeUEInputInjection::ReleaseHeld(VibeUEInputInjection::HoldId(Action, UsedInstance));
+		}
+	}
+	TSharedRef<FJsonObject> R = MakeShared<FJsonObject>();
+	R->SetStringField(TEXT("action"), ActionPath);
+	R->SetBoolField(TEXT("was_active"), bWasActive);
+	R->SetNumberField(TEXT("pie_instance"), UsedInstance);
+	return InjectionOkJson(R);
+}
+
+FString UInputService::InjectKey(const FString& KeyName, const FString& EventType, float HoldSeconds)
 {
 	if (!GEditor || !GEditor->PlayWorld)
 	{
@@ -969,11 +1557,17 @@ FString UInputService::InjectKey(const FString& KeyName, const FString& EventTyp
 		return InjectionErrorJson(TEXT("UNKNOWN_KEY"), FString::Printf(TEXT("Unknown key '%s' — see get_available_keys."), *KeyName));
 	}
 
-	const bool bDown = EventType.Equals(TEXT("down"), ESearchCase::IgnoreCase) || EventType.Equals(TEXT("tap"), ESearchCase::IgnoreCase);
+	// "hold" = down now, up after HoldSeconds (a ticker sends it; this call returns at once)
+	const bool bHold = EventType.Equals(TEXT("hold"), ESearchCase::IgnoreCase);
+	const bool bDown = bHold || EventType.Equals(TEXT("down"), ESearchCase::IgnoreCase) || EventType.Equals(TEXT("tap"), ESearchCase::IgnoreCase);
 	const bool bUp = EventType.Equals(TEXT("up"), ESearchCase::IgnoreCase) || EventType.Equals(TEXT("tap"), ESearchCase::IgnoreCase);
 	if (!bDown && !bUp)
 	{
-		return InjectionErrorJson(TEXT("BAD_EVENT"), FString::Printf(TEXT("Unknown event_type '%s' — use 'tap', 'down', or 'up'."), *EventType));
+		return InjectionErrorJson(TEXT("BAD_EVENT"), FString::Printf(TEXT("Unknown event_type '%s' — use 'tap', 'down', 'up', or 'hold'."), *EventType));
+	}
+	if (bHold && !(HoldSeconds >= 0.05f && HoldSeconds <= 60.0f))
+	{
+		return InjectionErrorJson(TEXT("BAD_DURATION"), TEXT("hold_seconds must be between 0.05 and 60 for a hold."));
 	}
 
 	FSlateApplication& Slate = FSlateApplication::Get();
@@ -981,9 +1575,27 @@ FString UInputService::InjectKey(const FString& KeyName, const FString& EventTyp
 	// the OS focus is elsewhere — the whole point versus SendKeys.
 	Slate.SetAllUserFocusToGameViewport();
 
+	// A hold of a key that is already held extends that hold: no second key-down (the game would see a
+	// second press), and its one pending release moves to HoldSeconds from now — two timers would let the
+	// first release the key early. An explicit "up" or "tap" ends a pending hold; this call sends the key-up.
+	bool bExtended = false;
+	if (bHold)
+	{
+		if (const FTSTicker::FDelegateHandle* Pending = VibeUEInputInjection::GHeldKeys.Find(Key))
+		{
+			FTSTicker::RemoveTicker(*Pending);
+			VibeUEInputInjection::GHeldKeys.Remove(Key);
+			bExtended = true;
+		}
+	}
+	else if (bUp)
+	{
+		VibeUEInputInjection::ReleaseHeldKey(Key, /*bSendKeyUp=*/false);
+	}
+
 	bool bHandledDown = false;
 	bool bHandledUp = false;
-	if (bDown)
+	if (bDown && !bExtended)
 	{
 		const FKeyEvent DownEvent(Key, FModifierKeysState(), /*UserIndex=*/0, /*bIsRepeat=*/false, /*CharacterCode=*/0, /*KeyCode=*/0);
 		bHandledDown = Slate.ProcessKeyDownEvent(const_cast<FKeyEvent&>(DownEvent));
@@ -993,11 +1605,27 @@ FString UInputService::InjectKey(const FString& KeyName, const FString& EventTyp
 		const FKeyEvent UpEvent(Key, FModifierKeysState(), /*UserIndex=*/0, /*bIsRepeat=*/false, /*CharacterCode=*/0, /*KeyCode=*/0);
 		bHandledUp = Slate.ProcessKeyUpEvent(const_cast<FKeyEvent&>(UpEvent));
 	}
+	if (bHold)
+	{
+		// The release, later. The editor stays off its background frame rate meanwhile, and ending PIE first
+		// cancels it (see OnEndPie).
+		const FTSTicker::FDelegateHandle Release = VibeUEInputInjection::AddWallClockRelease(HoldSeconds, [Key]()
+		{
+			VibeUEInputInjection::ReleaseHeldKey(Key, /*bSendKeyUp=*/true, /*bFromTicker=*/true);
+		});
+		VibeUEInputInjection::GHeldKeys.Add(Key, Release);
+		VibeUEInputInjection::UpdateThrottleScope();
+	}
 
 	TSharedRef<FJsonObject> R = MakeShared<FJsonObject>();
 	R->SetStringField(TEXT("key"), Key.GetFName().ToString());
 	R->SetStringField(TEXT("event"), EventType.ToLower());
 	R->SetBoolField(TEXT("handled_down"), bHandledDown);
 	R->SetBoolField(TEXT("handled_up"), bHandledUp);
+	if (bHold)
+	{
+		R->SetBoolField(TEXT("extended"), bExtended);
+		R->SetNumberField(TEXT("hold_seconds"), HoldSeconds);
+	}
 	return InjectionOkJson(R);
 }

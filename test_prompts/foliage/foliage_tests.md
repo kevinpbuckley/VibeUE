@@ -166,3 +166,13 @@ Delete all assets under /Game/FoliageTest.
 ---
 
 Delete FoliageTestTerrain.
+
+---
+
+## World Partition
+
+Open a new World Partition level. Place three trees with add_foliage_instances: two near the origin and one two grid cells away along X, without tracing to the ground. Tell me how many foliage actors hold them and which grid cell each is in. (Expected: one foliage actor per cell, two in all.)
+
+---
+
+Count those trees with get_instance_count, then remove them all with remove_all_foliage_of_type. (Expected: 3, then 3 removed and 0 left.)

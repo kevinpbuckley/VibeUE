@@ -16,6 +16,8 @@
 #include "Misc/Paths.h"
 #include "UObject/SoftObjectPath.h"
 #include "UObject/UnrealType.h"
+#include "Async/TaskGraphInterfaces.h"
+#include "Engine/StaticMesh.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeAssetReimportTest, "VibeUE.Assets.ReimportAsset",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -262,6 +264,74 @@ bool FVibeDeleteAssetUnattendedNotifiesRegistryTest::RunTest(const FString&)
 	}
 	IFileManager::Get().Delete(*SourcePng, false, true);
 	IFileManager::Get().DeleteDirectory(*TestDirectory, false, true);
+
+	return true;
+}
+
+// import_asset takes a mesh through AssetImportTask, and refuses (instead of asserting on TaskGraph's
+// RecursionGuard) when it is called from inside a game-thread task.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeAssetImportMeshTest, "VibeUE.Assets.ImportMesh",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVibeAssetImportMeshTest::RunTest(const FString&)
+{
+	const FString TestDirectory = FPaths::Combine(FPaths::ProjectIntermediateDir(), TEXT("VibeUE/ImportMeshTest"));
+	const FString ObjSource = FPaths::Combine(TestDirectory, TEXT("SM_ImportMeshTest.obj"));
+	const FString AssetPackagePath = TEXT("/Game/VibeUETests/SM_ImportMeshTest");
+
+	IFileManager::Get().MakeDirectory(*TestDirectory, true);
+	if (UEditorAssetLibrary::DoesAssetExist(AssetPackagePath))
+	{
+		UEditorAssetLibrary::DeleteAsset(AssetPackagePath);
+	}
+
+	// one 1 m quad as two triangles
+	const FString Obj = TEXT("v 0 0 0\nv 100 0 0\nv 100 100 0\nv 0 100 0\nvt 0 0\nvt 1 0\nvt 1 1\nvt 0 1\nvn 0 0 1\n")
+		TEXT("f 1/1/1 2/2/1 3/3/1\nf 1/1/1 3/3/1 4/4/1\n");
+	TestTrue(TEXT("OBJ fixture written"), FFileHelper::SaveStringToFile(Obj, *ObjSource));
+
+	// Run the call as a task taken from the game thread's own queue, the context where Interchange's wait would assert
+	// on TaskGraph's RecursionGuard: it must refuse and import nothing. WaitUntilTaskCompletes alone does not make that
+	// context: it retracts the task and runs it inline, outside the queue (measured 2026-09-29: the import ran).
+	bool bGuardHeld = false;
+	FString TaskPath;
+	FString TaskError;
+	const FGraphEventRef Event = FFunctionGraphTask::CreateAndDispatchWhenReady([&ObjSource, &bGuardHeld, &TaskPath, &TaskError]()
+	{
+		bGuardHeld = FTaskGraphInterface::Get().IsThreadProcessingTasks(ENamedThreads::GameThread);
+		if (bGuardHeld) // unrefused, an import here would assert, so it is only tried where the refusal must fire
+		{
+			TaskPath = UAssetDiscoveryService::ImportAsset(ObjSource, TEXT("/Game/VibeUETests"), TEXT("SM_ImportMeshTest"), TaskError);
+		}
+	}, TStatId(), nullptr, ENamedThreads::GameThread);
+	if (FTaskGraphInterface::Get().IsThreadProcessingTasks(ENamedThreads::GameThread))
+	{
+		FTaskGraphInterface::Get().WaitUntilTaskCompletes(Event, ENamedThreads::GameThread); // already inside the queue
+	}
+	else
+	{
+		FTaskGraphInterface::Get().ProcessThreadUntilIdle(ENamedThreads::GameThread);
+	}
+	TestTrue(TEXT("the task ran with the game thread's queue guard held"), Event->IsComplete() && bGuardHeld);
+	TestTrue(FString::Printf(TEXT("there the import is refused ('%s')"), *TaskError), TaskPath.IsEmpty() && TaskError.Contains(TEXT("RecursionGuard")));
+	TestFalse(TEXT("the refused import created nothing"), UEditorAssetLibrary::DoesAssetExist(AssetPackagePath));
+
+	FString Error;
+	const FString ImportedPath = UAssetDiscoveryService::ImportAsset(ObjSource, TEXT("/Game/VibeUETests"), TEXT("SM_ImportMeshTest"), Error);
+	TestFalse(FString::Printf(TEXT("OBJ mesh imported (%s)"), *Error), ImportedPath.IsEmpty());
+
+	const UObject* Imported = ImportedPath.IsEmpty() ? nullptr : StaticLoadObject(UObject::StaticClass(), nullptr, *ImportedPath);
+	TestTrue(TEXT("the returned asset is a static mesh"), Imported && Imported->IsA<UStaticMesh>());
+	TestTrue(TEXT("the mesh was saved to disk"), FPackageName::DoesPackageExist(AssetPackagePath));
+
+	if (UEditorAssetLibrary::DoesAssetExist(AssetPackagePath))
+	{
+		UEditorAssetLibrary::DeleteAsset(AssetPackagePath);
+	}
+	IFileManager::Get().Delete(*ObjSource, false, true);
+	IFileManager::Get().DeleteDirectory(*TestDirectory, false, true);
+	// the test folder goes only if it is empty (not a tree delete): other VibeUE tests may keep assets there
+	IFileManager::Get().DeleteDirectory(*FPaths::Combine(FPaths::ProjectContentDir(), TEXT("VibeUETests")), false, false);
 
 	return true;
 }

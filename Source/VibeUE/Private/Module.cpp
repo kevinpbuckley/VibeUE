@@ -514,6 +514,9 @@ void FModule::ShutdownModule()
 	FCoreDelegates::OnPreExit.RemoveAll(this);
 	FCoreDelegates::GetOnPostEngineInit().RemoveAll(this);
 
+	// The MCP bridge's worker threads must not outlive this module (already done by OnPreExit at editor exit)
+	VibeUEMCPToolBridge::CancelAllRunning();
+
 	// Unregister service toolsets + MCP tools
 	UnregisterToolsets();
 
@@ -526,6 +529,8 @@ void FModule::ShutdownModule()
 void FModule::OnPreExit()
 {
 	UE_LOG(LogTemp, Display, TEXT("VibeUE OnPreExit - cleaning up Python services"));
+	// Wake the tool calls waiting off the game thread while HTTP still runs, and stop the bridge's worker threads
+	VibeUEMCPToolBridge::CancelAllRunning();
 	UWorkflowService::ShutdownJournal();
 	FVibeUEHealthSignal::Stop();
 	FVibeUEReadinessSignal::Remove();

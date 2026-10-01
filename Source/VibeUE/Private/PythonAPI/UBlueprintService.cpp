@@ -981,13 +981,16 @@ UBlueprint* UBlueprintService::LoadBlueprint(const FString& BlueprintPath)
 		return nullptr;
 	}
 
-	// Under Play-In-Editor the editor asset often will not resolve and BlueprintService edits are
-	// unsafe, so callers used to get an empty/False result with no explanation. Make the refusal
-	// visible with a fixed PIE_ACTIVE: prefix naming the Blueprint path (LoadBlueprint is the shared
-	// choke point every BlueprintService entry point funnels through). Return type is unchanged.
+	// BlueprintService edits are unsafe under Play-In-Editor, so refuse every load while PIE runs:
+	// log a fixed PIE_ACTIVE: prefix naming the Blueprint path and return nullptr (LoadBlueprint is
+	// the shared choke point every BlueprintService entry point funnels through). The early return
+	// matters for subobject (":") paths: UEditorAssetLibrary::LoadAsset already refuses during PIE,
+	// but StaticLoadObject below does not, so without it a Level Blueprint path would still resolve
+	// and be edited while the log claimed the call was refused.
 	if (GEditor && GEditor->PlayWorld)
 	{
 		UE_LOG(LogTemp, Error, TEXT("PIE_ACTIVE: LoadBlueprint refused '%s' — a Play-In-Editor session is running; stop PIE before using BlueprintService."), *BlueprintPath);
+		return nullptr;
 	}
 
 	// Subobject paths (":" present) don't load through the asset library — resolve them
@@ -6493,11 +6496,42 @@ bool UBlueprintService::DeleteNode(
 		return false;
 	}
 
-	// Don't delete entry or result nodes
-	if (Node->IsA<UK2Node_FunctionEntry>() || Node->IsA<UK2Node_FunctionResult>())
+	// Never delete a function entry node — the graph cannot exist without one.
+	if (Node->IsA<UK2Node_FunctionEntry>())
 	{
-		UE_LOG(LogTemp, Error, TEXT("DeleteNode: Cannot delete function entry or result nodes"));
+		UE_LOG(LogTemp, Error, TEXT("DeleteNode: Cannot delete a function entry node ('%s')"), *NodeId);
 		return false;
+	}
+
+	// Result nodes follow the engine's own rule (UK2Node_FunctionResult::CanUserDeleteNode): an
+	// editable result can always go, and a fixed-signature one only while another result remains.
+	// Refusing every result node left an extra, unreachable "return" node impossible to remove.
+	const bool bIsResultNode = Node->IsA<UK2Node_FunctionResult>();
+	if (bIsResultNode && !Node->CanUserDeleteNode())
+	{
+		UE_LOG(LogTemp, Error,
+			TEXT("DeleteNode: Cannot delete function result node '%s' — it is the only result node of a fixed-signature function (CanUserDeleteNode is false)"),
+			*NodeId);
+		return false;
+	}
+
+	// The editor lets the user delete the ONLY result node of an editable function, and so does this
+	// call — but that removes the function's outputs with it, and every caller wired to them stops
+	// compiling. Note it now so the warning below can say so.
+	bool bRemovesLastResult = false;
+	int32 RemovedOutputCount = 0;
+	if (const UK2Node_FunctionResult* ResultNode = Cast<UK2Node_FunctionResult>(Node))
+	{
+		bRemovesLastResult = true;
+		for (const UEdGraphNode* Other : Graph->Nodes)
+		{
+			if (Other && Other != Node && Other->IsA<UK2Node_FunctionResult>())
+			{
+				bRemovesLastResult = false;
+				break;
+			}
+		}
+		RemovedOutputCount = ResultNode->UserDefinedPins.Num();
 	}
 
 	// Break all connections first
@@ -6511,7 +6545,25 @@ bool UBlueprintService::DeleteNode(
 
 	// Remove the node
 	Graph->RemoveNode(Node);
-	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+	if (bIsResultNode)
+	{
+		// A result node carries the function's output pins (UserDefinedPins); removing the last one
+		// changes the signature, so callers must be reconstructed. The editor's own delete
+		// (FBlueprintEditor::DeleteSelectedNodes) applies the same structural mark for any node whose
+		// NodeCausesStructuralBlueprintChange() is true, which every function terminator's is.
+		FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+	}
+	else
+	{
+		FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+	}
+
+	if (bRemovesLastResult)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("DeleteNode: '%s' was the last result node of function '%s' — the function now has no result node and its %d output(s) are gone; callers that use those outputs will fail to compile until a result node with the outputs is added back"),
+			*NodeId, *Graph->GetName(), RemovedOutputCount);
+	}
 
 	UE_LOG(LogTemp, Log, TEXT("DeleteNode: Deleted node '%s' from graph '%s'"), *NodeId, *GraphName);
 	return true;

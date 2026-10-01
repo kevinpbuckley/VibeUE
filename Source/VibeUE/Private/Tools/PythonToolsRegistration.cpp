@@ -170,7 +170,7 @@ REGISTER_VIBEUE_TOOL(execute_python_code,
 	"Execute Python code in Unreal Engine. IMPORTANT: Use 'import unreal' (lowercase). For subsystems use: unreal.get_editor_subsystem(unreal.LevelEditorSubsystem). Returns stdout, stderr, and execution status. A non-empty resident_maps in the reply means a map other than the open level is loaded in memory and the NEXT level load will crash the editor until it is released.",
 	"Python",
 	TOOL_PARAMS(
-		TOOL_PARAM("code", "Python code to execute. Must start with 'import unreal' (lowercase). For editor subsystems use unreal.get_editor_subsystem()", "string", true),
+		TOOL_PARAM("code", "Python code to execute. Must start with 'import unreal' (lowercase). For editor subsystems use unreal.get_editor_subsystem(). This is Python SOURCE, never a script path: a path such as C:/scripts/build.py is compiled as code and fails. To run a .py file, pass code that runs it, e.g. import unreal, runpy; runpy.run_path(r'C:/scripts/build.py') (its own globals) or exec(open(r'C:/scripts/build.py').read()) (the shared console globals)", "string", true),
 		TOOL_PARAM("auto_save", "Save all dirty content AND world packages before running (default true). Pass false to run without the pre-execution save sweep. The reply reports the OUTCOME: auto_save (true only if the sweep really ran), auto_save_note (why not, when false) and saved_packages.", "boolean", false)
 	),
 	{

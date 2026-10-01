@@ -9,7 +9,7 @@ struct FFabDownloadInfo;
 /** Live state of one asset's import, polled by FabService::ImportStatus. */
 struct FFabImportProgress
 {
-	enum class EPhase : uint8 { Downloading, Importing, Done, Failed };
+	enum class EPhase : uint8 { Downloading, Importing, Done, Staged, Failed };
 
 	EPhase Phase = EPhase::Downloading;
 	float Percent = 0.0f;
@@ -55,5 +55,7 @@ public:
 	                        const FString& DestinationPath, FString& OutError);
 
 	/** Current progress for AssetId, or null if no import has been started this session. */
+	static bool StartProject(const FString& AssetId, const FString& AssetName, const FFabDownloadInfo& Info, FString& OutError);
+
 	static TSharedPtr<FFabImportProgress> Get(const FString& AssetId);
 };

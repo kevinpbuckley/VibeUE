@@ -5,6 +5,7 @@
 #if WITH_AUTOMATION_TESTS
 
 #include "Tools/PythonTools.h"
+#include "Tools/PythonExecutionService.h"
 #include "Engine/World.h"
 #include "UObject/Package.h"
 #include "Misc/ScopeExit.h"
@@ -72,6 +73,75 @@ bool FVibePythonAutoSaveReportTest::RunTest(const FString&)
 		}
 		// Either way it must never claim the caller opted out — the caller asked for the sweep.
 		TestNotEqual(TEXT("auto_save=true never reports opted_out"), Note, FString(TEXT("opted_out")));
+	}
+
+	return true;
+}
+
+// The pre-run auto-save sweep must skip during a PIE / Simulate session. It used to test only
+// GIsPlayInEditorWorld, which the engine sets only while the PIE world itself ticks — an MCP call
+// dispatched from editor scope during PIE saw it false and flushed every dirty package through
+// UEditorLoadingAndSavingUtils::SavePackages (which has no PIE guard of its own). GEditor->PlayWorld
+// is what is non-null for the whole session.
+//
+// A real PIE session needs latent commands and a renderer; the suite runs headless under -nullrhi.
+// So PIE is simulated by pointing GEditor->PlayWorld at a transient PIE-type world that the engine
+// is never told about (bInformEngineOfWorld=false: no world context, nothing ticks it). The guard
+// restores the previous PlayWorld on every exit path, then the world is destroyed and un-rooted.
+//
+// Deliberately, NO sweep runs outside simulated PIE: a real auto_save=true run writes whatever other
+// tests left dirty (it once saved a project's startup map mid-suite). The non-PIE branch is covered
+// by VibeUE.Python.AutoSaveReport, and this test failing before the fix is what shows it is not
+// vacuous (that pre-fix run does sweep - it is the bug being proven).
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibePythonAutoSaveSkippedDuringPIETest, "VibeUE.Python.AutoSaveSkippedDuringPIE",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVibePythonAutoSaveSkippedDuringPIETest::RunTest(const FString&)
+{
+	if (!GEditor)
+	{
+		AddError(TEXT("No GEditor; cannot simulate a PIE session."));
+		return false;
+	}
+	if (!TestNull(TEXT("no real PIE session is running"), GEditor->PlayWorld.Get()))
+	{
+		return false;
+	}
+
+	// CreateWorld roots the world by default (bAddToRoot=true), hence the RemoveFromRoot below.
+	UWorld* FakePlayWorld = UWorld::CreateWorld(EWorldType::PIE, /*bInformEngineOfWorld=*/false);
+	if (!TestNotNull(TEXT("created the transient PIE world"), FakePlayWorld))
+	{
+		return false;
+	}
+	// Declared before the guard so it runs AFTER it: PlayWorld is restored first, then the world dies.
+	ON_SCOPE_EXIT
+	{
+		FakePlayWorld->DestroyWorld(/*bInformEngineOfWorld=*/false);
+		FakePlayWorld->RemoveFromRoot();
+	};
+	TGuardValue<TObjectPtr<UWorld>> PlayWorldGuard(GEditor->PlayWorld, FakePlayWorld);
+
+	// The skip is logged as a Warning; it is the expected outcome here.
+	AddExpectedMessage(TEXT("Cannot auto-save: Currently in PIE mode"), ELogVerbosity::Warning,
+		EAutomationExpectedMessageFlags::Contains, 1, /*IsRegex=*/false);
+
+	const FString Json = UPythonTools::ExecutePythonCode(TEXT("x = 1\n"), /*bAutoSave=*/true);
+	TSharedPtr<FJsonObject> Obj;
+	FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json), Obj);
+	if (!TestTrue(TEXT("PIE reply parses as JSON"), Obj.IsValid()))
+	{
+		return false;
+	}
+	TestTrue(TEXT("the script itself still runs during PIE"), Obj->GetBoolField(TEXT("success")));
+	TestFalse(TEXT("auto_save reports the sweep did NOT run during PIE"), Obj->GetBoolField(TEXT("auto_save")));
+	// A set crash latch would report "previous_run_crashed" here and fail this check - correctly.
+	TestEqual(TEXT("auto_save_note names PIE"), Obj->GetStringField(TEXT("auto_save_note")), FString(TEXT("pie_active")));
+
+	const TArray<TSharedPtr<FJsonValue>>* Saved = nullptr;
+	if (TestTrue(TEXT("saved_packages present"), Obj->TryGetArrayField(TEXT("saved_packages"), Saved)))
+	{
+		TestEqual(TEXT("nothing written during PIE"), Saved->Num(), 0);
 	}
 
 	return true;
@@ -208,6 +278,84 @@ bool FVibePythonResidentMapsTest::RunTest(const FString&)
 
 	TestFalse(*FString::Printf(TEXT("%s is no longer reported once released"), *ProbePath),
 		UPythonTools::GetResidentMapWorlds().Contains(ProbePath));
+
+	return true;
+}
+
+// In ExecuteFile mode the Python plugin takes any command whose first ".py" is followed by
+// whitespace or the end (or, when it starts with a quote, by a closing quote) as a FILE PATH, and
+// RunFile then fails "Could not load Python file". So code that merely mentioned a .py file in a
+// comment, a string or a docstring never ran, and the reply said only "Python execution failed".
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibePythonCodeMentioningPyFileTest, "VibeUE.Python.CodeMentioningPyFile",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVibePythonCodeMentioningPyFileTest::RunTest(const FString&)
+{
+	// The command handed to the plugin: other code unchanged, and never a ".py" for it to find.
+	const FString Plain = TEXT("x = 1\nprint(x)\n");
+	TestEqual(TEXT("code without .py is passed unchanged"), VibeUE::FPythonExecutionService::MakeCodeCommand(Plain), Plain);
+	TestFalse(TEXT("the command for code mentioning .py does not contain it"),
+		VibeUE::FPythonExecutionService::MakeCodeCommand(TEXT("# a.py\nb = 'c.PY '\n")).Contains(TEXT(".py")));
+
+	auto Run = [](const TCHAR* Code)
+	{
+		const FString Json = UPythonTools::ExecutePythonCode(Code, /*bAutoSave=*/false);
+		TSharedPtr<FJsonObject> Obj;
+		FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json), Obj);
+		return Obj;
+	};
+	auto ExpectRuns = [this, &Run](const TCHAR* What, const TCHAR* Code, const TCHAR* ExpectedOutput)
+	{
+		const TSharedPtr<FJsonObject> Obj = Run(Code);
+		if (!TestTrue(FString::Printf(TEXT("%s: reply parses"), What), Obj.IsValid()))
+		{
+			return;
+		}
+		FString Error;
+		Obj->TryGetStringField(TEXT("error_message"), Error);
+		TestTrue(FString::Printf(TEXT("%s: runs as code (error: '%s')"), What, *Error), Obj->GetBoolField(TEXT("success")));
+		TestTrue(FString::Printf(TEXT("%s: prints '%s'"), What, ExpectedOutput),
+			Obj->GetStringField(TEXT("output")).Contains(ExpectedOutput));
+	};
+
+	ExpectRuns(TEXT(".py then a line end, in a comment"),
+		TEXT("x = 1  # written by build.py\nprint('VibeUEPyFileComment', x)\n"), TEXT("VibeUEPyFileComment 1"));
+	ExpectRuns(TEXT(".py at the very end"),
+		TEXT("print('VibeUEPyFileEnd')  # see helper.py"), TEXT("VibeUEPyFileEnd"));
+	ExpectRuns(TEXT(".py then a space, in a string"),
+		TEXT("s = 'run tool.py now'\nprint('VibeUEPyFileString', len(s))\n"), TEXT("VibeUEPyFileString 15"));
+	ExpectRuns(TEXT("a leading docstring naming a .py file"),
+		TEXT("\"\"\"Helpers for make_level.py\"\"\"\nprint('VibeUEPyFileDocstring')\n"), TEXT("VibeUEPyFileDocstring"));
+
+	// Such code must run in the same globals as any other call: a function sees the module's names,
+	// and a name it binds is visible to the next call.
+	ExpectRuns(TEXT("module names inside a function"),
+		TEXT("vibeue_py_file_probe = 20  # set by probe.py\ndef twice():\n    return vibeue_py_file_probe * 2\nprint('VibeUEPyFileFunc', twice())\n"),
+		TEXT("VibeUEPyFileFunc 40"));
+	ExpectRuns(TEXT("a name bound by the previous call"),
+		TEXT("print('VibeUEPyFileNext', vibeue_py_file_probe + 1)\n"), TEXT("VibeUEPyFileNext 21"));
+
+	// Those shared globals may hold a caller's own compile or exec.
+	Run(TEXT("compile = exec = base64 = None\n"));
+	ExpectRuns(TEXT("after a call rebound compile, exec and base64"),
+		TEXT("print('VibeUEPyFileShadowed')  # see shadow.py"), TEXT("VibeUEPyFileShadowed"));
+	Run(TEXT("del compile, exec, base64, vibeue_py_file_probe\n"));
+
+	// An error must still name the caller's own line.
+	AddExpectedError(TEXT("LogPython"), EAutomationExpectedErrorFlags::Contains, 0);
+	{
+		const TSharedPtr<FJsonObject> Obj = Run(TEXT("# first line names check.py\ny = 2\nraise RuntimeError('VibeUEPyFileLine')\n"));
+		if (TestTrue(TEXT("raising run: reply parses"), Obj.IsValid()))
+		{
+			FString Error;
+			Obj->TryGetStringField(TEXT("error_message"), Error);
+			TestFalse(TEXT("raising run: reported as failed"), Obj->GetBoolField(TEXT("success")));
+			TestTrue(FString::Printf(TEXT("raising run: the error is the script's own (got '%s')"), *Error),
+				Error.Contains(TEXT("VibeUEPyFileLine")));
+			TestTrue(FString::Printf(TEXT("raising run: the error names line 3 (got '%s')"), *Error),
+				Error.Contains(TEXT("line 3")));
+		}
+	}
 
 	return true;
 }

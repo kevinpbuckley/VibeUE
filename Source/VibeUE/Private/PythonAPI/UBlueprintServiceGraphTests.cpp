@@ -24,6 +24,9 @@
 #include "PythonAPI/UActorService.h"
 #include "Engine/StaticMeshActor.h"
 #include "Engine/World.h"
+#include "Engine/Level.h"
+#include "Engine/LevelScriptBlueprint.h"
+#include "Templates/UnrealTemplate.h"
 #include "Editor.h"
 #include "K2Node_Event.h"
 #include "K2Node_Timeline.h"
@@ -1022,6 +1025,366 @@ bool FVibeActorServiceRerunConstructionTest::RunTest(const FString&)
 	Actor->SetActorLabel(TEXT("VibeUE_RCS_Probe"));
 	TestTrue(TEXT("rerun_construction_scripts by label returns true"),
 		UActorService::RerunConstructionScripts(TEXT("VibeUE_RCS_Probe")));
+	return true;
+}
+
+// ============================================================================
+// B1: LoadBlueprint logged "PIE_ACTIVE: LoadBlueprint refused" under Play-In-Editor but did not
+// return, so a subobject (":") path such as a Level Blueprint still resolved through
+// StaticLoadObject and mutators like SetNodePosition edited the Blueprint during PIE. Asset paths
+// were only refused by accident (UEditorAssetLibrary::LoadAsset refuses during PIE itself).
+//
+// The Level Blueprint belongs to a throwaway /Temp world rather than the editor's current map, so
+// the test gets the real "<Pkg>.<World>:PersistentLevel.<Name>" path shape without dirtying the
+// user's map. PIE is simulated by pointing GEditor->PlayWorld at a transient PIE world (a real PIE
+// session needs latent commands and a viewport, which the -nullrhi suite does not have); the guard
+// restores the previous value before any assertion runs, and both worlds are destroyed on exit.
+// ============================================================================
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBlueprintServiceLoadBlueprintRefusesDuringPIETest, "VibeUE.BlueprintService.LoadBlueprintRefusesDuringPIE",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FVibeBlueprintServiceLoadBlueprintRefusesDuringPIETest::RunTest(const FString&)
+{
+	if (!GEditor)
+	{
+		AddError(TEXT("GEditor is null; this test needs a full editor"));
+		return false;
+	}
+	if (!TestNull(TEXT("no real PIE session is running (the control call needs PIE off)"), GEditor->PlayWorld.Get()))
+	{
+		return false;
+	}
+
+	const FString PackageName = MakeUniqueObjectName(nullptr, UPackage::StaticClass(), FName(TEXT("/Temp/VibeUE_B1LevelScriptPIE"))).ToString();
+	UPackage* LevelPackage = CreatePackage(*PackageName);
+	if (!TestNotNull(TEXT("created a /Temp package for the throwaway level world"), LevelPackage))
+	{
+		return false;
+	}
+
+	UWorld* LevelWorld = UWorld::CreateWorld(EWorldType::Inactive, /*bInformEngineOfWorld*/ false, FName(TEXT("VibeUE_B1LevelScriptPIE")), LevelPackage);
+	UWorld* FakePieWorld = UWorld::CreateWorld(EWorldType::PIE, /*bInformEngineOfWorld*/ false);
+
+	// CreateWorld roots both worlds; tear them down on every exit path. The node edits below dirty the
+	// level world's package, so clear that before handing it to GC.
+	ON_SCOPE_EXIT
+	{
+		if (LevelWorld)
+		{
+			LevelWorld->DestroyWorld(/*bInformEngineOfWorld*/ false);
+			LevelWorld->RemoveFromRoot();
+		}
+		LevelPackage->SetDirtyFlag(false);
+		if (FakePieWorld)
+		{
+			FakePieWorld->DestroyWorld(/*bInformEngineOfWorld*/ false);
+			FakePieWorld->RemoveFromRoot();
+		}
+	};
+
+	if (!TestNotNull(TEXT("created the throwaway level world"), LevelWorld) ||
+		!TestNotNull(TEXT("created the transient PIE world"), FakePieWorld) ||
+		!TestNotNull(TEXT("level world has a persistent level"), LevelWorld->PersistentLevel.Get()))
+	{
+		return false;
+	}
+
+	ULevelScriptBlueprint* LevelBlueprint = LevelWorld->PersistentLevel->GetLevelScriptBlueprint(/*bDontCreate*/ false);
+	if (!TestNotNull(TEXT("level world produced a Level Blueprint"), LevelBlueprint) ||
+		!TestTrue(TEXT("Level Blueprint has an event graph"), LevelBlueprint->UbergraphPages.Num() > 0 && LevelBlueprint->UbergraphPages[0] != nullptr))
+	{
+		return false;
+	}
+
+	const FString Path = LevelBlueprint->GetPathName();
+	if (!TestTrue(FString::Printf(TEXT("Level Blueprint path is a subobject (':') path: %s"), *Path), Path.Contains(TEXT(":"))))
+	{
+		return false;
+	}
+
+	UEdGraph* Graph = LevelBlueprint->UbergraphPages[0];
+	const FString GraphName = Graph->GetName();
+
+	const FString NodeId = UBlueprintService::CreateNodeByKey(Path, GraphName, TEXT("FUNC KismetSystemLibrary::PrintString"), 100.0f, 200.0f);
+	if (!TestFalse(TEXT("service created a node in the Level Blueprint via its ':' path"), NodeId.IsEmpty()))
+	{
+		return false;
+	}
+	// Declared after the world teardown, so it runs first (while the world is still alive).
+	ON_SCOPE_EXIT
+	{
+		UBlueprintService::DeleteNode(Path, GraphName, NodeId);
+	};
+
+	FGuid NodeGuid;
+	FGuid::Parse(NodeId, NodeGuid);
+	UEdGraphNode* Node = nullptr;
+	for (UEdGraphNode* Candidate : Graph->Nodes)
+	{
+		if (Candidate && Candidate->NodeGuid == NodeGuid)
+		{
+			Node = Candidate;
+			break;
+		}
+	}
+	if (!TestNotNull(TEXT("created node is in the Level Blueprint's event graph"), Node))
+	{
+		return false;
+	}
+
+	// Control (PIE off): the ':' path resolves and the move lands, so the PIE assertion below is not
+	// vacuous.
+	TestTrue(TEXT("control: SetNodePosition on the ':' path succeeds with PIE off"),
+		UBlueprintService::SetNodePosition(Path, GraphName, NodeId, 300.0f, 400.0f));
+	TestEqual(TEXT("control: node X moved"), Node->NodePosX, 300);
+	TestEqual(TEXT("control: node Y moved"), Node->NodePosY, 400);
+
+	const int32 PosXBeforePie = Node->NodePosX;
+	const int32 PosYBeforePie = Node->NodePosY;
+
+	// The refusal logs at Error verbosity, and SetNodePosition then logs its own load failure.
+	AddExpectedError(TEXT("PIE_ACTIVE: LoadBlueprint refused"), EAutomationExpectedErrorFlags::Contains, 1);
+	AddExpectedError(TEXT("SetNodePosition: Failed to load blueprint"), EAutomationExpectedErrorFlags::Contains, 1);
+
+	bool bMovedDuringPie = false;
+	{
+		TGuardValue<TObjectPtr<UWorld>> PlayWorldGuard(GEditor->PlayWorld, FakePieWorld);
+		bMovedDuringPie = UBlueprintService::SetNodePosition(Path, GraphName, NodeId, 777.0f, 888.0f);
+	}
+
+	TestNull(TEXT("GEditor->PlayWorld restored after the simulated PIE call"), GEditor->PlayWorld.Get());
+	TestFalse(TEXT("SetNodePosition on a ':' path is refused while PIE runs"), bMovedDuringPie);
+	TestEqual(TEXT("node X unchanged by the refused PIE call"), Node->NodePosX, PosXBeforePie);
+	TestEqual(TEXT("node Y unchanged by the refused PIE call"), Node->NodePosY, PosYBeforePie);
+	return true;
+}
+
+// ============================================================================
+// B4: delete_node refused EVERY function result node, so an extra, unreachable "return" node in a
+// function graph could never be removed through the API. The engine's own rule
+// (UK2Node_FunctionResult::CanUserDeleteNode) allows deleting an editable result node. Builds a user
+// function with TWO result nodes, deletes the extra one by id, and asserts one result remains and
+// the Blueprint still compiles. Control: the function ENTRY node is still refused.
+// ============================================================================
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBlueprintServiceDeleteExtraFunctionResultTest, "VibeUE.BlueprintService.DeleteNodeRemovesExtraFunctionResult",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FVibeBlueprintServiceDeleteExtraFunctionResultTest::RunTest(const FString&)
+{
+	using namespace VibeBlueprintServiceTestUtil;
+
+	const FString PackageName = FString::Printf(TEXT("/Game/__VibeUETest/BP_DeleteExtraResult_%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+	UBlueprint* Blueprint = MakeRegisteredBlueprint(*this, PackageName, AActor::StaticClass());
+	if (!Blueprint)
+	{
+		return false;
+	}
+	ON_SCOPE_EXIT { ReleaseBlueprint(Blueprint); };
+
+	const FString Path = PackageName;
+
+	// A user function with one int output — the output parameter creates the primary result node.
+	const FString FuncName = UBlueprintService::CreateFunctionGraph(Path, TEXT("VibeTwoReturnsFunc"), /*bIsPure*/ false);
+	if (!TestFalse(TEXT("create_function_graph created the user function"), FuncName.IsEmpty()))
+	{
+		return false;
+	}
+	TestTrue(TEXT("added output parameter"),
+		UBlueprintService::AddFunctionParameter(Path, FuncName, TEXT("OutValue"), TEXT("int"), true, false, TEXT(""), false, TEXT("")));
+
+	UEdGraph* FuncGraph = nullptr;
+	for (UEdGraph* Graph : Blueprint->FunctionGraphs)
+	{
+		if (Graph && Graph->GetName() == FuncName)
+		{
+			FuncGraph = Graph;
+			break;
+		}
+	}
+	if (!TestNotNull(TEXT("found the new function graph"), FuncGraph))
+	{
+		return false;
+	}
+
+	TArray<UK2Node_FunctionEntry*> EntryNodes;
+	TArray<UK2Node_FunctionResult*> ResultNodes;
+	FuncGraph->GetNodesOfClass<UK2Node_FunctionEntry>(EntryNodes);
+	FuncGraph->GetNodesOfClass<UK2Node_FunctionResult>(ResultNodes);
+	if (!TestEqual(TEXT("function graph has one entry node"), EntryNodes.Num(), 1) ||
+		!TestEqual(TEXT("function graph starts with one result node"), ResultNodes.Num(), 1))
+	{
+		return false;
+	}
+	UK2Node_FunctionEntry* EntryNode = EntryNodes[0];
+	UK2Node_FunctionResult* PrimaryResult = ResultNodes[0];
+
+	// Add a SECOND result node the way the engine places one (PostPlacedNewNode syncs it with the
+	// entry node and the primary result's output pins). It is left unwired — the "extra return".
+	UK2Node_FunctionResult* ExtraResult = nullptr;
+	{
+		FGraphNodeCreator<UK2Node_FunctionResult> NodeCreator(*FuncGraph);
+		ExtraResult = NodeCreator.CreateNode(/*bSelectNewNode*/ false);
+		ExtraResult->NodePosX = PrimaryResult->NodePosX;
+		ExtraResult->NodePosY = PrimaryResult->NodePosY + 200;
+		NodeCreator.Finalize();
+	}
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+
+	ResultNodes.Reset();
+	FuncGraph->GetNodesOfClass<UK2Node_FunctionResult>(ResultNodes);
+	if (!TestEqual(TEXT("function graph now has two result nodes"), ResultNodes.Num(), 2))
+	{
+		return false;
+	}
+	TestTrue(TEXT("the engine itself allows deleting the extra result node"), ExtraResult->CanUserDeleteNode());
+
+	const FBlueprintCompileResult Before = UBlueprintService::CompileBlueprint(Path);
+	TestTrue(TEXT("the two-result function compiles"), Before.bSuccess);
+	TestEqual(TEXT("the two-result function compiles with no errors"), Before.NumErrors, 0);
+
+	// The fix: the extra result node can be deleted by id.
+	const FString ExtraId = ExtraResult->NodeGuid.ToString();
+	TestTrue(TEXT("delete_node removes the extra function result node"),
+		UBlueprintService::DeleteNode(Path, FuncName, ExtraId));
+
+	ResultNodes.Reset();
+	FuncGraph->GetNodesOfClass<UK2Node_FunctionResult>(ResultNodes);
+	TestEqual(TEXT("exactly one result node remains"), ResultNodes.Num(), 1);
+	TestTrue(TEXT("the remaining result node is the primary one"), ResultNodes.Num() == 1 && ResultNodes[0] == PrimaryResult);
+
+	const FBlueprintCompileResult After = UBlueprintService::CompileBlueprint(Path);
+	TestTrue(TEXT("the function still compiles after the delete"), After.bSuccess);
+	TestEqual(TEXT("the function compiles with no errors after the delete"), After.NumErrors, 0);
+
+	// Control: the function entry node is still refused. DeleteNode logs the refusal at Error
+	// verbosity; Occurrences = 1 means it must occur exactly once.
+	AddExpectedError(TEXT("DeleteNode: Cannot delete a function entry node"), EAutomationExpectedErrorFlags::Contains, 1);
+	TestFalse(TEXT("delete_node still refuses the function entry node"),
+		UBlueprintService::DeleteNode(Path, FuncName, EntryNode->NodeGuid.ToString()));
+
+	EntryNodes.Reset();
+	FuncGraph->GetNodesOfClass<UK2Node_FunctionEntry>(EntryNodes);
+	TestEqual(TEXT("the entry node is still in the graph"), EntryNodes.Num(), 1);
+
+	return true;
+}
+
+// ============================================================================
+// B4 control: a NON-editable result node (an interface implementation's fixed signature) that is
+// the ONLY result in its graph stays refused — the engine's CanUserDeleteNode returns false for it.
+// ============================================================================
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBlueprintServiceDeleteSoleFixedResultRefusedTest, "VibeUE.BlueprintService.DeleteNodeRefusesSoleFixedFunctionResult",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FVibeBlueprintServiceDeleteSoleFixedResultRefusedTest::RunTest(const FString&)
+{
+	UBlueprint* Interface = nullptr;
+	UBlueprint* Actor = nullptr;
+	FString ActorPath;
+	const bool bBuilt = VibeUETestHelpers::BuildInterfaceImplementer(*this, TEXT("SoleFixedResult"), Interface, Actor, ActorPath);
+	ON_SCOPE_EXIT{ VibeUETestHelpers::ForgetBlueprint(Actor); VibeUETestHelpers::ForgetBlueprint(Interface); };
+	if (!bBuilt)
+	{
+		return false;
+	}
+
+	// The return-valued interface function is materialised as an interface graph on the implementer.
+	UEdGraph* ImplGraph = nullptr;
+	for (const FBPInterfaceDescription& Desc : Actor->ImplementedInterfaces)
+	{
+		for (UEdGraph* Graph : Desc.Graphs)
+		{
+			if (Graph && Graph->GetName() == TEXT("GetValue"))
+			{
+				ImplGraph = Graph;
+				break;
+			}
+		}
+	}
+	if (!TestNotNull(TEXT("implementer has the GetValue interface graph"), ImplGraph))
+	{
+		return false;
+	}
+
+	TArray<UK2Node_FunctionResult*> ResultNodes;
+	ImplGraph->GetNodesOfClass<UK2Node_FunctionResult>(ResultNodes);
+	if (!TestEqual(TEXT("the interface graph has exactly one result node"), ResultNodes.Num(), 1))
+	{
+		return false;
+	}
+	UK2Node_FunctionResult* SoleResult = ResultNodes[0];
+	TestFalse(TEXT("the interface result node is not editable (fixed signature)"), SoleResult->IsEditable());
+	TestFalse(TEXT("the engine refuses deleting the sole fixed-signature result node"), SoleResult->CanUserDeleteNode());
+
+	AddExpectedError(TEXT("DeleteNode: Cannot delete function"), EAutomationExpectedErrorFlags::Contains, 1);
+	TestFalse(TEXT("delete_node refuses the sole fixed-signature result node"),
+		UBlueprintService::DeleteNode(ActorPath, TEXT("GetValue"), SoleResult->NodeGuid.ToString()));
+
+	ResultNodes.Reset();
+	ImplGraph->GetNodesOfClass<UK2Node_FunctionResult>(ResultNodes);
+	TestEqual(TEXT("the sole result node is still in the graph"), ResultNodes.Num(), 1);
+	return true;
+}
+
+// ============================================================================
+// B4 follow-up: the ONLY result node of an editable function can still be deleted (the editor allows
+// it), but that takes the function's outputs with it, so DeleteNode must say so with a Warning that
+// names the function instead of succeeding silently.
+// ============================================================================
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeBlueprintServiceDeleteLastResultWarnsTest, "VibeUE.BlueprintService.DeleteNodeWarnsOnLastFunctionResult",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FVibeBlueprintServiceDeleteLastResultWarnsTest::RunTest(const FString&)
+{
+	using namespace VibeBlueprintServiceTestUtil;
+
+	const FString PackageName = FString::Printf(TEXT("/Game/__VibeUETest/BP_DeleteLastResult_%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+	UBlueprint* Blueprint = MakeRegisteredBlueprint(*this, PackageName, AActor::StaticClass());
+	if (!Blueprint)
+	{
+		return false;
+	}
+	ON_SCOPE_EXIT { ReleaseBlueprint(Blueprint); };
+
+	const FString Path = PackageName;
+
+	const FString FuncName = UBlueprintService::CreateFunctionGraph(Path, TEXT("VibeLastReturnFunc"), /*bIsPure*/ false);
+	if (!TestFalse(TEXT("create_function_graph created the user function"), FuncName.IsEmpty()))
+	{
+		return false;
+	}
+	TestTrue(TEXT("added output parameter"),
+		UBlueprintService::AddFunctionParameter(Path, FuncName, TEXT("OutValue"), TEXT("int"), true, false, TEXT(""), false, TEXT("")));
+
+	UEdGraph* FuncGraph = nullptr;
+	for (UEdGraph* Graph : Blueprint->FunctionGraphs)
+	{
+		if (Graph && Graph->GetName() == FuncName)
+		{
+			FuncGraph = Graph;
+			break;
+		}
+	}
+	if (!TestNotNull(TEXT("found the new function graph"), FuncGraph))
+	{
+		return false;
+	}
+
+	TArray<UK2Node_FunctionResult*> ResultNodes;
+	FuncGraph->GetNodesOfClass<UK2Node_FunctionResult>(ResultNodes);
+	if (!TestEqual(TEXT("function graph has exactly one result node"), ResultNodes.Num(), 1))
+	{
+		return false;
+	}
+	UK2Node_FunctionResult* SoleResult = ResultNodes[0];
+	TestTrue(TEXT("the user function's result node is editable"), SoleResult->IsEditable());
+	TestTrue(TEXT("the engine allows deleting the sole editable result node"), SoleResult->CanUserDeleteNode());
+
+	// Exactly one Warning, and it names the function whose outputs went away.
+	AddExpectedMessagePlain(FString::Printf(TEXT("was the last result node of function '%s'"), *FuncName),
+		ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+	TestTrue(TEXT("delete_node removes the sole editable result node"),
+		UBlueprintService::DeleteNode(Path, FuncName, SoleResult->NodeGuid.ToString()));
+
+	ResultNodes.Reset();
+	FuncGraph->GetNodesOfClass<UK2Node_FunctionResult>(ResultNodes);
+	TestEqual(TEXT("no result node remains"), ResultNodes.Num(), 0);
 	return true;
 }
 

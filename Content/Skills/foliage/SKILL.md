@@ -40,6 +40,16 @@ All scatter/add methods trace downward to find the ground surface. If no surface
 
 When you pass a `UStaticMesh` path, the service auto-creates a transient `UFoliageType` internally. For persistent, reusable foliage types with custom properties, use `create_foliage_type()` first.
 
+### World Partition Levels
+
+On a World Partition level the engine keeps foliage in one foliage actor per grid cell, and the service places,
+lists, counts and removes through those cell actors. There the foliage type must be an asset: a mesh path uses
+`<Mesh>_FoliageType` next to the mesh, or the one other foliage type asset for that mesh (several: the call asks for
+a foliage type path), and creates `<Mesh>_FoliageType` when there is none, saved only when the call places
+something and refused while PIE runs. A call that would touch a cell whose foliage actor exists but is not loaded fails and changes nothing:
+load that region first. Placement only counts the cell actor of the editor's current data layer / content bundle
+context, as the engine does: an unloaded cell actor of another data layer does not block placing into that cell. Builds that do this define the read-only console variable `vibeue.Foliage.WorldPartitionCells`.
+
 ### Seed for Reproducibility
 
 Use the `seed` parameter to get reproducible scatter patterns. Same seed + same parameters = same layout. Use `seed=0` for random.
