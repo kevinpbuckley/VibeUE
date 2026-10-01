@@ -101,11 +101,11 @@ FVibeCOEditResult UCustomizableObjectService::AddNode(const FString& AssetPath, 
 	// these while constructing pins, and changing them afterwards does not rebuild them.
 	if (Properties.IsValid())
 	{
-		for (const TPair<FString, TSharedPtr<FJsonValue>>& Entry : Properties->Values)
+		for (const auto& Entry : Properties->Values)
 		{
 			FString Text;
 			FString PropertyError;
-			FProperty* Property = VibeCO::FindNodeProperty(Node, Entry.Key, PropertyError);
+			FProperty* Property = VibeCO::FindNodeProperty(Node, FString(Entry.Key), PropertyError);
 			if (Property && !JsonValueToText(Entry.Value, Text))
 			{
 				PropertyError = FString::Printf(TEXT("PropertiesJson.%s must be a string, number or boolean; "

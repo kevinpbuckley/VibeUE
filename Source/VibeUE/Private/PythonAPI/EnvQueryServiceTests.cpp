@@ -2362,7 +2362,7 @@ static bool PropertiesMatchForTest(const TSharedPtr<FJsonObject>* A, const TShar
 		}
 
 		FString RightValue;
-		if (!Right->TryGetStringField(FString(Pair.Key), RightValue))
+		if (!Right->TryGetStringField(Pair.Key.ToView(), RightValue))
 		{
 			OutDiff = FString::Printf(TEXT("%s: property '%s' is missing from the second query "
 				"(first holds %s)"), *Where, *Pair.Key, *LeftValue);
@@ -2378,7 +2378,7 @@ static bool PropertiesMatchForTest(const TSharedPtr<FJsonObject>* A, const TShar
 
 	for (const auto& Pair : Right->Values)
 	{
-		if (!Left->HasField(FString(Pair.Key)))
+		if (!Left->HasField(Pair.Key.ToView()))
 		{
 			FString RightValue;
 			if (Pair.Value.IsValid())

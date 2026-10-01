@@ -314,8 +314,8 @@ namespace VibeEQSBuild
 			// An unknown name is deliberately NOT rejected here: SetPropertyValue already refuses it
 			// with the message that names the class and points at GetPropertyNames, and having one
 			// wording for that failure is worth more than catching it a call earlier.
-			const bool* IsProvider = ProviderFlags.Find(Pair.Key);
-			FPendingWrite Write{ Pair.Key, ValueText };
+			const bool* IsProvider = ProviderFlags.Find(FString(Pair.Key));
+			FPendingWrite Write{ FString(Pair.Key), ValueText };
 			if (IsProvider && *IsProvider)
 			{
 				ProviderWrites.Add(MoveTemp(Write));
