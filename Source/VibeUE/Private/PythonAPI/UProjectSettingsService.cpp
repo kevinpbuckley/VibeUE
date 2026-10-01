@@ -18,6 +18,7 @@
 #include "Misc/OutputDeviceNull.h"
 #include "Misc/StringOutputDevice.h"
 #include "UObject/Package.h"   // Class->GetOutermost() below; unity builds hid the missing include
+#include "UObject/TextProperty.h"
 #include "UObject/UnrealType.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogProjectSettingsService, Log, All);
@@ -114,20 +115,82 @@ namespace
 		return true;
 	}
 
-	/** Values of Key in one on-disk file section; array lines may be stored with their +/./- command prefix */
-	TArray<FString> DiskValues(const FConfigFile& File, const FString& Section, const FString& Key)
+	/** The single value of Key in one on-disk file section, resolved the way GConfig resolves it in its copy of a single
+	 *  file (FConfigCacheIni::GetString: FConfigSection::Find on the plain key). A file read without its commands keeps
+	 *  array lines under their prefixed names (+Key, .Key, -Key, !Key), so those are not this value. nullptr when the
+	 *  section has no plain Key= line. */
+	const FConfigValue* SettingsIniScalar(const FConfigFile& File, const FString& Section, const FString& Key)
+	{
+		const FConfigSection* Found = File.FindSection(*Section);
+		return Found ? Found->Find(FName(*Key)) : nullptr;
+	}
+
+	/** The array values of Key in one on-disk file section, in file order: Key=, +Key= and .Key= lines (one layer, so
+	 *  this file's own lines; -Key= removals and !Key= clears are not values) */
+	TArray<FString> SettingsIniArrayLines(const FConfigFile& File, const FString& Section, const FString& Key)
 	{
 		TArray<FString> Values;
 		if (const FConfigSection* Found = File.FindSection(*Section))
 		{
-			for (const TCHAR* Prefix : { TEXT(""), TEXT("+"), TEXT(".") })
+			const FName Plain(*Key);
+			const FName Add(*(TEXT("+") + Key));
+			const FName AddUnique(*(TEXT(".") + Key));
+			for (const TPair<FName, FConfigValue>& Pair : *Found)
 			{
-				TArray<FString> Part;
-				Found->MultiFind(FName(*(FString(Prefix) + Key)), Part, /*bMaintainOrder*/ true);
-				Values.Append(Part);
+				if (Pair.Key == Plain || Pair.Key == Add || Pair.Key == AddUnique)
+				{
+					Values.Add(Pair.Value.GetValue());
+				}
 			}
 		}
 		return Values;
+	}
+
+	/** The name GConfig holds ConfigPath under when the engine keeps that file current itself: a config branch, or a
+	 *  file GConfig loaded in order to save it. Empty otherwise, in particular for the NoSave copy GConfig::Find makes
+	 *  of a bare path such as Config/DefaultGame.ini on its first read: that copy is never re-read from disk
+	 *  (ini.TimeToUnloadConfig defaults to 0, and reloading a branch does not touch it), so reading through it returned
+	 *  the old value after set_ini_value, set_settings_property or a hand edit changed the file. Such files are read
+	 *  from disk instead, which is what GConfig's copy held when it was made. */
+	FString SettingsIniLiveName(const FString& ConfigPath)
+	{
+		if (!GConfig || ConfigPath.IsEmpty())
+		{
+			return FString();
+		}
+		for (const FString& Name : { ConfigPath, FConfigCacheIni::NormalizeConfigIniPath(ConfigPath) })
+		{
+			// FindBranchWithNoReload never loads a file, unlike the GConfig getters
+			const FConfigBranch* Branch = GConfig->FindBranchWithNoReload(NAME_None, Name);
+			if (Branch && Branch->IniPath == Name && (Branch->bIsHierarchical || !Branch->InMemoryFile.NoSave))
+			{
+				return Name;
+			}
+		}
+		return FString();
+	}
+
+	/** Why a section or key cannot be written as raw ini text: the engine writes both verbatim, so a line break would
+	 *  inject lines into the file and a ']' would end the [Section] header early. Empty when the text is safe. */
+	FString SettingsIniBadName(const FString& Section, const FString& Key)
+	{
+		if (Section.Contains(TEXT("\r")) || Section.Contains(TEXT("\n")) || Key.Contains(TEXT("\r")) || Key.Contains(TEXT("\n")))
+		{
+			return TEXT("a section or key cannot contain a line break");
+		}
+		if (Section.Contains(TEXT("]")))
+		{
+			return TEXT("a section name cannot contain ']'");
+		}
+		return FString();
+	}
+
+	/** Puts a file back as it was before a failed write: its original bytes, or no file when there was none */
+	bool SettingsIniRestore(const FString& DiskPath, bool bExisted, const TArray<uint8>& OriginalBytes)
+	{
+		return bExisted
+			? FFileHelper::SaveArrayToFile(OriginalBytes, *DiskPath)
+			: IFileManager::Get().Delete(*DiskPath, /*RequireExists*/ false, /*EvenReadOnly*/ false, /*Quiet*/ true);
 	}
 
 	/** Makes GConfig's merged copy of a branch re-read its files (what UObject::UpdateSingleSectionOfConfigFile does
@@ -383,7 +446,8 @@ TArray<FString> UProjectSettingsService::ListIniKeys(const FString& Section, con
 	}
 
 	TArray<FString> KeyValuePairs;
-	if (GConfig->GetSection(*Section, KeyValuePairs, ConfigPath))
+	const FString LiveName = SettingsIniLiveName(ConfigPath);
+	if (!LiveName.IsEmpty() && GConfig->GetSection(*Section, KeyValuePairs, LiveName))
 	{
 		for (const FString& Pair : KeyValuePairs)
 		{
@@ -402,7 +466,7 @@ TArray<FString> UProjectSettingsService::ListIniKeys(const FString& Section, con
 	}
 	else
 	{
-		// A project file GConfig does not know (see ResolveIni): list what is in the file on disk
+		// Any other file (see ResolveIni, SettingsIniLiveName): list what is in the file on disk now
 		FConfigFile OnDisk;
 		if (ReadDiskIni(ResolveIni(ConfigFile).DiskPath, OnDisk))
 		{
@@ -431,19 +495,19 @@ FString UProjectSettingsService::GetIniValue(const FString& Section, const FStri
 	}
 
 	FString Value;
-	if (GConfig->GetString(*Section, *Key, Value, ConfigPath))
+	const FString LiveName = SettingsIniLiveName(ConfigPath);
+	if (!LiveName.IsEmpty() && GConfig->GetString(*Section, *Key, Value, LiveName))
 	{
 		return Value;
 	}
 
-	// A project file GConfig does not know: read the file on disk
+	// Any other file (see SettingsIniLiveName): read the file on disk now
 	FConfigFile OnDisk;
 	if (ReadDiskIni(ResolveIni(ConfigFile).DiskPath, OnDisk))
 	{
-		const TArray<FString> Values = DiskValues(OnDisk, Section, Key);
-		if (Values.Num() > 0)
+		if (const FConfigValue* Found = SettingsIniScalar(OnDisk, Section, Key))
 		{
-			return Values.Last();
+			return Found->GetValue();
 		}
 	}
 
@@ -463,9 +527,30 @@ FProjectSettingResult UProjectSettingsService::SetIniValue(const FString& Sectio
 		Result.ErrorMessage = FString::Printf(TEXT("Invalid config file, section or key: '%s' [%s] %s"), *ConfigFile, *Section, *Key);
 		return Result;
 	}
+	const FString BadName = SettingsIniBadName(Section, Key);
+	if (!BadName.IsEmpty())
+	{
+		Result.ErrorMessage = FString::Printf(TEXT("Invalid section or key for %s: %s"), *Ini.DiskPath, *BadName);
+		return Result;
+	}
+	// a mistyped path would otherwise create an arbitrary file
+	if (!FPaths::GetExtension(Ini.DiskPath).Equals(TEXT("ini"), ESearchCase::IgnoreCase))
+	{
+		Result.ErrorMessage = FString::Printf(TEXT("'%s' is not an .ini file"), *Ini.DiskPath);
+		return Result;
+	}
 	if (IFileManager::Get().FileExists(*Ini.DiskPath) && IFileManager::Get().IsReadOnly(*Ini.DiskPath))
 	{
 		Result.ErrorMessage = FString::Printf(TEXT("%s is read-only"), *Ini.DiskPath);
+		return Result;
+	}
+
+	// keep the file as it is now, to put it back if the write does not land
+	const bool bExisted = IFileManager::Get().FileExists(*Ini.DiskPath);
+	TArray<uint8> OriginalBytes;
+	if (bExisted && !FFileHelper::LoadFileToArray(OriginalBytes, *Ini.DiskPath, FILEREAD_Silent))
+	{
+		Result.ErrorMessage = FString::Printf(TEXT("Could not read %s to keep a copy before writing it"), *Ini.DiskPath);
 		return Result;
 	}
 
@@ -473,17 +558,24 @@ FProjectSettingResult UProjectSettingsService::SetIniValue(const FString& Sectio
 	Pending.SetString(*Section, *Key, *Value);
 	if (!Pending.UpdateSinglePropertyInSection(*Ini.DiskPath, *Key, *Section))
 	{
-		Result.ErrorMessage = FString::Printf(TEXT("The engine could not write [%s] %s to %s"), *Section, *Key, *Ini.DiskPath);
+		const bool bRestored = SettingsIniRestore(Ini.DiskPath, bExisted, OriginalBytes);
+		Result.ErrorMessage = FString::Printf(TEXT("The engine could not write [%s] %s to %s%s"), *Section, *Key, *Ini.DiskPath,
+			bRestored ? TEXT("") : TEXT(" (and the file could not be put back as it was)"));
 		return Result;
 	}
 	ReloadBranch(Ini.BranchBaseName);
 
+	// compare the text as written (GetSavedValue), not with %PLACEHOLDERS% expanded (GetValue)
 	FConfigFile OnDisk;
-	const TArray<FString> Written = ReadDiskIni(Ini.DiskPath, OnDisk) ? DiskValues(OnDisk, Section, Key) : TArray<FString>();
-	if (Written.Num() == 0 || Written.Last() != Value)
+	const FConfigValue* Written = ReadDiskIni(Ini.DiskPath, OnDisk) ? SettingsIniScalar(OnDisk, Section, Key) : nullptr;
+	if (!Written || !Written->GetSavedValue().Equals(Value, ESearchCase::CaseSensitive))
 	{
-		Result.ErrorMessage = FString::Printf(TEXT("[%s] %s did not read back as '%s' from %s (found: %s)"),
-			*Section, *Key, *Value, *Ini.DiskPath, Written.Num() ? *Written.Last() : TEXT("nothing"));
+		const FString Found = Written ? Written->GetSavedValue() : FString(TEXT("nothing"));
+		const bool bRestored = SettingsIniRestore(Ini.DiskPath, bExisted, OriginalBytes);
+		ReloadBranch(Ini.BranchBaseName);
+		Result.ErrorMessage = FString::Printf(TEXT("[%s] %s did not read back as '%s' from %s (found: %s); %s"),
+			*Section, *Key, *Value, *Ini.DiskPath, *Found,
+			bRestored ? TEXT("the file was put back as it was") : TEXT("the file could NOT be put back as it was"));
 		return Result;
 	}
 
@@ -506,15 +598,19 @@ TArray<FString> UProjectSettingsService::GetIniArray(const FString& Section, con
 		return Values;
 	}
 
-	GConfig->GetArray(*Section, *Key, Values, ConfigPath);
+	const FString LiveName = SettingsIniLiveName(ConfigPath);
+	if (!LiveName.IsEmpty())
+	{
+		GConfig->GetArray(*Section, *Key, Values, LiveName);
+	}
 	if (Values.Num() == 0)
 	{
-		// A project file GConfig does not know: the file's own lines on disk (one layer, so the
+		// Any other file (see SettingsIniLiveName): the file's own lines on disk now (one layer, so the
 		// +/- commands of this file are listed as written, not merged with the lower layers)
 		FConfigFile OnDisk;
 		if (ReadDiskIni(ResolveIni(ConfigFile).DiskPath, OnDisk))
 		{
-			Values = DiskValues(OnDisk, Section, Key);
+			Values = SettingsIniArrayLines(OnDisk, Section, Key);
 		}
 	}
 	return Values;
@@ -529,11 +625,34 @@ FProjectSettingResult UProjectSettingsService::SetIniArray(const FString& Sectio
 	// A settings class section therefore goes through SetSettingsProperty; anything else fails honestly.
 	if (UClass* Class = Section.StartsWith(TEXT("/Script/")) ? FindSettingsClass(Section) : nullptr)
 	{
+		// the array's element property, to tell a struct literal from a string that merely looks like one
+		const FProperty* Target = FindSettingsProperty(Class, Key);
+		const FProperty* Element = nullptr;
+		if (const FArrayProperty* ArrayProperty = CastField<FArrayProperty>(Target))
+		{
+			Element = ArrayProperty->Inner;
+		}
+		else if (const FSetProperty* SetProperty = CastField<FSetProperty>(Target))
+		{
+			Element = SetProperty->ElementProp;
+		}
+		// FStrProperty / FTextProperty import an array element (PPF_Delimited) only from a quoted string
+		const bool bQuotedElements = Element && (Element->IsA<FStrProperty>() || Element->IsA<FTextProperty>());
+		const bool bTextElements = bQuotedElements || (Element && Element->IsA<FNameProperty>());
+
 		TArray<FString> Items;
 		for (const FString& Item : Values)
 		{
-			// quote anything the struct/array text parser would split on
-			const bool bNeedsQuotes = Item.IsEmpty() || Item.Contains(TEXT(",")) || Item.Contains(TEXT("(")) || Item.Contains(TEXT(")"))
+			// a struct element "(Name=...,Value=...)" goes in as written: UScriptStruct::ImportText needs its leading
+			// '(' and a quoted struct does not parse (+Profiles=, +ActiveClassRedirects= style arrays)
+			const FString Trimmed = Item.TrimStartAndEnd();
+			if (!bTextElements && Trimmed.StartsWith(TEXT("(")) && Trimmed.EndsWith(TEXT(")")))
+			{
+				Items.Add(Trimmed);
+				continue;
+			}
+			// quote a string element, and anything else the struct/array text parser would split on
+			const bool bNeedsQuotes = bQuotedElements || Item.IsEmpty() || Item.Contains(TEXT(",")) || Item.Contains(TEXT("(")) || Item.Contains(TEXT(")"))
 				|| Item.Contains(TEXT("\"")) || Item.Contains(TEXT(" "));
 			Items.Add(bNeedsQuotes ? FString::Printf(TEXT("\"%s\""), *Item.ReplaceCharWithEscapedChar()) : Item);
 		}

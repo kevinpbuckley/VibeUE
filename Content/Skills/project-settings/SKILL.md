@@ -35,8 +35,14 @@ result = unreal.ProjectSettingsService.set_settings_property(
     "EditorStyleSettings", "AssetEditorOpenLocation", "MainWindow")
 ```
 
-`set_ini_value` writes a project `Config/Default*.ini` file on disk; it cannot reach a user-layer
-file such as `EditorPerProjectUserSettings.ini`, which lives under `Saved/Config`.
+`set_ini_value` writes the file you name: a bare name resolves to the project `Config/` folder
+(`"DefaultGame.ini"` → `Config/DefaultGame.ini`), an absolute path is used as-is, and the path must end
+in `.ini`. A bare `"EditorPerProjectUserSettings.ini"` therefore writes
+`Config/EditorPerProjectUserSettings.ini`, a file no config hierarchy reads. An absolute path does reach
+a user-layer file under `Saved/Config/<Platform>Editor/`, but the editor keeps those files in memory and
+rewrites them from memory when it saves its config (at the latest when it exits), which can silently drop
+a direct write. Change user settings (editor preferences such as `EditorStyleSettings`) with
+`set_settings_property`, which edits the editor's in-memory copy and saves it.
 
 ### ⚠️ Category vs Raw INI
 
@@ -48,7 +54,7 @@ the engine **`ConfigSettingsToolset`**. From VibeUE you instead address settings
 |------|-----|
 | Project info, maps, any registered category by name | engine `ConfigSettingsToolset` via `call_tool` |
 | Read/write a known INI section+key | `ProjectSettingsService.get_ini_value` / `set_ini_value` |
-| Set one property of a settings class, live and saved as the Settings window saves it | `ProjectSettingsService.set_settings_property(class, property, value)` |
+| Set one property of any loaded config class, live and saved as the Settings window saves it | `ProjectSettingsService.set_settings_property(class, property, value)` |
 | Discover which classes/sections exist | `ProjectSettingsService.discover_settings_classes()` |
 
 ### ⚠️ Map Paths Must Be Full Asset Paths
@@ -76,11 +82,42 @@ if not result.success:
 
 `set_ini_value` writes the key into the file on disk (the rest of the file, comments included, is
 kept), reloads that config branch, and reads the file back: `success` is false when the value did not
-land. A settings object read its config at startup, so it sees the new value after a restart
+land, and the file is then put back exactly as it was. A section or key containing a line break, a
+section containing `]`, and a path that does not end in `.ini` are refused before anything is written.
+A settings object read its config at startup, so it sees the new value after a restart
 (`requires_restart` is true); `set_settings_property` applies the value live as well.
+
+`get_ini_value`, `list_ini_keys` and `get_ini_array` read the file on disk as it is now (one file, not
+the merged config hierarchy), so they see `set_ini_value`, `set_settings_property` and hand edits at
+once. `get_ini_value` returns the plain `Key=` line, resolved as GConfig resolves it; `+Key=` /
+`.Key=` array lines are not its value. `get_ini_array` returns the `Key=`, `+Key=` and `.Key=` lines in
+file order (`-Key=` removals and `!Key=ClearArray` are not values). For the merged value a settings
+object actually uses, read `get_settings_property`.
+
+`set_settings_property` takes any loaded config class (`CLASS_Config`), not only the ones the
+Settings window lists, and saves it the way the Settings window does: a `defaultconfig` class to its
+project `Default*.ini`, a user-config class to its user file, any other class to its config branch
+under `Saved/Config`. The value applies live (`PostEditChangeProperty` runs, as for an edit in the
+details panel), so an engine or editor class changes behavior immediately. Per-object-config classes
+are refused.
+
 `set_ini_array` works only on a settings class section (`/Script/Module.Class`), through
 `set_settings_property`: an array in a layered project file needs `!Key=ClearArray` / `+Key=`
-lines relative to the lower layers, which only a settings object writes correctly.
+lines relative to the lower layers, which only a settings object writes correctly. It replaces the
+whole array. Each value is one element in Unreal text format: an element of a struct array is a
+struct literal and goes in as written; an element of a string array is passed as the plain string and
+quoted for you; any other element containing a space, comma, parenthesis or quote is quoted for you.
+
+```python
+# struct array: elements are struct literals, passed as written
+result = unreal.ProjectSettingsService.set_ini_array(
+    "/Script/DeveloperToolSettings.ProjectPackagingSettings", "DirectoriesToAlwaysStageAsNonUFS",
+    ['(Path="Movies")', '(Path="Extras/Data")'], "DefaultGame.ini")
+# string array: plain values
+result = unreal.ProjectSettingsService.set_ini_array(
+    "/Script/DeveloperToolSettings.ProjectPackagingSettings", "CulturesToStage",
+    ["en", "pt-BR"], "DefaultGame.ini")
+```
 
 (Registered-setting writes via the engine `ConfigSettingsToolset` return their own result — check it the same way.)
 
@@ -123,15 +160,16 @@ if result.success:
 ```python
 import unreal
 
-# EditorStartupMap controls which level opens when the editor launches.
-# Registered setting → engine ConfigSettingsToolset (via call_tool), OR raw INI:
+# EditorStartupMap controls which level opens when the editor launches. It is a GameMapsSettings
+# property (defaultconfig, saved in Config/DefaultEngine.ini).
+# Registered "maps" category → engine ConfigSettingsToolset (via call_tool), OR the class by name:
 # Use full asset path format: /Game/Path/To/Level.Level
-result = unreal.ProjectSettingsService.set_ini_value(
-    "/Script/UnrealEd.EditorLoadingSavingSettings", "EditorStartupMap",
-    "/Game/Levels/MyLevel.MyLevel", "EditorPerProjectUserSettings.ini")
+result = unreal.ProjectSettingsService.set_settings_property(
+    "GameMapsSettings", "EditorStartupMap", "/Game/Levels/MyLevel.MyLevel")
 if result.success:
-    unreal.ProjectSettingsService.save_all_config()
-    print("Editor startup map updated and saved")
+    print("Editor startup map updated and saved:", result.modified_settings)
+else:
+    print("Failed:", result.error_message)
 ```
 
 > 💾 **If the level must be saved first** (untitled level, or "save as <name> and set as startup"): the editor world comes from `unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()` (NOT `LevelEditorSubsystem`, NOT deprecated `EditorLevelLibrary`), then `unreal.EditorLoadingAndSavingUtils.save_map(world, "/Game/Maps/MyLevel")`. Full workflow: load the `level-actors` skill → "Save the Current Level".

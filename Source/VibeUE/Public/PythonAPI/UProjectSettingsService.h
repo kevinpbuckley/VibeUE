@@ -135,7 +135,9 @@ public:
 	/**
 	 * Set one config property of a settings class the way the editor's Settings window does: the value applies live
 	 * (PostEditChangeProperty runs) and is saved to the class's own config file, then read back from the reloaded
-	 * config to verify it.
+	 * config to verify it. Any loaded config class (CLASS_Config, not per-object config) is accepted, not only the
+	 * ones the Settings window lists: defaultconfig classes save to their project Default*.ini, user config classes
+	 * to their user file, anything else to its config branch (Saved/Config).
 	 *
 	 * @param SettingsClass - Class path ("/Script/UnrealEd.EditorProjectAppearanceSettings") or name
 	 *                        ("EditorProjectAppearanceSettings", a leading U is accepted)
@@ -166,7 +168,7 @@ public:
 	static TArray<FString> ListIniSections(const FString& ConfigFile);
 
 	/**
-	 * List all keys in a config section.
+	 * List all keys in a config section, as the file on disk holds them now (array lines without their +/. prefix).
 	 *
 	 * @param Section - INI section (e.g., "/Script/Engine.Engine")
 	 * @param ConfigFile - Config file name
@@ -176,7 +178,9 @@ public:
 	static TArray<FString> ListIniKeys(const FString& Section, const FString& ConfigFile);
 
 	/**
-	 * Get a value directly from an INI config file.
+	 * Get a value directly from an INI config file, as the file on disk holds it now (one file, not the merged config
+	 * hierarchy): the key's plain "Key=" line, resolved as GConfig resolves it; "+Key=" / ".Key=" array lines are not
+	 * the value (see GetIniArray).
 	 *
 	 * @param Section - INI section (e.g., "/Script/Engine.Engine")
 	 * @param Key - Key name within the section
@@ -190,13 +194,14 @@ public:
 	 * Set a value directly in an INI config file.
 	 * Writes the key into the file ON DISK with Epic's FConfigFile::UpdateSinglePropertyInSection (the
 	 * rest of the file, comments included, is kept), reloads that config branch so the editor's config cache sees it,
-	 * and reads the file back; bSuccess is false when the value did not land. For a property of a settings class
-	 * prefer SetSettingsProperty (it also applies the value live).
+	 * and reads the file back; bSuccess is false when the value did not land, and the file is then put back as it
+	 * was. A section or key containing a line break, a section containing ']', and a path that is not an .ini file are
+	 * refused. For a property of a settings class prefer SetSettingsProperty (it also applies the value live).
 	 *
 	 * @param Section - INI section
 	 * @param Key - Key name within the section
 	 * @param Value - Value to set
-	 * @param ConfigFile - Config file name
+	 * @param ConfigFile - Config file name (resolved in the project Config folder) or an absolute path to an .ini file
 	 * @return Operation result
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|ProjectSettings")
@@ -204,7 +209,8 @@ public:
 
 	/**
 	 * Get an array of values from an INI config file.
-	 * Some INI keys have multiple values (e.g., +ActiveGameNameRedirects).
+	 * Some INI keys have multiple values (e.g., +ActiveGameNameRedirects). Read from the file on disk as it is now:
+	 * its "Key=", "+Key=" and ".Key=" lines in file order (one file, so not merged with the lower config layers).
 	 *
 	 * @param Section - INI section
 	 * @param Key - Key name within the section
@@ -220,7 +226,9 @@ public:
 	 * relative to the lower layers, which only the settings-object path writes correctly. When Section is a settings
 	 * class section ("/Script/Module.Class") this forwards to SetSettingsProperty (the array applies live and is saved
 	 * the Settings-window way); any other section fails with an explanation instead of reporting a success that
-	 * never reached the disk.
+	 * never reached the disk. Each value is one element in Unreal text format: an element of a struct array is a
+	 * struct literal and goes in as written: (Path="/Game/Movies"); an element of a string array is the plain string
+	 * and is quoted for you; any other element containing a space, comma, parenthesis or quote is quoted for you.
 	 *
 	 * @param Section - INI section
 	 * @param Key - Key name within the section
