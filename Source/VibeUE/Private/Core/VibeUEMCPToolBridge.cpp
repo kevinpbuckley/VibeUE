@@ -10,7 +10,9 @@
 #include "ModelContextProtocolSession.h" // FModelContextProtocolToolRequestId, for CancelAsync
 
 #include "Async/Async.h"
-#include "Core/VibeUEToolCancel.h"
+#include "Core/VibeUEToolCancel.h" // Private/Core: module-private
+#include "Misc/IQueuedWork.h"
+#include "Misc/QueuedThreadPool.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Serialization/JsonReader.h"
@@ -51,9 +53,15 @@ namespace
 	}
 
 	/**
-	 * The running off-game-thread calls, by request id, for CancelAsync and the exit sweep. A multimap:
-	 * the id carries no session, so two clients' calls can share one, and neither may drop out of the table (a cancel
-	 * with that id reaches both).
+	 * The off-game-thread calls, running or waiting for a thread, by request id, for CancelAsync, the exit sweep and the
+	 * cap on calls in flight. A multimap: the id carries no session, so two clients' calls can share one, and neither
+	 * may drop out of the table.
+	 *
+	 * Known limitation, cross-session cancel: JSON-RPC ids are unique only within one MCP session (clients number them
+	 * 1, 2, 3...), and CancelAsync gets the id but no session. Epic's server calls CancelAsync only when the cancelling
+	 * session has an active request with that id, but this table is shared by every session and every bridged tool, so
+	 * a notifications/cancelled from client A also cancels client B's deep_research or terrain_data call that carries
+	 * the same id. Telling them apart needs the session in CancelAsync (or in the request id) from Epic's interface.
 	 */
 	FCriticalSection GRunningCallsLock;
 	TMultiMap<FString, TSharedRef<FVibeUEToolCancel, ESPMode::ThreadSafe>> GRunningCalls;
@@ -117,6 +125,102 @@ namespace
 			? UE::ModelContextProtocol::MakeErrorResult(Result)
 			: UE::ModelContextProtocol::MakeTextResult(Result));
 	}
+
+	/**
+	 * The threads the off-game-thread calls run on: a small pool of their own, not the engine's shared GThreadPool.
+	 * Each call parks its thread while it waits on a request (deep_research up to ~46 s per request, and fetch_page's
+	 * fallback makes two; terrain_data up to ~46 s), and in the editor GThreadPool runs at most one job per worker
+	 * core, so a few slow calls there would hold up the engine's own background work. Calls past the pool's size wait
+	 * in its queue; past MaxOffGameThreadCalls, running and waiting together, a call is refused at once with BUSY.
+	 * Made on first use and destroyed by CancelAllRunning, both on the game thread.
+	 */
+	constexpr int32 OffGameThreadPoolSize = 4;
+	constexpr int32 MaxOffGameThreadCalls = 16;
+	FQueuedThreadPool* GOffGameThreadPool = nullptr;
+	bool bOffGameThreadPoolShutDown = false; // Set by CancelAllRunning: no pool is made again, later calls are refused
+
+	/** A failure in FToolRegistry's error shape, for calls the bridge answers without running the tool. */
+	FString MakeOffGameThreadError(const TCHAR* ErrorCode, const FString& Message)
+	{
+		TSharedRef<FJsonObject> ErrorResult = MakeShared<FJsonObject>();
+		ErrorResult->SetBoolField(TEXT("success"), false);
+		ErrorResult->SetStringField(TEXT("error"), Message);
+		ErrorResult->SetStringField(TEXT("error_code"), ErrorCode);
+		FString Out;
+		const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Out);
+		FJsonSerializer::Serialize(ErrorResult, Writer);
+		return Out;
+	}
+
+	FQueuedThreadPool* GetOffGameThreadPool()
+	{
+		check(IsInGameThread());
+		if (!GOffGameThreadPool && !bOffGameThreadPoolShutDown)
+		{
+			FQueuedThreadPool* Pool = FQueuedThreadPool::Allocate();
+			// 1 MB stacks, as the editor gives its own pool threads
+			if (Pool->Create(OffGameThreadPoolSize, 1024 * 1024, TPri_Normal, TEXT("VibeUE Tool Calls")))
+			{
+				GOffGameThreadPool = Pool;
+			}
+			else
+			{
+				delete Pool;
+			}
+		}
+		return GOffGameThreadPool;
+	}
+
+	/** One off-game-thread call, queued on GOffGameThreadPool. Deletes itself once it has delivered its result. */
+	class FVibeUEOffGameThreadCall final : public IQueuedWork
+	{
+	public:
+		FVibeUEOffGameThreadCall(FToolExecuteFunc InFunc, TMap<FString, FString> InArgs,
+			IModelContextProtocolTool::FResultCallback InOnComplete, FString InKey,
+			TSharedRef<FVibeUEToolCancel, ESPMode::ThreadSafe> InCancel)
+			: Func(MoveTemp(InFunc))
+			, Args(MoveTemp(InArgs))
+			, OnComplete(MoveTemp(InOnComplete))
+			, Key(MoveTemp(InKey))
+			, Cancel(MoveTemp(InCancel))
+		{
+		}
+
+		virtual void DoThreadedWork() override
+		{
+			FString Result;
+			{
+				FVibeUEToolCancel::FScope CurrentCall(&Cancel.Get());
+				Result = Func(Args);
+			}
+			Finish(Result);
+		}
+
+		// The pool is being destroyed (CancelAllRunning) before this call got a thread: answer it without running it.
+		virtual void Abandon() override
+		{
+			Finish(MakeOffGameThreadError(TEXT("CANCELLED"), TEXT("The editor is shutting down; the call was cancelled before it started.")));
+		}
+
+		virtual const TCHAR* GetDebugName() const override { return TEXT("VibeUE tool call"); }
+
+	private:
+		void Finish(const FString& Result)
+		{
+			{
+				FScopeLock Guard(&GRunningCallsLock);
+				GRunningCalls.RemoveSingle(Key, Cancel); // Only this call's entry
+			}
+			DeliverResult(Result, OnComplete); // Epic's server takes the result to the game thread itself
+			delete this;
+		}
+
+		FToolExecuteFunc Func;
+		TMap<FString, FString> Args;
+		IModelContextProtocolTool::FResultCallback OnComplete;
+		FString Key;
+		TSharedRef<FVibeUEToolCancel, ESPMode::ThreadSafe> Cancel;
+	};
 
 	/** Build an MCP JSON Schema object from a tool's parameter metadata. */
 	TSharedPtr<FJsonObject> BuildInputSchema(const FToolMetadata& Meta)
@@ -274,26 +378,33 @@ namespace
 						DeliverResult(ErrorJson, OnComplete);
 						return;
 					}
+					// The bridge's own pool, not a task-graph worker nor GThreadPool: the tool may wait up to ~46 s.
+					FQueuedThreadPool* Pool = GetOffGameThreadPool();
+					if (!Pool)
+					{
+						DeliverResult(MakeOffGameThreadError(TEXT("UNAVAILABLE"), bOffGameThreadPoolShutDown
+							? FString::Printf(TEXT("'%s' was not run: the editor is shutting down."), *ToolName)
+							: FString::Printf(TEXT("'%s' was not run: its worker threads could not be started."), *ToolName)), OnComplete);
+						return;
+					}
 					TSharedRef<FVibeUEToolCancel, ESPMode::ThreadSafe> Cancel = MakeShared<FVibeUEToolCancel, ESPMode::ThreadSafe>();
+					bool bBusy = false;
 					{
 						FScopeLock Guard(&GRunningCallsLock);
-						GRunningCalls.Add(Key, Cancel);
+						bBusy = GRunningCalls.Num() >= MaxOffGameThreadCalls;
+						if (!bBusy)
+						{
+							GRunningCalls.Add(Key, Cancel);
+						}
 					}
-					// The queued thread pool, not a task-graph worker: the tool may wait up to 45 s.
-					Async(EAsyncExecution::ThreadPool,
-						[Func = MoveTemp(Func), Args = MoveTemp(Args), OnComplete, Key, Cancel]()
+					if (bBusy)
 					{
-						FString Result;
-						{
-							FVibeUEToolCancel::FScope CurrentCall(&Cancel.Get());
-							Result = Func(Args);
-						}
-						{
-							FScopeLock Guard(&GRunningCallsLock);
-							GRunningCalls.RemoveSingle(Key, Cancel); // Only this call's entry
-						}
-						DeliverResult(Result, OnComplete);
-					});
+						DeliverResult(MakeOffGameThreadError(TEXT("BUSY"), FString::Printf(
+							TEXT("'%s' was not run: %d deep_research / terrain_data calls are already running or waiting, the most the editor takes at once. Try again when one has finished."),
+							*ToolName, MaxOffGameThreadCalls)), OnComplete);
+						return;
+					}
+					Pool->AddQueuedWork(new FVibeUEOffGameThreadCall(MoveTemp(Func), MoveTemp(Args), OnComplete, Key, Cancel));
 				};
 				if (IsInGameThread())
 				{
@@ -322,7 +433,8 @@ namespace
 			}
 		}
 
-		// Epic's server calls this on notifications/cancelled; it wakes an off-game-thread call.
+		// Epic's server calls this on notifications/cancelled; it wakes an off-game-thread call. It gets no session, so
+		// it reaches every call with that id, other clients' too (see GRunningCalls).
 		virtual void CancelAsync(const FModelContextProtocolToolRequestId& RequestId) override
 		{
 			TArray<TSharedRef<FVibeUEToolCancel, ESPMode::ThreadSafe>> Cancels;
@@ -399,11 +511,19 @@ namespace VibeUEMCPToolBridge
 		GRegisteredTools.Empty();
 	}
 
-	// At editor exit, wake every worker still waiting on a request, so the thread pool's shutdown
-	// does not wait out each request's timeout, and no worker queues a request start after HTTP is gone. Not from
-	// UnregisterAll: that also runs on every ModelContextProtocol.RefreshTools, which must not cancel live calls.
+	// At editor exit (OnPreExit) and module shutdown, wake every worker still waiting on a request, so no worker
+	// queues a request start after HTTP is gone, then stop the bridge's threads. Destroy() answers the calls still
+	// waiting for a thread (Abandon) and waits for the running ones: cancelled, they return at once and need nothing
+	// from the game thread (their request aborts and their result are only queued to it). Not from UnregisterAll: that
+	// also runs on every ModelContextProtocol.RefreshTools, which must not cancel live calls.
 	void CancelAllRunning()
 	{
+		if (bOffGameThreadPoolShutDown)
+		{
+			return; // Done already (OnPreExit, then ShutdownModule): no call is left and no pool is made after it
+		}
+		check(IsInGameThread()); // The pool is made and destroyed on the game thread only
+		bOffGameThreadPoolShutDown = true;
 		TArray<TSharedRef<FVibeUEToolCancel, ESPMode::ThreadSafe>> Cancels;
 		{
 			FScopeLock Guard(&GRunningCallsLock);
@@ -412,6 +532,12 @@ namespace VibeUEMCPToolBridge
 		for (const TSharedRef<FVibeUEToolCancel, ESPMode::ThreadSafe>& Cancel : Cancels)
 		{
 			Cancel->Cancel();
+		}
+		if (GOffGameThreadPool)
+		{
+			GOffGameThreadPool->Destroy();
+			delete GOffGameThreadPool;
+			GOffGameThreadPool = nullptr;
 		}
 	}
 }

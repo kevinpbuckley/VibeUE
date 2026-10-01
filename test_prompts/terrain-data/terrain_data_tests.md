@@ -341,3 +341,9 @@ Start a 2017 x 2017 heightmap for Mount Rainier and cancel the call from the cli
 
 Expected: the call ends at once with "Request cancelled", and the next terrain_data call works normally.
 
+### The Same Place Twice at Once
+
+Ask for the heightmap of Mount Fuji twice at once (two parallel tool calls, no save_path).
+
+Expected: both succeed and name the same file under Saved/Terrain; neither fails with SAVE_ERROR.
+

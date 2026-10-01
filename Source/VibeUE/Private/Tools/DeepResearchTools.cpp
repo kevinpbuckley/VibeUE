@@ -109,7 +109,18 @@ struct FResearchHttpResult
 	int32   ResponseCode  = 0;
 	FString Body;
 	FString ErrorMessage;
+	bool    bTooLarge     = false; // The response passed the request's MaxResponseBytes; ErrorMessage says so
 };
+
+// The request's own HTTP timeout is this much longer than the helper's deadline (TimeoutSeconds on the game thread,
+// TimeoutSeconds + 1 for a worker's wait), so the helper gives up first and says "Request timed out" rather than
+// HTTP's "Connection failed". The HTTP timeout is only a backstop for a request nobody abandons.
+static constexpr float ResearchHttpTimeoutMargin = 2.0f;
+
+static FString ResearchTooLargeMessage(uint64 Bytes, uint64 MaxResponseBytes)
+{
+	return FString::Printf(TEXT("The response is at least %llu bytes, over the %llu MB limit."), Bytes, MaxResponseBytes / (1024 * 1024));
+}
 
 // The request's completion writes into this shared state, which it holds only weakly, never into the helper's
 // locals: a request that times out is cancelled, CancelRequest only schedules the abort, and the completion then runs
@@ -119,30 +130,59 @@ struct FResearchHttpState
 	FResearchHttpResult Result;
 	std::atomic<bool> bComplete{false};
 	std::atomic<bool> bCancelled{false};
+	std::atomic<bool> bTooLarge{false};    // Set by the size checks, which wake the wait; the waiter abandons
+	std::atomic<uint64> TooLargeBytes{0};
 	FEventRef Done{EEventMode::ManualReset};
 	TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> Request; // touched on the game thread only
 };
 using FResearchHttpStateRef = TSharedRef<FResearchHttpState, ESPMode::ThreadSafe>;
 
-// Builds and starts the request. Game thread only.
+// Builds and starts the request. Game thread only. MaxResponseBytes > 0 caps the response: a larger Content-Length
+// or download flags bTooLarge and wakes the wait, and the waiter abandons the request (never these delegates).
 static void StartResearchRequest(
 	const FResearchHttpStateRef& State,
 	const FString& Url,
 	const FString& UserAgent,
 	const TArray<TPair<FString, FString>>& ExtraHeaders,
-	float TimeoutSeconds)
+	float TimeoutSeconds,
+	uint64 MaxResponseBytes)
 {
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
 	Request->SetURL(Url);
 	Request->SetVerb(TEXT("GET"));
+	Request->SetTimeout(TimeoutSeconds + ResearchHttpTimeoutMargin);
 	if (!UserAgent.IsEmpty())
 		Request->SetHeader(TEXT("User-Agent"), UserAgent);
 	for (const auto& KV : ExtraHeaders)
 		Request->SetHeader(KV.Key, KV.Value);
 
 	const TWeakPtr<FResearchHttpState, ESPMode::ThreadSafe> WeakState = State;
+	if (MaxResponseBytes > 0)
+	{
+		auto FlagTooLarge = [WeakState, MaxResponseBytes](uint64 Bytes)
+		{
+			const TSharedPtr<FResearchHttpState, ESPMode::ThreadSafe> S = WeakState.Pin();
+			if (S && Bytes > MaxResponseBytes && !S->bTooLarge)
+			{
+				S->TooLargeBytes = Bytes;
+				S->bTooLarge = true;
+				S->Done->Trigger();
+			}
+		};
+		Request->OnHeaderReceived().BindLambda([FlagTooLarge](FHttpRequestPtr, const FString& HeaderName, const FString& HeaderValue)
+		{
+			if (HeaderName.Equals(TEXT("Content-Length"), ESearchCase::IgnoreCase))
+			{
+				FlagTooLarge(FCString::Strtoui64(*HeaderValue, nullptr, 10));
+			}
+		});
+		Request->OnRequestProgress64().BindLambda([FlagTooLarge](FHttpRequestPtr, uint64 /*BytesSent*/, uint64 BytesReceived)
+		{
+			FlagTooLarge(BytesReceived);
+		});
+	}
 	Request->OnProcessRequestComplete().BindLambda(
-		[WeakState](FHttpRequestPtr, FHttpResponsePtr Resp, bool bConnected)
+		[WeakState, MaxResponseBytes](FHttpRequestPtr, FHttpResponsePtr Resp, bool bConnected)
 		{
 			const TSharedPtr<FResearchHttpState, ESPMode::ThreadSafe> S = WeakState.Pin();
 			if (!S)
@@ -152,6 +192,13 @@ static void StartResearchRequest(
 			if (!bConnected || !Resp.IsValid())
 			{
 				S->Result.ErrorMessage = TEXT("Connection failed");
+			}
+			else if (MaxResponseBytes > 0 && static_cast<uint64>(Resp->GetContent().Num()) > MaxResponseBytes)
+			{
+				// It arrived whole before a progress tick saw it: refused all the same, and never decoded
+				S->Result.ResponseCode = Resp->GetResponseCode();
+				S->Result.bTooLarge    = true;
+				S->Result.ErrorMessage = ResearchTooLargeMessage(Resp->GetContent().Num(), MaxResponseBytes);
 			}
 			else
 			{
@@ -174,6 +221,8 @@ static void AbandonResearchRequest(const FResearchHttpStateRef& State)
 	if (State->Request.IsValid())
 	{
 		State->Request->OnProcessRequestComplete().Unbind();
+		State->Request->OnHeaderReceived().Unbind();
+		State->Request->OnRequestProgress64().Unbind();
 		State->Request->CancelRequest();
 		State->Request.Reset();
 	}
@@ -183,19 +232,32 @@ static FResearchHttpResult ResearchHttpGet(
 	const FString& Url,
 	const FString& UserAgent = TEXT("VibeUE/1.0 (Unreal Engine plugin)"),
 	const TArray<TPair<FString, FString>>& ExtraHeaders = {},
-	float TimeoutSeconds = 30.0f)
+	float TimeoutSeconds = 30.0f,
+	uint64 MaxResponseBytes = 0) // 0: no cap
 {
 	const FResearchHttpStateRef State = MakeShared<FResearchHttpState, ESPMode::ThreadSafe>();
+	auto TooLarge = [&State, MaxResponseBytes]()
+	{
+		FResearchHttpResult Refused;
+		Refused.bTooLarge = true;
+		Refused.ErrorMessage = ResearchTooLargeMessage(State->TooLargeBytes, MaxResponseBytes);
+		return Refused;
+	};
 
 	if (IsInGameThread())
 	{
 		// On the game thread (a direct call, e.g. from Python): the original blocking wait, now safe.
-		StartResearchRequest(State, Url, UserAgent, ExtraHeaders, TimeoutSeconds);
+		StartResearchRequest(State, Url, UserAgent, ExtraHeaders, TimeoutSeconds, MaxResponseBytes);
 		const double Start = FPlatformTime::Seconds();
 		while (!State->bComplete)
 		{
 			FHttpModule::Get().GetHttpManager().Tick(0.0f);
 			FPlatformProcess::Sleep(0.01f);
+			if (State->bTooLarge)
+			{
+				AbandonResearchRequest(State);
+				return TooLarge();
+			}
 			if (FPlatformTime::Seconds() - Start > TimeoutSeconds)
 			{
 				AbandonResearchRequest(State);
@@ -226,11 +288,11 @@ static FResearchHttpResult ResearchHttpGet(
 			}
 		});
 	}
-	AsyncTask(ENamedThreads::GameThread, [State, Url, UserAgent, ExtraHeaders, TimeoutSeconds]()
+	AsyncTask(ENamedThreads::GameThread, [State, Url, UserAgent, ExtraHeaders, TimeoutSeconds, MaxResponseBytes]()
 	{
 		if (!State->bCancelled)
 		{
-			StartResearchRequest(State, Url, UserAgent, ExtraHeaders, TimeoutSeconds);
+			StartResearchRequest(State, Url, UserAgent, ExtraHeaders, TimeoutSeconds, MaxResponseBytes);
 		}
 	});
 	const bool bSignalled = State->Done->Wait(FTimespan::FromSeconds(TimeoutSeconds + 1.0));
@@ -243,6 +305,10 @@ static FResearchHttpResult ResearchHttpGet(
 		return State->Result;
 	}
 	AsyncTask(ENamedThreads::GameThread, [State]() { AbandonResearchRequest(State); });
+	if (State->bTooLarge && !State->bCancelled)
+	{
+		return TooLarge();
+	}
 	FResearchHttpResult Failed;
 	Failed.ErrorMessage = State->bCancelled ? TEXT("Request cancelled") : TEXT("Request timed out");
 	return Failed;
@@ -407,6 +473,16 @@ static bool IsReaderRefusal(const FResearchHttpResult& Http)
 		|| Http.ResponseCode == 429 || Http.ResponseCode == 451);
 }
 
+// fetch_page fetches a page itself only over the web's own schemes: libcurl here also speaks file, ftp, smb, gopher,
+// dict, telnet and tftp.
+static bool IsDirectlyFetchableUrl(const FString& Url)
+{
+	return Url.StartsWith(TEXT("http://"), ESearchCase::IgnoreCase) || Url.StartsWith(TEXT("https://"), ESearchCase::IgnoreCase);
+}
+
+// The most of a page fetch_page downloads itself (its text is cut to 200,000 characters anyway)
+static constexpr uint64 ResearchDirectFetchMaxBytes = 5ull * 1024 * 1024;
+
 static FString DecodeHtmlEntities(const FString& In)
 {
 	FString Out;
@@ -420,14 +496,35 @@ static FString DecodeHtmlEntities(const FString& In)
 			{
 				const FString Entity = In.Mid(i + 1, Semi - i - 1);
 				TCHAR Decoded = 0;
+				uint32 CodePoint = 0; // A numeric entity's
 				if (Entity == TEXT("amp")) Decoded = TEXT('&');
 				else if (Entity == TEXT("lt")) Decoded = TEXT('<');
 				else if (Entity == TEXT("gt")) Decoded = TEXT('>');
 				else if (Entity == TEXT("quot")) Decoded = TEXT('"');
 				else if (Entity == TEXT("apos")) Decoded = TEXT('\'');
 				else if (Entity == TEXT("nbsp")) Decoded = TEXT(' ');
-				else if (Entity.StartsWith(TEXT("#x")) || Entity.StartsWith(TEXT("#X"))) Decoded = (TCHAR)FParse::HexNumber(*Entity.Mid(2));
-				else if (Entity.StartsWith(TEXT("#"))) Decoded = (TCHAR)FCString::Atoi(*Entity.Mid(1));
+				else if (Entity.StartsWith(TEXT("#x")) || Entity.StartsWith(TEXT("#X"))) CodePoint = FParse::HexNumber(*Entity.Mid(2));
+				else if (Entity.StartsWith(TEXT("#"))) CodePoint = static_cast<uint32>(FCString::Atoi(*Entity.Mid(1)));
+				// FString is UTF-16: a code point past U+FFFF (emoji) is a surrogate pair. Zero, a lone surrogate and
+				// anything past U+10FFFF stay as written.
+				if (CodePoint != 0 && StringConv::IsValidCodepoint(CodePoint)
+					&& !StringConv::IsHighSurrogate(CodePoint) && !StringConv::IsLowSurrogate(CodePoint))
+				{
+					if (CodePoint > 0xFFFF)
+					{
+						uint16 High = 0;
+						uint16 Low = 0;
+						StringConv::DecodeSurrogate(CodePoint, High, Low);
+						Out.AppendChar(static_cast<TCHAR>(High));
+						Out.AppendChar(static_cast<TCHAR>(Low));
+					}
+					else
+					{
+						Out.AppendChar(static_cast<TCHAR>(CodePoint));
+					}
+					i = Semi;
+					continue;
+				}
 				if (Decoded != 0)
 				{
 					Out.AppendChar(Decoded);
@@ -524,14 +621,26 @@ static TArray<FDDGResult> ParseDDGLiteHtml(const FString& Html, int32 MaxResults
 static FString HtmlPageToText(const FString& Html, int32 MaxChars = 200000)
 {
 	FString Work = Html;
+	// One forward pass per pair, copying what is kept once: removing in place and searching again from the start was
+	// quadratic on a page full of scripts.
 	auto DropBetween = [&Work](const FString& Open, const FString& Close)
 	{
-		int32 Start;
-		while ((Start = Work.Find(Open, ESearchCase::IgnoreCase)) != INDEX_NONE)
+		FString Kept;
+		Kept.Reserve(Work.Len());
+		int32 Cursor = 0;
+		while (Cursor < Work.Len())
 		{
+			const int32 Start = Work.Find(Open, ESearchCase::IgnoreCase, ESearchDir::FromStart, Cursor);
+			if (Start == INDEX_NONE)
+			{
+				Kept.Append(*Work + Cursor, Work.Len() - Cursor);
+				break;
+			}
+			Kept.Append(*Work + Cursor, Start - Cursor);
 			const int32 End = Work.Find(Close, ESearchCase::IgnoreCase, ESearchDir::FromStart, Start + Open.Len());
-			Work.RemoveAt(Start, (End == INDEX_NONE ? Work.Len() : End + Close.Len()) - Start);
+			Cursor = End == INDEX_NONE ? Work.Len() : End + Close.Len(); // Unclosed: dropped to the end
 		}
+		Work = MoveTemp(Kept);
 	};
 	DropBetween(TEXT("<!--"), TEXT("-->"));
 	for (const TCHAR* Drop : { TEXT("script"), TEXT("style"), TEXT("noscript"), TEXT("svg"), TEXT("template") })
@@ -630,8 +739,11 @@ static FString ActionSearch(const TMap<FString, FString>& Params)
 		? ParseMarkdownSearchResults(Http.Body, 15)
 		: ParseDDGLiteHtml(Http.Body, 15);
 
+	// DuckDuckGo answered 200 but nothing in it read as a result: no results, or a page that is not a result list
 	if (ParsedResults.Num() == 0 && ReaderRefusalCode)
-		return BuildResearchError(TEXT("SEARCH_REFUSED"), RefusedBoth);
+		return BuildResearchError(TEXT("SEARCH_REFUSED"), FString::Printf(
+			TEXT("Jina Reader refused the search (HTTP %d; it refuses anonymous requests from networks it rates badly), and DuckDuckGo's direct answer (HTTP 200) held no results this tool could read: there may be none for this query, or the page was not a result list (a bot check, for one). Set a Jina API key (free at jina.ai) in the JINA_API_KEY environment variable and restart the editor."),
+			ReaderRefusalCode));
 
 	if (ParsedResults.Num() == 0)
 		return BuildResearchError(TEXT("NO_RESULTS"),
@@ -693,11 +805,20 @@ static FString ActionFetchPage(const TMap<FString, FString>& Params)
 	bool bDirect = false;
 	if (IsReaderRefusal(Http))
 	{
+		if (!IsDirectlyFetchableUrl(PageUrl))
+			return BuildResearchError(TEXT("UNSUPPORTED_URL_SCHEME"), FString::Printf(
+				TEXT("Jina Reader refused the request (HTTP %d), and the direct fallback fetches only http:// and https:// URLs. Pass the page's full http(s) URL, or set a Jina API key (free at jina.ai) in the JINA_API_KEY environment variable and restart the editor."),
+				Http.ResponseCode));
+
 		TArray<TPair<FString, FString>> DirectHeaders;
 		DirectHeaders.Add(TPair<FString, FString>(TEXT("Accept"), TEXT("text/html,text/plain;q=0.9,*/*;q=0.5")));
-		Http = ResearchHttpGet(PageUrl, TEXT("VibeUE/1.0 (Unreal Engine plugin)"), DirectHeaders, 45.0f);
+		Http = ResearchHttpGet(PageUrl, TEXT("VibeUE/1.0 (Unreal Engine plugin)"), DirectHeaders, 45.0f, ResearchDirectFetchMaxBytes);
 		bDirect = true;
 	}
+
+	if (Http.bTooLarge) // Only the direct fetch is capped
+		return BuildResearchError(TEXT("PAGE_TOO_LARGE"), FString::Printf(
+			TEXT("Jina Reader refused the request, and the page is too large for the direct fallback to read. %s"), *Http.ErrorMessage));
 
 	if (!Http.bSuccess)
 		return BuildResearchError(TEXT("HTTP_ERROR"), Http.ErrorMessage);
@@ -897,9 +1018,9 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeUEResearchTimeoutIsSafeTest, "VibeUE.Resea
 
 bool FVibeUEResearchTimeoutIsSafeTest::RunTest(const FString& Parameters)
 {
-	// A non-routable address: the connection hangs, so the request times out.
+	// TEST-NET-1 (RFC 5737, documentation only, never a real host): the connection hangs, so the request times out.
 	const double Start = FPlatformTime::Seconds();
-	FResearchHttpResult Result = ResearchHttpGet(TEXT("http://10.255.255.1/"), TEXT("VibeUE test"), {}, 1.0f);
+	FResearchHttpResult Result = ResearchHttpGet(TEXT("http://192.0.2.1/"), TEXT("VibeUE test"), {}, 1.0f);
 	const double Elapsed = FPlatformTime::Seconds() - Start;
 	const bool bSuccessAtReturn = Result.bSuccess;
 	const FString MessageAtReturn = Result.ErrorMessage;
@@ -947,6 +1068,23 @@ bool FVibeUEResearchDirectFallbackParsingTest::RunTest(const FString& Parameters
 	// dev.epicgames.com puts JSON in a multi-line attribute of a custom element; none of it may leak.
 	const FString Attr = HtmlPageToText(TEXT("<nav links=\"[\n  {\n    &quot;id&quot;: &quot;notifications&quot;\n  }\n]\"></nav><!-- a > comment --><p>Body text</p>"));
 	TestEqual(TEXT("a multi-line attribute and a comment leave no text"), Attr, FString(TEXT("Body text\n")));
+
+	// Several scripts, in any case, and one never closed: each goes, the text between them stays.
+	const FString Scripts = HtmlPageToText(TEXT("<p>A</p><script>1</script><p>B</p><SCRIPT type=\"x\">2</SCRIPT><p>C</p><script>never closed"));
+	TestEqual(TEXT("every script goes, the text between them stays"), Scripts, FString(TEXT("A\nB\nC\n")));
+
+	// U+1F600 is the surrogate pair D83D DE00 in an FString; a lone surrogate is not a character and stays as written.
+	const TCHAR Grin[] = { static_cast<TCHAR>(0xD83D), static_cast<TCHAR>(0xDE00), 0 };
+	TestEqual(TEXT("numeric entities past U+FFFF become surrogate pairs"),
+		DecodeHtmlEntities(TEXT("&#x1F600;|&#128512;|&#65;|&#xD800;")), FString::Printf(TEXT("%s|%s|A|&#xD800;"), Grin, Grin));
+
+	// The direct fetch only takes the web's own schemes.
+	TestTrue(TEXT("https is fetched directly"), IsDirectlyFetchableUrl(TEXT("https://example.com/")));
+	TestTrue(TEXT("http is fetched directly, in any case"), IsDirectlyFetchableUrl(TEXT("HTTP://EXAMPLE.COM/")));
+	TestFalse(TEXT("file is not"), IsDirectlyFetchableUrl(TEXT("file:///C:/Windows/win.ini")));
+	TestFalse(TEXT("ftp is not"), IsDirectlyFetchableUrl(TEXT("ftp://example.com/a.txt")));
+	TestFalse(TEXT("gopher is not"), IsDirectlyFetchableUrl(TEXT("gopher://example.com/")));
+	TestFalse(TEXT("a URL without a scheme is not"), IsDirectlyFetchableUrl(TEXT("example.com/page")));
 	return true;
 }
 // On a worker thread the helper starts and cancels its request on the game thread and only waits; a cancel from the
@@ -970,13 +1108,13 @@ bool FVibeUEResearchWorkerWaitIsCancellableTest::RunTest(const FString& Paramete
 	};
 	const TSharedRef<FState, ESPMode::ThreadSafe> S = MakeShared<FState, ESPMode::ThreadSafe>();
 
-	// A non-routable address: the connection hangs, so only the cancel can end the wait early.
+	// TEST-NET-1 (RFC 5737, never a real host): the connection hangs, so only the cancel can end the wait early.
 	S->Started = FPlatformTime::Seconds();
 	S->FrameAtStart = GFrameCounter;
 	Async(EAsyncExecution::ThreadPool, [S]()
 	{
 		FVibeUEToolCancel::FScope CurrentCall(&S->Cancel.Get());
-		S->Result = ResearchHttpGet(TEXT("http://10.255.255.1/"), TEXT("VibeUE test"), {}, 10.0f);
+		S->Result = ResearchHttpGet(TEXT("http://192.0.2.1/"), TEXT("VibeUE test"), {}, 10.0f);
 		S->Finished = FPlatformTime::Seconds();
 		S->bDone = true;
 	});

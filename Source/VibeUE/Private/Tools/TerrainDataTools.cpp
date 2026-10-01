@@ -19,6 +19,8 @@
 // Shared request state, a wait off the game thread, cancellation
 #include "Async/Async.h"
 #include "HAL/Event.h"
+#include "HAL/CriticalSection.h"
+#include "Misc/ScopeLock.h"
 #include "Core/VibeUEToolCancel.h"
 
 // ---------------------------------------------------------------------------
@@ -160,6 +162,11 @@ struct FTerrainHttpState
 };
 using FTerrainHttpStateRef = TSharedRef<FTerrainHttpState, ESPMode::ThreadSafe>;
 
+// The request's own HTTP timeout is this much longer than the helper's deadline (TimeoutSeconds on the game thread,
+// TimeoutSeconds + 1 for a worker's wait), so the helper gives up first and says "Request timed out" rather than
+// HTTP's "Connection failed". The HTTP timeout is only a backstop for a request nobody abandons.
+static constexpr float TerrainHttpTimeoutMargin = 2.0f;
+
 // Builds and starts the request. Game thread only.
 static void StartTerrainRequest(const FTerrainHttpStateRef& State, const FTerrainHttpRequestSpec& Spec)
 {
@@ -187,7 +194,7 @@ static void StartTerrainRequest(const FTerrainHttpStateRef& State, const FTerrai
 	}
 	if (!ApiKey.IsEmpty())
 		Request->SetHeader(TEXT("X-API-Key"), ApiKey);
-	Request->SetTimeout(Spec.TimeoutSeconds);
+	Request->SetTimeout(Spec.TimeoutSeconds + TerrainHttpTimeoutMargin);
 
 	const TWeakPtr<FTerrainHttpState, ESPMode::ThreadSafe> WeakState = State;
 	const bool bKeepHeightmapHeaders = Spec.bKeepHeightmapHeaders;
@@ -356,6 +363,22 @@ static FString ResolveSavePath(const FString& RequestedPath, const FString& File
 	return FPaths::Combine(Dir, Filename);
 }
 
+// Off the game thread two terrain_data calls run at once, and two for the same place share a default file name: one
+// save at a time, so neither fails on the other's open file (the last one wins, as when the calls ran in turn).
+static FCriticalSection GTerrainDataSaveLock;
+
+static bool SaveTerrainBytes(const TArray<uint8>& Bytes, const FString& FilePath)
+{
+	FScopeLock SaveGuard(&GTerrainDataSaveLock);
+	return FFileHelper::SaveArrayToFile(Bytes, *FilePath);
+}
+
+static bool SaveTerrainText(const FString& Text, const FString& FilePath)
+{
+	FScopeLock SaveGuard(&GTerrainDataSaveLock);
+	return FFileHelper::SaveStringToFile(Text, *FilePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+}
+
 // ---------------------------------------------------------------------------
 // Action: get_water_features
 // ---------------------------------------------------------------------------
@@ -492,7 +515,7 @@ static FString ActionGetWaterFeatures(const TMap<FString, FString>& Params)
 	const FString DefaultFilename = FString::Printf(TEXT("water_features_%.4f_%.4f_%gkm.json"), Lat, Lng, MapSize);
 	const FString FilePath = ResolveSavePath(SavePath, DefaultFilename);
 
-	if (!FFileHelper::SaveStringToFile(FullJson, *FilePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+	if (!SaveTerrainText(FullJson, FilePath))
 		return BuildErrorJson(TEXT("SAVE_ERROR"), FString::Printf(TEXT("Failed to save water features to: %s"), *FilePath));
 
 	// Build a compact summary to return (not the full JSON — that can be 200K+ tokens)
@@ -679,7 +702,7 @@ static FString ActionGenerateHeightmap(const TMap<FString, FString>& Params)
 	const FString DefaultFilename = FString::Printf(TEXT("heightmap_%.4f_%.4f.%s"), Lat, Lng, *Ext);
 	const FString FilePath = ResolveSavePath(SavePath, DefaultFilename);
 
-	if (!FFileHelper::SaveArrayToFile(HttpResult.Content, *FilePath))
+	if (!SaveTerrainBytes(HttpResult.Content, FilePath))
 		return BuildErrorJson(TEXT("SAVE_ERROR"), FString::Printf(TEXT("Failed to save to: %s"), *FilePath));
 
 	// Build success response
@@ -785,7 +808,7 @@ static FString ActionGetMapImage(const TMap<FString, FString>& Params)
 	const FString DefaultFilename = FString::Printf(TEXT("map_%s_%.4f_%.4f.png"), *StyleTag, Lat, Lng);
 	const FString FilePath = ResolveSavePath(SavePath, DefaultFilename);
 
-	if (!FFileHelper::SaveArrayToFile(HttpResult.Content, *FilePath))
+	if (!SaveTerrainBytes(HttpResult.Content, FilePath))
 		return BuildErrorJson(TEXT("SAVE_ERROR"), FString::Printf(TEXT("Failed to save to: %s"), *FilePath));
 
 	TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
@@ -885,10 +908,10 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeUETerrainDataTimeoutIsSafeTest, "VibeUE.Te
 
 bool FVibeUETerrainDataTimeoutIsSafeTest::RunTest(const FString& Parameters)
 {
-	// A non-routable address: the connection hangs, so the request times out (a network that rejects the address
-	// outright fails it as "Connection failed" instead).
+	// TEST-NET-1 (RFC 5737, documentation only, never a real host): the connection hangs, so the request times out.
+	// The request's own HTTP timeout is longer than the helper's (TerrainHttpTimeoutMargin), so the helper's wins.
 	FTerrainHttpRequestSpec Spec;
-	Spec.Url = TEXT("http://10.255.255.1/");
+	Spec.Url = TEXT("http://192.0.2.1/");
 	Spec.TimeoutSeconds = 1.0f;
 	const double Start = FPlatformTime::Seconds();
 	FTerrainHttpResult Result = TerrainHttpRun(Spec);
@@ -897,8 +920,7 @@ bool FVibeUETerrainDataTimeoutIsSafeTest::RunTest(const FString& Parameters)
 	const FString MessageAtReturn = Result.ErrorMessage;
 	TestFalse(TEXT("the request did not succeed"), bSuccessAtReturn);
 	TestTrue(FString::Printf(TEXT("it gave up within its time (%.2f s)"), Elapsed), Elapsed < 3.0);
-	TestTrue(FString::Printf(TEXT("it says why: '%s'"), *MessageAtReturn),
-		MessageAtReturn == TEXT("Request timed out") || MessageAtReturn == TEXT("Connection failed"));
+	TestEqual(TEXT("it says why"), MessageAtReturn, FString(TEXT("Request timed out")));
 
 	// Let the cancelled request's late completion run, then check it changed nothing after the return.
 	const double PumpUntil = FPlatformTime::Seconds() + 2.0;
@@ -925,7 +947,7 @@ bool FVibeUETerrainDataCancelWakesWorkerTest::RunTest(const FString& Parameters)
 
 	const TSharedRef<FVibeUEToolCancel, ESPMode::ThreadSafe> Cancel = MakeShared<FVibeUEToolCancel, ESPMode::ThreadSafe>();
 	FTerrainHttpRequestSpec Spec;
-	Spec.Url = TEXT("http://10.255.255.1/");
+	Spec.Url = TEXT("http://192.0.2.1/"); // TEST-NET-1: hangs, so only the cancel ends the wait early
 	Spec.TimeoutSeconds = 10.0f;
 	TFuture<FTerrainHttpResult> Future = Async(EAsyncExecution::ThreadPool, [Cancel, Spec]()
 	{

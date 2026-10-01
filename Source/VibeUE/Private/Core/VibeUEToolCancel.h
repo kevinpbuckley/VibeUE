@@ -7,6 +7,9 @@
 // current on the worker thread while the tool runs, and calls Cancel() when the client sends
 // notifications/cancelled (IModelContextProtocolTool::CancelAsync). A tool that waits registers what to do on
 // cancel with SetOnCancel, typically waking its wait.
+//
+// Module-private (Private/, no VIBEUE_API): only this module's bridge makes a token current, for the tools it runs
+// off the game thread, and CurrentSlot() is defined in VibeUEMCPToolBridge.cpp.
 
 #pragma once
 

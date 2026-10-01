@@ -240,8 +240,6 @@ Import the heightmap as a new landscape called "GrindelwaldTerrain" using the se
 
 ---
 
----
-
 ## Reader refusal fallback
 
 Run these on a network Jina Reader refuses anonymously (search and fetch_page return HTTP_401 without the fallback),
@@ -250,6 +248,20 @@ with no `JINA_API_KEY` set.
 Fetch https://example.com/ and tell me which `source` served it.
 
 Expected: success, `source` is `direct-html-to-text`, and the content is the page's text with no markup.
+
+---
+
+Fetch file:///C:/Windows/win.ini, then ftp://ftp.example.com/readme.txt.
+
+Expected: both fail with `UNSUPPORTED_URL_SCHEME` and nothing is read from the disk or the FTP server: the direct
+fallback fetches only http:// and https:// URLs.
+
+---
+
+Fetch a page larger than 5 MB (a big single-page specification or a large raw file over https).
+
+Expected: a `PAGE_TOO_LARGE` error that names the size and the 5 MB limit, returned soon after the download passes
+5 MB, not after the whole file.
 
 ---
 
@@ -263,3 +275,12 @@ Expected: results with `source` `duckduckgo-lite-direct`, or, if DuckDuckGo also
 Set `JINA_API_KEY` to a Jina key, restart the editor, and run the same search.
 
 Expected: results with `source` `jina-reader`.
+
+---
+
+## Many calls at once
+
+Run six searches on different topics at once (parallel tool calls), and meanwhile ask for the name of the open level.
+
+Expected: all six come back with results (four run at a time, the others wait their turn), and the level name comes
+back at once, not after the searches.
