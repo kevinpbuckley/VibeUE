@@ -219,8 +219,11 @@ unreal.PerformanceService.set_background_throttling(False)   # full rate while u
 unreal.PerformanceService.set_background_throttling(True)    # restore when done
 ```
 To drive gameplay in PIE without OS focus or input-asset remapping:
-`unreal.InputService.inject_action("/Game/Input/IA_Fire")` (Enhanced Input, one tick per call) and
-`unreal.InputService.inject_key("SpaceBar")` (raw key via Slate).
+`unreal.InputService.inject_action("/Game/Input/IA_Fire")` (Enhanced Input, queued for the next input
+tick: read the result in a later call), `inject_action_for("/Game/Input/IA_Block", 1.5)` to hold an
+action (`stop_injection` releases early), and `unreal.InputService.inject_key("SpaceBar")` (raw key via
+Slate; `"hold"` with a duration holds it). Holds keep the editor off its background frame rate and end
+with PIE.
 
 To spawn a test actor (blocker, dummy, trigger) into a live PIE world — the one thing native/engine
 spawn can't do (they hit the editor world or refuse during PIE):

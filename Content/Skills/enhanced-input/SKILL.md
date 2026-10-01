@@ -31,7 +31,10 @@ real API is below; you rarely need a discovery call at all:
 | Triggers | `add_trigger(context_path, mapping_index, trigger_type, properties_json="")`, `add_action_trigger(action_path, trigger_type, properties_json="")` → JSON, `remove_trigger(context_path, mapping_index, trigger_index)`, `get_triggers(context_path, mapping_index)` |
 
 `create_action` value types are the strings `discover_types()` returns: `"Boolean"`
-(alias `"Digital"`), `"Axis1D"`, `"Axis2D"`, `"Axis3D"`. Modifiers and triggers are
+(alias `"Digital"`), `"Axis1D"`, `"Axis2D"`, `"Axis3D"`. The `create_*` folder may be a bare
+folder (`"Input"` goes under `/Game`) or start with its mount point (`/Game/...`, a plugin root);
+`/Engine`, `/Script` and `/Temp` are refused, and so is an invalid asset name (empty, a space,
+`.`), each with the reason in `error_message`. Modifiers and triggers are
 addressed by **index on the mapping**, so `get_mappings` / `get_modifiers` /
 `get_triggers` first, then add/remove by index.
 
@@ -124,10 +127,15 @@ unreal.EditorAssetLibrary.save_asset(context_path)
 ### Trigger Settings
 
 `properties_json` sets the new trigger's settings, by C++ name or snake_case
-(`HoldTimeThreshold` or `hold_time_threshold`, `bIsOneShot` or `is_one_shot`). An unknown
-name or a bad value fails the call and adds nothing. `add_action_trigger` puts the trigger
-on the Input Action itself, so it applies to every mapping of the action. Neither saves the
-asset, and a running PIE session keeps its copy of the triggers: restart PIE to see a change.
+(`HoldTimeThreshold` or `hold_time_threshold`, `bIsOneShot` or `is_one_shot`). Only the
+settings the trigger's Details panel shows can be set: runtime state such as `HeldDuration`,
+`LastValue` or `bShouldAlwaysTick` is refused ("not a trigger setting"), and a number outside
+the property's `ClampMin`/`ClampMax` is refused with the allowed range (`hold_time_threshold`
+must be >= 0). An unknown name, a refused setting or a bad value fails the call and adds
+nothing. `add_action_trigger` puts the trigger on the Input Action itself, so it applies to
+every mapping of the action; it returns `PIE_ACTIVE` while a play session runs (stop PIE
+first). Neither saves the asset, and a running PIE session keeps its copy of the triggers:
+restart PIE to see a change.
 
 ```python
 import unreal
@@ -195,7 +203,11 @@ print(unreal.InputService.inject_key("SpaceBar"))
 print(unreal.InputService.inject_key("RightMouseButton", "hold", 1.5))
 ```
 
-All return JSON with `success`/`error_code` (PIE not running, no local player yet, unknown key,
-`BAD_DURATION` outside 0.05 to 60 s). `inject_action` reports `queued: true`: it was queued, not yet
-applied. The action calls take `pie_instance` to pick a PIE world (-1, the default, is the first).
-See the `pie-testing` skill for the full verification loop.
+All return JSON with `success`/`error_code` (PIE not running, `NO_LOCAL_PLAYER` /
+`NO_PLAYER_CONTROLLER` while PIE or a client's join is still starting — retry on a later call —,
+unknown key, `BAD_DURATION` outside 0.05 to 60 s). `inject_action` reports `queued: true`: it was
+queued, not yet applied. The action calls take `pie_instance` to pick a PIE world: -1, the default,
+is the first PIE world with a local player (the lowest instance number), and replies report the
+instance actually used. A hold is one hold per action and PIE world whatever the path spelling, so
+`stop_injection` finds it either way; holding a held key again extends it (`extended: true`); ending
+PIE drops every hold. See the `pie-testing` skill for the full verification loop.

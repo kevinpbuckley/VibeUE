@@ -278,10 +278,15 @@ print(unreal.InputService.inject_key("SpaceBar"))
 A Python call blocks the game thread, so PIE does not tick while it runs: inject in one call and
 read the game state in a LATER call, two or more frames on. While a hold is active the editor stays
 off its background frame rate, so an unfocused editor does not starve the hold. The action calls
-take `pie_instance` to pick a PIE world (-1, the default, is the first).
+take `pie_instance` to pick a PIE world: -1, the default, is the first PIE world with a local player
+(the lowest instance number — the listen server's window, or client 1 under a dedicated server), and
+replies report the instance actually used. A hold is one hold per action and PIE world whatever the
+path spelling; holding a held key again extends it; `StopPIE` drops every hold, so nothing from an
+ended session is released into the editor or reported active in the next one.
 
-All return JSON with `success` and an `error_code` naming the problem (PIE not running, no local
-player yet, unknown key, ...). `inject_key` additionally rejects a **Simulate In Editor** session
+All return JSON with `success` and an `error_code` naming the problem (PIE not running,
+`NO_LOCAL_PLAYER` / `NO_PLAYER_CONTROLLER` while PIE or a client's join is still starting — retry on
+a later call —, unknown key, ...). `inject_key` additionally rejects a **Simulate In Editor** session
 with `SIMULATE_NOT_PLAY`: Simulate has no player game viewport, so the Slate key events would be
 dropped. Use `StartPIE` (Play), not Simulate, when driving keys. Its `handled_down` / `handled_up`
 fields report whether a Slate widget *consumed* the event, not whether the key reached the player — a

@@ -96,8 +96,10 @@ bool FVibeInputInjectionGuardsTest::RunTest(const FString&)
 }
 
 // In PIE: inject_action_for holds the action across frames for its time, then releases it; stop_injection
-// releases early; while a hold (or a held key) runs, one extra throttling delegate keeps the editor off its
-// background frame rate, and it is gone after the release grace.
+// releases early, finding the hold by the action and world it names (whatever the path spelling, -1 or the
+// instance number); while a hold (or a held key) runs, one extra throttling delegate keeps the editor off its
+// background frame rate, and it is gone after the release grace; a second hold of a held key extends it;
+// ending PIE drops every hold and the throttling delegate at once.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeInputHoldInPIETest,
 	"VibeUE.Input.HoldInPIE", kInjectTestFlags)
 bool FVibeInputHoldInPIETest::RunTest(const FString&)
@@ -113,10 +115,12 @@ bool FVibeInputHoldInPIETest::RunTest(const FString&)
 	{
 		TStrongObjectPtr<UInputAction> Action;
 		FString Path;
+		FString ObjectPath;
 		bool bReady = false;
 		int32 Baseline = 0;
 		double Started = 0.0;
 		double Released = 0.0;
+		double EndRequested = 0.0;
 	};
 	const TSharedRef<FState> S = MakeShared<FState>();
 
@@ -137,6 +141,7 @@ bool FVibeInputHoldInPIETest::RunTest(const FString&)
 	// a second run in the same editor never meets the first run's object.
 	const FString Name = FString::Printf(TEXT("IA_VibeHoldTest_%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 	S->Path = FString(TEXT("/Temp/VibeUEInputTests/")) + Name;
+	S->ObjectPath = S->Path + TEXT(".") + Name;
 	UPackage* Package = CreatePackage(*S->Path);
 	S->Action.Reset(NewObject<UInputAction>(Package, *Name, RF_Public | RF_Standalone | RF_Transient));
 	S->Action->ValueType = EInputActionValueType::Boolean;
@@ -174,6 +179,8 @@ bool FVibeInputHoldInPIETest::RunTest(const FString&)
 		if (TestTrue(TEXT("inject_action_for returns JSON"), Reply.IsValid()))
 		{
 			TestTrue(TEXT("inject_action_for succeeded"), Reply->GetBoolField(TEXT("success")));
+			TestEqual(TEXT("pie_instance -1 reports the instance it used (the only PIE world, 0)"),
+				static_cast<int32>(Reply->GetNumberField(TEXT("pie_instance"))), 0);
 		}
 		S->Started = FPlatformTime::Seconds();
 		TestEqual(TEXT("one throttling delegate while the hold runs"), ThrottleDelegates(), S->Baseline + 1);
@@ -238,10 +245,11 @@ bool FVibeInputHoldInPIETest::RunTest(const FString&)
 		{
 			return true;
 		}
-		const TSharedPtr<FJsonObject> Stop = ParseJson(UInputService::StopInjection(S->Path));
+		// The hold was started as (package path, -1); it is the same hold as (object path, instance 0).
+		const TSharedPtr<FJsonObject> Stop = ParseJson(UInputService::StopInjection(S->ObjectPath, 0));
 		if (TestTrue(TEXT("stop_injection returns JSON"), Stop.IsValid()))
 		{
-			TestTrue(TEXT("stop_injection reports the hold was active"), Stop->GetBoolField(TEXT("was_active")));
+			TestTrue(TEXT("stop_injection by another spelling and instance 0 finds the hold"), Stop->GetBoolField(TEXT("was_active")));
 		}
 		TestFalse(TEXT("no longer injected after stop_injection"), Subsystem->HasContinuousInputInjectionForAction(S->Action.Get()));
 		const TSharedPtr<FJsonObject> Again = ParseJson(UInputService::StopInjection(S->Path));
@@ -253,21 +261,63 @@ bool FVibeInputHoldInPIETest::RunTest(const FString&)
 		{
 			TestTrue(TEXT("inject_key hold succeeded"), Key->GetBoolField(TEXT("success")));
 			TestEqual(TEXT("inject_key reports hold_seconds"), Key->GetNumberField(TEXT("hold_seconds")), 0.3, 0.001);
+			TestFalse(TEXT("a first hold is not an extension"), Key->GetBoolField(TEXT("extended")));
+		}
+		// Holding it again extends the one hold: no second key-down, one pending release.
+		const TSharedPtr<FJsonObject> KeyAgain = ParseJson(UInputService::InjectKey(TEXT("SpaceBar"), TEXT("hold"), 0.3f));
+		if (TestTrue(TEXT("a second inject_key hold returns JSON"), KeyAgain.IsValid()))
+		{
+			TestTrue(TEXT("a second hold of a held key extends it"), KeyAgain->GetBoolField(TEXT("extended")));
+			TestFalse(TEXT("...without a second key-down"), KeyAgain->GetBoolField(TEXT("handled_down")));
 		}
 		TestEqual(TEXT("one throttling delegate while the key is held"), ThrottleDelegates(), S->Baseline + 1);
 		return true;
 	}));
 	ADD_LATENT_AUTOMATION_COMMAND(FWaitLatentCommand(1.2f));
-	ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([this, S]()
+	ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([this, S, LivePieSubsystem]()
 	{
-		if (S->bReady)
+		if (!S->bReady)
 		{
-			TestEqual(TEXT("the throttling delegate is gone after the key's release"), ThrottleDelegates(), S->Baseline);
+			return true;
+		}
+		TestEqual(TEXT("the throttling delegate is gone after the key's release"), ThrottleDelegates(), S->Baseline);
+
+		// Long holds left running when PIE ends.
+		if (LivePieSubsystem())
+		{
+			TestTrue(TEXT("a 10 s action hold starts before PIE ends"), Succeeded(UInputService::InjectActionFor(S->Path, 10.0f)));
+			TestTrue(TEXT("a 10 s key hold starts before PIE ends"), Succeeded(UInputService::InjectKey(TEXT("SpaceBar"), TEXT("hold"), 10.0f)));
+			TestEqual(TEXT("one throttling delegate for both"), ThrottleDelegates(), S->Baseline + 1);
 		}
 		return true;
 	}));
 
 	ADD_LATENT_AUTOMATION_COMMAND(FEndPlayMapCommand());
+	// Ending PIE drops the holds and the throttling delegate at once, with no release grace.
+	ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([this, S]()
+	{
+		if (GEditor && GEditor->PlayWorld)
+		{
+			if (S->EndRequested == 0.0)
+			{
+				S->EndRequested = FPlatformTime::Seconds();
+			}
+			if (FPlatformTime::Seconds() - S->EndRequested > 30.0)
+			{
+				AddError(TEXT("PIE did not end within 30 s."));
+				return true;
+			}
+			return false;
+		}
+		if (S->bReady)
+		{
+			TestEqual(TEXT("no throttling delegate once PIE has ended"), ThrottleDelegates(), S->Baseline);
+			// Instance 0 explicitly: with no PIE world, -1 resolves to nothing and could never match a leftover hold.
+			const TSharedPtr<FJsonObject> Stop = ParseJson(UInputService::StopInjection(S->Path, 0));
+			TestFalse(TEXT("a hold from the ended session is not reported active"), Stop.IsValid() && Stop->GetBoolField(TEXT("was_active")));
+		}
+		return true;
+	}));
 	ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([S]()
 	{
 		if (UInputAction* Action = S->Action.Get())
