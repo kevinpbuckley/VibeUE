@@ -262,6 +262,25 @@ When sculpting pushes vertices to 0 or 65535, a saturation warning is logged. To
 - Heights in `set_height_in_region` are world-space Z values
 - Heights returned by `get_height_in_region` are world-space Z values
 
+### Spline Coordinates and Edit Layers
+
+- `create_spline_point`, `create_spline_from_points`, and `modify_spline_point` take
+  **world-space** locations; `get_spline_info().control_points[].location` also reports
+  world space. Internally, control points use the **spline component's** transform,
+  which cancels the landscape scale. Do not multiply locations or widths by landscape scale.
+- Prefer a reserved **Splines** edit layer (`LandscapeEditLayerSplines`, not an ordinary
+  sculpt layer merely named "Splines"). `apply_splines_to_landscape` rebuilds that layer
+  through the engine, including removal of old deformation after moving/deleting points,
+  without baking into the base sculpt layer.
+- Without a reserved Splines layer, apply requires an explicitly set, unlocked editing
+  layer and permanently bakes into that layer. If no target is set, it returns `False`
+  and logs an error; it never silently chooses layer 0. UI layer selection alone does
+  not establish the scoped editing layer used by Python calls.
+- After changing control point properties with `set_editor_property`, call
+  `apply_splines_to_landscape` to rebuild and merge terrain/paint. With a reserved Splines
+  layer, `landscape_actor.force_layers_full_update()` also forces the engine refresh;
+  property assignment alone is not evidence that terrain and collision have updated.
+
 ### ⚠️ GrassVariety Struct Properties Are Read-Only via Direct Assignment
 
 `GrassVariety` (and its nested structs like `PerPlatformFloat`, `FloatInterval`, etc.) **cannot** be set via direct attribute assignment. You MUST use `set_editor_property()` for all properties.

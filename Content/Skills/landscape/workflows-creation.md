@@ -196,7 +196,9 @@ for pt in src.control_points:
         )
 
 # 7. Apply to deform terrain
-svc.apply_splines_to_landscape("DestLandscape")
+# First create a Splines-type edit layer on the destination in Landscape mode.
+# An ordinary sculpt layer named "Splines" is not a reserved spline layer.
+assert svc.apply_splines_to_landscape("DestLandscape")
 ```
 
 > **Order matters:** Create points → Connect segments → Set rotations → Set meshes → Apply.

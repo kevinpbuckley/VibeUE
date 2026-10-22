@@ -3872,9 +3872,9 @@ FSplineCreateResult ULandscapeService::CreateSplinePoint(
 
 	SplinesComp->Modify();
 
-	// Convert world location to landscape-local space
-	FTransform LandscapeTransform = Landscape->GetActorTransform();
-	FVector LocalLocation = LandscapeTransform.InverseTransformPosition(WorldLocation);
+	// Control points belong to the spline component, whose scale cancels the
+	// landscape scale. Using the actor transform silently shrinks world offsets.
+	const FVector LocalLocation = SplinesComp->GetComponentTransform().InverseTransformPosition(WorldLocation);
 
 	ULandscapeSplineControlPoint* NewCP = NewObject<ULandscapeSplineControlPoint>(SplinesComp, NAME_None, RF_Transactional);
 	NewCP->Location     = LocalLocation;
@@ -4090,7 +4090,7 @@ FLandscapeSplineInfo ULandscapeService::GetSplineInfo(const FString& LandscapeNa
 		return SplineInfo;
 	}
 
-	FTransform LandscapeTransform = Landscape->GetActorTransform();
+	const FTransform SplineTransform = SplinesComp->GetComponentTransform();
 
 	// Enumerate control points
 	for (int32 i = 0; i < SplinesComp->GetControlPoints().Num(); i++)
@@ -4103,7 +4103,7 @@ FLandscapeSplineInfo ULandscapeService::GetSplineInfo(const FString& LandscapeNa
 
 		FLandscapeSplinePointInfo PointInfo;
 		PointInfo.PointIndex    = i;
-		PointInfo.Location      = LandscapeTransform.TransformPosition(CP->Location);
+		PointInfo.Location      = SplineTransform.TransformPosition(CP->Location);
 		PointInfo.Rotation      = CP->Rotation;
 		PointInfo.Width         = CP->Width;
 		PointInfo.SideFalloff   = CP->SideFalloff;
@@ -4220,8 +4220,7 @@ bool ULandscapeService::ModifySplinePoint(
 	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "ModifySplinePoint", "Modify Spline Point"));
 	CP->Modify();
 
-	FTransform LandscapeTransform = Landscape->GetActorTransform();
-	CP->Location = LandscapeTransform.InverseTransformPosition(WorldLocation);
+	CP->Location = SplinesComp->GetComponentTransform().InverseTransformPosition(WorldLocation);
 
 	if (Width >= 0.0f)       CP->Width       = Width;
 	if (SideFalloff >= 0.0f) CP->SideFalloff = SideFalloff;
@@ -4234,7 +4233,12 @@ bool ULandscapeService::ModifySplinePoint(
 
 	if (bAutoCalcRotation)
 	{
-		CP->AutoCalcRotation(false);
+		// UE averages the connected segment rotations; an isolated point would
+		// divide by zero and store NaNs. Keep its rotation until it is connected.
+		if (!CP->ConnectedSegments.IsEmpty())
+		{
+			CP->AutoCalcRotation(false);
+		}
 	}
 	else
 	{
@@ -4372,26 +4376,30 @@ bool ULandscapeService::ApplySplinesToLandscape(const FString& LandscapeNameOrLa
 		return false;
 	}
 
+	const ULandscapeEditLayerBase* SplinesLayer = Landscape->FindEditLayerOfTypeConst(ULandscapeEditLayerSplines::StaticClass());
+	const ULandscapeEditLayerBase* TargetLayer = SplinesLayer ? SplinesLayer : Landscape->GetEditLayerConst(Landscape->GetEditingLayer());
+	if (!TargetLayer || (!SplinesLayer && (!TargetLayer->SupportsEditingTools() || TargetLayer->IsLocked())))
+	{
+		UE_LOG(LogTemp, Error, TEXT("ULandscapeService::ApplySplinesToLandscape: No writable spline target. Create a Splines edit layer or explicitly set an unlocked editing layer; refusing to fall back to the first layer."));
+		return false;
+	}
+	if (!LandscapeInfo->AreAllComponentsRegistered())
+	{
+		UE_LOG(LogTemp, Error, TEXT("ULandscapeService::ApplySplinesToLandscape: Load all landscape components before applying splines."));
+		return false;
+	}
+
 	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "ApplySplines", "Apply Splines to Landscape"));
 
-	// Set the editing layer so that ApplySplines() can rasterize into the
-	// correct heightmap/weightmap layer. Without this, UE5.7 asserts
-	// "EditingLayer != nullptr" in LandscapeSplineRaster.cpp:335 and the
-	// SEH-caught exception leaves heightmap textures permanently locked.
-	const FGuid EditLayerGuid = ResolveEditLayerGuid(Landscape);
-	FScopedSetLandscapeEditingLayer EditLayerScope(
-		Landscape,
-		EditLayerGuid,
-		[Landscape]()
-		{
-			if (Landscape)
-			{
-				Landscape->RequestLayersContentUpdate(ELandscapeLayerUpdateMode::Update_Heightmap_All);
-			}
-		});
-
-	// ApplySplines rasterizes terrain deformation and layer painting for all splines
-	LandscapeInfo->ApplySplines(nullptr, true);
+	// ForceLayersFullUpdate below requests the engine's reserved-spline rebuild:
+	// it clears previous spline contributions, rasterizes into the Splines layer,
+	// then merges height AND paint data. Direct ApplySplines would bake into the
+	// current sculpt layer and leave stale deformation when points move/delete.
+	// Without a reserved layer, only an explicitly scoped editing layer is allowed.
+	if (!SplinesLayer)
+	{
+		Landscape->UpdateAllLandscapeSplines(TargetLayer->GetGuid());
+	}
 
 	LandscapeInfo->ForceLayersFullUpdate();
 	UpdateLandscapeAfterHeightEdit(Landscape);

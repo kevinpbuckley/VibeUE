@@ -2,6 +2,16 @@
 
 Tests for creating and managing landscapes. Start from an empty open world level. Run sequentially.
 
+For spline terrain tests, create a **Splines-type edit layer** in Landscape mode first.
+An ordinary sculpt layer named "Splines" is not sufficient. Applying without a reserved
+layer or an explicitly scoped writable editing layer must fail without touching the base.
+
+Automated regression coverage for #640: run `Automation RunTests VibeUE.LandscapeService.Splines`
+in a disposable editor project with rendering enabled (not `-NullRHI`). Tests create and
+remove temporary actors without saving assets. They cover component-space placement,
+isolated-point rotation, base-layer preservation, hide/restore, repeated apply, moving
+and deleting splines, and rejected/explicit bake targets.
+
 ---
 
 ## Discovery - Empty Level
