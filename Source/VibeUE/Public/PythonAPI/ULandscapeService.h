@@ -1733,6 +1733,9 @@ public:
 	 *
 	 * Triggers UE's built-in spline → landscape rasterization, which raises/lowers
 	 * terrain and paints weight layers under all spline segments.
+	 * Uses the reserved Splines edit layer when present, rebuilding old contributions.
+	 * Otherwise requires an explicitly set, unlocked editing layer and bakes into it.
+	 * Returns false if no safe target exists; never falls back to the first edit layer.
 	 *
 	 * @param LandscapeNameOrLabel - Name or label of the landscape
 	 * @return True if applied successfully
