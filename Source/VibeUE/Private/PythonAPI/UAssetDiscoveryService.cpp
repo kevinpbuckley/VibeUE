@@ -724,6 +724,28 @@ FUnattendedDeleteResult UAssetDiscoveryService::DeleteAssetUnattended(const FStr
 	TArray<UObject*> Objects;
 	Objects.Add(Asset);
 	const int32 Deleted = ObjectTools::ForceDeleteObjects(Objects, /*bShowConfirmation*/ false);
+
+	// Whether the engine's delete really reset the undo history, measured around ForceDeleteObjects itself so
+	// EVERY return below reports it truthfully, failures included: the reset happens inside the delete
+	// (DeleteSingleObject / CleanupAfterSuccessfulDelete), before the outcome checks. Read from the queue
+	// length, not the asset: the asset may already be garbage-collected here. The Warning above names the
+	// reset in advance; when the queue did not go to 0, the result says what happened instead.
+	const int32 UndoQueueLengthAfter = (GEditor && GEditor->Trans) ? GEditor->Trans->GetQueueLength() : 0;
+	Result.bUndoBufferReset = GEditor && GEditor->Trans && UndoQueueLengthBefore > 0 && UndoQueueLengthAfter == 0;
+	if (Result.bUndoBufferReset)
+	{
+		Result.Message = bUndoHeld
+			? FString(TEXT("The asset was in the undo buffer, and the engine reset the undo history during the delete: earlier edits can no longer be undone."))
+			: FString(TEXT("The engine reset the undo history during the delete: earlier edits can no longer be undone."));
+	}
+	else if (bUndoHeld)
+	{
+		Result.Message = FString::Printf(
+			TEXT("The asset was in the undo buffer, but the engine did NOT reset the undo history (queue length %d before the delete, %d after): ")
+			TEXT("earlier edits are still undoable, and the undo buffer may still hold the asset."),
+			UndoQueueLengthBefore, UndoQueueLengthAfter);
+	}
+
 	if (Deleted <= 0)
 	{
 		Result.ErrorMessage = FString::Printf(TEXT("ForceDeleteObjects returned 0 for %s (system veto; see the log)"), *AssetPath);
@@ -755,14 +777,6 @@ FUnattendedDeleteResult UAssetDiscoveryService::DeleteAssetUnattended(const FStr
 	else
 	{
 		Result.FileStatus = TEXT("never_on_disk");
-	}
-
-	// Whether the engine's delete really reset the undo history (it does so only when undo was the sole
-	// holder). Read from the queue length: the asset itself may already be garbage-collected here.
-	if (bUndoHeld && GEditor && GEditor->Trans && UndoQueueLengthBefore > 0 && GEditor->Trans->GetQueueLength() == 0)
-	{
-		Result.bUndoBufferReset = true;
-		Result.Message = TEXT("The asset was in the undo buffer, so the engine reset the undo history to delete it: earlier edits can no longer be undone.");
 	}
 
 	UE_LOG(LogTemp, Log, TEXT("UAssetDiscoveryService::DeleteAssetUnattended: deleted %s (%d referencer(s) reported, file: %s)"),

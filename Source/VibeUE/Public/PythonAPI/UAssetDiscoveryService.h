@@ -53,13 +53,19 @@ struct FUnattendedDeleteResult
 	FString FileStatus;
 
 	/**
-	 * True when the asset was held by the undo buffer and the engine's delete reset the undo history to
-	 * delete it (it does that whenever undo is the asset's only holder): earlier edits can no longer be undone.
+	 * True when the editor's undo history was reset across the engine delete call: the undo queue held at
+	 * least one transaction before ForceDeleteObjects and none after (the engine resets it whenever undo is
+	 * the asset's only holder). Earlier edits can no longer be undone. Reported on EVERY return after the
+	 * delete call, failures included (bSuccess false, e.g. FILE_NOT_REMOVED); false on refusals before it.
 	 */
 	UPROPERTY(BlueprintReadWrite, Category = "Assets")
 	bool bUndoBufferReset = false;
 
-	/** Human-readable note on a successful delete (e.g. that the undo history was reset); empty otherwise. */
+	/**
+	 * Human-readable note, set whenever there is something to say about the undo history or the delete
+	 * outcome, on success or failure (e.g. that the undo history was reset, or that an undo-held asset's
+	 * history was NOT reset); empty otherwise. Errors themselves go in ErrorMessage.
+	 */
 	UPROPERTY(BlueprintReadWrite, Category = "Assets")
 	FString Message;
 };
@@ -198,7 +204,9 @@ public:
 	 * UNDO BUFFER: an asset a committed transaction still holds is deleted as the engine always did:
 	 * when undo is its only holder, the engine's delete resets the undo history (ObjectTools.cpp
 	 * DeleteSingleObject / CleanupAfterSuccessfulDelete) and the asset goes completely. A Warning is
-	 * logged, and bUndoBufferReset + Message report the reset. bForceEvenIfReferenced does not affect this.
+	 * logged. bUndoBufferReset (the undo queue went from non-empty to empty across the delete call) and
+	 * Message report what happened on every return after the delete call, success or failure, not only
+	 * on success. bForceEvenIfReferenced does not affect this.
 	 * If undo AND another holder keep the package, the engine leaves its file on disk; the FILE CHECK
 	 * reports that.
 	 *

@@ -419,7 +419,11 @@ bool FVibeAssetImportMeshTest::RunTest(const FString&)
 //    reset (b_undo_buffer_reset, message) and a Warning is logged.
 //
 // The fixture is an in-memory curve in a scratch /Game package: it is never saved, so nothing reaches
-// disk, and the delete reports file_status "never_on_disk". NOTE: step 2 resets the editor's undo
+// disk, and the delete reports file_status "never_on_disk". The reset is measured around ForceDeleteObjects
+// and reported on failure returns too (ForceDeleteObjects returning 0, FILE_NOT_REMOVED); those are not
+// exercised here: every engine failure after the delete call either opens a modal FMessageDialog (the
+// OnAssetsCanDelete veto, DeleteSingleObject's "is in use") or needs the package saved to disk
+// (FILE_NOT_REMOVED), so none can be forced headless without writing to disk. NOTE: step 2 resets the editor's undo
 // buffer (that is the engine behaviour under test) - run this suite in a disposable host, not over work.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeDeleteAssetUnattendedUndoBufferTest, "VibeUE.Assets.DeleteAssetUnattendedUndoBuffer",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -512,7 +516,8 @@ bool FVibeDeleteAssetUnattendedUndoBufferTest::RunTest(const FString&)
 		TestTrue(FString::Printf(TEXT("undo-held: the delete succeeds ('%s')"), *Res.ErrorMessage), Res.bSuccess);
 		TestTrue(TEXT("undo-held: no error code"), Res.ErrorCode.IsEmpty());
 		TestTrue(TEXT("undo-held: b_undo_buffer_reset is reported"), Res.bUndoBufferReset);
-		TestTrue(FString::Printf(TEXT("undo-held: message names the reset ('%s')"), *Res.Message), Res.Message.Contains(TEXT("undo")));
+		TestTrue(FString::Printf(TEXT("undo-held: message names the reset ('%s')"), *Res.Message), Res.Message.Contains(TEXT("reset the undo history")));
+		TestFalse(FString::Printf(TEXT("undo-held: message does not claim the history survived ('%s')"), *Res.Message), Res.Message.Contains(TEXT("did NOT reset")));
 		TestEqual(TEXT("undo-held: file_status reports an asset that was never on disk"), Res.FileStatus, FString(TEXT("never_on_disk")));
 		TestFalse(TEXT("undo-held: file_removed is false when there was no file"), Res.bFileRemoved);
 		TestFalse(TEXT("undo-held: the asset is gone from the registry"), UEditorAssetLibrary::DoesAssetExist(AssetPath));
