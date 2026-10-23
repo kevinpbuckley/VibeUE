@@ -316,7 +316,7 @@ These signatures are complete — no need to `discover_python_class` them again:
 | `set_component_property(bp, comp, prop, value)` → `bool` | `value` is a STRING — see formats below |
 | `get_all_component_properties(bp, comp, include_inherited=True)` → `[ComponentPropertyInfo]` | `list_component_properties` is an alias |
 | `compare_components(bp_a, comp_a, bp_b, comp_b)` → `str` or `None` | Diff as text; same or different blueprints |
-| `set_collision_settings(bp, comp, collision_enabled, object_type, collision_profile, channel_responses)` → `bool` | Collision lives in `BodyInstance` — `set_component_property` cannot reach it |
+| `set_collision_settings(bp, comp, collision_enabled, object_type, collision_profile, channel_responses)` → `bool` | Collision lives in `BodyInstance` — `set_component_property` cannot reach it. Channel names (`object_type` and `channel_responses` keys): engine names (`Visibility`), the project's custom channel names from DefaultEngine.ini (`Weapon`), or `ECC_GameTraceChannel1`..`18`. An unknown channel name, response or `collision_enabled` value refuses the whole call (error lists valid values). Placed actors that had not overridden the old value get the new one; each such actor's package (its external actor package in World Partition) is marked dirty with no undo, so the next save or `auto_save` sweep writes it |
 
 **Root component behavior**: components added with no `parent_name` go to root level. The first
 scene component added this way replaces the auto-generated DefaultSceneRoot and becomes the root;

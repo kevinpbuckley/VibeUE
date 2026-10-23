@@ -811,6 +811,7 @@ This skill index contains the frontmatter, intro, and the **Critical Rules / got
 ## Additional gotchas
 
 - `discover_nodes` returns clean `FUNC <BP>_C::Fn` keys now (no `SKEL_` prefix to strip). BP custom events are callable cross-BP through such a key; BP functions cannot call custom events — `FUNC Self::<Event>` in a function graph returns "".
+- Class names in `FUNC <Class>::Fn` keys, `build_graph` nodes and class pin defaults accept a Blueprint SHORT name of any Blueprint type, with or without `_C` (`BP_Enemy_C`, `WBP_Menu_C`, `ABP_Zombie`), loaded or not. If two Blueprint assets share that short name the call is refused with a warning listing both paths: pass the full path (`/Game/UI/WBP_Menu.WBP_Menu_C`) instead.
 - Read pin defaults from `get_node_pins` (it now reports non-string defaults too); `get_graph_definition`'s `defaults` array and a node's `default_object` are the cross-checks. Bool pins on VariableSet nodes work (the pin name is the variable name).
 - Variable GET/SET spawners are scoped to the owning Blueprint now, so their keys are unambiguous — you no longer disambiguate by `n.category` (`Variables|<OwningBlueprint>`).
 - `build_graph` that fails on one node spec leaves the OTHER nodes behind; inspect the graph and delete the strays before retrying.

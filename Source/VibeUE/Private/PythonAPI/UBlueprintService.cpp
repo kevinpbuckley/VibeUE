@@ -2,6 +2,8 @@
 
 #include "PythonAPI/UBlueprintService.h"
 #include "PythonAPI/BlueprintTypeParser.h"
+#include "Engine/CollisionProfile.h"     // Custom collision channel names (set_collision_settings)
+#include "PythonAPI/BlueprintClassResolve.h" // Short-name ambiguity policy (VibeBlueprintClassResolve)
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
 #include "Engine/Level.h"                // Level Blueprint resolution (LoadBlueprint on a map path)
@@ -88,6 +90,39 @@
 #include "Serialization/JsonWriter.h"
 #include "Serialization/JsonSerializer.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
+
+UClass* VibeBlueprintClassResolve::ChooseCandidate(const FString& ShortName, const TArray<FCandidate>& Candidates)
+{
+	if (Candidates.Num() > 1)
+	{
+		TArray<FString> Paths;
+		for (const FCandidate& Candidate : Candidates)
+		{
+			Paths.Add(Candidate.ObjectPath);
+		}
+		Paths.Sort();
+		UE_LOG(LogTemp, Warning, TEXT("ResolveClassByName: short name '%s' is ambiguous, %d Blueprints match: %s. Pass the full asset path instead."),
+			*ShortName, Paths.Num(), *FString::Join(Paths, TEXT(", ")));
+		return nullptr;
+	}
+
+	if (Candidates.Num() == 1)
+	{
+		if (Candidates[0].Class)
+		{
+			return Candidates[0].Class;
+		}
+		if (Candidates[0].Asset.IsValid())
+		{
+			if (UBlueprint* Blueprint = Cast<UBlueprint>(Candidates[0].Asset.GetAsset()))
+			{
+				return Blueprint->GeneratedClass;
+			}
+		}
+	}
+
+	return nullptr;
+}
 
 namespace
 {
@@ -305,6 +340,100 @@ namespace
 		return nullptr;
 	}
 
+	// Generated classes left behind by recompiles, hot reload and deletes carry these prefixes.
+	// They are never the class a caller means.
+	static bool IsStaleGeneratedClassName(const FString& Name)
+	{
+		return Name.StartsWith(TEXT("SKEL_"), ESearchCase::CaseSensitive)
+			|| Name.StartsWith(TEXT("REINST_"), ESearchCase::CaseSensitive)
+			|| Name.StartsWith(TEXT("TRASHCLASS_"), ESearchCase::CaseSensitive)
+			|| Name.StartsWith(TEXT("HOTRELOADED_"), ESearchCase::CaseSensitive);
+	}
+
+	// Resolve a Blueprint by short name (no "_C", no path) to its generated class. Candidates are
+	// the union, de-duplicated by package, of
+	//   - LOADED generated classes named "<Short>_C" whose Blueprint's current GeneratedClass is
+	//     that class (stale/outdated classes skipped), and
+	//   - asset-registry assets of ANY UBlueprint subclass named "<Short>" (plain, Widget, Anim,
+	//     Editor Utility...). Without bSearchSubClasses only plain UBlueprint assets match (bug B6).
+	// The ambiguity policy (two or more packages = refusal, no implicit preference) is
+	// VibeBlueprintClassResolve::ChooseCandidate, documented in BlueprintClassResolve.h.
+	static UClass* ResolveBlueprintShortName(const FString& ShortName)
+	{
+		// FName construction from a string longer than NAME_SIZE is a Fatal engine log.
+		if (ShortName.IsEmpty() || ShortName.Len() + 2 >= NAME_SIZE)
+		{
+			return nullptr;
+		}
+
+		using VibeBlueprintClassResolve::FCandidate;
+		TArray<FCandidate> Candidates;
+		auto HasPackage = [&Candidates](FName PackageName)
+		{
+			return Candidates.ContainsByPredicate([PackageName](const FCandidate& C) { return C.PackageName == PackageName; });
+		};
+
+		// (1) Loaded generated classes. FNAME_Find: a name absent from the name table cannot name
+		// any object, so a miss costs nothing and adds nothing to the table.
+		const FName GeneratedFName(*(ShortName + TEXT("_C")), FNAME_Find);
+		if (!GeneratedFName.IsNone())
+		{
+			TArray<UObject*> Found;
+			StaticFindAllObjectsFast(Found, UClass::StaticClass(), GeneratedFName, EFindObjectFlags::None);
+			for (UObject* Object : Found)
+			{
+				UClass* Class = Cast<UClass>(Object);
+				if (!IsValid(Class) || Class->HasAnyClassFlags(CLASS_NewerVersionExists) || IsStaleGeneratedClassName(Class->GetName()))
+				{
+					continue;
+				}
+				UBlueprint* Blueprint = Cast<UBlueprint>(Class->ClassGeneratedBy);
+				if (!IsValid(Blueprint) || Blueprint->GeneratedClass != Class)
+				{
+					continue; // native, or an outdated class its Blueprint no longer points at
+				}
+				const FName PackageName = Blueprint->GetPackage()->GetFName();
+				if (!HasPackage(PackageName))
+				{
+					FCandidate& Candidate = Candidates.AddDefaulted_GetRef();
+					Candidate.PackageName = PackageName;
+					Candidate.ObjectPath = Blueprint->GetPathName();
+					Candidate.Class = Class;
+				}
+			}
+		}
+
+		// (2) Asset registry, every UBlueprint subclass.
+		const FName AssetFName(*ShortName, FNAME_Find);
+		if (!AssetFName.IsNone())
+		{
+			IAssetRegistry& Registry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+			TArray<FAssetData> Assets;
+			Registry.GetAssetsByClass(UBlueprint::StaticClass()->GetClassPathName(), Assets, /*bSearchSubClasses*/ true);
+			for (const FAssetData& Asset : Assets)
+			{
+				if (Asset.AssetName == AssetFName && !HasPackage(Asset.PackageName))
+				{
+					FCandidate& Candidate = Candidates.AddDefaulted_GetRef();
+					Candidate.PackageName = Asset.PackageName;
+					Candidate.ObjectPath = Asset.GetObjectPathString();
+					Candidate.Asset = Asset;
+				}
+			}
+		}
+
+		return VibeBlueprintClassResolve::ChooseCandidate(ShortName, Candidates);
+	}
+
+	// Resolve a class name as node keys, class pins and node properties spell it. Tried in order:
+	//   1. A native class by its object name ("Actor", "KismetSystemLibrary"; the C++ prefix is
+	//      not stripped, so "AActor" does not resolve), then /Script/Engine.<Name>. Native
+	//      classes always win.
+	//   2. A full asset path ("/Game/UI/WBP_Menu", "/Game/UI/WBP_Menu.WBP_Menu",
+	//      "/Game/UI/WBP_Menu.WBP_Menu_C"): the asset is loaded and its generated class returned.
+	//   3. A Blueprint short name with or without "_C" ("BP_Enemy", "WBP_Menu_C", "ABP_Zombie_C"),
+	//      any Blueprint type, loaded or not, under the ambiguity policy of ResolveBlueprintShortName.
+	// A "SKEL_" prefix is stripped first so older discover_nodes keys still resolve.
 	static UClass* ResolveClassByName(const FString& ClassName)
 	{
 		if (ClassName.IsEmpty())
@@ -320,6 +449,9 @@ namespace
 			return ResolveClassByName(ClassName.RightChop(5));
 		}
 
+		// ExactClass is deliberate in the native lookups: it matches only objects whose class is
+		// exactly UClass (native classes), so a Blueprint can never shadow a native type. Blueprint
+		// generated classes are found by the short-name step at the end.
 		if (UClass* FoundClass = FindFirstObject<UClass>(*ClassName, EFindFirstObjectOptions::ExactClass))
 		{
 			return FoundClass;
@@ -388,40 +520,20 @@ namespace
 					return DirectClass;
 				}
 			}
+			return nullptr;
 		}
 
-		// Asset registry lookup by short Blueprint name. Handles "BP_PatrolPointManager_C"
-		// and "BP_PatrolPointManager" when the Blueprint isn't loaded yet.
+		// Blueprint short name: "BP_PatrolPointManager_C" or "BP_PatrolPointManager", loaded or not.
+		FString ShortName = ClassName;
+		if (ShortName.EndsWith(TEXT("_C"), ESearchCase::CaseSensitive))
 		{
-			FString ShortName = ClassName;
-			if (ShortName.EndsWith(TEXT("_C"), ESearchCase::CaseSensitive))
-			{
-				ShortName.LeftChopInline(2);
-			}
-
-			if (!ShortName.IsEmpty() && !ShortName.Contains(TEXT("/")))
-			{
-				IAssetRegistry& Registry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
-				TArray<FAssetData> Assets;
-				Registry.GetAssetsByClass(UBlueprint::StaticClass()->GetClassPathName(), Assets);
-				for (const FAssetData& Asset : Assets)
-				{
-					if (Asset.AssetName == FName(*ShortName))
-					{
-						if (UBlueprint* BP = Cast<UBlueprint>(Asset.GetAsset()))
-						{
-							if (BP->GeneratedClass)
-							{
-								return BP->GeneratedClass;
-							}
-						}
-						break;
-					}
-				}
-			}
+			ShortName.LeftChopInline(2);
 		}
-
-		return nullptr;
+		if (ShortName.Contains(TEXT("/")) || ShortName.Contains(TEXT(".")))
+		{
+			return nullptr;
+		}
+		return ResolveBlueprintShortName(ShortName);
 	}
 
 	// Blueprint functions and variables are registered against the transient SKELETON class
@@ -619,14 +731,11 @@ namespace
 
 		if (bClass)
 		{
-			// Resolve the class with U/A prefix fallbacks (mirrors SetNodePinValue's original path).
+			// Resolve the full path first, then native names (with U/A prefix fallbacks) and Blueprint
+			// short names of any Blueprint type ("BP_Enemy_C", "WBP_Menu") via ResolveClassByName.
 			UClass* ResolvedClass = LoadObject<UClass>(nullptr, *Value);
 			if (!ResolvedClass)
-				ResolvedClass = FindFirstObject<UClass>(*Value, EFindFirstObjectOptions::ExactClass);
-			if (!ResolvedClass)
-				ResolvedClass = FindFirstObject<UClass>(*FString::Printf(TEXT("U%s"), *Value), EFindFirstObjectOptions::ExactClass);
-			if (!ResolvedClass)
-				ResolvedClass = FindFirstObject<UClass>(*FString::Printf(TEXT("A%s"), *Value), EFindFirstObjectOptions::ExactClass);
+				ResolvedClass = ResolveClassByName(Value);
 
 			if (!ResolvedClass)
 			{
@@ -7897,14 +8006,11 @@ bool UBlueprintService::ConfigureNode(
 	// Handle special cases for class/object references
 	if (FClassProperty* ClassProp = CastField<FClassProperty>(Property))
 	{
-		// Resolve with full path first, then U/A prefix fallbacks
+		// Resolve with full path first, then native names (U/A prefix fallbacks) and Blueprint
+		// short names of any Blueprint type via ResolveClassByName.
 		UClass* LoadedClass = LoadObject<UClass>(nullptr, *Value);
 		if (!LoadedClass)
-			LoadedClass = FindFirstObject<UClass>(*Value, EFindFirstObjectOptions::ExactClass);
-		if (!LoadedClass)
-			LoadedClass = FindFirstObject<UClass>(*FString::Printf(TEXT("U%s"), *Value), EFindFirstObjectOptions::ExactClass);
-		if (!LoadedClass)
-			LoadedClass = FindFirstObject<UClass>(*FString::Printf(TEXT("A%s"), *Value), EFindFirstObjectOptions::ExactClass);
+			LoadedClass = ResolveClassByName(Value);
 
 		if (LoadedClass)
 		{
@@ -9330,6 +9436,98 @@ bool UBlueprintService::RefreshBlueprintEditor(const FString& BlueprintPath)
 	return true;
 }
 
+namespace
+{
+	// The channels a Blueprint component may name: the 8 engine channels and the 18 game channels.
+	// ECC_EngineTraceChannel1..6 are reserved for the engine and never offered.
+	bool IsUserFacingCollisionChannel(int32 Index)
+	{
+		return (Index >= static_cast<int32>(ECC_WorldStatic) && Index <= static_cast<int32>(ECC_Destructible))
+			|| (Index >= static_cast<int32>(ECC_GameTraceChannel1) && Index <= static_cast<int32>(ECC_GameTraceChannel18));
+	}
+
+	// The name the project knows a channel by: the configured Name for a custom channel
+	// (DefaultEngine.ini +DefaultChannelResponses=(...,Name="Weapon")), else the enum name without
+	// its ECC_ prefix (an unconfigured custom channel reads "GameTraceChannel4").
+	FString CollisionChannelDisplayName(int32 Index)
+	{
+		if (const UCollisionProfile* Profile = UCollisionProfile::Get())
+		{
+			const FName Name = Profile->ReturnChannelNameFromContainerIndex(Index);
+			if (!Name.IsNone())
+			{
+				return Name.ToString();
+			}
+		}
+		FString EnumName = StaticEnum<ECollisionChannel>()->GetNameStringByValue(Index);
+		EnumName.RemoveFromStart(TEXT("ECC_"));
+		return EnumName;
+	}
+
+	// Resolve a collision channel name for set_collision_settings (ChannelResponses keys and
+	// ObjectType). Case-insensitive. Accepts the engine channel names ("WorldStatic".."Destructible"),
+	// a project's configured custom channel names (read from UCollisionProfile at call time, with or
+	// without spaces or an "ECC_" prefix), and the raw enum names "ECC_WorldStatic".."ECC_Destructible"
+	// and "ECC_GameTraceChannel1".."ECC_GameTraceChannel18".
+	bool ResolveCollisionChannel(const FString& InName, ECollisionChannel& OutChannel)
+	{
+		FString Name = InName.TrimStartAndEnd();
+		if (Name.IsEmpty())
+		{
+			return false;
+		}
+
+		// Raw enum spelling: ECC_WorldStatic, ECC_GameTraceChannel4, ...
+		if (const UEnum* ChannelEnum = StaticEnum<ECollisionChannel>())
+		{
+			for (int32 EnumIndex = 0; EnumIndex < ChannelEnum->NumEnums(); ++EnumIndex)
+			{
+				const int32 Value = static_cast<int32>(ChannelEnum->GetValueByIndex(EnumIndex));
+				if (IsUserFacingCollisionChannel(Value)
+					&& ChannelEnum->GetNameStringByIndex(EnumIndex).Equals(Name, ESearchCase::IgnoreCase))
+				{
+					OutChannel = static_cast<ECollisionChannel>(Value);
+					return true;
+				}
+			}
+		}
+
+		// Display / configured names, with or without spaces and with or without an ECC_ prefix
+		// (the engine's script name for a custom channel is "ECC_" + the name with spaces removed).
+		Name.RemoveFromStart(TEXT("ECC_"), ESearchCase::IgnoreCase);
+		const FString Compact = Name.Replace(TEXT(" "), TEXT(""));
+		for (int32 Index = 0; Index <= static_cast<int32>(ECC_GameTraceChannel18); ++Index)
+		{
+			if (!IsUserFacingCollisionChannel(Index))
+			{
+				continue;
+			}
+			const FString DisplayName = CollisionChannelDisplayName(Index);
+			if (DisplayName.Equals(Name, ESearchCase::IgnoreCase)
+				|| DisplayName.Replace(TEXT(" "), TEXT("")).Equals(Compact, ESearchCase::IgnoreCase))
+			{
+				OutChannel = static_cast<ECollisionChannel>(Index);
+				return true;
+			}
+		}
+		return false;
+	}
+
+	// Every accepted channel name, for the refusal message.
+	FString DescribeValidCollisionChannels()
+	{
+		TArray<FString> Names;
+		for (int32 Index = 0; Index <= static_cast<int32>(ECC_GameTraceChannel18); ++Index)
+		{
+			if (IsUserFacingCollisionChannel(Index))
+			{
+				Names.Add(CollisionChannelDisplayName(Index));
+			}
+		}
+		return FString::Join(Names, TEXT(", ")) + TEXT(" (or the raw enum names ECC_WorldStatic..ECC_Destructible, ECC_GameTraceChannel1..18)");
+	}
+}
+
 bool UBlueprintService::SetCollisionSettings(
 	const FString& BlueprintPath,
 	const FString& ComponentName,
@@ -9360,27 +9558,69 @@ bool UBlueprintService::SetCollisionSettings(
 		return false;
 	}
 
-	// Helper: channel name string -> ECollisionChannel
-	auto ParseChannel = [](const FString& S) -> ECollisionChannel
+	// Channel names resolve through UCollisionProfile, so a project's custom channel names
+	// ("Weapon", "Projectile") and the raw ECC_GameTraceChannelN spellings work alongside the
+	// engine names. Validate every input BEFORE touching the template: an unknown channel, response
+	// or CollisionEnabled value is a refusal with nothing written, never a silent default (which the
+	// propagation below would then copy onto every untouched placed actor).
+	ECollisionChannel ParsedObjectType = ECC_WorldStatic;
+	if (!ObjectType.IsEmpty() && !ResolveCollisionChannel(ObjectType, ParsedObjectType))
 	{
-		if (S.Equals(TEXT("WorldStatic"),   ESearchCase::IgnoreCase)) return ECC_WorldStatic;
-		if (S.Equals(TEXT("WorldDynamic"),  ESearchCase::IgnoreCase)) return ECC_WorldDynamic;
-		if (S.Equals(TEXT("Pawn"),          ESearchCase::IgnoreCase)) return ECC_Pawn;
-		if (S.Equals(TEXT("Visibility"),    ESearchCase::IgnoreCase)) return ECC_Visibility;
-		if (S.Equals(TEXT("Camera"),        ESearchCase::IgnoreCase)) return ECC_Camera;
-		if (S.Equals(TEXT("PhysicsBody"),   ESearchCase::IgnoreCase)) return ECC_PhysicsBody;
-		if (S.Equals(TEXT("Vehicle"),       ESearchCase::IgnoreCase)) return ECC_Vehicle;
-		if (S.Equals(TEXT("Destructible"),  ESearchCase::IgnoreCase)) return ECC_Destructible;
-		return ECC_MAX; // unknown
+		UE_LOG(LogTemp, Error, TEXT("SetCollisionSettings: Unknown ObjectType '%s'. Valid channels: %s"),
+			*ObjectType, *DescribeValidCollisionChannels());
+		return false;
+	}
+
+	// Response string -> ECollisionResponse; false for anything but Ignore/Overlap/Block.
+	auto ParseResponse = [](const FString& S, ECollisionResponse& Out) -> bool
+	{
+		if (S.Equals(TEXT("Ignore"),  ESearchCase::IgnoreCase)) { Out = ECR_Ignore;  return true; }
+		if (S.Equals(TEXT("Overlap"), ESearchCase::IgnoreCase)) { Out = ECR_Overlap; return true; }
+		if (S.Equals(TEXT("Block"),   ESearchCase::IgnoreCase)) { Out = ECR_Block;   return true; }
+		return false;
 	};
 
-	// Helper: response string -> ECollisionResponse
-	auto ParseResponse = [](const FString& S) -> ECollisionResponse
+	TArray<TTuple<ECollisionChannel, FString, ECollisionResponse>> ParsedChannels;
+	for (const TPair<FString, FString>& Pair : ChannelResponses)
 	{
-		if (S.Equals(TEXT("Overlap"), ESearchCase::IgnoreCase)) return ECR_Overlap;
-		if (S.Equals(TEXT("Block"),   ESearchCase::IgnoreCase)) return ECR_Block;
-		return ECR_Ignore; // default / "Ignore"
-	};
+		ECollisionChannel Channel = ECC_WorldStatic;
+		if (!ResolveCollisionChannel(Pair.Key, Channel))
+		{
+			UE_LOG(LogTemp, Error, TEXT("SetCollisionSettings: Unknown channel '%s'. Valid channels: %s"),
+				*Pair.Key, *DescribeValidCollisionChannels());
+			return false;
+		}
+		ECollisionResponse Response = ECR_Ignore;
+		if (!ParseResponse(Pair.Value, Response))
+		{
+			UE_LOG(LogTemp, Error, TEXT("SetCollisionSettings: Unknown response '%s' for channel '%s', expected Ignore/Overlap/Block"),
+				*Pair.Value, *Pair.Key);
+			return false;
+		}
+		ParsedChannels.Emplace(Channel, Pair.Key, Response);
+	}
+
+	ECollisionEnabled::Type ParsedEnabled = ECollisionEnabled::QueryAndPhysics;
+	if (!CollisionEnabled.IsEmpty())
+	{
+		if      (CollisionEnabled.Equals(TEXT("NoCollision"),     ESearchCase::IgnoreCase)) ParsedEnabled = ECollisionEnabled::NoCollision;
+		else if (CollisionEnabled.Equals(TEXT("QueryOnly"),       ESearchCase::IgnoreCase)) ParsedEnabled = ECollisionEnabled::QueryOnly;
+		else if (CollisionEnabled.Equals(TEXT("PhysicsOnly"),     ESearchCase::IgnoreCase)) ParsedEnabled = ECollisionEnabled::PhysicsOnly;
+		else if (CollisionEnabled.Equals(TEXT("QueryAndPhysics"), ESearchCase::IgnoreCase)) ParsedEnabled = ECollisionEnabled::QueryAndPhysics;
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("SetCollisionSettings: Unknown CollisionEnabled value '%s', expected NoCollision/QueryOnly/PhysicsOnly/QueryAndPhysics"), *CollisionEnabled);
+			return false;
+		}
+	}
+
+	// The template's collision state before this call. Placed instances still holding exactly
+	// these values have not overridden them, and get the new values below (the details panel's
+	// rule, FComponentEditorUtils::PropagateDefaultValueChange).
+	const FName OldProfileName = PrimComp->BodyInstance.GetCollisionProfileName();
+	const ECollisionEnabled::Type OldEnabled = PrimComp->BodyInstance.GetCollisionEnabled(/*bCheckOwner*/ false);
+	const ECollisionChannel OldObjectType = PrimComp->BodyInstance.GetObjectType();
+	const FCollisionResponseContainer OldResponses = PrimComp->BodyInstance.GetResponseToChannels();
 
 	Blueprint->Modify();
 	PrimComp->Modify();
@@ -9396,46 +9636,108 @@ bool UBlueprintService::SetCollisionSettings(
 	// Set collision enabled type
 	if (!CollisionEnabled.IsEmpty())
 	{
-		ECollisionEnabled::Type EnabledType = ECollisionEnabled::QueryAndPhysics;
-		if      (CollisionEnabled.Equals(TEXT("NoCollision"),     ESearchCase::IgnoreCase)) EnabledType = ECollisionEnabled::NoCollision;
-		else if (CollisionEnabled.Equals(TEXT("QueryOnly"),       ESearchCase::IgnoreCase)) EnabledType = ECollisionEnabled::QueryOnly;
-		else if (CollisionEnabled.Equals(TEXT("PhysicsOnly"),     ESearchCase::IgnoreCase)) EnabledType = ECollisionEnabled::PhysicsOnly;
-		else if (CollisionEnabled.Equals(TEXT("QueryAndPhysics"), ESearchCase::IgnoreCase)) EnabledType = ECollisionEnabled::QueryAndPhysics;
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("SetCollisionSettings: Unknown CollisionEnabled value '%s', expected NoCollision/QueryOnly/PhysicsOnly/QueryAndPhysics"), *CollisionEnabled);
-		}
-		PrimComp->BodyInstance.SetCollisionEnabled(EnabledType);
+		PrimComp->BodyInstance.SetCollisionEnabled(ParsedEnabled);
 		UE_LOG(LogTemp, Log, TEXT("SetCollisionSettings: '%s' CollisionEnabled = '%s'"), *ComponentName, *CollisionEnabled);
 	}
 
 	// Set object type (what collision channel this component occupies)
 	if (!ObjectType.IsEmpty())
 	{
-		ECollisionChannel Channel = ParseChannel(ObjectType);
-		if (Channel != ECC_MAX)
-		{
-			PrimComp->BodyInstance.SetObjectType(Channel);
-			UE_LOG(LogTemp, Log, TEXT("SetCollisionSettings: '%s' ObjectType = '%s'"), *ComponentName, *ObjectType);
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("SetCollisionSettings: Unknown ObjectType '%s'"), *ObjectType);
-		}
+		PrimComp->BodyInstance.SetObjectType(ParsedObjectType);
+		UE_LOG(LogTemp, Log, TEXT("SetCollisionSettings: '%s' ObjectType = '%s'"), *ComponentName, *ObjectType);
 	}
 
 	// Set per-channel collision responses
-	for (const TPair<FString, FString>& Pair : ChannelResponses)
+	for (const TTuple<ECollisionChannel, FString, ECollisionResponse>& Parsed : ParsedChannels)
 	{
-		ECollisionChannel Channel = ParseChannel(Pair.Key);
-		if (Channel == ECC_MAX)
+		PrimComp->BodyInstance.SetResponseToChannel(Parsed.Get<0>(), Parsed.Get<2>());
+		UE_LOG(LogTemp, Log, TEXT("SetCollisionSettings: '%s' channel '%s' = '%s'"), *ComponentName, *Parsed.Get<1>(), *ChannelResponses.FindChecked(Parsed.Get<1>()));
+	}
+
+	// Propagate to archetype instances (components of placed actors, child-Blueprint templates)
+	// that have not overridden the old value. Without this the compile below reinstances placed
+	// actors with their OLD collision: the instance-data cache serializes each component against
+	// its (already updated) archetype, so the stale value reads as a per-instance override.
+	{
+		const FName NewProfileName = PrimComp->BodyInstance.GetCollisionProfileName();
+		const ECollisionEnabled::Type NewEnabled = PrimComp->BodyInstance.GetCollisionEnabled(/*bCheckOwner*/ false);
+		const ECollisionChannel NewObjectType = PrimComp->BodyInstance.GetObjectType();
+		const FCollisionResponseContainer NewResponses = PrimComp->BodyInstance.GetResponseToChannels();
+
+		int32 NumPropagated = 0;
+		if (PrimComp->HasAnyFlags(RF_ArchetypeObject))
 		{
-			UE_LOG(LogTemp, Warning, TEXT("SetCollisionSettings: Unknown channel '%s', skipping"), *Pair.Key);
-			continue;
+			TArray<UObject*> ArchetypeInstances;
+			PrimComp->GetArchetypeInstances(ArchetypeInstances);
+			for (UObject* InstanceObject : ArchetypeInstances)
+			{
+				UPrimitiveComponent* Instance = Cast<UPrimitiveComponent>(InstanceObject);
+				if (!IsValid(Instance))
+				{
+					continue;
+				}
+
+				// Compare every field against the OLD template value before writing any of them:
+				// a profile write rewrites the other three on the instance.
+				const bool bProfileMatches = Instance->BodyInstance.GetCollisionProfileName() == OldProfileName;
+				const bool bEnabledMatches = Instance->BodyInstance.GetCollisionEnabled(/*bCheckOwner*/ false) == OldEnabled;
+				const bool bObjectTypeMatches = Instance->BodyInstance.GetObjectType() == OldObjectType;
+				const bool bResponsesMatch = Instance->BodyInstance.GetResponseToChannels() == OldResponses;
+
+				// "Custom" is never written directly: on an instance it rebuilds the response table
+				// from the instance's stale custom-response array. The response write below sets it.
+				const bool bWriteProfile = bProfileMatches && NewProfileName != OldProfileName
+					&& NewProfileName != UCollisionProfile::CustomCollisionProfileName;
+				const bool bWriteEnabled = bEnabledMatches && NewEnabled != OldEnabled;
+				const bool bWriteObjectType = bObjectTypeMatches && NewObjectType != OldObjectType;
+				const bool bWriteResponses = bResponsesMatch && NewResponses != OldResponses;
+				if (!bWriteProfile && !bWriteEnabled && !bWriteObjectType && !bWriteResponses)
+				{
+					continue;
+				}
+
+				Instance->Modify();
+				if (AActor* Owner = Instance->GetOwner())
+				{
+					Owner->Modify();
+				}
+				// Profile first, without overlap updates (no Blueprint overlap handlers run on editor
+				// actors). A profile write already loads enabled / object type / responses from the
+				// profile, so each later field is written only if the instance still differs:
+				// FBodyInstance::SetObjectType and SetResponseToChannels reset the profile name to
+				// "Custom" even for an unchanged value, which would turn an untouched instance into a
+				// permanent override.
+				if (bWriteProfile)
+				{
+					Instance->SetCollisionProfileName(NewProfileName, /*bUpdateOverlaps*/ false);
+				}
+				// Raw BodyInstance writes, not the component setters: UPrimitiveComponent's
+				// SetCollisionEnabled compares against GetCollisionEnabled(bCheckOwner=true), which
+				// reads NoCollision on an actor with collision disabled, and would skip the write.
+				bool bWroteBody = false;
+				if (bWriteEnabled && Instance->BodyInstance.GetCollisionEnabled(/*bCheckOwner*/ false) != NewEnabled)
+				{
+					Instance->BodyInstance.SetCollisionEnabled(NewEnabled);
+					bWroteBody = true;
+				}
+				if (bWriteObjectType && Instance->BodyInstance.GetObjectType() != NewObjectType)
+				{
+					Instance->BodyInstance.SetObjectType(NewObjectType);
+					bWroteBody = true;
+				}
+				if (bWriteResponses && Instance->BodyInstance.GetResponseToChannels() != NewResponses)
+				{
+					Instance->BodyInstance.SetResponseToChannels(NewResponses);
+					bWroteBody = true;
+				}
+				if (bWroteBody && Instance->IsRegistered())
+				{
+					Instance->RecreatePhysicsState();
+				}
+				++NumPropagated;
+			}
 		}
-		ECollisionResponse Response = ParseResponse(Pair.Value);
-		PrimComp->BodyInstance.SetResponseToChannel(Channel, Response);
-		UE_LOG(LogTemp, Log, TEXT("SetCollisionSettings: '%s' channel '%s' = '%s'"), *ComponentName, *Pair.Key, *Pair.Value);
+		UE_LOG(LogTemp, Log, TEXT("SetCollisionSettings: propagated '%s' collision to %d instance(s) that had not overridden it"), *ComponentName, NumPropagated);
 	}
 
 	// Notify the editor so the Details panel and viewport refresh
