@@ -939,49 +939,158 @@ static UClass* ResolveActorClassPath(const FString& ActorClassPath)
 	return nullptr;
 }
 
-static bool IsValidBlueprintTaskClass(UClass* InClass)
+/** True for the class-name prefixes the Blueprint compiler and reinstancer give to internal classes. */
+static bool HasInternalBlueprintClassPrefix(const FString& ClassName)
+{
+	return ClassName.StartsWith(TEXT("SKEL_")) ||
+		ClassName.StartsWith(TEXT("REINST_")) ||
+		ClassName.StartsWith(TEXT("TRASHCLASS_")) ||
+		ClassName.StartsWith(TEXT("HOTRELOADED_"));
+}
+
+/**
+ * The one gate between a Blueprint class and NewObject in this service.
+ *
+ * A Blueprint's skeleton class (UBlueprint::SkeletonGeneratedClass, "SKEL_<Name>_C") is an internal,
+ * transient, layout-only class (FBlueprintCompilationManagerImpl::FastGenerateSkeletonClass marks it
+ * RF_Transient and bIsInternalClass). It is a child of the Blueprint's parent like the real class, so
+ * a plain IsChildOf check let it through, and instantiating it as a node's instance data crashed the
+ * editor. Reinstancing leftovers (REINST_/TRASHCLASS_/HOTRELOADED_) are just as unsafe, and so is the
+ * generated class of a Blueprint that was edited but not compiled.
+ *
+ * Returns the class that is safe to instantiate: the input itself, or, for a skeleton class whose
+ * Blueprint is compiled, that Blueprint's GeneratedClass. Returns nullptr with OutError set otherwise.
+ * The Blueprint check is the truth; the name prefix only catches internal classes with no live Blueprint.
+ */
+static UClass* ResolveUsableBlueprintClass(UClass* InClass, FString& OutError)
+{
+	if (!InClass)
+	{
+		return nullptr;
+	}
+
+	UClass* UsableClass = InClass;
+
+#if WITH_EDITORONLY_DATA
+	if (const UBlueprint* Blueprint = Cast<UBlueprint>(InClass->ClassGeneratedBy))
+	{
+		const bool bIsSkeletonClass = Blueprint->SkeletonGeneratedClass.Get() == InClass;
+		const bool bIsGeneratedClass = Blueprint->GeneratedClass.Get() == InClass;
+		if (!bIsSkeletonClass && !bIsGeneratedClass)
+		{
+			OutError = FString::Printf(
+				TEXT("'%s' is an internal class of Blueprint '%s', not its generated class. Use the generated class name '%s'."),
+				*InClass->GetName(), *Blueprint->GetPathName(), *GetNameSafe(Blueprint->GeneratedClass.Get()));
+			return nullptr;
+		}
+
+		if (Blueprint->Status == BS_Error)
+		{
+			// Keep refusing: a class whose Blueprint fails to compile is not safe to instantiate either.
+			OutError = FString::Printf(
+				TEXT("Blueprint '%s' has compile errors; fix them and recompile, then add its generated class."),
+				*Blueprint->GetPathName());
+			return nullptr;
+		}
+
+		if (!Blueprint->GeneratedClass || !Blueprint->IsUpToDate())
+		{
+			OutError = FString::Printf(
+				TEXT("Blueprint '%s' is not compiled (status %s). Compile the Blueprint first, then add its generated class."),
+				*Blueprint->GetPathName(), *UEnum::GetValueAsString(Blueprint->Status.GetValue()));
+			return nullptr;
+		}
+
+		// A copied SKEL_ name resolves to the real class instead of crashing.
+		UsableClass = Blueprint->GeneratedClass.Get();
+	}
+#endif
+
+	if (HasInternalBlueprintClassPrefix(UsableClass->GetName()))
+	{
+		OutError = FString::Printf(
+			TEXT("'%s' is an internal Blueprint class (skeleton or reinstancing leftover) and cannot be instantiated. Use the Blueprint's generated '_C' class."),
+			*UsableClass->GetName());
+		return nullptr;
+	}
+
+	if (UsableClass->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists))
+	{
+		OutError = FString::Printf(TEXT("'%s' is abstract, deprecated or replaced by a newer version."), *UsableClass->GetName());
+		return nullptr;
+	}
+
+	return UsableClass;
+}
+
+/**
+ * Returns the usable Blueprint task class for InClass, or nullptr. A class that is not a Blueprint task
+ * at all is simply not a candidate (no error); a Blueprint task class that is unsafe sets OutError.
+ */
+static UClass* ResolveValidBlueprintTaskClass(UClass* InClass, FString& OutError)
 {
 	const UClass* BlueprintTaskBaseClass = UStateTreeTaskBlueprintBase::StaticClass();
 	if (!InClass || !BlueprintTaskBaseClass)
 	{
-		return false;
+		return nullptr;
 	}
 
 	if (!InClass->IsChildOf(BlueprintTaskBaseClass) || InClass == BlueprintTaskBaseClass)
 	{
-		return false;
+		return nullptr;
 	}
 
-	if (InClass->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists))
+	// The gate may remap a skeleton class to its GeneratedClass; that class must still be a task.
+	UClass* UsableClass = ResolveUsableBlueprintClass(InClass, OutError);
+	if (UsableClass && (!UsableClass->IsChildOf(BlueprintTaskBaseClass) || UsableClass == BlueprintTaskBaseClass))
 	{
-		return false;
+		OutError = FString::Printf(TEXT("'%s' resolves to '%s', which is not a Blueprint task class."),
+			*InClass->GetName(), *UsableClass->GetName());
+		return nullptr;
 	}
-
-	return true;
+	return UsableClass;
 }
 
-static bool IsValidBlueprintEvaluatorClass(UClass* InClass)
+/** True only when InClass itself (not a remapped class) may be instantiated as a Blueprint task. */
+static bool IsValidBlueprintTaskClass(UClass* InClass)
+{
+	FString IgnoredError;
+	return InClass && ResolveValidBlueprintTaskClass(InClass, IgnoredError) == InClass;
+}
+
+/** Evaluator counterpart of ResolveValidBlueprintTaskClass. */
+static UClass* ResolveValidBlueprintEvaluatorClass(UClass* InClass, FString& OutError)
 {
 	const UClass* BlueprintEvalBaseClass = UStateTreeEvaluatorBlueprintBase::StaticClass();
 	if (!InClass || !BlueprintEvalBaseClass)
 	{
-		return false;
+		return nullptr;
 	}
 
 	if (!InClass->IsChildOf(BlueprintEvalBaseClass) || InClass == BlueprintEvalBaseClass)
 	{
-		return false;
+		return nullptr;
 	}
 
-	if (InClass->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists))
+	// The gate may remap a skeleton class to its GeneratedClass; that class must still be a evaluator.
+	UClass* UsableClass = ResolveUsableBlueprintClass(InClass, OutError);
+	if (UsableClass && (!UsableClass->IsChildOf(BlueprintEvalBaseClass) || UsableClass == BlueprintEvalBaseClass))
 	{
-		return false;
+		OutError = FString::Printf(TEXT("'%s' resolves to '%s', which is not a Blueprint evaluator class."),
+			*InClass->GetName(), *UsableClass->GetName());
+		return nullptr;
 	}
-
-	return true;
+	return UsableClass;
 }
 
-static UClass* TryResolveBlueprintTaskClassFromObjectPath(const FString& ObjectPath)
+/** True only when InClass itself (not a remapped class) may be instantiated as a Blueprint evaluator. */
+static bool IsValidBlueprintEvaluatorClass(UClass* InClass)
+{
+	FString IgnoredError;
+	return InClass && ResolveValidBlueprintEvaluatorClass(InClass, IgnoredError) == InClass;
+}
+
+static UClass* TryResolveBlueprintTaskClassFromObjectPath(const FString& ObjectPath, FString& OutError)
 {
 	if (ObjectPath.IsEmpty())
 	{
@@ -990,24 +1099,24 @@ static UClass* TryResolveBlueprintTaskClassFromObjectPath(const FString& ObjectP
 
 	if (UClass* LoadedClass = LoadObject<UClass>(nullptr, *ObjectPath))
 	{
-		if (IsValidBlueprintTaskClass(LoadedClass))
+		if (UClass* TaskClass = ResolveValidBlueprintTaskClass(LoadedClass, OutError))
 		{
-			return LoadedClass;
+			return TaskClass;
 		}
 	}
 
 	if (UClass* FoundClass = FindFirstObject<UClass>(*ObjectPath, EFindFirstObjectOptions::None))
 	{
-		if (IsValidBlueprintTaskClass(FoundClass))
+		if (UClass* TaskClass = ResolveValidBlueprintTaskClass(FoundClass, OutError))
 		{
-			return FoundClass;
+			return TaskClass;
 		}
 	}
 
 	return nullptr;
 }
 
-static UClass* TryResolveBlueprintTaskClassFromAssetPath(const FString& AssetPath)
+static UClass* TryResolveBlueprintTaskClassFromAssetPath(const FString& AssetPath, FString& OutError)
 {
 	if (AssetPath.IsEmpty())
 	{
@@ -1018,17 +1127,17 @@ static UClass* TryResolveBlueprintTaskClassFromAssetPath(const FString& AssetPat
 	{
 		if (UBlueprint* Blueprint = Cast<UBlueprint>(LoadedAsset))
 		{
-			if (IsValidBlueprintTaskClass(Blueprint->GeneratedClass))
+			if (UClass* TaskClass = ResolveValidBlueprintTaskClass(Blueprint->GeneratedClass, OutError))
 			{
-				return Blueprint->GeneratedClass;
+				return TaskClass;
 			}
 		}
 
 		if (UClass* LoadedClass = Cast<UClass>(LoadedAsset))
 		{
-			if (IsValidBlueprintTaskClass(LoadedClass))
+			if (UClass* TaskClass = ResolveValidBlueprintTaskClass(LoadedClass, OutError))
 			{
-				return LoadedClass;
+				return TaskClass;
 			}
 		}
 	}
@@ -1037,7 +1146,7 @@ static UClass* TryResolveBlueprintTaskClassFromAssetPath(const FString& AssetPat
 	if (!AssetName.IsEmpty())
 	{
 		const FString GeneratedClassPath = FString::Printf(TEXT("%s.%s_C"), *AssetPath, *AssetName);
-		if (UClass* GeneratedClass = TryResolveBlueprintTaskClassFromObjectPath(GeneratedClassPath))
+		if (UClass* GeneratedClass = TryResolveBlueprintTaskClassFromObjectPath(GeneratedClassPath, OutError))
 		{
 			return GeneratedClass;
 		}
@@ -1046,7 +1155,12 @@ static UClass* TryResolveBlueprintTaskClassFromAssetPath(const FString& AssetPat
 	return nullptr;
 }
 
-static UClass* ResolveBlueprintTaskClass(const FString& TaskIdentifier)
+/**
+ * Resolve a task identifier to a Blueprint task class that is safe to instantiate. Every candidate goes
+ * through ResolveValidBlueprintTaskClass, so a SKEL_ name maps to its compiled generated class and a
+ * stale/internal class is refused; OutError carries the refusal reason when nothing resolved.
+ */
+static UClass* ResolveBlueprintTaskClass(const FString& TaskIdentifier, FString& OutError)
 {
 	FString Identifier = TaskIdentifier;
 	Identifier.TrimStartAndEndInline();
@@ -1059,19 +1173,19 @@ static UClass* ResolveBlueprintTaskClass(const FString& TaskIdentifier)
 	{
 		if (UClass* LoadedClass = FindFirstObject<UClass>(*Identifier, EFindFirstObjectOptions::None))
 		{
-			if (IsValidBlueprintTaskClass(LoadedClass))
+			if (UClass* TaskClass = ResolveValidBlueprintTaskClass(LoadedClass, OutError))
 			{
-				return LoadedClass;
+				return TaskClass;
 			}
 		}
 
-		if (!Identifier.EndsWith(TEXT("_C")))
+		if (OutError.IsEmpty() && !Identifier.EndsWith(TEXT("_C")))
 		{
 			if (UClass* LoadedClass = FindFirstObject<UClass>(*(Identifier + TEXT("_C")), EFindFirstObjectOptions::None))
 			{
-				if (IsValidBlueprintTaskClass(LoadedClass))
+				if (UClass* TaskClass = ResolveValidBlueprintTaskClass(LoadedClass, OutError))
 				{
-					return LoadedClass;
+					return TaskClass;
 				}
 			}
 		}
@@ -1081,7 +1195,7 @@ static UClass* ResolveBlueprintTaskClass(const FString& TaskIdentifier)
 	{
 		if (Identifier.Contains(TEXT(".")))
 		{
-			if (UClass* TaskClass = TryResolveBlueprintTaskClassFromObjectPath(Identifier))
+			if (UClass* TaskClass = TryResolveBlueprintTaskClassFromObjectPath(Identifier, OutError))
 			{
 				return TaskClass;
 			}
@@ -1090,14 +1204,14 @@ static UClass* ResolveBlueprintTaskClass(const FString& TaskIdentifier)
 			FString ObjectName;
 			if (Identifier.Split(TEXT("."), &PackagePath, &ObjectName, ESearchCase::CaseSensitive, ESearchDir::FromEnd))
 			{
-				if (UClass* TaskClass = TryResolveBlueprintTaskClassFromAssetPath(PackagePath))
+				if (UClass* TaskClass = TryResolveBlueprintTaskClassFromAssetPath(PackagePath, OutError))
 				{
 					return TaskClass;
 				}
 
 				if (!ObjectName.EndsWith(TEXT("_C")))
 				{
-					if (UClass* TaskClass = TryResolveBlueprintTaskClassFromObjectPath(PackagePath + TEXT(".") + ObjectName + TEXT("_C")))
+					if (UClass* TaskClass = TryResolveBlueprintTaskClassFromObjectPath(PackagePath + TEXT(".") + ObjectName + TEXT("_C"), OutError))
 					{
 						return TaskClass;
 					}
@@ -1106,11 +1220,18 @@ static UClass* ResolveBlueprintTaskClass(const FString& TaskIdentifier)
 		}
 		else
 		{
-			if (UClass* TaskClass = TryResolveBlueprintTaskClassFromAssetPath(Identifier))
+			if (UClass* TaskClass = TryResolveBlueprintTaskClassFromAssetPath(Identifier, OutError))
 			{
 				return TaskClass;
 			}
 		}
+	}
+
+	// A candidate found by this name was refused (stale, internal, ...): keep that refusal rather than
+	// falling through to the asset-registry pass, which could pick a same-named Blueprint elsewhere.
+	if (!OutError.IsEmpty())
+	{
+		return nullptr;
 	}
 
 	FString TargetBlueprintName = Identifier;
@@ -1153,19 +1274,25 @@ static UClass* ResolveBlueprintTaskClass(const FString& TaskIdentifier)
 			continue;
 		}
 
-		if (UClass* TaskClass = TryResolveBlueprintTaskClassFromAssetPath(AssetData.PackageName.ToString()))
+		if (UClass* TaskClass = TryResolveBlueprintTaskClassFromAssetPath(AssetData.PackageName.ToString(), OutError))
 		{
 			return TaskClass;
 		}
 
 		const FAssetTagValueRef GeneratedClassTag = AssetData.TagsAndValues.FindTag(TEXT("GeneratedClass"));
-		if (GeneratedClassTag.IsSet())
+		if (OutError.IsEmpty() && GeneratedClassTag.IsSet())
 		{
 			const FString GeneratedClassObjectPath = FPackageName::ExportTextPathToObjectPath(GeneratedClassTag.GetValue());
-			if (UClass* TaskClass = TryResolveBlueprintTaskClassFromObjectPath(GeneratedClassObjectPath))
+			if (UClass* TaskClass = TryResolveBlueprintTaskClassFromObjectPath(GeneratedClassObjectPath, OutError))
 			{
 				return TaskClass;
 			}
+		}
+
+		// This asset was refused: do not move on to another same-named Blueprint.
+		if (!OutError.IsEmpty())
+		{
+			return nullptr;
 		}
 	}
 
@@ -1244,39 +1371,39 @@ static bool SetBlueprintTaskClassOnWrapperNode(FStateTreeEditorNode& InOutNode, 
 
 // ---- Blueprint Evaluator resolution helpers (mirrors task helpers above) ----
 
-static UClass* TryResolveBlueprintEvaluatorClassFromObjectPath(const FString& ObjectPath)
+static UClass* TryResolveBlueprintEvaluatorClassFromObjectPath(const FString& ObjectPath, FString& OutError)
 {
 	if (ObjectPath.IsEmpty()) { return nullptr; }
 	if (UClass* LoadedClass = LoadObject<UClass>(nullptr, *ObjectPath))
 	{
-		if (IsValidBlueprintEvaluatorClass(LoadedClass)) { return LoadedClass; }
+		if (UClass* EvalClass = ResolveValidBlueprintEvaluatorClass(LoadedClass, OutError)) { return EvalClass; }
 	}
 	if (UClass* FoundClass = FindFirstObject<UClass>(*ObjectPath, EFindFirstObjectOptions::None))
 	{
-		if (IsValidBlueprintEvaluatorClass(FoundClass)) { return FoundClass; }
+		if (UClass* EvalClass = ResolveValidBlueprintEvaluatorClass(FoundClass, OutError)) { return EvalClass; }
 	}
 	return nullptr;
 }
 
-static UClass* TryResolveBlueprintEvaluatorClassFromAssetPath(const FString& AssetPath)
+static UClass* TryResolveBlueprintEvaluatorClassFromAssetPath(const FString& AssetPath, FString& OutError)
 {
 	if (AssetPath.IsEmpty()) { return nullptr; }
 	if (UObject* LoadedAsset = UEditorAssetLibrary::LoadAsset(AssetPath))
 	{
 		if (UBlueprint* Blueprint = Cast<UBlueprint>(LoadedAsset))
 		{
-			if (IsValidBlueprintEvaluatorClass(Blueprint->GeneratedClass)) { return Blueprint->GeneratedClass; }
+			if (UClass* EvalClass = ResolveValidBlueprintEvaluatorClass(Blueprint->GeneratedClass, OutError)) { return EvalClass; }
 		}
 		if (UClass* LoadedClass = Cast<UClass>(LoadedAsset))
 		{
-			if (IsValidBlueprintEvaluatorClass(LoadedClass)) { return LoadedClass; }
+			if (UClass* EvalClass = ResolveValidBlueprintEvaluatorClass(LoadedClass, OutError)) { return EvalClass; }
 		}
 	}
 	const FString AssetName = FPackageName::GetShortName(AssetPath);
 	if (!AssetName.IsEmpty())
 	{
 		const FString GeneratedClassPath = FString::Printf(TEXT("%s.%s_C"), *AssetPath, *AssetName);
-		if (UClass* GeneratedClass = TryResolveBlueprintEvaluatorClassFromObjectPath(GeneratedClassPath))
+		if (UClass* GeneratedClass = TryResolveBlueprintEvaluatorClassFromObjectPath(GeneratedClassPath, OutError))
 		{
 			return GeneratedClass;
 		}
@@ -1284,7 +1411,7 @@ static UClass* TryResolveBlueprintEvaluatorClassFromAssetPath(const FString& Ass
 	return nullptr;
 }
 
-static UClass* ResolveBlueprintEvaluatorClass(const FString& EvalIdentifier)
+static UClass* ResolveBlueprintEvaluatorClass(const FString& EvalIdentifier, FString& OutError)
 {
 	FString Identifier = EvalIdentifier;
 	Identifier.TrimStartAndEndInline();
@@ -1295,13 +1422,13 @@ static UClass* ResolveBlueprintEvaluatorClass(const FString& EvalIdentifier)
 	{
 		if (UClass* LoadedClass = FindFirstObject<UClass>(*Identifier, EFindFirstObjectOptions::None))
 		{
-			if (IsValidBlueprintEvaluatorClass(LoadedClass)) { return LoadedClass; }
+			if (UClass* EvalClass = ResolveValidBlueprintEvaluatorClass(LoadedClass, OutError)) { return EvalClass; }
 		}
-		if (!Identifier.EndsWith(TEXT("_C")))
+		if (OutError.IsEmpty() && !Identifier.EndsWith(TEXT("_C")))
 		{
 			if (UClass* LoadedClass = FindFirstObject<UClass>(*(Identifier + TEXT("_C")), EFindFirstObjectOptions::None))
 			{
-				if (IsValidBlueprintEvaluatorClass(LoadedClass)) { return LoadedClass; }
+				if (UClass* EvalClass = ResolveValidBlueprintEvaluatorClass(LoadedClass, OutError)) { return EvalClass; }
 			}
 		}
 	}
@@ -1311,21 +1438,28 @@ static UClass* ResolveBlueprintEvaluatorClass(const FString& EvalIdentifier)
 	{
 		if (Identifier.Contains(TEXT(".")))
 		{
-			if (UClass* EvalClass = TryResolveBlueprintEvaluatorClassFromObjectPath(Identifier)) { return EvalClass; }
+			if (UClass* EvalClass = TryResolveBlueprintEvaluatorClassFromObjectPath(Identifier, OutError)) { return EvalClass; }
 			FString PackagePath, ObjectName;
 			if (Identifier.Split(TEXT("."), &PackagePath, &ObjectName, ESearchCase::CaseSensitive, ESearchDir::FromEnd))
 			{
-				if (UClass* EvalClass = TryResolveBlueprintEvaluatorClassFromAssetPath(PackagePath)) { return EvalClass; }
+				if (UClass* EvalClass = TryResolveBlueprintEvaluatorClassFromAssetPath(PackagePath, OutError)) { return EvalClass; }
 				if (!ObjectName.EndsWith(TEXT("_C")))
 				{
-					if (UClass* EvalClass = TryResolveBlueprintEvaluatorClassFromObjectPath(PackagePath + TEXT(".") + ObjectName + TEXT("_C"))) { return EvalClass; }
+					if (UClass* EvalClass = TryResolveBlueprintEvaluatorClassFromObjectPath(PackagePath + TEXT(".") + ObjectName + TEXT("_C"), OutError)) { return EvalClass; }
 				}
 			}
 		}
 		else
 		{
-			if (UClass* EvalClass = TryResolveBlueprintEvaluatorClassFromAssetPath(Identifier)) { return EvalClass; }
+			if (UClass* EvalClass = TryResolveBlueprintEvaluatorClassFromAssetPath(Identifier, OutError)) { return EvalClass; }
 		}
+	}
+
+	// A candidate found by this name was refused (stale, internal, ...): keep that refusal rather than
+	// falling through to the asset-registry pass, which could pick a same-named Blueprint elsewhere.
+	if (!OutError.IsEmpty())
+	{
+		return nullptr;
 	}
 
 	// Asset registry search by short name
@@ -1360,13 +1494,15 @@ static UClass* ResolveBlueprintEvaluatorClass(const FString& EvalIdentifier)
 	for (const FAssetData& AssetData : BlueprintAssets)
 	{
 		if (!AssetData.AssetName.ToString().Equals(TargetBlueprintName, ESearchCase::IgnoreCase)) { continue; }
-		if (UClass* EvalClass = TryResolveBlueprintEvaluatorClassFromAssetPath(AssetData.PackageName.ToString())) { return EvalClass; }
+		if (UClass* EvalClass = TryResolveBlueprintEvaluatorClassFromAssetPath(AssetData.PackageName.ToString(), OutError)) { return EvalClass; }
 		const FAssetTagValueRef GeneratedClassTag = AssetData.TagsAndValues.FindTag(TEXT("GeneratedClass"));
-		if (GeneratedClassTag.IsSet())
+		if (OutError.IsEmpty() && GeneratedClassTag.IsSet())
 		{
 			const FString GeneratedClassObjectPath = FPackageName::ExportTextPathToObjectPath(GeneratedClassTag.GetValue());
-			if (UClass* EvalClass = TryResolveBlueprintEvaluatorClassFromObjectPath(GeneratedClassObjectPath)) { return EvalClass; }
+			if (UClass* EvalClass = TryResolveBlueprintEvaluatorClassFromObjectPath(GeneratedClassObjectPath, OutError)) { return EvalClass; }
 		}
+		// This asset was refused: do not move on to another same-named Blueprint.
+		if (!OutError.IsEmpty()) { return nullptr; }
 	}
 
 	return nullptr;
@@ -1451,11 +1587,14 @@ static void AppendBlueprintTaskTypes(TArray<FString>& InOutResults)
 		return;
 	}
 
+	// Lists only classes that add_task can instantiate: a skeleton class maps to its compiled
+	// generated class (the set de-duplicates the pair), and internal or uncompiled classes are skipped.
 	auto AddTypeNameIfBlueprintTask = [&UniqueTypes](UClass* CandidateClass)
 	{
-		if (IsValidBlueprintTaskClass(CandidateClass))
+		FString IgnoredError;
+		if (UClass* TaskClass = ResolveValidBlueprintTaskClass(CandidateClass, IgnoredError))
 		{
-			UniqueTypes.Add(CandidateClass->GetName());
+			UniqueTypes.Add(TaskClass->GetName());
 		}
 	};
 
@@ -2189,11 +2328,14 @@ TArray<FString> UStateTreeService::GetAvailableEvaluatorTypes()
 		const UClass* BlueprintEvalBaseClass = UStateTreeEvaluatorBlueprintBase::StaticClass();
 		if (BlueprintEvalBaseClass)
 		{
+			// Same gate as add_evaluator: skeleton classes map to their compiled generated class (the
+			// set de-duplicates the pair); internal or uncompiled classes are skipped.
 			for (TObjectIterator<UClass> It; It; ++It)
 			{
-				if (IsValidBlueprintEvaluatorClass(*It))
+				FString IgnoredError;
+				if (UClass* EvalClass = ResolveValidBlueprintEvaluatorClass(*It, IgnoredError))
 				{
-					UniqueTypes.Add((*It)->GetName());
+					UniqueTypes.Add(EvalClass->GetName());
 				}
 			}
 		}
@@ -2216,11 +2358,19 @@ TArray<FString> UStateTreeService::GetAvailableEvaluatorTypes()
 			{
 				FString ClassName = ClassPath.GetAssetName().ToString();
 				// Skip the base itself and transient skeleton / reinstanced classes.
-				if (ClassName == BaseClassName ||
-					ClassName.StartsWith(TEXT("SKEL_")) ||
-					ClassName.StartsWith(TEXT("REINST_")))
+				if (ClassName == BaseClassName || HasInternalBlueprintClassPrefix(ClassName))
 				{
 					continue;
+				}
+				// A class that is already loaded gets the same gate as the loaded pass above, so an
+				// edited-but-uncompiled Blueprint is not re-added here by name.
+				if (UClass* LoadedClass = FindObject<UClass>(ClassPath))
+				{
+					FString IgnoredError;
+					if (!ResolveValidBlueprintEvaluatorClass(LoadedClass, IgnoredError))
+					{
+						continue;
+					}
 				}
 				UniqueTypes.Add(ClassName);
 			}
@@ -4349,10 +4499,18 @@ bool UStateTreeService::AddTask(const FString& AssetPath, const FString& StatePa
 	}
 	else
 	{
-		BlueprintTaskClass = ResolveBlueprintTaskClass(TaskStructName);
+		FString ResolveError;
+		BlueprintTaskClass = ResolveBlueprintTaskClass(TaskStructName, ResolveError);
 		if (!BlueprintTaskClass)
 		{
-			UE_LOG(LogStateTreeService, Warning, TEXT("AddTask: Task struct/class not found: %s"), *TaskStructName);
+			if (!ResolveError.IsEmpty())
+			{
+				UE_LOG(LogStateTreeService, Warning, TEXT("AddTask: Refused '%s': %s"), *TaskStructName, *ResolveError);
+			}
+			else
+			{
+				UE_LOG(LogStateTreeService, Warning, TEXT("AddTask: Task struct/class not found: %s"), *TaskStructName);
+			}
 			return false;
 		}
 
@@ -5085,10 +5243,18 @@ bool UStateTreeService::AddEvaluator(const FString& AssetPath, const FString& Ev
 	else
 	{
 		// Try to resolve as a Blueprint evaluator class
-		BlueprintEvalClass = ResolveBlueprintEvaluatorClass(EvaluatorStructName);
+		FString ResolveError;
+		BlueprintEvalClass = ResolveBlueprintEvaluatorClass(EvaluatorStructName, ResolveError);
 		if (!BlueprintEvalClass)
 		{
-			UE_LOG(LogStateTreeService, Warning, TEXT("AddEvaluator: Evaluator struct/class not found: %s"), *EvaluatorStructName);
+			if (!ResolveError.IsEmpty())
+			{
+				UE_LOG(LogStateTreeService, Warning, TEXT("AddEvaluator: Refused '%s': %s"), *EvaluatorStructName, *ResolveError);
+			}
+			else
+			{
+				UE_LOG(LogStateTreeService, Warning, TEXT("AddEvaluator: Evaluator struct/class not found: %s"), *EvaluatorStructName);
+			}
 			return false;
 		}
 
@@ -5162,10 +5328,18 @@ bool UStateTreeService::AddGlobalTask(const FString& AssetPath, const FString& T
 	}
 	else
 	{
-		BlueprintTaskClass = ResolveBlueprintTaskClass(TaskStructName);
+		FString ResolveError;
+		BlueprintTaskClass = ResolveBlueprintTaskClass(TaskStructName, ResolveError);
 		if (!BlueprintTaskClass)
 		{
-			UE_LOG(LogStateTreeService, Warning, TEXT("AddGlobalTask: Task struct/class not found: %s"), *TaskStructName);
+			if (!ResolveError.IsEmpty())
+			{
+				UE_LOG(LogStateTreeService, Warning, TEXT("AddGlobalTask: Refused '%s': %s"), *TaskStructName, *ResolveError);
+			}
+			else
+			{
+				UE_LOG(LogStateTreeService, Warning, TEXT("AddGlobalTask: Task struct/class not found: %s"), *TaskStructName);
+			}
 			return false;
 		}
 
