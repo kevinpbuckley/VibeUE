@@ -169,4 +169,13 @@ public:
 	/** Report the current background-throttling state (see SetBackgroundThrottling). */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Performance")
 	static FString GetBackgroundThrottling();
+
+	/**
+	 * Remove the ShouldDisableCPUThrottlingDelegates entry SetBackgroundThrottling(false) registered and, if
+	 * that override is still on, put bThrottleCPUWhenNotForeground back to its value from before it. Called
+	 * from the module's OnPreExit (while GEditor still exists) and ShutdownModule. The entry is a lambda INTO
+	 * THIS DLL, so it must not outlive an unload (plugin reload / Live Coding). Safe to call twice and with
+	 * GEditor null (then only the handle is reset). Not a UFUNCTION. GAME-THREAD ONLY.
+	 */
+	static void ShutdownThrottlingHook();
 };

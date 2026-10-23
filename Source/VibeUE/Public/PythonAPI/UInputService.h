@@ -703,7 +703,27 @@ public:
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Input|PIE")
 	static FString InjectKey(const FString& KeyName, const FString& EventType = TEXT("tap"), float HoldSeconds = 0.0f);
 
+	/**
+	 * End every hold inject_action_for / inject_key started (injections stopped, pending releases and the
+	 * release grace cancelled; no key-up is sent) and unhook the FEditorDelegates::EndPIE handler and the
+	 * GEditor->ShouldDisableCPUThrottlingDelegates entry the holds registered. Called from the module's
+	 * OnPreExit (while GEditor still exists) and ShutdownModule. Both callbacks, and the hold tickers, are
+	 * code INTO THIS DLL, so they must not outlive an unload (plugin reload / Live Coding) — the same
+	 * teardown as UPIEActorService::ShutdownEndPIEHook. Safe to call twice and with GEditor null (then the
+	 * throttling handle is only reset: the array went with the editor engine). Not a UFUNCTION.
+	 * GAME-THREAD ONLY.
+	 */
+	static void ShutdownInjectionHooks();
+
 private:
+	// Test-only surface (no UFUNCTION): file and release a key hold's bookkeeping without PIE (no key event
+	// is sent), and read the hook state. Reached through the friend struct in InputInjectionTests.cpp.
+	static void TrackKeyHoldForTest(const FName KeyName, float HoldSeconds);
+	static bool ReleaseKeyHoldForTest(const FName KeyName);
+	static void GetInjectionStateForTest(bool& bOutEndPieHooked, bool& bOutThrottleHooked, int32& OutHolds, bool& bOutReleaseGrace);
+
+	friend struct FInputServiceTestAccess;
+
 	/** Helper to load an Input Action */
 	static class UInputAction* LoadInputAction(const FString& ActionPath);
 	
