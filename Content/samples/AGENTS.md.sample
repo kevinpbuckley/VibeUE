@@ -288,6 +288,12 @@ crash handler — MCP will hang; relaunch); fresh and small → the editor is fi
   is unchanged; after 2 failed attempts at a goal, stop and report — don't try a 3rd variation.
 - **Never** use modal dialogs, `input()`, blocking ops, long `time.sleep()`, or infinite loops.
 - **Full asset paths** (`/Game/Blueprints/BP_Name`). **Colors are 0.0–1.0** (`{"R":1.0,"G":0.5,"B":0.0,"A":1.0}`).
+- **Know what your script dirtied.** Every `execute_python_code` reply carries `dirtied_packages` /
+  `cleaned_packages` (what the SCRIPT left dirty / clean, also on an error) besides `auto_save`,
+  `saved_packages` and `resident_maps`. After a script that raised, check `dirtied_packages` before the next
+  `auto_save=true` call saves a half-finished edit. Mid-script: `unreal.PythonTools.get_dirty_packages()`.
+- **Change level with `vibeue.safe_load_level(path)`**, never a bare `load_level` while `resident_maps` is
+  non-empty: a resident map makes the next level load FATAL the editor. It refuses (raises) instead.
 - **`unreal.EditorLevelLibrary` is deprecated** — use `EditorActorSubsystem` (`get_all_level_actors()`
   + `isinstance` filtering; `get_all_level_actors_of_class` does not exist).
 

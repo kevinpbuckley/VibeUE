@@ -167,7 +167,7 @@ static FString MakeErrorJson(const FString& ErrorCode, const FString& ErrorMessa
 
 // Register execute_python_code tool
 REGISTER_VIBEUE_TOOL(execute_python_code,
-	"Execute Python code in Unreal Engine. IMPORTANT: Use 'import unreal' (lowercase). For subsystems use: unreal.get_editor_subsystem(unreal.LevelEditorSubsystem). Returns stdout, stderr, and execution status. A non-empty resident_maps in the reply means a map other than the open level is loaded in memory and the NEXT level load will crash the editor until it is released.",
+	"Execute Python code in Unreal Engine. IMPORTANT: Use 'import unreal' (lowercase). For subsystems use: unreal.get_editor_subsystem(unreal.LevelEditorSubsystem). Returns stdout, stderr, and execution status. A non-empty resident_maps in the reply means a map other than the open level is loaded in memory and the NEXT level load will crash the editor until it is released. dirtied_packages / cleaned_packages (always present) list the packages the script itself left dirty / clean.",
 	"Python",
 	TOOL_PARAMS(
 		TOOL_PARAM("code", "Python code to execute. Must start with 'import unreal' (lowercase). For editor subsystems use unreal.get_editor_subsystem(). This is Python SOURCE, never a script path: a path such as C:/scripts/build.py is compiled as code and fails. To run a .py file, pass code that runs it, e.g. import unreal, runpy; runpy.run_path(r'C:/scripts/build.py') (its own globals) or exec(open(r'C:/scripts/build.py').read()) (the shared console globals)", "string", true),

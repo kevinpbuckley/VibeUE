@@ -209,6 +209,16 @@ the script WITHOUT that sweep -- use it when you do not want in-flight editor ed
 or to keep a mutation you are about to make from being interleaved with an unrelated dirty package.
 The sweep is skipped anyway after a crashed run, when GEditor is missing, or in PIE.
 
+**`dirtied_packages` / `cleaned_packages` (always present, also on an error reply).** The packages
+YOUR SCRIPT left dirty, and the ones it left clean (saved, cleaned or unloaded), from snapshots taken
+after the auto-save sweep and right after the script. Pre-existing dirt and the sweep's own saves never
+show up there. Check `dirtied_packages` after a script that raised: a half-finished edit stays dirty,
+and the next `auto_save=true` call would save it. To read the dirty set mid-script, use
+`unreal.PythonTools.get_dirty_packages()` (pass `False` to leave maps out) instead of snapshotting
+`EditorLoadingAndSavingUtils.get_dirty_content_packages()` by hand. Expect two engine extras in the
+list: a never-saved map appears as `/Temp/Untitled_N`, and a dirty unsaved map's MapBuildData package
+can be marked dirty by the enumeration itself. Both lists are empty after a crashed (SEH) run.
+
 ## Never leave a map loaded - it crashes the editor on the next level change
 
 Opening a map as an **asset** keeps it resident:
@@ -245,8 +255,13 @@ So treat this as prevention, not repair:
   ar = unreal.AssetRegistryHelpers.get_asset_registry()
   maps = ar.get_assets_by_path("/Game/Maps", recursive=True)
   ```
-- To **change level**, use `unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).load_level(path)`,
-  which swaps the open world properly. Never `load_asset` a map to "look at it".
+- To **change level**, use `vibeue.safe_load_level(path)`: it reads
+  `unreal.PythonTools.get_resident_maps()` (the `resident_maps` list minus streaming sublevels of the
+  open level) and raises
+  `vibeue.LevelLoadRefused`, loading nothing, while any map other than the open level is resident, when
+  the target itself is resident (unless `allow_resident_target=True`), or when the registry has no map
+  at that path; otherwise it calls `unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).load_level(path)`
+  and returns its bool. Never `load_asset` a map to "look at it".
 
 The open level is never reported - only stragglers.
 

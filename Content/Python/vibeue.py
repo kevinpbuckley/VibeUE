@@ -28,6 +28,11 @@ Also provides (agent helpers for PIE, async tools, and asset GC):
   else the pending key to collect_tool_result() later.
 - python_globals_holding() / release_globals() — find and drop the execute_python_code script
   globals that root an asset (a GCObjectReferencer root), so delete_asset_unattended can proceed.
+- safe_load_level(level_path, *, allow_resident_target=False) — LevelEditorSubsystem.load_level
+  behind a resident-map check: a map loaded as an ASSET (Save-As, a Level Instance, load_asset on a
+  map) stays resident, and the next load_level then FATALS the editor ("World Memory Leaks").
+  Raises LevelLoadRefused instead of loading while any map other than the open level is resident,
+  or when the target does not exist. Returns load_level's bool.
 """
 
 import inspect
@@ -516,3 +521,82 @@ def release_globals(names, namespace=None):
                     released.append(name)
     unreal.SystemLibrary.collect_garbage()
     return released
+
+
+# --- Guarded level load ------------------------------------------------------------------------
+#
+# A map that is loaded as an ASSET (EditorLoadingAndSavingUtils.save_map Save-As, placed Level
+# Instances, unreal.load_asset on a map path) stays resident, and the engine's stale-world check on
+# the NEXT level load is a FATAL, not a warning ("World Memory Leaks", EditorServer.cpp). Nothing in
+# process releases such a map (collect_garbage and unload_packages both leave it), so the only safe
+# move is to not load a level while one is resident, and to restart the editor instead.
+
+class LevelLoadRefused(RuntimeError):
+    """safe_load_level() refused to load: a map is resident, or the target does not exist."""
+
+
+def _map_package_name(path):
+    """'/Game/Maps/Foo.Foo' or '/Game/Maps/Foo' -> '/Game/Maps/Foo' (the long package name)."""
+    path = str(path).strip()
+    leaf = path.rsplit("/", 1)[-1]
+    if "." in leaf:
+        path = path[: len(path) - len(leaf)] + leaf.split(".", 1)[0]
+    return path
+
+
+def safe_load_level(level_path, *, allow_resident_target=False):
+    """Load a level with LevelEditorSubsystem.load_level, refusing when that would crash the editor.
+
+    Reads unreal.PythonTools.get_resident_maps() (map worlds resident besides the open level: the
+    resident_maps reply list minus streaming sublevels of the open level, which a level change unloads
+    with it) and raises LevelLoadRefused, loading
+    nothing, when:
+      - any resident map is NOT the target (that is the fatal "World Memory Leaks" shape); the
+        message lists them; restart the editor first;
+      - the TARGET itself is resident, unless allow_resident_target=True (issue #613 shape: loading
+        a map that is already resident as an asset);
+      - level_path is empty, or the asset registry has no map at that package path.
+    Otherwise calls load_level(level_path) and returns its bool.
+
+        import unreal, vibeue
+        vibeue.safe_load_level("/Game/Maps/RunMap_01")
+    """
+    if not isinstance(level_path, str) or not level_path.strip():
+        raise LevelLoadRefused("safe_load_level: level_path must be a non-empty package path such as /Game/Maps/Foo")
+    target_pkg = _map_package_name(level_path)
+    if not target_pkg.startswith("/"):
+        raise LevelLoadRefused("safe_load_level: '{}' is not a long package path (expected /Game/...)".format(level_path))
+
+    resident = [str(m) for m in unreal.PythonTools.get_resident_maps()]
+    others = [m for m in resident if _map_package_name(m) != target_pkg]
+    if others:
+        raise LevelLoadRefused(
+            "safe_load_level: refusing to load '{}': {} map(s) other than the open level are resident "
+            "({}). Loading any level now FATALS the editor (World Memory Leaks). Nothing in process "
+            "releases them: restart the editor, then load the level.".format(
+                target_pkg, len(others), ", ".join(others)))
+    if resident and not allow_resident_target:
+        raise LevelLoadRefused(
+            "safe_load_level: refusing to load '{}': the target map is itself resident as an asset ({}). "
+            "Restart the editor first, or pass allow_resident_target=True if you know this load is "
+            "safe.".format(target_pkg, ", ".join(resident)))
+
+    registry = unreal.AssetRegistryHelpers.get_asset_registry()
+    # A bool UFUNCTION with an out-param comes back as the list on success and None on failure;
+    # unwrap a tuple too, in case a binding ever returns (bool, list).
+    found = registry.get_assets_by_package_name(target_pkg)
+    if isinstance(found, tuple):
+        found = next((x for x in reversed(found) if not isinstance(x, bool)), None)
+    is_map = False
+    for asset in found or []:
+        try:
+            if str(asset.asset_class_path.asset_name) == "World":
+                is_map = True
+                break
+        except Exception:
+            pass
+    if not is_map:
+        raise LevelLoadRefused(
+            "safe_load_level: no map at '{}' in the asset registry; nothing was loaded".format(target_pkg))
+
+    return unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).load_level(level_path)
