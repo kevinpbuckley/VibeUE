@@ -517,4 +517,128 @@ bool FVibePythonVibeueWaitForCompletesTest::RunTest(const FString&)
 	return true;
 }
 
+// vibeue.GateSession.enter() must be transactional (review find, 2026-10-23): it used to apply
+// set_background_throttling BEFORE reading the PIE settings, so a raise in between left throttling
+// changed with no __exit__ to restore it. Run the real class against fakes (perf=/settings=) so no
+// editor setting changes: A) the PIE read raises -> nothing changed, exception propagates;
+// B) the PIE write raises after throttling was applied -> both restored in reverse order,
+// exception propagates; C) the happy path applies both and exit() restores both. exit() after a
+// failed enter() must be a no-op. Headless-safe: no PIE, no real settings write.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibePythonVibeueGateSessionEntryFailureRestoresTest, "VibeUE.Python.VibeueGateSessionEntryFailureRestores",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVibePythonVibeueGateSessionEntryFailureRestoresTest::RunTest(const FString&)
+{
+	bool bSuccess = false;
+	FString Error;
+	const FString Output = VibeueWaitTest::Run(TEXT(R"PY(import json
+import vibeue
+
+def _vibeue_gate_entry_test():
+    calls = []
+
+    class FakePerf(object):
+        def __init__(self, enabled):
+            self.enabled = enabled
+        def get_background_throttling(self):
+            return json.dumps({"success": True, "throttling_enabled": self.enabled})
+        def set_background_throttling(self, value):
+            calls.append(("throttle", bool(value)))
+            self.enabled = bool(value)
+
+    class FakePie(object):
+        def __init__(self, mode, count, one):
+            self.success = True
+            self.net_mode = mode
+            self.num_clients = count
+            self.run_under_one_process = one
+        def get_editor_property(self, name):
+            return getattr(self, name)
+
+    class FakeSettings(object):
+        def __init__(self, fail_get=False, fail_set_mode=None):
+            self.pie = ("Standalone", 1, True)
+            self.fail_get = fail_get
+            self.fail_set_mode = fail_set_mode
+        def get_pie_settings(self):
+            if self.fail_get:
+                raise RuntimeError("VibeueGateFakeGetFailed")
+            return FakePie(*self.pie)
+        def set_pie_settings(self, mode, count, one):
+            calls.append(("pie", mode, count, one))
+            if mode == self.fail_set_mode:
+                raise RuntimeError("VibeueGateFakeSetFailed")
+            self.pie = (mode, count, one)
+            return True
+
+    # A: the PIE settings read raises. Reads come first now, so nothing may have been changed,
+    # the exception must propagate, and exit() must be a no-op.
+    perf, settings = FakePerf(True), FakeSettings(fail_get=True)
+    gs = vibeue.GateSession(clients=3, net_mode="ListenServer", throttle=False, perf=perf, settings=settings)
+    raised = None
+    try:
+        gs.enter()
+    except RuntimeError as exc:
+        raised = str(exc)
+    assert raised == "VibeueGateFakeGetFailed", "A: exception did not propagate: %r" % raised
+    assert calls == [], "A: a setting was changed before the read failed: %r" % calls
+    assert perf.enabled is True, "A: throttling left changed"
+    assert not gs.entered, "A: session marked entered"
+    gs.exit()
+    assert calls == [], "A: exit() after a failed enter() changed something: %r" % calls
+
+    # B: throttling is applied, then the PIE write raises. Throttling must be set back to its
+    # original value (True), PIE restored to its prior values, in reverse order, and the exception
+    # must propagate; exit() is then a no-op.
+    del calls[:]
+    perf, settings = FakePerf(True), FakeSettings(fail_set_mode="ListenServer")
+    gs = vibeue.GateSession(clients=3, net_mode="ListenServer", throttle=False, perf=perf, settings=settings)
+    raised = None
+    try:
+        gs.enter()
+    except RuntimeError as exc:
+        raised = str(exc)
+    assert raised == "VibeueGateFakeSetFailed", "B: exception did not propagate: %r" % raised
+    expected = [("throttle", False), ("pie", "ListenServer", 3, True),
+                ("pie", "Standalone", 1, True), ("throttle", True)]
+    assert calls == expected, "B: wrong apply/rollback sequence: %r" % calls
+    assert perf.enabled is True, "B: throttling not restored"
+    assert settings.pie == ("Standalone", 1, True), "B: PIE settings not restored: %r" % (settings.pie,)
+    assert not gs.entered, "B: session marked entered"
+    assert gs.state["throttle_applied"] is None and gs.state["pie_applied"] is None, "B: applied state kept"
+    n = len(calls)
+    gs.exit()
+    assert len(calls) == n, "B: exit() after rollback changed something: %r" % calls[n:]
+
+    # C: the happy path. enter() applies both, exit() restores both, a second exit() is a no-op.
+    del calls[:]
+    perf, settings = FakePerf(True), FakeSettings()
+    gs = vibeue.GateSession(clients=3, net_mode="ListenServer", throttle=False, perf=perf, settings=settings)
+    with gs as state:
+        assert sorted(state.keys()) == ["notes", "pie_applied", "pie_before", "throttle_applied", "throttle_before"], state
+        assert state["throttle_before"] is True and state["throttle_applied"] is False, state
+        assert state["pie_before"] == {"net_mode": "Standalone", "num_clients": 1, "run_under_one_process": True}, state
+        assert state["pie_applied"]["net_mode"] == "ListenServer" and state["pie_applied"]["num_clients"] == 3, state
+        assert perf.enabled is False and settings.pie == ("ListenServer", 3, True)
+    assert perf.enabled is True, "C: throttling not restored"
+    assert settings.pie == ("Standalone", 1, True), "C: PIE not restored: %r" % (settings.pie,)
+    n = len(calls)
+    gs.exit()
+    assert len(calls) == n, "C: second exit() changed something"
+    print("VibeueGateSessionCases A B C OK")
+
+try:
+    _vibeue_gate_entry_test()
+finally:
+    del _vibeue_gate_entry_test
+)PY"), bSuccess, Error);
+	if (!TestTrue(FString::Printf(TEXT("GateSession fake-service cases run (error: '%s')"), *Error), bSuccess))
+	{
+		return false;
+	}
+	TestTrue(FString::Printf(TEXT("all three GateSession cases passed (output: '%s')"), *Output),
+		Output.Contains(TEXT("VibeueGateSessionCases A B C OK")));
+	return true;
+}
+
 #endif // WITH_AUTOMATION_TESTS

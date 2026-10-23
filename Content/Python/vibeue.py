@@ -1109,10 +1109,17 @@ class GateSession(object):
     Made by gate_session(); see there. A plain object, not a generator, so a session entered in
     one execute_python_code call and exited in a later one cannot run its restore early when an
     intermediate reference is garbage-collected. exit() is idempotent.
+
+    enter() is transactional: it reads and validates every setting first, then applies the changes
+    one by one. If an apply step raises, every change already made is put back in reverse order and
+    the exception propagates; the session stays un-entered, so exit() is then a no-op.
+
+    perf / settings default to unreal.PerformanceService / unreal.EngineSettingsService; tests pass
+    fakes with the same methods.
     """
 
     def __init__(self, clients: Optional[int] = None, net_mode: Optional[str] = None,
-                 throttle: bool = False):
+                 throttle: bool = False, perf=None, settings=None):
         self.clients = clients
         self.net_mode = net_mode
         self.throttle = bool(throttle)
@@ -1122,26 +1129,52 @@ class GateSession(object):
         self.exited = False
         self._changed_pie = False
         self._changed_throttle = False
+        self._perf = perf
+        self._settings = settings
+
+    def _services(self):
+        perf = self._perf if self._perf is not None else unreal.PerformanceService
+        settings = self._settings if self._settings is not None else unreal.EngineSettingsService
+        return perf, settings
+
+    def _reset_state(self):
+        state = self.state
+        for key in ("throttle_before", "pie_before", "pie_applied", "throttle_applied"):
+            state[key] = None
+        state["notes"] = []
+        self._changed_pie = False
+        self._changed_throttle = False
+        return state
+
+    def _restore_pie(self):
+        _, settings = self._services()
+        prior = self.state["pie_before"]
+        if not settings.set_pie_settings(
+                prior["net_mode"], max(1, prior["num_clients"]), prior["run_under_one_process"]):
+            unreal.log_warning("vibeue.gate_session: PIE settings restore did not read back")
+
+    def _restore_throttle(self):
+        perf, _ = self._services()
+        perf.set_background_throttling(self.state["throttle_before"])
 
     def enter(self) -> dict:
         """Record the current settings and apply the requested ones. Returns self.state."""
         if self.entered:
             return self.state
-        self.entered = True
-        state = self.state
+        perf, settings = self._services()
+        state = self._reset_state()
 
-        before = _decode_json_reply(unreal.PerformanceService.get_background_throttling())
+        # Phase 1: read and validate everything. Nothing has changed yet, so a raise here leaves
+        # the editor exactly as it was.
+        before = _decode_json_reply(perf.get_background_throttling())
         if before.get("success"):
             state["throttle_before"] = bool(before.get("throttling_enabled", True))
-            unreal.PerformanceService.set_background_throttling(self.throttle)
-            self._changed_throttle = True
-            state["throttle_applied"] = self.throttle
         else:
             # Nothing could restore it, so leave it alone.
             state["notes"].append("get_background_throttling failed ({}); throttling left unchanged"
                                   .format(before.get("error", "?")))
 
-        pie = unreal.EngineSettingsService.get_pie_settings()
+        pie = settings.get_pie_settings()
         if get_prop(pie, "success", False):
             state["pie_before"] = {"net_mode": pie.net_mode,
                                    "num_clients": int(pie.num_clients),
@@ -1149,6 +1182,7 @@ class GateSession(object):
         else:
             state["notes"].append("get_pie_settings failed: {}".format(get_prop(pie, "error_message", "?")))
 
+        pie_target = None
         if self.clients is not None or self.net_mode is not None:
             if state["pie_before"] is None:
                 state["notes"].append("PIE settings left unchanged: the current ones could not be read")
@@ -1156,10 +1190,38 @@ class GateSession(object):
                 prior = state["pie_before"]
                 mode = self.net_mode if self.net_mode is not None else prior["net_mode"]
                 count = int(self.clients) if self.clients is not None else max(1, prior["num_clients"])
-                ok = unreal.EngineSettingsService.set_pie_settings(mode, count, True)
+                pie_target = (mode, count)
+
+        # Phase 2: apply one change at a time. Each restore is recorded BEFORE its setter runs,
+        # because a setter that raises may still have written part of its change; restoring the
+        # recorded prior value is harmless when it wrote nothing.
+        undo = []
+        try:
+            if state["throttle_before"] is not None:
+                undo.append(self._restore_throttle)
+                perf.set_background_throttling(self.throttle)
+                self._changed_throttle = True
+                state["throttle_applied"] = self.throttle
+            if pie_target is not None:
+                mode, count = pie_target
+                undo.append(self._restore_pie)
+                ok = settings.set_pie_settings(mode, count, True)
                 self._changed_pie = True
                 state["pie_applied"] = {"net_mode": mode, "num_clients": count,
                                         "run_under_one_process": True, "ok": bool(ok)}
+        except BaseException:
+            for restore in reversed(undo):
+                try:
+                    restore()
+                except Exception as exc:
+                    unreal.log_warning("vibeue.gate_session: rollback step failed: {}".format(exc))
+            self._changed_pie = False
+            self._changed_throttle = False
+            state["throttle_applied"] = None
+            state["pie_applied"] = None
+            state["notes"].append("enter() failed; every applied change was rolled back")
+            raise
+        self.entered = True
         return state
 
     def exit(self) -> dict:
@@ -1170,13 +1232,10 @@ class GateSession(object):
         state = self.state
         try:
             if self._changed_pie:
-                prior = state["pie_before"]
-                if not unreal.EngineSettingsService.set_pie_settings(
-                        prior["net_mode"], max(1, prior["num_clients"]), prior["run_under_one_process"]):
-                    unreal.log_warning("vibeue.gate_session: PIE settings restore did not read back")
+                self._restore_pie()
         finally:
             if self._changed_throttle:
-                unreal.PerformanceService.set_background_throttling(state["throttle_before"])
+                self._restore_throttle()
         return state
 
     def __enter__(self) -> dict:
