@@ -31,8 +31,101 @@
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "HAL/FileManager.h"
+// Editor window state (set_editor_window_state / get_editor_window_state)
+#include "GameFramework/Actor.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Framework/Docking/TabManager.h"
+#include "Widgets/SWindow.h"
+#include "GenericPlatform/GenericWindow.h"
+#include "Dom/JsonObject.h"
+#include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogViewportService, Log, All);
+
+// Named (not anonymous) so these helpers cannot collide with another file's in a unity build.
+namespace VibeUEViewportServicePrivate
+{
+	// The main editor window, or null when Slate is down or no root window exists (headless runs).
+	TSharedPtr<SWindow> GetMainEditorWindow()
+	{
+		if (!FSlateApplication::IsInitialized())
+		{
+			return nullptr;
+		}
+		return FGlobalTabmanager::Get()->GetRootWindow();
+	}
+
+	bool IsForeground(const TSharedPtr<SWindow>& Window)
+	{
+		if (!Window.IsValid())
+		{
+			return false;
+		}
+		const TSharedPtr<FGenericWindow> Native = Window->GetNativeWindow();
+		return Native.IsValid() && Native->IsForegroundWindow();
+	}
+
+	void WriteWindowFields(FJsonObject& Obj, const TSharedPtr<SWindow>& Window)
+	{
+		Obj.SetBoolField(TEXT("is_minimized"), Window->IsWindowMinimized());
+		Obj.SetBoolField(TEXT("is_maximized"), Window->IsWindowMaximized());
+		Obj.SetBoolField(TEXT("is_foreground"), IsForeground(Window));
+		Obj.SetBoolField(TEXT("is_visible"), Window->IsVisible());
+		Obj.SetStringField(TEXT("title"), Window->GetTitle().ToString());
+	}
+
+	FString ToJsonString(const TSharedRef<FJsonObject>& Obj)
+	{
+		FString Out;
+		const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Out);
+		FJsonSerializer::Serialize(Obj, Writer);
+		return Out;
+	}
+
+	FString WindowErrorJson(const FString& Code, const FString& Message)
+	{
+		const TSharedRef<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetBoolField(TEXT("success"), false);
+		Obj->SetStringField(TEXT("error_code"), Code);
+		Obj->SetStringField(TEXT("error_message"), Message);
+		return ToJsonString(Obj);
+	}
+
+	const TCHAR* NoWindowMessage()
+	{
+		return TEXT("No main editor window (Slate is not initialized or the editor has no root window, e.g. a headless / -nullrhi run).");
+	}
+
+	// Puts the level viewport back to a snapshot when it leaves scope, so every return path of
+	// CaptureWithView restores. It lives for one synchronous call only: nothing is retained.
+	// FOVAngle (the FOV the editor saves to its ini) is not in FViewportInfo, so it is kept here too.
+	struct FScopedViewportState
+	{
+		FViewportInfo Saved;
+		FLevelEditorViewportClient* Client = nullptr;
+		float SavedFOVAngle = 90.0f;
+
+		FScopedViewportState(FLevelEditorViewportClient* InClient, const FViewportInfo& InSaved)
+			: Saved(InSaved)
+			, Client(InClient)
+			, SavedFOVAngle(InClient ? InClient->FOVAngle : 90.0f)
+		{
+		}
+
+		~FScopedViewportState()
+		{
+			UViewportService::RestoreViewportInfo(Saved);
+			if (Client)
+			{
+				Client->FOVAngle = SavedFOVAngle;
+			}
+		}
+
+		FScopedViewportState(const FScopedViewportState&) = delete;
+		FScopedViewportState& operator=(const FScopedViewportState&) = delete;
+	};
+}
 
 // =================================================================
 // Internal helpers
@@ -144,6 +237,8 @@ FViewportInfo UViewportService::GetViewportInfo()
 	Info.NearClipPlane = Client->GetNearClipPlane();
 	Info.FarClipPlane = Client->GetFarClipPlaneOverride();
 	Info.bIsRealtime = Client->IsRealtime();
+	// The base flag without overrides: the value the editor saves, and the one RestoreViewportInfo writes.
+	Client->SaveRealtimeStateToConfig(Info.bRealtimeBase);
 	Info.bIsGameView = Client->IsInGameView();
 	Info.bAllowCinematicControl = Client->AllowsCinematicControl();
 	Info.bExposureFixed = Client->ExposureSettings.bFixed;
@@ -183,6 +278,80 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	}
 
 	return Info;
+}
+
+bool UViewportService::RestoreViewportInfo(const FViewportInfo& Info)
+{
+	FLevelEditorViewportClient* Client = GetActiveViewportClient();
+	if (!Client)
+	{
+		UE_LOG(LogViewportService, Warning, TEXT("RestoreViewportInfo: No active viewport client"));
+		return false;
+	}
+
+	// Compare before every write, so restoring an unchanged snapshot writes nothing.
+	bool bChanged = false;
+	// SetViewLocation/SetViewRotation write the CURRENT view type's transform (perspective and ortho are
+	// separate), so a pose snapshotted in another view type would land in the wrong transform. An empty
+	// ViewportType (a hand-built FViewportInfo) means "the current type".
+	const FString CurrentType = ViewportTypeToString(static_cast<int32>(Client->GetViewportType()));
+	if (!Info.ViewportType.IsEmpty() && !Info.ViewportType.Equals(CurrentType, ESearchCase::IgnoreCase))
+	{
+		UE_LOG(LogViewportService, Warning,
+			TEXT("RestoreViewportInfo: camera pose NOT restored: the snapshot is from a '%s' view but the viewport is now '%s'. Call set_viewport_type('%s') and restore again to put the pose back."),
+			*Info.ViewportType, *CurrentType, *Info.ViewportType);
+	}
+	else
+	{
+		if (Client->GetViewLocation() != Info.Location)
+		{
+			Client->SetViewLocation(Info.Location);
+			bChanged = true;
+		}
+		if (Client->GetViewRotation() != Info.Rotation)
+		{
+			Client->SetViewRotation(Info.Rotation);
+			bChanged = true;
+		}
+	}
+	// Same pair SetFOV writes: ViewFOV is the live value, FOVAngle the one the editor saves.
+	if (Client->ViewFOV != Info.FOV || Client->FOVAngle != Info.FOV)
+	{
+		Client->ViewFOV = Info.FOV;
+		Client->FOVAngle = Info.FOV;
+		bChanged = true;
+	}
+	if (Client->ExposureSettings.bFixed != Info.bExposureFixed || Client->ExposureSettings.FixedEV100 != Info.ExposureEV100)
+	{
+		Client->ExposureSettings.bFixed = Info.bExposureFixed;
+		Client->ExposureSettings.FixedEV100 = Info.ExposureEV100;
+		bChanged = true;
+	}
+	// The BASE realtime flag (the saved one), never IsRealtime(): that includes temporary overrides, such as
+	// the "Background Process" realtime=false override a backgrounded editor puts on every viewport each tick.
+	// Comparing or writing the override-inclusive value would turn the user's realtime off and save it.
+	bool bCurrentRealtimeBase = Info.bRealtimeBase;
+	Client->SaveRealtimeStateToConfig(bCurrentRealtimeBase);
+	if (bCurrentRealtimeBase != Info.bRealtimeBase)
+	{
+		Client->SetRealtime(Info.bRealtimeBase);
+		bChanged = true;
+	}
+	if (Client->IsInGameView() != Info.bIsGameView)
+	{
+		Client->SetGameView(Info.bIsGameView);
+		bChanged = true;
+	}
+
+	if (bChanged)
+	{
+		Client->SetIsCameraCut();
+		ForceViewportRedraw();
+	}
+	UE_LOG(LogViewportService, Log, TEXT("RestoreViewportInfo: %s (FOV %.1f, exposure %s EV100 %.2f)"),
+		bChanged ? TEXT("restored") : TEXT("already matched"), Info.FOV,
+		Info.bExposureFixed ? TEXT("fixed") : TEXT("game settings"), Info.ExposureEV100);
+	return true;
 }
 
 // =================================================================
@@ -725,4 +894,295 @@ FSceneCaptureResult UViewportService::CaptureScene(
 		Width, Height, Result.FileSizeBytes,
 		OrthoWidth > 0.0f ? TEXT("orthographic") : TEXT("perspective"), *OutPath);
 	return Result;
+}
+
+// =================================================================
+// Capture with a temporary view (restores the viewport afterwards)
+// =================================================================
+
+bool UViewportService::RunWithTemporaryView(
+	FVector Location,
+	FRotator Rotation,
+	float FOV,
+	bool bFixedExposure,
+	float EV100,
+	TFunctionRef<void()> Body)
+{
+	using namespace VibeUEViewportServicePrivate;
+
+	FLevelEditorViewportClient* Client = GetActiveViewportClient();
+	if (!Client)
+	{
+		return false;
+	}
+
+	const FViewportInfo Snapshot = GetViewportInfo();
+	// Logged before anything is applied: SEH unwinding (the Python runner catches access violations) runs no
+	// destructors, so if the body crashes these are the values to put back by hand.
+	UE_LOG(LogViewportService, Display,
+		TEXT("CaptureWithView: snapshot before the temporary view: location=(%s) rotation=(%s) fov=%.3f fov_angle=%.3f exposure_fixed=%s ev100=%.3f (restore with restore_viewport_info / set_fov / set_exposure)"),
+		*Snapshot.Location.ToString(), *Snapshot.Rotation.ToString(), Snapshot.FOV, Client->FOVAngle,
+		Snapshot.bExposureFixed ? TEXT("true") : TEXT("false"), Snapshot.ExposureEV100);
+
+	{
+		// From here on every exit restores the snapshot (camera, FOV and FOVAngle, exposure, realtime, game view).
+		const FScopedViewportState Restore(Client, Snapshot);
+
+		Client->SetViewLocation(Location);
+		Client->SetViewRotation(Rotation);
+		if (FOV > 0.0f)
+		{
+			// Only the live FOV: FOVAngle (the saved one) is left alone for the shot.
+			Client->ViewFOV = FMath::Clamp(FOV, 5.0f, 170.0f);
+		}
+		if (bFixedExposure)
+		{
+			Client->ExposureSettings.bFixed = true;
+			Client->ExposureSettings.FixedEV100 = EV100;
+		}
+		// A jump to a new pose: drop temporal history (motion blur, TAA/TSR) for this frame.
+		Client->SetIsCameraCut();
+
+		Body();
+	}
+	return true;
+}
+
+FSceneCaptureResult UViewportService::CaptureWithView(
+	FVector Location,
+	FRotator Rotation,
+	int32 Width,
+	int32 Height,
+	const FString& OutputPngPath,
+	float FOV,
+	bool bFixedExposure,
+	float EV100)
+{
+	using namespace VibeUEViewportServicePrivate;
+
+	FSceneCaptureResult Result;
+	// Every failure here is a refusal the caller can act on: Warning, never Error.
+	auto Refuse = [&Result](const FString& Message)
+	{
+		Result.ErrorMessage = Message;
+		UE_LOG(LogViewportService, Warning, TEXT("%s"), *Message);
+		return Result;
+	};
+
+	// --- Validation, all before the view is touched ---
+	if (!GEditor)
+	{
+		return Refuse(TEXT("CaptureWithView: no GEditor (running headless?)."));
+	}
+	if (GEditor->PlayWorld)
+	{
+		return Refuse(TEXT("CaptureWithView: a PIE/Simulate session is running; the level viewport may be showing it. Use the capture_image tool with source='game', or stop PIE first."));
+	}
+	if (Width <= 0 || Height <= 0 || Width > 8192 || Height > 8192)
+	{
+		return Refuse(FString::Printf(TEXT("CaptureWithView: invalid dimensions %dx%d (each must be 1..8192)."), Width, Height));
+	}
+	if (OutputPngPath.TrimStartAndEnd().IsEmpty())
+	{
+		return Refuse(TEXT("CaptureWithView: OutputPngPath is empty."));
+	}
+
+	FLevelEditorViewportClient* Client = GetActiveViewportClient();
+	if (!Client)
+	{
+		return Refuse(TEXT("CaptureWithView: no active level viewport client."));
+	}
+	if (!Client->IsPerspective())
+	{
+		return Refuse(FString::Printf(TEXT("CaptureWithView: the level viewport is '%s', not perspective. Switch it with set_viewport_type('perspective') first (and back afterwards)."),
+			*ViewportTypeToString(static_cast<int32>(Client->GetViewportType()))));
+	}
+	const TSharedPtr<SWindow> MainWindow = GetMainEditorWindow();
+	if (MainWindow.IsValid() && MainWindow->IsWindowMinimized())
+	{
+		return Refuse(TEXT("CaptureWithView: the editor window is minimized, so the viewport cannot draw. Call unreal.ViewportService.set_editor_window_state(\"restore\") and retry."));
+	}
+	// A piloted actor (or a cinematic camera) owns the view: moving the camera would move that actor, and
+	// CalcSceneView takes the FOV from it (bUseControllingActorViewInfo), so the requested view would be ignored.
+	if (Client->IsLockedToCinematic())
+	{
+		return Refuse(TEXT("CaptureWithView: the level viewport is locked to a cinematic (Sequencer) camera, which overrides the camera and FOV. Unlock it in Sequencer first."));
+	}
+	if (const AActor* Locked = Client->GetActiveActorLock().Get())
+	{
+		return Refuse(FString::Printf(TEXT("CaptureWithView: the level viewport is piloting actor '%s'; moving the camera would move that actor and its FOV would override the requested one. Stop piloting (Eject) first."),
+			*Locked->GetActorNameOrLabel()));
+	}
+	FViewport* Viewport = Client->Viewport;
+	if (!Viewport || Viewport->GetSizeXY().X <= 0 || Viewport->GetSizeXY().Y <= 0)
+	{
+		return Refuse(TEXT("CaptureWithView: the level viewport has no drawable surface (zero size)."));
+	}
+
+	// Resolve output path: relative -> <Project>/Saved/VibeUE/Captures; ensure .png extension.
+	FString OutPath = OutputPngPath.TrimStartAndEnd();
+	FPaths::NormalizeFilename(OutPath);
+	if (FPaths::IsRelative(OutPath))
+	{
+		OutPath = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("VibeUE"), TEXT("Captures"), OutPath);
+	}
+	if (!OutPath.EndsWith(TEXT(".png"), ESearchCase::IgnoreCase))
+	{
+		OutPath += TEXT(".png");
+	}
+
+	TArray<FColor> Pixels;
+	FIntPoint SrcSize(0, 0);
+	bool bReadOk = false;
+	// The view is applied and restored inside RunWithTemporaryView; the body only draws and reads.
+	Result.bViewApplied = RunWithTemporaryView(Location, Rotation, FOV, bFixedExposure, EV100, [&]()
+	{
+		// The same draw-and-read path capture_image source='editor' uses (CaptureTools.cpp).
+		Viewport->Draw(/*bShouldPresent=*/false);
+		bReadOk = Viewport->ReadPixels(Pixels) && Pixels.Num() > 0;
+		SrcSize = Viewport->GetSizeXY();
+	});
+	if (!Result.bViewApplied)
+	{
+		return Refuse(TEXT("CaptureWithView: no active level viewport client."));
+	}
+	if (!bReadOk)
+	{
+		return Refuse(TEXT("CaptureWithView: ReadPixels on the level viewport returned no data (no RHI, e.g. -nullrhi?)."));
+	}
+
+	if (Pixels.Num() != SrcSize.X * SrcSize.Y)
+	{
+		return Refuse(FString::Printf(TEXT("CaptureWithView: ReadPixels returned %d pixels for a %dx%d viewport."), Pixels.Num(), SrcSize.X, SrcSize.Y));
+	}
+
+	// Force opaque, or the PNG can show as a checkerboard / blank page in viewers.
+	for (FColor& Px : Pixels)
+	{
+		Px.A = 255;
+	}
+	if (SrcSize.X != Width || SrcSize.Y != Height)
+	{
+		TArray<FColor> Resized;
+		FImageUtils::ImageResize(SrcSize.X, SrcSize.Y, Pixels, Width, Height, Resized, /*bLinearSpace=*/false);
+		Pixels = MoveTemp(Resized);
+	}
+
+	TArray64<uint8> Png;
+	FImageUtils::PNGCompressImageArray(Width, Height, Pixels, Png);
+	if (Png.Num() == 0)
+	{
+		return Refuse(TEXT("CaptureWithView: PNG encoding produced no data."));
+	}
+
+	IFileManager::Get().MakeDirectory(*FPaths::GetPath(OutPath), /*Tree=*/true);
+	if (!FFileHelper::SaveArrayToFile(TArrayView<const uint8>(Png.GetData(), (int32)Png.Num()), *OutPath))
+	{
+		return Refuse(FString::Printf(TEXT("CaptureWithView: failed to write PNG to '%s'."), *OutPath));
+	}
+
+	Result.bSuccess = true;
+	Result.OutputPath = OutPath;
+	Result.Width = Width;
+	Result.Height = Height;
+	Result.FileSizeBytes = IFileManager::Get().FileSize(*OutPath);
+	UE_LOG(LogViewportService, Log, TEXT("CaptureWithView: wrote %dx%d (from a %dx%d viewport, %lld bytes) to %s; viewport restored"),
+		Width, Height, SrcSize.X, SrcSize.Y, Result.FileSizeBytes, *OutPath);
+	return Result;
+}
+
+// =================================================================
+// Main editor window state
+// =================================================================
+
+FString UViewportService::GetEditorWindowState()
+{
+	using namespace VibeUEViewportServicePrivate;
+
+	const TSharedPtr<SWindow> Window = GetMainEditorWindow();
+	if (!Window.IsValid())
+	{
+		return WindowErrorJson(TEXT("NO_WINDOW"), NoWindowMessage());
+	}
+	const TSharedRef<FJsonObject> Obj = MakeShared<FJsonObject>();
+	Obj->SetBoolField(TEXT("success"), true);
+	WriteWindowFields(*Obj, Window);
+	return ToJsonString(Obj);
+}
+
+FString UViewportService::SetEditorWindowState(const FString& State)
+{
+	using namespace VibeUEViewportServicePrivate;
+
+	const FString Lower = State.TrimStartAndEnd().ToLower();
+	const bool bRestore = Lower == TEXT("restore");
+	const bool bFront = Lower == TEXT("front");
+	const bool bMinimize = Lower == TEXT("minimize");
+	const bool bMaximize = Lower == TEXT("maximize");
+	if (!bRestore && !bFront && !bMinimize && !bMaximize)
+	{
+		return WindowErrorJson(TEXT("BAD_STATE"),
+			FString::Printf(TEXT("Unknown state '%s'. Use 'restore', 'front', 'minimize' or 'maximize'."), *State));
+	}
+
+	const TSharedPtr<SWindow> Window = GetMainEditorWindow();
+	if (!Window.IsValid())
+	{
+		return WindowErrorJson(TEXT("NO_WINDOW"), NoWindowMessage());
+	}
+
+	const bool bWasMinimized = Window->IsWindowMinimized();
+	if ((bRestore || bFront) && bWasMinimized)
+	{
+		Window->Restore();
+	}
+	if (bFront)
+	{
+		Window->BringToFront(/*bForce=*/true);
+		Window->HACK_ForceToFront();
+	}
+	if (bMinimize && !bWasMinimized)
+	{
+		Window->Minimize();
+	}
+	if (bMaximize && !Window->IsWindowMaximized())
+	{
+		Window->Maximize();
+	}
+
+	const bool bIsMinimized = Window->IsWindowMinimized();
+	bool bReached = false;
+	if (bRestore)
+	{
+		bReached = !bIsMinimized;
+	}
+	else if (bFront)
+	{
+		bReached = !bIsMinimized && IsForeground(Window);
+	}
+	else if (bMinimize)
+	{
+		bReached = bIsMinimized;
+	}
+	else
+	{
+		bReached = Window->IsWindowMaximized();
+	}
+
+	const TSharedRef<FJsonObject> Obj = MakeShared<FJsonObject>();
+	Obj->SetBoolField(TEXT("success"), bReached);
+	Obj->SetStringField(TEXT("state"), Lower);
+	Obj->SetBoolField(TEXT("was_minimized"), bWasMinimized);
+	WriteWindowFields(*Obj, Window);
+	if (!bReached)
+	{
+		Obj->SetStringField(TEXT("error_code"), TEXT("STATE_NOT_REACHED"));
+		Obj->SetStringField(TEXT("error_message"), bFront
+			? FString(TEXT("The OS did not move the editor to the foreground (Windows refuses foreground changes for a background process). If is_minimized is false the window is restored, which is enough for capture_image and PIE."))
+			: FString::Printf(TEXT("The window did not reach state '%s'."), *Lower));
+	}
+	UE_LOG(LogViewportService, Log, TEXT("SetEditorWindowState: '%s' -> %s (was_minimized=%s, is_minimized=%s)"),
+		*Lower, bReached ? TEXT("ok") : TEXT("not reached"),
+		bWasMinimized ? TEXT("true") : TEXT("false"), bIsMinimized ? TEXT("true") : TEXT("false"));
+	return ToJsonString(Obj);
 }
