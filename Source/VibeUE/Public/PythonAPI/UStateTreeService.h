@@ -320,6 +320,113 @@ struct FStateTreePropertyInfo
 	/** Current value exported to string (UE text format, e.g. "(R=1.0,G=0.0,B=0.0,A=1.0)" for FLinearColor) */
 	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
 	FString CurrentValue;
+
+	/** Whether this exact property path is the target of a property binding (Python: is_bound) */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	bool bIsBound = false;
+
+	/**
+	 * Binding source when bound, formatted "<SourceKind>:<SourceStatePath/><SourceNodeName>.<SourcePropertyPath>",
+	 * e.g. "RootParameter:Parameters.IdlingTime". Empty when unbound. A trailing " (output)" marks an output binding:
+	 * the data flows the other way, this (Output) property WRITES the named source. See get_bindings for the
+	 * structured form.
+	 */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	FString BoundTo;
+};
+
+/**
+ * One property binding in a StateTree, as returned by get_bindings.
+ * Kinds are strings. Target kinds: Task, Evaluator, GlobalTask, Condition, Consideration, Transition,
+ * Parameter, PropertyFunction, Unknown. Source kinds: RootParameter, ContextData, Evaluator, GlobalTask,
+ * Task, State (state parameters), Condition, Consideration, TransitionEvent, StateEvent, PropertyFunction,
+ * Transition, Unknown.
+ */
+USTRUCT(BlueprintType)
+struct FStateTreeBindingInfo
+{
+	GENERATED_BODY()
+
+	/** What owns the bound (target) property, e.g. "Task", "Condition", "Evaluator" */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	FString TargetKind;
+
+	/** State path of the target node (e.g. "Root/Chase"); empty for global nodes (evaluators, global tasks) */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	FString TargetStatePath;
+
+	/** Display name of the target node (e.g. "Delay", or the Blueprint task's display name) */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	FString TargetNodeName;
+
+	/**
+	 * Struct name of the target node (e.g. "StateTreeDelayTask"). For Blueprint nodes (which live in a
+	 * StateTreeBlueprint*Wrapper struct) this is the Blueprint class name instead (e.g. "STT_Idle_C"), the name
+	 * the task functions accept. Empty for parameters, transitions and property functions.
+	 */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	FString TargetNodeStruct;
+
+	/**
+	 * Array index of the target node in its owning list (state Tasks, EnterConditions, Considerations,
+	 * a transition's Conditions, Transitions, global Evaluators or GlobalTasks). A state's SingleTask reports 0,
+	 * like Tasks[0]. INDEX_NONE (-1) for parameters and property functions (the function node lives inside the
+	 * binding). This is the raw array index, not the per-struct TaskMatchIndex used by the task functions.
+	 */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	int32 TargetNodeIndex = INDEX_NONE;
+
+	/** Index of the transition that owns the target (transition conditions and transitions); -1 otherwise */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	int32 TargetTransitionIndex = INDEX_NONE;
+
+	/** Bound property path on the target node, e.g. "Duration" or "Offset.Z" */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	FString TargetPropertyPath;
+
+	/** What provides the value, e.g. "RootParameter", "ContextData", "Evaluator" */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	FString SourceKind;
+
+	/** State path of the source node; empty for global sources (root parameters, context, evaluators, global tasks) */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	FString SourceStatePath;
+
+	/** Name of the source struct: node display name, context name (e.g. "Actor"), or "Parameters" */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	FString SourceNodeName;
+
+	/**
+	 * Struct name of the source node when it is a node (evaluator, task, ...), with the same Blueprint rule as
+	 * TargetNodeStruct. Empty for parameters, context data, events, transitions and property functions.
+	 */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	FString SourceNodeStruct;
+
+	/** Source property path, e.g. "IdlingTime"; empty when the whole source struct/object is bound */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	FString SourcePropertyPath;
+
+	/** True when the source struct exists in this tree and the source path resolves against it (Python: source_resolves) */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	bool bSourceResolves = false;
+
+	/**
+	 * Debug form of the binding: "<SourceStructID>:<SourcePropertyPath> -> <TargetStructID>:<TargetPropertyPath>",
+	 * with " (output)" appended for output bindings. Struct IDs are FGuid::ToString() (32 hex digits); the paths are
+	 * the same raw property-name paths as SourcePropertyPath / TargetPropertyPath (never editor display names), e.g.
+	 * "C728B2074F954E16CAA196BE8447969C:WaitTime -> 9380F5F945B3E954A779FDA938C61610:Duration".
+	 */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	FString Raw;
+
+	/**
+	 * True for an output binding (Python: is_output_binding): the engine copies TARGET -> SOURCE, i.e. the target
+	 * node's Output property writes the source (e.g. a task output writing a root parameter). The compiler sets
+	 * this when the target's root property is an Output property. False for ordinary SOURCE -> TARGET bindings.
+	 */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	bool bIsOutputBinding = false;
 };
 
 /**
@@ -741,6 +848,8 @@ public:
 	 *                       - Blueprint task class names (e.g. "STT_Rotate_C")
 	 *                       - Blueprint class object paths (e.g. "/Game/StateTree/STT_Rotate.STT_Rotate_C")
 	 *                       - Blueprint asset paths (e.g. "/Game/StateTree/STT_Rotate")
+	 *                       Blueprint tasks must be compiled first; a skeleton name ("SKEL_STT_Rotate_C")
+	 *                       resolves to the compiled "STT_Rotate_C" class, and other internal classes are refused.
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool AddTask(const FString& AssetPath, const FString& StatePath,
@@ -751,6 +860,7 @@ public:
 	 * and properties declared on its instance data, with name, type, and current value.
 	 * Nested struct leaf properties are returned using dotted paths (e.g. "Offset.Z").
 	 * Use this to discover property names before calling set_task_property_value — never guess.
+	 * Each entry's bIsBound / BoundTo report whether that exact property path is the target of a binding.
 	 * @param TaskMatchIndex Which matching task to target for the struct type. -1 means the last matching task.
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
@@ -842,6 +952,19 @@ public:
 	static bool UnbindTaskProperty(const FString& AssetPath, const FString& StatePath,
 	                               const FString& TaskStructName, const FString& TaskPropertyPath,
 	                               int32 TaskMatchIndex = -1);
+
+	/**
+	 * List the property bindings in a StateTree (read-only; the reader for every bind_* / unbind_* function).
+	 * With an empty StatePath, returns every binding in the asset. With a StatePath (e.g. "Root/Chase"),
+	 * returns only bindings whose TARGET lives in that state: its tasks, enter conditions, considerations,
+	 * transitions and transition conditions, state parameters, and property functions bound into them.
+	 * Returns an empty array (and logs a warning) when the asset or state is not found.
+	 * Data normally flows source -> target; entries with bIsOutputBinding flow target -> source.
+	 * Example: unreal.StateTreeService.get_bindings("/Game/AI/ST_Zombie_AI", "Root/Chase")
+	 * @param StatePath Optional state path filter; empty means the whole asset.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
+	static TArray<FStateTreeBindingInfo> GetBindings(const FString& AssetPath, const FString& StatePath = TEXT(""));
 
 	/** Remove a task from a state by struct type name. */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")

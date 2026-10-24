@@ -37,8 +37,12 @@ keywords:
 | `get_fov()` | Get current FOV |
 | `set_near_clip_plane(distance)` | Set near clipping plane (-1 = engine default) |
 | `set_far_clip_plane(distance)` | Set far clipping plane (0 = infinity) |
-| `set_exposure(fixed, ev100)` | Set fixed/auto exposure with EV100 value |
+| `set_exposure(fixed, ev100)` | Set fixed/auto exposure with EV100 value. ⚠️ PERSISTS into the user's editor settings — snapshot + restore (see below) |
 | `set_exposure_game_settings()` | Reset exposure to auto (game settings) |
+| `restore_viewport_info(info)` | Put camera, FOV, exposure, base realtime (`realtime_base`) and game view back to a `get_viewport_info()` snapshot (writes only what differs; skips the camera if the view type changed) |
+| `capture_with_view(location, rotation, width, height, out_png, fov=0, fixed_exposure=False, ev100=0)` | Draw the REAL level viewport from a temporary camera/FOV/exposure into a PNG, then restore the viewport (on ordinary failures too; see the crash caveat below) |
+| `get_editor_window_state()` | JSON: is the main editor window minimized / maximized / foreground |
+| `set_editor_window_state(state)` | `"restore"` / `"front"` / `"minimize"` / `"maximize"` the main editor window (JSON reply) |
 | `set_game_view(enable)` | Toggle Game View (hides editor icons) |
 | `set_allow_cinematic_control(allow)` | Allow Sequencer to control viewport camera |
 | `set_realtime(enable)` | Toggle realtime rendering |
@@ -57,6 +61,69 @@ keywords:
 > mode, FOV, clip planes, exposure, game view, layout, realtime, and camera speed.
 
 ## Critical Rules
+
+### 🛑 `set_exposure` and `set_fov` PERSIST — always snapshot and restore
+
+The editor saves the level viewport's FOV and exposure into `EditorPerProjectUserSettings.ini`.
+A script that calls `set_exposure` / `set_fov` and exits leaves the **user's** viewport that way —
+and it comes back on **every later launch**. A fixed EV100 tuned for a capture (say 12) on a dim
+map turns the Lit viewport black (only selection outlines and spline points stay visible); a
+capture FOV of 73.8 stays forever. Never change them without putting them back:
+
+```python
+import unreal
+info = unreal.ViewportService.get_viewport_info()   # snapshot FIRST
+try:
+    unreal.ViewportService.set_exposure(True, 12.0)
+    unreal.ViewportService.set_fov(60.0)
+    # ... capture ...
+finally:
+    unreal.ViewportService.restore_viewport_info(info)   # camera, FOV, exposure, base realtime, game view
+```
+
+Restore details: realtime is restored from `info.realtime_base` (the user's own setting, the one the
+editor saves), never from `info.is_realtime` — that one includes temporary overrides, such as the
+"Background Process" realtime-off override a backgrounded editor puts on every viewport. The camera
+pose is only restored when the viewport is still in the snapshot's view type (`info.viewport_type`);
+otherwise it is skipped with a warning — switch the type back first, then restore again.
+
+Or let one call do it all — `capture_with_view` applies the camera/FOV/exposure, draws the real
+level viewport once, writes the PNG and restores everything. The restore is scoped, so ordinary
+failures and early returns restore too. **Crash caveat:** an access violation inside the draw is
+caught by the Python runner's SEH guard, and SEH unwinding runs no destructors, so then the shot's
+FOV/exposure/camera stay in the session (and get saved at exit). The snapshot is logged at Display
+first (`CaptureWithView: snapshot before the temporary view: ...`) — put those values back by hand.
+`res.view_applied` is False when it refused before touching the viewport:
+
+```python
+import unreal
+res = unreal.ViewportService.capture_with_view(
+    unreal.Vector(0, 0, 800), unreal.Rotator(roll=0, pitch=-20, yaw=90),
+    1280, 720, "train_preview.png", 60.0, True, 10.0)   # fov, fixed_exposure, ev100
+print(res.success, res.output_path, res.error_message)
+```
+
+If a viewport is already stuck on a fixed exposure, `set_exposure_game_settings()` puts it back on
+game settings. `capture_with_view` refuses (and touches nothing) during PIE, in an orthographic
+viewport, while the viewport pilots an actor or is locked to a Sequencer camera (moving the camera
+would move that actor, and its FOV would override yours), and while the editor window is
+minimized — `set_editor_window_state("restore")` fixes the last one.
+
+### A minimized editor window freezes PIE and blocks captures
+
+After a scripted relaunch the editor can come up minimized: PIE then ticks nothing (world time stays
+0) and `capture_image` refuses with "window is minimized". Check and fix it from Python:
+
+```python
+import unreal, json
+print(json.loads(unreal.ViewportService.get_editor_window_state()))
+r = json.loads(unreal.ViewportService.set_editor_window_state("restore"))   # no-op if not minimized
+assert r["success"] and not r["is_minimized"], r
+```
+
+`"front"` also asks the OS for the foreground; Windows may refuse that for a background process
+(`success: false`, `error_code: "STATE_NOT_REACHED"`), but a restored window is all PIE and
+`capture_image` need. Headless hosts reply `{"success": false, "error_code": "NO_WINDOW"}`.
 
 ### ⚠️ A black capture usually means no lighting, not a broken mesh
 
@@ -270,6 +337,9 @@ unreal.ViewportService.set_viewport_layout("OnePane")
 
 ```python
 import unreal
+# ⚠️ FOV and exposure persist into the user's editor settings: snapshot first and call
+# unreal.ViewportService.restore_viewport_info(info) when the review is over.
+info = unreal.ViewportService.get_viewport_info()
 # Perspective with narrow FOV for minimal distortion
 unreal.ViewportService.set_viewport_type("perspective")
 unreal.ViewportService.set_fov(60.0)
@@ -325,6 +395,9 @@ unreal.ViewportService.set_far_clip_plane(0)     # Infinity
 
 ```python
 import unreal
+# ⚠️ Exposure persists into the user's editor settings: snapshot, and restore when done
+info = unreal.ViewportService.get_viewport_info()
+
 # Fix exposure for consistent lighting review
 unreal.ViewportService.set_exposure(True, 1.0)
 
@@ -334,6 +407,9 @@ unreal.ViewportService.set_exposure(True, 4.0)   # Brighter
 
 # Return to auto exposure (game settings)
 unreal.ViewportService.set_exposure_game_settings()
+
+# Or put back exactly what the user had (fixed or game settings, EV100, FOV, camera)
+unreal.ViewportService.restore_viewport_info(info)
 ```
 
 ## Sample scripts (run via `execute_python_code`)

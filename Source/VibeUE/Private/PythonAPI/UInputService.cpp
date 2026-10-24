@@ -1397,10 +1397,9 @@ namespace VibeUEInputInjection
 		return true;
 	}
 
-	// PIE ended, and every hold belonged to it: stop the injections, cancel the pending releases (no key-up is
-	// sent: the game viewport is going away) and drop the throttle override now, with no grace — there is no
-	// session left to process a release. A later stop_injection then truthfully reports was_active: false.
-	static void OnEndPie(const bool /*bIsSimulating*/)
+	// Ends every hold at once: stops the injections, cancels the pending releases (no key-up is sent: the game
+	// viewport is going away, or the module is) and the release grace. The caller drops the hooks after it.
+	static void DropAllHolds()
 	{
 		for (const TPair<FString, FHeldInjection>& Pair : GHeldInjections)
 		{
@@ -1430,8 +1429,74 @@ namespace VibeUEInputInjection
 			GReleaseGraceTicker.Reset();
 		}
 		GReleaseGraceActive = false;
+	}
+
+	// PIE ended, and every hold belonged to it: drop them all and the throttle override now, with no grace —
+	// there is no session left to process a release. A later stop_injection then truthfully reports was_active: false.
+	static void OnEndPie(const bool /*bIsSimulating*/)
+	{
+		DropAllHolds();
 		UpdateThrottleScope();
 	}
+
+	// Files a held key: its release HoldSeconds of wall-clock time from now, and the throttle/EndPIE scope.
+	// The caller has already sent the key-down (or is extending a hold).
+	static void TrackKeyHold(const FKey& Key, float HoldSeconds)
+	{
+		const FTSTicker::FDelegateHandle Release = AddWallClockRelease(HoldSeconds, [Key]()
+		{
+			ReleaseHeldKey(Key, /*bSendKeyUp=*/true, /*bFromTicker=*/true);
+		});
+		GHeldKeys.Add(Key, Release);
+		UpdateThrottleScope();
+	}
+}
+
+void UInputService::ShutdownInjectionHooks()
+{
+	using namespace VibeUEInputInjection;
+	DropAllHolds();
+	// Not UpdateThrottleScope: it does nothing at all once GEditor is gone, and the EndPIE hook must go regardless.
+	if (GThrottleHandle.IsValid())
+	{
+		// With GEditor already gone (late module shutdown) the array went with the editor engine.
+		if (GEditor)
+		{
+			const FDelegateHandle Handle = GThrottleHandle;
+			GEditor->ShouldDisableCPUThrottlingDelegates.RemoveAll(
+				[Handle](const UEditorEngine::FShouldDisableCPUThrottling& D) { return D.GetHandle() == Handle; });
+		}
+		GThrottleHandle.Reset();
+	}
+	if (GEndPieHandle.IsValid())
+	{
+		FEditorDelegates::EndPIE.Remove(GEndPieHandle);
+		GEndPieHandle.Reset();
+	}
+}
+
+// =============================================================================
+// Test-only surface (no UFUNCTION) — reached through FInputServiceTestAccess
+// =============================================================================
+
+void UInputService::TrackKeyHoldForTest(const FName KeyName, float HoldSeconds)
+{
+	// The hold's bookkeeping only, with no key event: no PIE viewport is needed to exercise the hooks.
+	VibeUEInputInjection::TrackKeyHold(FKey(KeyName), HoldSeconds);
+}
+
+bool UInputService::ReleaseKeyHoldForTest(const FName KeyName)
+{
+	return VibeUEInputInjection::ReleaseHeldKey(FKey(KeyName), /*bSendKeyUp=*/false);
+}
+
+void UInputService::GetInjectionStateForTest(bool& bOutEndPieHooked, bool& bOutThrottleHooked, int32& OutHolds, bool& bOutReleaseGrace)
+{
+	using namespace VibeUEInputInjection;
+	bOutEndPieHooked = GEndPieHandle.IsValid();
+	bOutThrottleHooked = GThrottleHandle.IsValid();
+	OutHolds = GHeldInjections.Num() + GHeldKeys.Num();
+	bOutReleaseGrace = GReleaseGraceActive || GReleaseGraceTicker.IsValid();
 }
 
 FString UInputService::InjectAction(const FString& ActionPath, float X, float Y, float Z, int32 PieInstance)
@@ -1609,12 +1674,7 @@ FString UInputService::InjectKey(const FString& KeyName, const FString& EventTyp
 	{
 		// The release, later. The editor stays off its background frame rate meanwhile, and ending PIE first
 		// cancels it (see OnEndPie).
-		const FTSTicker::FDelegateHandle Release = VibeUEInputInjection::AddWallClockRelease(HoldSeconds, [Key]()
-		{
-			VibeUEInputInjection::ReleaseHeldKey(Key, /*bSendKeyUp=*/true, /*bFromTicker=*/true);
-		});
-		VibeUEInputInjection::GHeldKeys.Add(Key, Release);
-		VibeUEInputInjection::UpdateThrottleScope();
+		VibeUEInputInjection::TrackKeyHold(Key, HoldSeconds);
 	}
 
 	TSharedRef<FJsonObject> R = MakeShared<FJsonObject>();

@@ -246,7 +246,13 @@ session, not just the live actors — and `destroy_all()` counts an already-cons
 **Error codes:** `INVALID_SELECTOR`, `PIE_NOT_RUNNING`, `WORLD_NOT_FOUND`, `AMBIGUOUS_WORLD`,
 `CLASS_NOT_FOUND`, `NOT_AN_ACTOR_CLASS`, `CLASS_ABSTRACT`, `CLASS_DEPRECATED`, `CLASS_REINSTANCED`,
 `INVALID_TRANSFORM`, `INVALID_COLLISION_HANDLING`, `CLIENT_REQUIRES_OPT_IN`, `SPAWN_REJECTED`
-(the placement collided under the chosen collision policy), `UNKNOWN_HANDLE`, `STALE_HANDLE`.
+(the placement collided under the chosen collision policy), `UNSUPPORTED_CLASS`, `UNKNOWN_HANDLE`,
+`STALE_HANDLE`.
+
+**Landscapes are refused** (`UNSUPPORTED_CLASS` for `ALandscape`, `ALandscapeStreamingProxy` and every
+other `ALandscapeProxy`): a landscape spawned this way has no landscape GUID, so destroying it never
+unregisters it from `ULandscapeSubsystem`, and the subsystem's next tick crashes the editor. The class
+check runs after the selector and PIE-world checks, so with no PIE you still get `PIE_NOT_RUNNING`.
 
 > **Gotcha — handles die with the PIE session.** `EndPIE` bumps an internal session serial and clears
 > the registry, so a handle kept across a stop/start reports `STALE_HANDLE`. And the same
@@ -254,6 +260,92 @@ session, not just the live actors — and `destroy_all()` counts an already-cons
 > spawned actor before `StopPIE`** (`del blocker` / set to `None`, or `vibeue.release_globals`), or
 > the editor asserts on PIE teardown ("Object from PIE level still referenced"). The returned JSON is
 > a string, so keeping `res`/`handle` is safe — only a live actor reference is the hazard.
+
+## Calling functions with real RPC routing — `PIEActorService.call_function`
+
+**Why Python-called RPCs misroute:** the Python plugin runs every call under
+`FEditorScriptExecutionGuard`, which sets `GAllowActorScriptExecutionInEditor = true`, and while that
+global is true `AActor::GetFunctionCallspace` answers **Local** for every function. So a `Server_` RPC
+called from Python on a PIE client runs on the client and sends no packet, and a `Client_` RPC the
+server sends inside a flow Python started runs on the server instead of the owning client.
+
+`call_function` lowers that global for the one call (restored on return), computes the real callspace,
+and calls `ProcessEvent`, so every RPC inside the call routes exactly as in a real game.
+`console_command` does the same around `GEngine->Exec` for the chosen PIE world (console variables and
+engine/world commands; PlayerController exec functions and cheats are not routed there, so call those
+with `call_function` on the controller).
+
+**When to use which:**
+- **Input injection** (`InputService`, below) when you are testing the player-facing path: the key or
+  action, the input binding, and the code that decides to send the RPC.
+- **`call_function`** when you need one specific function or RPC with chosen arguments: a server RPC from
+  a client, a server-side flow that sends client RPCs (respawn, possession, travel), or a gate fixture.
+  It also covers plain non-RPC UFUNCTIONs with typed return values.
+
+**The `callspace` field** says what the routing decided: `"local"` (ran here), `"remote"` (the RPC
+was handed to the net driver and nothing ran here, so `return`/`out_params` are empty),
+`"local+remote"` (a multicast on the server: ran here and was handed to the driver), or `"absorbed"`
+(dropped before the driver: an authority-only call on a client, or, on the SERVER side, an RPC on an
+actor with no owning connection). `executed_locally` is the same thing as a bool.
+
+**`"remote"` means handed to the net driver, not delivered.** On a client, an actor without authority
+skips the ownership check entirely and gets `"remote"` whenever it replicates. So a `Server_` call on
+another player's pawn, or on a placed lever the client does not own, also reports `"remote"`, and the
+net driver then DROPS it with a LogNet "No owning connection" warning. With the guard lowered, a
+client-side `Server_` call never reports `"local"`. To confirm delivery, run `log LogNetTraffic Log`
+first and look for `Sent RPC: ...::Server_X` in the client frame (and the handler's effect on the
+server), and watch for "No owning connection".
+
+```python
+import unreal, json
+
+# Server RPC from client 1's own pawn: "remote" = handed to the net driver (confirm with LogNetTraffic).
+res = json.loads(unreal.PIEActorService.call_function(
+    "client:1", "BP_Test_C_0", "Server_BeginInteract", '{"Target": "Lever_0"}'))
+assert res["success"] and res["callspace"] == "remote", res
+
+# A normal UFUNCTION with a return value, on a component ("<actor>.<component>").
+hp = json.loads(unreal.PIEActorService.call_function("server", "BP_Test_C_0.HealthComp", "GetHealth", "{}"))
+print(hp["return"])
+
+# A console variable on the server world.
+print(unreal.PIEActorService.console_command("server", "r.VSync 0"))
+```
+
+The object is resolved **inside the selected PIE world only**: a full object path (it must belong to
+that world), a `spawn_actor` handle, an actor name or editor label, `"<actor>.<component>"`, or
+`"<actor>:<subobject>"`. Arguments are a JSON object keyed by parameter name (case-insensitive).
+Numbers and bools fill numeric and bool params; strings fill string, name and text params and enums
+(by name); object and class params take a PIE-world name or label, or a full object or asset path
+(`""`/`"None"` is null; an object from another PIE world or the editor world is refused); anything else
+(structs, arrays, soft references) takes its ImportText form, e.g. `"(X=1,Y=2,Z=3)"`. **Object
+references nested inside a struct, array or map argument are resolved by the engine's global object
+lookup, not confined to the PIE world**, so pass full PIE-world paths there. An object or class path
+that points into a map package the editor has not loaded is refused with `MAP_PATH_REFUSED` and is
+never loaded (a map loaded as an asset stays resident and makes the next `load_level` fatal); other
+assets outside the PIE world are found first and loaded only when they are not maps. Integers are
+range-checked against the parameter's size (`int8`, `uint16`, `int32`, ...; `uint64` caps at 2^63-1),
+numbers given as strings must be whole numbers (`"12abc"` is refused), and enum integers or names must
+name a real enumerator (never `_MAX`). JSON arrays and objects and delegate params are rejected. A missing input uses the UFUNCTION's C++ default when one is
+declared (BlueprintCallable functions carry it), else `MISSING_ARG`; out-only params need no input and
+come back in `out_params`.
+
+Reply: `{success, function, object_path, world_path, net_mode, pie_instance, callspace,
+executed_locally, return, out_params}`. **Error codes:** the selector and world codes above, plus
+`OBJECT_NOT_FOUND`, `AMBIGUOUS_OBJECT` (two actors share the label), `OBJECT_NOT_IN_WORLD`,
+`FUNCTION_NOT_FOUND`, `INVALID_ARGS_JSON`, `UNKNOWN_ARG` (a key that names no parameter),
+`MISSING_ARG`, `INVALID_ARG_VALUE`, `UNSUPPORTED_ARG_TYPE`, `MAP_PATH_REFUSED`. `console_command` replies `{success,
+command, handled, output, world_path, net_mode, pie_instance}` and fails with `EMPTY_COMMAND` or
+`COMMAND_NOT_HANDLED`; `output` is only what the handler wrote to the command's output device, not the
+log.
+
+> **Why this exists (ZombieGame, 2026-10-22/23):** a gate respawned a dead client's player through a
+> C++ fixture called from Python. The server ran `Possess`, but under the raised guard `ClientRestart`
+> and `ClientSetRotation` executed **on the server**, so the owning client never acknowledged its new
+> pawn: its movement component stayed `MOVE_None`, it sent no moves, and its copy froze while the
+> train rode on. It looked like a product regression for a whole day; the log tell was
+> `ClientRestart_Implementation` printed in the server's frame. Scoping the guard to false around the
+> flow fixed it, and `call_function` does exactly that for you.
 
 ## Driving gameplay input in PIE — `InputService` (issue #550)
 
@@ -299,6 +391,22 @@ The `capture_image` MCP tool with `source="game"` screenshots the PIE viewport *
 Slate/UMG HUD** and returns a real image block you can look at (plus a PNG under
 `Saved/VibeUE/Captures`). This replaces the old `Shot showui` + read-the-file workaround — and
 `CaptureViewport` can never see PIE or UI at all.
+
+**Multi-player PIE: pick the window with `pie_instance`.** Plain `source="game"` captures only the
+editor's current game viewport (one instance). Pass the PIE instance number to capture a specific
+one — no foreground-window juggling:
+
+```
+capture_image {"source": "game", "pie_instance": 0}   # first PIE window (the listen server)
+capture_image {"source": "game", "pie_instance": 2}   # client 2
+```
+
+The reply carries `pie_instance` (the instance captured). An unknown instance returns
+`error_code: "PIE_INSTANCE_NOT_FOUND"` with `available_pie_instances` (empty when PIE is not
+running); a dedicated-server instance has no viewport (`PIE_INSTANCE_NO_VIEWPORT`).
+
+**"window is minimized"?** A minimized editor also freezes PIE (world time stays 0). Restore it from
+`execute_python_code` with `unreal.ViewportService.set_editor_window_state("restore")`.
 
 ## Full-rate unfocused verification — `PerformanceService` (issue #549)
 
@@ -353,4 +461,5 @@ unreal.PerformanceService.set_background_throttling(True)    # after
 - A Server RPC invoked from Python runs LOCALLY and is silently dropped; never Start/StopFire a client world's weapon from Python (it crashes the editor). Move a client pawn through its server copy; control rotation is client-owned.
 - `slomo 0.1` stretches a 2 s timer to 20 s of wall time so a transient state survives between calls; restore `slomo 1` after. PIE time restarts each run.
 - Never leave an automation test run queued before starting PIE — it wakes on PIE activity and tears the session down.
+- Don't hand-roll waits with `time.sleep()` or your own post-tick callback. `vibeue.wait_for(pred, timeout_s)` and `vibeue.wait_for_players(n)` poll between calls against a wall-clock deadline (PIE world time restarts each session), and `vibeue.cancel_all_waits()` purges their handles. `with vibeue.gate_session(clients=3, net_mode="ListenServer"):` turns background throttling off, sets the PIE settings and restores both afterwards. See the `vibeue` skill.
 - Globals in the `execute_python_code` script namespace persist across calls (it is a separate dict from `sys.modules["__main__"]`, so `import __main__` does not see them): use them to collect async tool results (`vibeue.exec_tool_async`/`collect_tool_result`), and release PIE object references (`vibeue.release_globals`) before `StopPIE`.

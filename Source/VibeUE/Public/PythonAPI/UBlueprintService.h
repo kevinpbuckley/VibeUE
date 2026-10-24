@@ -1355,10 +1355,21 @@ public:
 	 * @param BlueprintPath     - Full path to the blueprint
 	 * @param ComponentName     - Name of the component (must be a UPrimitiveComponent)
 	 * @param CollisionEnabled  - "NoCollision", "QueryOnly", "PhysicsOnly", "QueryAndPhysics" (empty = no change)
-	 * @param ObjectType        - "WorldStatic", "WorldDynamic", "Pawn", "Visibility", "Camera", "PhysicsBody", "Vehicle", "Destructible" (empty = no change)
+	 * @param ObjectType        - Channel name (empty = no change). Same names as ChannelResponses keys.
 	 * @param CollisionProfile  - Profile name e.g. "Custom", "BlockAll", "OverlapAll", "NoCollision" (empty = no change)
-	 * @param ChannelResponses  - Map of channel name -> response: "Ignore", "Overlap", "Block" (empty map = no change)
-	 * @return True if successful
+	 * @param ChannelResponses  - Map of channel name -> response: "Ignore", "Overlap", "Block" (empty map = no change).
+	 *                            Channel names: the engine channels "WorldStatic", "WorldDynamic", "Pawn", "Visibility",
+	 *                            "Camera", "PhysicsBody", "Vehicle", "Destructible"; the project's custom channel names
+	 *                            as configured in DefaultEngine.ini (e.g. "Weapon"); or the raw enum names
+	 *                            "ECC_WorldStatic" / "ECC_GameTraceChannel1".."ECC_GameTraceChannel18". Case-insensitive.
+	 * @return True if successful. An unknown channel name (ObjectType or a ChannelResponses key), response or
+	 *         CollisionEnabled value refuses the whole call before anything is written; the error log lists the
+	 *         valid values.
+	 *
+	 * Placed actors and child Blueprints whose component still holds the OLD template value get the new value
+	 * (the details panel's rule); an instance that overrode a field keeps its override. Each placed actor it
+	 * touches has its package marked dirty (in World Partition, one external actor package per actor) with NO
+	 * undo transaction: the change cannot be undone, and the next save or auto_save sweep writes those packages.
 	 *
 	 * Example:
 	 *   unreal.BlueprintService.set_collision_settings(

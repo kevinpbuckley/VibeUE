@@ -11,6 +11,8 @@
 #include "UObject/Package.h"
 #include "UObject/UObjectIterator.h" // TObjectIterator<UWorld> for the resident-map check
 #include "Engine/World.h"
+#include "Engine/Level.h"          // ULevel::OwningWorld, for the sublevel filter in GetResidentMaps
+#include "Engine/LevelStreaming.h" // ULevelStreaming::GetLoadedLevel
 #include "FileHelpers.h" // FEditorFileUtils + UEditorLoadingAndSavingUtils (headless SavePackages)
 
 // Include service headers after PythonTypes
@@ -75,7 +77,114 @@ TArray<FString> UPythonTools::GetResidentMapWorlds()
 	return Resident;
 }
 
+TArray<FString> UPythonTools::GetResidentMaps()
+{
+	// Narrower than the resident_maps reply field (which keeps GetResidentMapWorlds' rule unchanged):
+	// a legacy streaming sublevel of the open map is a separate map package that is resident by design,
+	// and the level change unloads it with its persistent world. Reporting it here would make
+	// vibeue.safe_load_level refuse forever on any map that has sublevels.
+	TArray<FString> Resident = GetResidentMapWorlds();
+	const UWorld* EditorWorld = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+	if (!EditorWorld || Resident.Num() == 0)
+	{
+		return Resident;
+	}
+
+	TSet<FString> Sublevels;
+	for (const ULevelStreaming* Streaming : EditorWorld->GetStreamingLevels())
+	{
+		const ULevel* Loaded = Streaming ? Streaming->GetLoadedLevel() : nullptr;
+		const UWorld* SublevelWorld = Loaded ? Loaded->GetTypedOuter<UWorld>() : nullptr;
+		if (SublevelWorld && SublevelWorld != EditorWorld)
+		{
+			Sublevels.Add(SublevelWorld->GetPathName());
+		}
+	}
+	for (TObjectIterator<UWorld> It; It; ++It)
+	{
+		const UWorld* World = *It;
+		if (World && World != EditorWorld && World->PersistentLevel && World->PersistentLevel->OwningWorld == EditorWorld)
+		{
+			Sublevels.Add(World->GetPathName());
+		}
+	}
+	Resident.RemoveAll([&Sublevels](const FString& Path) { return Sublevels.Contains(Path); });
+	return Resident;
+}
+
+TArray<FString> UPythonTools::GetDirtyPackages(bool bIncludeMaps)
+{
+	TArray<FString> Names;
+	if (!GEditor)
+	{
+		return Names;
+	}
+
+	// The same enumeration as the pre-run auto-save sweep, so this is exactly what an auto_save=true
+	// call would write.
+	TArray<UPackage*> DirtyPackages;
+	FEditorFileUtils::GetDirtyContentPackages(DirtyPackages);
+	if (bIncludeMaps)
+	{
+		FEditorFileUtils::GetDirtyWorldPackages(DirtyPackages);
+	}
+
+	// A TSet, not AddUnique: a World Partition map can have thousands of dirty external-actor packages,
+	// and this runs twice per execute_python_code call.
+	TSet<FString> Unique;
+	Unique.Reserve(DirtyPackages.Num());
+	for (const UPackage* DirtyPackage : DirtyPackages)
+	{
+		if (DirtyPackage)
+		{
+			Unique.Add(DirtyPackage->GetName());
+		}
+	}
+	Names = Unique.Array();
+	Names.Sort();
+	return Names;
+}
+
+void UPythonTools::ComputeDirtyPackageDelta(const TArray<FString>& Before, const TArray<FString>& After,
+	TArray<FString>& OutDirtied, TArray<FString>& OutCleaned)
+{
+	OutDirtied.Reset();
+	OutCleaned.Reset();
+
+	const TSet<FString> BeforeSet(Before);
+	const TSet<FString> AfterSet(After);
+	for (const FString& Name : AfterSet)
+	{
+		if (!BeforeSet.Contains(Name))
+		{
+			OutDirtied.Add(Name);
+		}
+	}
+	for (const FString& Name : BeforeSet)
+	{
+		if (!AfterSet.Contains(Name))
+		{
+			OutCleaned.Add(Name);
+		}
+	}
+	OutDirtied.Sort();
+	OutCleaned.Sort();
+}
+
 using namespace VibeUE;
+
+// Write a string list as a JSON array field (an empty list still writes the key: reply fields are
+// always present, so a caller can index them without a presence check).
+static void SetStringArrayField(const TSharedPtr<FJsonObject>& Obj, const TCHAR* FieldName, const TArray<FString>& Values)
+{
+	TArray<TSharedPtr<FJsonValue>> Arr;
+	Arr.Reserve(Values.Num());
+	for (const FString& Value : Values)
+	{
+		Arr.Add(MakeShared<FJsonValueString>(Value));
+	}
+	Obj->SetArrayField(FieldName, Arr);
+}
 
 // Track whether the last Python execution crashed (SEH-caught).
 // When true, skip auto-save to avoid serializing potentially corrupt assets.
@@ -233,6 +342,9 @@ FString UPythonTools::ExecutePythonCode(const FString& Code, bool bAutoSave)
 			ErrorObj->SetStringField(TEXT("error_message"), FString::Printf(
 				TEXT("Blocked world-mutating Python execution: %s Retry in a few seconds after the level finishes loading."),
 				*BlockReason));
+			// Nothing ran, so nothing was dirtied or cleaned; the keys are still present.
+			SetStringArrayField(ErrorObj, TEXT("dirtied_packages"), TArray<FString>());
+			SetStringArrayField(ErrorObj, TEXT("cleaned_packages"), TArray<FString>());
 			FString JsonString;
 			TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
 			FJsonSerializer::Serialize(ErrorObj.ToSharedRef(), Writer);
@@ -344,6 +456,16 @@ FString UPythonTools::ExecutePythonCode(const FString& Code, bool bAutoSave)
 		Obj->SetArrayField(TEXT("saved_packages"), SavedArray);
 	};
 
+	// What the script itself dirtied and cleaned (filled once it has run). Attached to every JSON
+	// reply below, empty when the script never ran, so callers can rely on both keys.
+	TArray<FString> DirtiedPackageNames;
+	TArray<FString> CleanedPackageNames;
+	auto AddDirtyInfo = [&DirtiedPackageNames, &CleanedPackageNames](const TSharedPtr<FJsonObject>& Obj)
+	{
+		SetStringArrayField(Obj, TEXT("dirtied_packages"), DirtiedPackageNames);
+		SetStringArrayField(Obj, TEXT("cleaned_packages"), CleanedPackageNames);
+	};
+
 	auto Service = GetExecutionService();
 	if (!Service.IsValid() || !Service.Get())
 	{
@@ -352,6 +474,7 @@ FString UPythonTools::ExecutePythonCode(const FString& Code, bool bAutoSave)
 		ErrorObj->SetStringField(TEXT("error_code"), TEXT("PYTHON_SERVICE_UNAVAILABLE"));
 		ErrorObj->SetStringField(TEXT("error_message"), TEXT("Python execution service is not available"));
 		AddSaveInfo(ErrorObj);
+		AddDirtyInfo(ErrorObj);
 		FString JsonString;
 		TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
 		FJsonSerializer::Serialize(ErrorObj.ToSharedRef(), Writer);
@@ -366,13 +489,27 @@ FString UPythonTools::ExecutePythonCode(const FString& Code, bool bAutoSave)
 		ErrorObj->SetStringField(TEXT("error_code"), TEXT("SERVICE_CONTEXT_INVALID"));
 		ErrorObj->SetStringField(TEXT("error_message"), TEXT("Service context is not properly initialized"));
 		AddSaveInfo(ErrorObj);
+		AddDirtyInfo(ErrorObj);
 		FString JsonString;
 		TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
 		FJsonSerializer::Serialize(ErrorObj.ToSharedRef(), Writer);
 		return JsonString;
 	}
 
+	// Snapshot the dirty set immediately around the script. The auto-save sweep above has already
+	// run, so its saves are not attributed to the script, and dirt that predates this call never shows
+	// up as "dirtied". Taken on the error path too: a script that raised half-way through an edit is
+	// exactly the one whose stray dirt a later auto_save=true call would otherwise flush to disk.
+	const TArray<FString> DirtyBeforeRun = GetDirtyPackages(/*bIncludeMaps=*/true);
+
 	auto Result = Service->ExecuteCode(Code);
+
+	// After an SEH-caught crash the editor may hold half-torn objects, and the after-snapshot walks every
+	// UPackage outside the crash guard - so skip it and report empty lists rather than risk a second crash.
+	if (!(Result.IsError() && Result.GetErrorCode() == FString(ErrorCodes::PYTHON_EDITOR_CRASH)))
+	{
+		ComputeDirtyPackageDelta(DirtyBeforeRun, GetDirtyPackages(/*bIncludeMaps=*/true), DirtiedPackageNames, CleanedPackageNames);
+	}
 
 	// Maps this run has left resident (see GetResidentMapWorlds). Computed here, BEFORE the error
 	// branch, because the run that strands a map is frequently the same run that raised - that was
@@ -417,6 +554,7 @@ FString UPythonTools::ExecutePythonCode(const FString& Code, bool bAutoSave)
 		ErrorObj->SetStringField(TEXT("error_message"), Result.GetErrorMessage());
 		AddSaveInfo(ErrorObj);
 		AddResidentInfo(ErrorObj);
+		AddDirtyInfo(ErrorObj);
 		FString JsonString;
 		TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
 		FJsonSerializer::Serialize(ErrorObj.ToSharedRef(), Writer);
@@ -432,6 +570,8 @@ FString UPythonTools::ExecutePythonCode(const FString& Code, bool bAutoSave)
 	Value.AutoSaveNote = AutoSaveNote;
 	Value.SavedPackages = SavedPackageNames;
 	Value.ResidentMaps = ResidentMaps;
+	Value.DirtiedPackages = DirtiedPackageNames;
+	Value.CleanedPackages = CleanedPackageNames;
 	return ConvertExecutionResultToJson(Value);
 }
 
@@ -628,6 +768,10 @@ FString UPythonTools::ConvertExecutionResultToJson(const VibeUE::FPythonExecutio
 		SavedArray.Add(MakeShared<FJsonValueString>(Name));
 	}
 	JsonObj->SetArrayField(TEXT("saved_packages"), SavedArray);
+
+	// What the script itself dirtied and cleaned (snapshots taken after the auto-save sweep).
+	SetStringArrayField(JsonObj, TEXT("dirtied_packages"), Result.DirtiedPackages);
+	SetStringArrayField(JsonObj, TEXT("cleaned_packages"), Result.CleanedPackages);
 
 	FString JsonString;
 	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);

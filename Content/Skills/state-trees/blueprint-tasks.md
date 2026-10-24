@@ -105,6 +105,7 @@ for t in types:
 ### Blueprint Task Add Rule (No Wrapper-First Guidance)
 
 - Prefer adding blueprint tasks by their registered type name (for example, `STT_Rotate_C`) via `StateTreeService.add_task`.
+- Compile the Blueprint first: `add_task`/`add_global_task`/`add_evaluator` refuse a Blueprint that is edited but not compiled, or has compile errors. A copied `SKEL_<Name>_C` skeleton name resolves to the compiled `<Name>_C` class; other internal names (`REINST_`, `TRASHCLASS_`) are refused.
 - Do not present `StateTreeBlueprintTaskWrapper` as the user-level task outcome when a named blueprint task type exists.
 - If wrapper internals are used by the service implementation, keep that internal and report the added task as the blueprint task name.
 

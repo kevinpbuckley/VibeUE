@@ -32,6 +32,24 @@ public:
 	/** Start the game-thread tick stamp and the background writer. Idempotent. */
 	static void Start();
 
-	/** Stop the writer, remove the ticker, and delete this process's health file. Safe to repeat. */
+	/**
+	 * Stop the writer (joined), remove the ticker, and delete this process's health file. Safe to repeat, and safe
+	 * after RequestStopFromAnyThread. Off the game thread it does RequestStopFromAnyThread instead (no join).
+	 */
 	static void Stop();
+
+	/**
+	 * Forced-exit variant of Stop() for ANY thread (the Windows console-control thread on Ctrl-C/close/logoff,
+	 * or a crashing worker, possibly the writer itself, inside RequestExit(true)): sets the stop flag, wakes the
+	 * writer WITHOUT joining it, and deletes the health file. A heartbeat in flight does not leave the file behind:
+	 * the writer re-checks the flag under the shared lock, and a write that was already past that check deletes
+	 * the files again after its move. Only a hard exit (TerminateProcess) landing between that move and the
+	 * writer's own delete can still leave one. Owns nothing: the thread, event and ticker stay with the game
+	 * thread, so a later Stop() (OnPreExit after a Ctrl-C) still joins and frees them. Waits about 0.2 s at most
+	 * (wall clock) for the writer's lock.
+	 */
+	static void RequestStopFromAnyThread();
+
+	/** True while the game thread owns a writer thread that Stop() has not joined yet (even if it is already stopping). GAME-THREAD ONLY. */
+	static bool IsWriterThreadOwned();
 };

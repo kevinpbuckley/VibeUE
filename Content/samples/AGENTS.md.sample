@@ -53,7 +53,8 @@ tool in a toolset (the most token-heavy thing here); reach for a **skill** plus 
   (use `unreal` lowercase; narrow with `name_filter` / `method_filter`).
 - `list_python_subsystems` — list editor subsystems.
 - `capture_image` — screenshot as a real MCP image (see §6): `source` = `game` (PIE incl. UMG HUD),
-  `window` (whole editor window), or `editor` (viewport scene). Also saves a PNG under
+  `window` (whole editor window), or `editor` (viewport scene); `pie_instance` picks one PIE
+  instance's game viewport in a multi-player session. Also saves a PNG under
   `Saved/VibeUE/Captures` and returns the path.
 - `deep_research` — web search / page fetch / geocode (see §5).
 - `terrain_data` — real-world heightmaps + water splines (see §5).
@@ -149,15 +150,16 @@ sub = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
 info = unreal.BlueprintService.get_blueprint_info("/Game/MyBP")
 
 # Batch a whole task in ONE execute_python_code call, printing evidence as you go.
-# Blueprint create / variables / compile are ENGINE-side (native libs + BlueprintTools toolset),
-# NOT BlueprintService (it owns graphs/components/timelines — see discover_python_class):
+# Blueprint create / variables are ENGINE-side (native libs + BlueprintTools toolset), NOT
+# BlueprintService (it owns graphs/components/timelines and compile — see discover_python_class):
 import json
 factory = unreal.BlueprintFactory(); factory.set_editor_property("ParentClass", unreal.Actor)
 bp = unreal.AssetToolsHelpers.get_asset_tools().create_asset("BP_Enemy", "/Game/Blueprints", unreal.Blueprint, factory); print("CREATED:", bp)
 unreal.ToolsetRegistry.execute_tool("editor_toolset.toolsets.blueprint.BlueprintTools", "add_variable",
     json.dumps({"blueprint": {"refPath": "/Game/Blueprints/BP_Enemy.BP_Enemy"},   # refPath = full object path
                 "name": "Health", "type_name": "float"})); print("ADDED: Health")
-unreal.BlueprintEditorLibrary.compile_blueprint(bp); print("COMPILED: BP_Enemy")
+res = unreal.BlueprintService.compile_blueprint("/Game/Blueprints/BP_Enemy")      # FBlueprintCompileResult
+print("COMPILED: BP_Enemy", res.success, res.num_errors, res.errors)
 ```
 
 ---
@@ -186,7 +188,14 @@ After any **visible** change, capture and actually look before claiming success:
 capture_image                          # editor viewport scene (default when PIE is off)
 capture_image {"source": "game"}       # PIE game viewport INCLUDING the Slate/UMG HUD
 capture_image {"source": "window"}     # the whole editor window (any editor UI/panel)
+capture_image {"source": "game", "pie_instance": 1}   # one PIE instance in a multi-player session
 ```
+If it refuses with "window is minimized" (a minimized editor also freezes PIE), run
+`unreal.ViewportService.set_editor_window_state("restore")` in `execute_python_code` and retry.
+Scripts that change the viewport's FOV or exposure for a shot must restore them: those settings
+persist into the user's editor config. Snapshot with `info = unreal.ViewportService.get_viewport_info()`
+and finish with `unreal.ViewportService.restore_viewport_info(info)`, or use
+`unreal.ViewportService.capture_with_view(...)`, which restores by itself.
 `capture_image` returns a **real MCP image block** — you see the picture directly, no base64
 decoding, no token blowout — and saves a PNG under `Saved/VibeUE/Captures` (path in the result).
 `source="game"` is the ONLY way to screenshot the running game's HUD: Epic's `CaptureViewport`
@@ -223,13 +232,27 @@ To drive gameplay in PIE without OS focus or input-asset remapping:
 tick: read the result in a later call), `inject_action_for("/Game/Input/IA_Block", 1.5)` to hold an
 action (`stop_injection` releases early), and `unreal.InputService.inject_key("SpaceBar")` (raw key via
 Slate; `"hold"` with a duration holds it). Holds keep the editor off its background frame rate and end
-with PIE.
+with PIE. The action calls take `pie_instance` to pick the PIE world (-1 = the first PIE world with a
+local player). Use them instead of a slate-tick loop around `inject_input_vector_for_action`.
+PIE net mode and client count: `unreal.EngineSettingsService.set_pie_settings("ListenServer", 3, True)`
+(net mode, clients 1-10, run under one process; it is saved to the user's ini), read back with
+`get_pie_settings()`.
+
+For gate harnesses, `import vibeue` adds `wait_for` / `wait_for_players` (non-blocking waits: never
+`time.sleep()` on the game thread, it freezes every PIE net driver), `gate_session` (throttling + PIE
+settings, restored on exit), `viewport_state` (camera/FOV/exposure, restored on exit),
+`dirty_snapshot` / `dirty_delta`, `set_prop_pie` and `set_array_prop`. The `vibeue` skill has the details.
 
 To spawn a test actor (blocker, dummy, trigger) into a live PIE world — the one thing native/engine
 spawn can't do (they hit the editor world or refuse during PIE):
 `unreal.PIEActorService.spawn_actor("server", "/Script/Engine.StaticMeshActor", unreal.Transform())`
 (role selector `server`/`client`/`client:N`/`instance:N`; transient; `destroy_all()` to clean up;
 handles die with the PIE session). See the `pie-testing` skill.
+To call a UFUNCTION or RPC in PIE from Python with REAL net routing (plain Python calls run every RPC
+locally): `unreal.PIEActorService.call_function("client:1", "BP_Test_C_0", "Server_Foo", '{"Arg": 1}')`;
+its `callspace` field (`local`/`remote`/`local+remote`/`absorbed`) says whether an RPC was sent.
+`unreal.PIEActorService.console_command("server", "r.VSync 0")` runs a console command in one PIE world
+the same way.
 
 ---
 
@@ -275,9 +298,10 @@ crash handler — MCP will hang; relaunch); fresh and small → the editor is fi
   after each op so a mid-script failure can be undone.
 - **Idempotent: check before create.** Use the service `*_exists()` (or `unreal.EditorAssetLibrary.does_asset_exist`)
   before creating, to avoid duplicates.
-- **Compile after structure changes.** `unreal.BlueprintEditorLibrary.compile_blueprint(unreal.EditorAssetLibrary.load_asset(path))`
-  after adding variables/functions/components (there is no `BlueprintService.compile_blueprint`;
-  `build_graph`'s compile flag also works for graph edits).
+- **Compile after structure changes.** `unreal.BlueprintService.compile_blueprint(path)` after adding
+  variables/functions/components. It returns `success`, `num_errors`, `num_warnings`, `errors` and
+  `warnings`. `unreal.BlueprintEditorLibrary.compile_blueprint(loaded_bp)` also works but returns no
+  errors, and `build_graph`'s compile flag works for graph edits.
 - **Verify success with evidence.** For Blueprint/Widget/Material/AnimGraph/StateTree edits, a successful
   tool call isn't proof — re-read the asset (`get_nodes_in_graph`, `get_connections`, compile result)
   and report brief evidence.
@@ -288,6 +312,12 @@ crash handler — MCP will hang; relaunch); fresh and small → the editor is fi
   is unchanged; after 2 failed attempts at a goal, stop and report — don't try a 3rd variation.
 - **Never** use modal dialogs, `input()`, blocking ops, long `time.sleep()`, or infinite loops.
 - **Full asset paths** (`/Game/Blueprints/BP_Name`). **Colors are 0.0–1.0** (`{"R":1.0,"G":0.5,"B":0.0,"A":1.0}`).
+- **Know what your script dirtied.** Every `execute_python_code` reply carries `dirtied_packages` /
+  `cleaned_packages` (what the SCRIPT left dirty / clean, also on an error) besides `auto_save`,
+  `saved_packages` and `resident_maps`. After a script that raised, check `dirtied_packages` before the next
+  `auto_save=true` call saves a half-finished edit. Mid-script: `unreal.PythonTools.get_dirty_packages()`.
+- **Change level with `vibeue.safe_load_level(path)`**, never a bare `load_level` while `resident_maps` is
+  non-empty: a resident map makes the next level load FATAL the editor. It refuses (raises) instead.
 - **`unreal.EditorLevelLibrary` is deprecated** — use `EditorActorSubsystem` (`get_all_level_actors()`
   + `isinstance` filtering; `get_all_level_actors_of_class` does not exist).
 

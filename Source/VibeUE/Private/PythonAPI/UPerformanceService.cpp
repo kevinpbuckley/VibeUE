@@ -1474,6 +1474,31 @@ FString UPerformanceService::StopPIE()
 
 // True while an agent has asked for full-rate rendering regardless of focus (issue #549).
 static bool GDisableBackgroundThrottling = false;
+// The ShouldDisableCPUThrottlingDelegates entry. Present ONLY while GDisableBackgroundThrottling is set,
+// and it is a lambda compiled into this DLL, so ShutdownThrottlingHook removes it (FModule::OnPreExit and
+// FModule::ShutdownModule).
+static FDelegateHandle GBackgroundThrottlingHook;
+// bThrottleCPUWhenNotForeground as it was before this service turned it off. ShutdownThrottlingHook puts it
+// back, so an override nobody re-enabled does not outlive the module that made it.
+static TOptional<bool> GThrottleSettingBeforeOverride;
+
+// Removes this service's entry by its own handle, so another system's entry (InputService's hold scope among
+// them) is never touched. With GEditor already gone (late module shutdown) the array went with the editor
+// engine; only the handle is reset.
+static void RemoveBackgroundThrottlingHook()
+{
+	if (!GBackgroundThrottlingHook.IsValid())
+	{
+		return;
+	}
+	if (GEditor)
+	{
+		const FDelegateHandle Handle = GBackgroundThrottlingHook;
+		GEditor->ShouldDisableCPUThrottlingDelegates.RemoveAll(
+			[Handle](const UEditorEngine::FShouldDisableCPUThrottling& D) { return D.GetHandle() == Handle; });
+	}
+	GBackgroundThrottlingHook.Reset();
+}
 
 FString UPerformanceService::SetBackgroundThrottling(bool bEnabled)
 {
@@ -1483,20 +1508,36 @@ FString UPerformanceService::SetBackgroundThrottling(bool bEnabled)
 	if (!Settings) return ErrJson(TEXT("NO_SETTINGS"), TEXT("EditorPerformanceSettings not available."));
 
 	const bool bPreviousThrottle = Settings->bThrottleCPUWhenNotForeground != 0;
+	// Remember the value from before the FIRST disable (a repeated disable keeps it); re-enabling ends the override.
+	if (!bEnabled && !GDisableBackgroundThrottling)
+	{
+		GThrottleSettingBeforeOverride = bPreviousThrottle;
+	}
+	else if (bEnabled)
+	{
+		GThrottleSettingBeforeOverride.Reset();
+	}
 	Settings->bThrottleCPUWhenNotForeground = bEnabled;
 	// Session-only on purpose: no SaveConfig(). PostEditChange so the unfocused-viewport render
 	// disable (which reads this setting) re-evaluates.
 	Settings->PostEditChange();
 
 	// The settings flag doesn't cover a minimized editor (AreAllWindowsHidden) — the engine checks
-	// ShouldDisableCPUThrottlingDelegates first, so register one that tracks our state.
+	// ShouldDisableCPUThrottlingDelegates first, so one entry is registered exactly while throttling is off.
+	// The engine skips throttling as soon as ANY entry returns true, so entries compose as an OR: this one and
+	// InputService's hold scope each return true only while their own reason holds, and each removes only its
+	// own entry, by handle.
 	GDisableBackgroundThrottling = !bEnabled;
-	static bool bDelegateRegistered = false;
-	if (!bDelegateRegistered)
+	if (GDisableBackgroundThrottling && !GBackgroundThrottlingHook.IsValid())
 	{
-		GEditor->ShouldDisableCPUThrottlingDelegates.Add(
-			UEditorEngine::FShouldDisableCPUThrottling::CreateLambda([]() { return GDisableBackgroundThrottling; }));
-		bDelegateRegistered = true;
+		UEditorEngine::FShouldDisableCPUThrottling Delegate =
+			UEditorEngine::FShouldDisableCPUThrottling::CreateLambda([]() { return GDisableBackgroundThrottling; });
+		GBackgroundThrottlingHook = Delegate.GetHandle();
+		GEditor->ShouldDisableCPUThrottlingDelegates.Add(MoveTemp(Delegate));
+	}
+	else if (!GDisableBackgroundThrottling)
+	{
+		RemoveBackgroundThrottlingHook();
 	}
 
 	TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
@@ -1517,4 +1558,21 @@ FString UPerformanceService::GetBackgroundThrottling()
 	R->SetBoolField(TEXT("throttling_enabled"), Settings->bThrottleCPUWhenNotForeground != 0);
 	R->SetBoolField(TEXT("delegate_override_active"), GDisableBackgroundThrottling);
 	return OkJson(R);
+}
+
+void UPerformanceService::ShutdownThrottlingHook()
+{
+	RemoveBackgroundThrottlingHook();
+	// An override still on at teardown goes back to the value from before it. Assigned without PostEditChange:
+	// this runs during editor exit / module unload, and the engine reads the flag directly every tick anyway
+	// (UEditorEngine::ShouldThrottleCPUUsage and the unfocused-viewport check).
+	if (GDisableBackgroundThrottling && GThrottleSettingBeforeOverride.IsSet() && UObjectInitialized())
+	{
+		if (UEditorPerformanceSettings* Settings = GetMutableDefault<UEditorPerformanceSettings>())
+		{
+			Settings->bThrottleCPUWhenNotForeground = GThrottleSettingBeforeOverride.GetValue();
+		}
+	}
+	GDisableBackgroundThrottling = false;
+	GThrottleSettingBeforeOverride.Reset();
 }

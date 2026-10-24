@@ -146,6 +146,21 @@ struct VIBEUE_API FPythonExecutionResult
 	 * the next level change will crash until the references are dropped and garbage is collected.
 	 */
 	TArray<FString> ResidentMaps;
+
+	/**
+	 * Content and world packages that were clean immediately before the script ran and dirty right
+	 * after it, sorted. The "before" snapshot is taken AFTER the auto-save sweep, so the sweep's own
+	 * saves never show here, and dirt that predates the run is never attributed to it. May include a
+	 * never-saved map's /Temp/Untitled_N package and the MapBuildData package the world enumeration itself
+	 * marks dirty. Empty after an SEH-caught crash (the after-snapshot is skipped then).
+	 */
+	TArray<FString> DirtiedPackages;
+
+	/**
+	 * Content and world packages that were dirty immediately before the script ran and are no longer
+	 * dirty (saved, cleaned or unloaded) right after it, sorted.
+	 */
+	TArray<FString> CleanedPackages;
 };
 
 /**

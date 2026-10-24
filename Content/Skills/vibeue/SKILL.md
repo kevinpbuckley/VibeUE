@@ -209,6 +209,16 @@ the script WITHOUT that sweep -- use it when you do not want in-flight editor ed
 or to keep a mutation you are about to make from being interleaved with an unrelated dirty package.
 The sweep is skipped anyway after a crashed run, when GEditor is missing, or in PIE.
 
+**`dirtied_packages` / `cleaned_packages` (always present, also on an error reply).** The packages
+YOUR SCRIPT left dirty, and the ones it left clean (saved, cleaned or unloaded), from snapshots taken
+after the auto-save sweep and right after the script. Pre-existing dirt and the sweep's own saves never
+show up there. Check `dirtied_packages` after a script that raised: a half-finished edit stays dirty,
+and the next `auto_save=true` call would save it. To read the dirty set mid-script, use
+`unreal.PythonTools.get_dirty_packages()` (pass `False` to leave maps out) instead of snapshotting
+`EditorLoadingAndSavingUtils.get_dirty_content_packages()` by hand. Expect two engine extras in the
+list: a never-saved map appears as `/Temp/Untitled_N`, and a dirty unsaved map's MapBuildData package
+can be marked dirty by the enumeration itself. Both lists are empty after a crashed (SEH) run.
+
 ## Never leave a map loaded - it crashes the editor on the next level change
 
 Opening a map as an **asset** keeps it resident:
@@ -245,8 +255,13 @@ So treat this as prevention, not repair:
   ar = unreal.AssetRegistryHelpers.get_asset_registry()
   maps = ar.get_assets_by_path("/Game/Maps", recursive=True)
   ```
-- To **change level**, use `unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).load_level(path)`,
-  which swaps the open world properly. Never `load_asset` a map to "look at it".
+- To **change level**, use `vibeue.safe_load_level(path)`: it reads
+  `unreal.PythonTools.get_resident_maps()` (the `resident_maps` list minus streaming sublevels of the
+  open level) and raises
+  `vibeue.LevelLoadRefused`, loading nothing, while any map other than the open level is resident, when
+  the target itself is resident (unless `allow_resident_target=True`), or when the registry has no map
+  at that path; otherwise it calls `unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).load_level(path)`
+  and returns its bool. Never `load_asset` a map to "look at it".
 
 The open level is never reported - only stragglers.
 
@@ -285,9 +300,57 @@ Performance/Insights tracing is the one net-new VibeUE service â€” `unreal.
 the `profiling` skill) â€” because Unreal 5.8 ships no performance toolset.
 
 
+## Gate and audit helpers in `vibeue`
+
+`import vibeue` also carries the helpers that gate harnesses used to hand-roll. Each has a docstring
+with an example (`help(vibeue.wait_for)`).
+
+```python
+import unreal, vibeue
+
+# Waits never block: the editor does not tick inside a call, and time.sleep() on the game thread
+# freezes every PIE net driver. Start the wait in one call, read it in a later one (or chain .then).
+w = vibeue.wait_for(lambda: some_condition(), timeout_s=10, description="seated")
+vibeue.wait_for_players(3, timeout_s=20).then(lambda w: print("players", w.ok, w.result))
+# ... next call:
+print(w.done, w.ok, w.elapsed_s, vibeue.waits())
+vibeue.cancel_all_waits()                 # unregisters every handle; run at the end of a gate
+
+before = vibeue.dirty_snapshot()          # bracket a read-only audit (pass auto_save=false too)
+print(vibeue.dirty_delta(before))         # {'dirtied': [...], 'cleaned': [...]}
+
+with vibeue.viewport_state():             # camera, FOV and exposure come back on exit
+    unreal.ViewportService.set_exposure(True, 11.5)
+with vibeue.gate_session(clients=3, net_mode="ListenServer"):   # throttling + PIE settings restored
+    pass
+# A gate that spans calls: gs = vibeue.gate_session(...); gs.enter() in call 1, gs.exit() in the last.
+```
+
+- `set_prop_pie(obj, name, value)` writes with notify mode NEVER; the default mode reruns a live PIE
+  actor's construction script and recreates every Blueprint-added component locally.
+  `get_prop(obj, name, default)` returns `default` on a protected property; other errors such as a
+  misspelled name still raise (`strict=True` raises on protected ones too).
+- `set_array_prop(obj, name, values)` copies the values, sets them with notify mode ALWAYS and calls
+  `modify()`. A plain `get_editor_property` + `append` + `set_editor_property` edits a live
+  reference, so the set sees no change: no dirty mark and no undo entry.
+- `mapping_context_priority(subsystem, ctx)` returns the priority, or None. `has_mapping_context`
+  returns the priority, and priority 0 is common, so `bool()` of it is wrong.
+- `canvas_slot(wbp_path, widget)` / `set_canvas_slot(...)` edit a design-time `CanvasPanelSlot`
+  through `<Asset>:WidgetTree.<Widget>`, then compile and save.
+
+### Already in the plugin (stop hand-rolling these)
+
+- `unreal.BlueprintService.compile_blueprint(path)` exists. It returns `FBlueprintCompileResult` (`success`, `num_errors`, `num_warnings`, `errors`, `warnings`).
+- `BlueprintService.set_node_pin_value` writes class and object pins (into the pin's `DefaultObject`), and `get_node_pins` reports them in `default_object`.
+- `unreal.PerformanceService.set_background_throttling(False)` / `get_background_throttling()` replace the hand-written `EditorPerformanceSettings` CDO write. Both return a JSON string.
+- `unreal.InputService.inject_action_for(action_path, seconds, x, y, z, pie_instance)`, `inject_key(key, "hold", seconds)` and `stop_injection(action_path, pie_instance)` replace slate-tick loops around `inject_input_vector_for_action`. `pie_instance` picks the PIE world; -1 means the first PIE world with a local player.
+- `unreal.EngineSettingsService.set_pie_settings(net_mode, clients, run_under_one_process)` / `get_pie_settings()` set and read the PIE net mode ("Standalone", "ListenServer", "Client"). It is saved to the user's ini.
+- `unreal.ActorService.rerun_construction_scripts(label_or_name)` matches an actor by label or object name. It works in the editor world only and refuses during PIE.
+- `WidgetService.capture_preview` applies gamma once and runs the layout prepass. The old double-gamma and bottom-aligned-content bugs are fixed.
+
 ## Additional gotchas
 
 - A Python traceback still proves the MCP link is up — only "Unable to connect" means it is down. A dropped server or a newly added tool needs a Claude Code restart. A stuck call is usually a modal dialog and the client timeout does not stop the script, so persisted results (`vibeue.last_python_result()`) let you read the outcome on the next call rather than re-running.
 - Don't run a headless `UnrealEditor-Cmd` while the GUI editor is starting — they fight over the MCP port and the loser runs with no MCP; the readiness signal's `mcpListening` flag tells you when the port is claimed. `-run=pythonscript` fully substitutes for pure-asset work when no editor runs, but not for World Partition world surgery.
 - Engine toolset quirks: `LogsToolset.GetLogEntries` requires a `pattern`; `StartPIE` via `execute_tool` needs the full options object; results can be double-encoded (`vibeue.exec_tool` decodes them). A genuinely async tool like `CaptureAssetImage` never completes inside one call — fire it with `vibeue.exec_tool_async` and read it with `vibeue.collect_tool_result` on the next call.
-- A leaked `register_slate_post_tick_callback` can survive its own unregister; an editor restart is the only reliable purge.
+- A hand-registered `register_slate_post_tick_callback` whose handle you lost keeps ticking until the editor restarts. A `vibeue.wait_for` wait unregisters its handle when it finishes, and the registry keeps every pending one, so `vibeue.cancel_all_waits()` can end a wait whose `Wait` object you no longer hold.

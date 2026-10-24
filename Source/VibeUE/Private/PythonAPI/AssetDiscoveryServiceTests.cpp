@@ -20,6 +20,12 @@
 #include "Application/ThrottleManager.h"
 #include "Async/TaskGraphInterfaces.h"
 #include "Engine/StaticMesh.h"
+#include "Curves/CurveFloat.h"
+#include "Editor.h"
+#include "Editor/Transactor.h"
+#include "Misc/Guid.h"
+#include "Misc/ScopeExit.h"
+#include "ScopedTransaction.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeAssetReimportTest, "VibeUE.Assets.ReimportAsset",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -195,6 +201,14 @@ bool FVibeDeleteAssetUnattendedResultStructTest::RunTest(const FString&)
 		TestTrue(TEXT("unreferenced asset deletes and reports success in the struct"), Res.bSuccess);
 		TestTrue(TEXT("success carries no error message"), Res.ErrorMessage.IsEmpty());
 		TestFalse(TEXT("asset is actually gone after delete"), UEditorAssetLibrary::DoesAssetExist(AssetPackagePath));
+		// P16: a saved asset's package file must really leave the disk, and the result must say so.
+		TestEqual(TEXT("a saved asset reports file_status 'removed'"), Res.FileStatus, FString(TEXT("removed")));
+		TestTrue(TEXT("a saved asset reports file_removed"), Res.bFileRemoved);
+		FString DeletedFilename;
+		if (FPackageName::TryConvertLongPackageNameToFilename(AssetPackagePath, DeletedFilename, FPackageName::GetAssetPackageExtension()))
+		{
+			TestFalse(TEXT("the package file is really gone from disk"), IFileManager::Get().FileExists(*DeletedFilename));
+		}
 	}
 
 	if (UEditorAssetLibrary::DoesAssetExist(AssetPackagePath))
@@ -393,6 +407,122 @@ bool FVibeAssetImportMeshTest::RunTest(const FString&)
 		}
 		return false;
 	}));
+
+	return true;
+}
+
+// P16: delete_asset_unattended and the undo buffer.
+//  - Inside an OPEN editor transaction every delete is refused (TRANSACTION_OPEN): the engine delete can
+//    reset the undo buffer, and UTransBuffer::Reset with a transaction open cancels it.
+//  - An asset a COMMITTED transaction holds deletes as the engine always did: with undo as its only
+//    holder, ObjectTools resets the undo history and removes it completely. The result reports the
+//    reset (b_undo_buffer_reset, message) and a Warning is logged.
+//
+// The fixture is an in-memory curve in a scratch /Game package: it is never saved, so nothing reaches
+// disk, and the delete reports file_status "never_on_disk". The reset is measured around ForceDeleteObjects
+// and reported on failure returns too (ForceDeleteObjects returning 0, FILE_NOT_REMOVED); those are not
+// exercised here: every engine failure after the delete call either opens a modal FMessageDialog (the
+// OnAssetsCanDelete veto, DeleteSingleObject's "is in use") or needs the package saved to disk
+// (FILE_NOT_REMOVED), so none can be forced headless without writing to disk. NOTE: step 2 resets the editor's undo
+// buffer (that is the engine behaviour under test) - run this suite in a disposable host, not over work.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeDeleteAssetUnattendedUndoBufferTest, "VibeUE.Assets.DeleteAssetUnattendedUndoBuffer",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVibeDeleteAssetUnattendedUndoBufferTest::RunTest(const FString&)
+{
+	if (!GEditor || !GEditor->Trans)
+	{
+		AddInfo(TEXT("No editor transaction buffer; skipping."));
+		return true;
+	}
+	if (!TestFalse(TEXT("no transaction is open when the test starts"), GEditor->IsTransactionActive()))
+	{
+		return false;
+	}
+
+	const FString Leaf = FString::Printf(TEXT("Curve_UndoDelete_%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+	const FString AssetPath = FString(TEXT("/Game/__VibeUETest/")) + Leaf;
+	UPackage* Package = CreatePackage(*AssetPath);
+	if (!TestNotNull(TEXT("created the scratch package"), Package))
+	{
+		return false;
+	}
+	UCurveFloat* Curve = NewObject<UCurveFloat>(Package, *Leaf, RF_Public | RF_Standalone | RF_Transactional);
+	if (!TestNotNull(TEXT("created the scratch curve"), Curve))
+	{
+		return false;
+	}
+	FAssetRegistryModule::AssetCreated(Curve);
+	const TWeakObjectPtr<UPackage> WeakPackage(Package);
+	const TWeakObjectPtr<UCurveFloat> WeakCurve(Curve);
+	ON_SCOPE_EXIT
+	{
+		// Whatever step failed: leave nothing dirty for a later auto-save sweep, and nothing registered.
+		if (UCurveFloat* Leftover = WeakCurve.Get())
+		{
+			FAssetRegistryModule::AssetDeleted(Leftover);
+			Leftover->ClearFlags(RF_Public | RF_Standalone);
+			Leftover->MarkAsGarbage();
+		}
+		if (UPackage* Leftover = WeakPackage.Get())
+		{
+			Leftover->SetDirtyFlag(false);
+		}
+	};
+	TestTrue(TEXT("the scratch asset is visible to the delete path"), UEditorAssetLibrary::DoesAssetExist(AssetPath));
+
+	AddExpectedMessage(TEXT("while an editor transaction is open"), ELogVerbosity::Warning,
+		EAutomationExpectedMessageFlags::Contains, 1, /*IsRegex=*/false);
+
+	// 1. Inside a still-open transaction: refused even when forced, and nothing is touched.
+	{
+		FScopedTransaction Transaction(NSLOCTEXT("VibeUETests", "UndoDeleteProbe", "VibeUE undo-delete probe"));
+		if (!TestTrue(TEXT("the probe transaction opened"), Transaction.IsOutstanding()))
+		{
+			return false;
+		}
+		// A REAL change, not a bare Modify(): UTransBuffer::End drops a transaction whose records hold no
+		// change (FTransaction::IsTransient -> UndoBuffer.Pop, EditorTransaction.cpp), so a snapshot of an
+		// unchanged curve vanishes at commit and step 2 would have nothing to test.
+		Curve->Modify();
+		Curve->FloatCurve.AddKey(0.0f, 1.0f);
+		Curve->FloatCurve.AddKey(1.0f, 2.0f);
+
+		const FUnattendedDeleteResult Res = UAssetDiscoveryService::DeleteAssetUnattended(AssetPath, /*bForceEvenIfReferenced=*/true);
+		TestFalse(TEXT("open transaction: refused even when forced"), Res.bSuccess);
+		TestEqual(TEXT("open transaction: error_code is TRANSACTION_OPEN"), Res.ErrorCode, FString(TEXT("TRANSACTION_OPEN")));
+		TestTrue(TEXT("open transaction: nothing about the file or undo is reported"),
+			Res.FileStatus.IsEmpty() && !Res.bFileRemoved && !Res.bUndoBufferReset);
+		TestTrue(TEXT("open transaction: the transaction is still open afterwards"), GEditor->IsTransactionActive());
+		TestTrue(TEXT("open transaction: the asset still exists"), WeakCurve.IsValid() && UEditorAssetLibrary::DoesAssetExist(AssetPath));
+	}
+	TestFalse(TEXT("the probe transaction is closed"), GEditor->IsTransactionActive());
+
+	// Fixture precondition, not the product check: the committed transaction must still hold the curve.
+	// Compared directly (not by queue length, which can stay flat when the buffer trims at its size limit).
+	if (!GEditor->IsObjectInTransactionBuffer(Curve))
+	{
+		AddWarning(TEXT("The editor transactor did not keep the committed probe transaction; skipping the undo-held step. ")
+			TEXT("This is a fixture gap, not a delete_asset_unattended result."));
+		return true;
+	}
+
+	AddExpectedMessage(TEXT("is in the undo buffer; the engine resets the undo history to delete it"), ELogVerbosity::Warning,
+		EAutomationExpectedMessageFlags::Contains, 1, /*IsRegex=*/false);
+
+	// 2. Committed and undo-held, NOT forced: deletes as the engine always did, and says the history went.
+	{
+		const FUnattendedDeleteResult Res = UAssetDiscoveryService::DeleteAssetUnattended(AssetPath, /*bForceEvenIfReferenced=*/false);
+		TestTrue(FString::Printf(TEXT("undo-held: the delete succeeds ('%s')"), *Res.ErrorMessage), Res.bSuccess);
+		TestTrue(TEXT("undo-held: no error code"), Res.ErrorCode.IsEmpty());
+		TestTrue(TEXT("undo-held: b_undo_buffer_reset is reported"), Res.bUndoBufferReset);
+		TestTrue(FString::Printf(TEXT("undo-held: message names the reset ('%s')"), *Res.Message), Res.Message.Contains(TEXT("reset the undo history")));
+		TestFalse(FString::Printf(TEXT("undo-held: message does not claim the history survived ('%s')"), *Res.Message), Res.Message.Contains(TEXT("did NOT reset")));
+		TestEqual(TEXT("undo-held: file_status reports an asset that was never on disk"), Res.FileStatus, FString(TEXT("never_on_disk")));
+		TestFalse(TEXT("undo-held: file_removed is false when there was no file"), Res.bFileRemoved);
+		TestFalse(TEXT("undo-held: the asset is gone from the registry"), UEditorAssetLibrary::DoesAssetExist(AssetPath));
+		TestEqual(TEXT("undo-held: the engine reset the undo history"), GEditor->Trans->GetQueueLength(), 0);
+	}
 
 	return true;
 }

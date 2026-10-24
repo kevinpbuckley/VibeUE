@@ -19,7 +19,7 @@ struct FUnattendedDeleteResult
 {
 	GENERATED_BODY()
 
-	/** True only when the asset is gone. */
+	/** True only when the asset is gone: out of memory and the registry, and its package file off disk if it had one. */
 	UPROPERTY(BlueprintReadWrite, Category = "Assets")
 	bool bSuccess = false;
 
@@ -30,6 +30,44 @@ struct FUnattendedDeleteResult
 	/** Human-readable reason when the delete did not happen; empty on success. */
 	UPROPERTY(BlueprintReadWrite, Category = "Assets")
 	FString ErrorMessage;
+
+	/**
+	 * Machine-readable refusal code. "TRANSACTION_OPEN": an editor transaction is still open, so nothing
+	 * was deleted. "FILE_NOT_REMOVED": the engine delete ran but the package file is still on disk. Empty on success
+	 * and on the older refusal paths (empty path, not found, read-only, referenced, native GC root),
+	 * which ErrorMessage describes.
+	 */
+	UPROPERTY(BlueprintReadWrite, Category = "Assets")
+	FString ErrorCode;
+
+	/** True when the asset's package file existed on disk before the delete and is gone after it. */
+	UPROPERTY(BlueprintReadWrite, Category = "Assets")
+	bool bFileRemoved = false;
+
+	/**
+	 * What happened to the package FILE: "removed", "never_on_disk" (an in-memory asset that was never
+	 * saved, so there was no file to remove), "still_on_disk" (bSuccess is false, ErrorCode
+	 * FILE_NOT_REMOVED), or empty when the call refused before deleting anything.
+	 */
+	UPROPERTY(BlueprintReadWrite, Category = "Assets")
+	FString FileStatus;
+
+	/**
+	 * True when the editor's undo history was reset across the engine delete call: the undo queue held at
+	 * least one transaction before ForceDeleteObjects and none after (the engine resets it whenever undo is
+	 * the asset's only holder). Earlier edits can no longer be undone. Reported on EVERY return after the
+	 * delete call, failures included (bSuccess false, e.g. FILE_NOT_REMOVED); false on refusals before it.
+	 */
+	UPROPERTY(BlueprintReadWrite, Category = "Assets")
+	bool bUndoBufferReset = false;
+
+	/**
+	 * Human-readable note, set whenever there is something to say about the undo history or the delete
+	 * outcome, on success or failure (e.g. that the undo history was reset, or that an undo-held asset's
+	 * history was NOT reset); empty otherwise. Errors themselves go in ErrorMessage.
+	 */
+	UPROPERTY(BlueprintReadWrite, Category = "Assets")
+	FString Message;
 };
 
 /**
@@ -159,6 +197,23 @@ public:
 	 * the asset. A read-only package is also refused before ForceDeleteObjects, preventing its remaining
 	 * read-only-package prompt. The function therefore preserves its unattended/no-modal contract.
 	 *
+	 * OPEN TRANSACTION: every delete is refused with ErrorCode "TRANSACTION_OPEN" while an editor
+	 * transaction is still open (e.g. inside a unreal.ScopedEditorTransaction block). The engine delete
+	 * can reset the undo buffer, and a reset with a transaction open cancels that transaction.
+	 *
+	 * UNDO BUFFER: an asset a committed transaction still holds is deleted as the engine always did:
+	 * when undo is its only holder, the engine's delete resets the undo history (ObjectTools.cpp
+	 * DeleteSingleObject / CleanupAfterSuccessfulDelete) and the asset goes completely. A Warning is
+	 * logged. bUndoBufferReset (the undo queue went from non-empty to empty across the delete call) and
+	 * Message report what happened on every return after the delete call, success or failure, not only
+	 * on success. bForceEvenIfReferenced does not affect this.
+	 * If undo AND another holder keep the package, the engine leaves its file on disk; the FILE CHECK
+	 * reports that.
+	 *
+	 * FILE CHECK: after the engine delete the package file is looked up on disk again. bFileRemoved and
+	 * FileStatus report it; a file that is still there makes the call fail with ErrorCode
+	 * "FILE_NOT_REMOVED" (the asset would come back on the next editor start).
+	 *
 	 * @param AssetPath              - Package path of the asset (/Game/Folder/Asset)
 	 * @param bForceEvenIfReferenced - True: delete anyway and clear references; false: refuse if referenced
 	 * @return FUnattendedDeleteResult: bSuccess, Referencers (filled on refusal AND on force), ErrorMessage
@@ -166,7 +221,9 @@ public:
 	 * Python usage (the result struct always comes back, so the reason survives a refusal):
 	 *   result = unreal.AssetDiscoveryService.delete_asset_unattended("/Game/Anim/AS_Temp", True)
 	 *   if not result.b_success:
-	 *       print(result.error_message, result.referencers)
+	 *       print(result.error_code, result.error_message, result.referencers)
+	 *   else:
+	 *       print(result.file_status, result.b_file_removed, result.b_undo_buffer_reset, result.message)
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable, CPP_Default_bForceEvenIfReferenced = "false"), Category = "VibeUE|Assets")
 	static FUnattendedDeleteResult DeleteAssetUnattended(

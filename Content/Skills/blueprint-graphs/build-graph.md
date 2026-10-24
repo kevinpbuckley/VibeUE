@@ -124,6 +124,9 @@ if result.errors:
   `ref_to_node_id` like a fresh node, so connections just work.
 - **Pin defaults on existing nodes**: use `set_node_pin_value(bp, graph, node_id, pin, value)` —
   struct pins accept serialized text, e.g. a GameplayTag pin takes `(TagName="My.Tag")`.
+- **Class and object pins** take an object path (`"/Script/Engine.StaticMeshActor"`), which is
+  written into the pin's `DefaultObject`. `get_node_pins` reports it in `default_object`, because
+  `default_value` holds only string defaults. An unresolvable path returns False.
 - The engine `BlueprintTools.compile_blueprint` tool (via `call_tool`) requires the FULL object
   path (`/Game/X/BP_Foo.BP_Foo`); from Python prefer
   `unreal.BlueprintEditorLibrary.compile_blueprint(loaded_bp)`.

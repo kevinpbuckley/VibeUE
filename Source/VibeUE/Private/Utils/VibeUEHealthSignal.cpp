@@ -5,6 +5,7 @@
 #include "Utils/VibeUEReadinessSignal.h"
 #include "Utils/VibeUEMcpStatus.h"
 #include "Containers/Ticker.h"
+#include "HAL/CriticalSection.h"
 #include "HAL/Event.h"
 #include "HAL/FileManager.h"
 #include "HAL/PlatformProcess.h"
@@ -12,6 +13,7 @@
 #include "HAL/Thread.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Misc/ScopeLock.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 
@@ -32,9 +34,28 @@ namespace
 	FTSTicker::FDelegateHandle GTickerHandle;
 	TUniquePtr<FThread> GWriterThread;
 	FEvent* GStopEvent = nullptr;
+	// Held by the writer for one write-then-move, and by RequestStopFromAnyThread while it sets the stop flag and
+	// deletes the file, so a heartbeat in flight can never re-create a file that a forced exit just deleted. Also
+	// guards GStopEvent's lifetime against that off-thread Trigger. Recursive (FCriticalSection is): a writer that
+	// crashes mid-write reaches RequestStopFromAnyThread on itself and must not deadlock.
+	FCriticalSection GHealthWriteLock;
+
+	void DeleteHealthFiles()
+	{
+		IFileManager& FileManager = IFileManager::Get();
+		const FString HealthPath = FVibeUEHealthSignal::GetHealthPathForPid(FPlatformProcess::GetCurrentProcessId());
+		FileManager.Delete(*HealthPath, /*RequireExists=*/false, /*EvenReadOnly=*/true, /*Quiet=*/true);
+		FileManager.Delete(*(HealthPath + TEXT(".tmp")), /*RequireExists=*/false, /*EvenReadOnly=*/true, /*Quiet=*/true);
+	}
 
 	void WriteHealthFile()
 	{
+		FScopeLock Lock(&GHealthWriteLock);
+		if (GStopRequested.load())
+		{
+			return;
+		}
+
 		const uint32 ProcessId = FPlatformProcess::GetCurrentProcessId();
 		const FString HealthPath = FVibeUEHealthSignal::GetHealthPathForPid(ProcessId);
 		const FString TempPath = HealthPath + TEXT(".tmp");
@@ -61,6 +82,12 @@ namespace
 		if (FFileHelper::SaveStringToFile(Payload, *TempPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
 		{
 			IFileManager::Get().Move(*HealthPath, *TempPath, /*Replace=*/true, /*EvenIfReadOnly=*/true);
+		}
+		// A forced exit whose lock wait timed out may have set the flag and deleted the files while this write was
+		// stalled past the check above (its .tmp delete fails while the file is held open here): clean up after it.
+		if (GStopRequested.load())
+		{
+			DeleteHealthFiles();
 		}
 	}
 }
@@ -120,7 +147,10 @@ void FVibeUEHealthSignal::Start()
 			return true;
 		});
 
-	GStopEvent = FPlatformProcess::GetSynchEventFromPool(/*bIsManualReset=*/true);
+	{
+		FScopeLock Lock(&GHealthWriteLock);
+		GStopEvent = FPlatformProcess::GetSynchEventFromPool(/*bIsManualReset=*/true);
+	}
 	GWriterThread = MakeUnique<FThread>(TEXT("VibeUEHealthSignal"), []()
 	{
 		while (!GStopRequested.load(std::memory_order_relaxed))
@@ -136,23 +166,69 @@ void FVibeUEHealthSignal::Start()
 
 void FVibeUEHealthSignal::Stop()
 {
+	// Joining belongs to the game thread, which owns the writer; from any other thread (possibly the writer
+	// itself) a Join is a self-join or a race on GWriterThread. Fall back to the non-joining stop.
+	if (!IsInGameThread())
+	{
+		RequestStopFromAnyThread();
+		return;
+	}
 	if (!GWriterThread.IsValid())
 	{
 		return;
 	}
 
-	GStopRequested.store(true, std::memory_order_relaxed);
-	GStopEvent->Trigger();
+	// After an early RequestStopFromAnyThread (a Ctrl-C, then OnPreExit) the flag is already set and the writer
+	// is already leaving: this still joins it (an FThread must be joined before destruction) and frees the event.
+	GStopRequested.store(true);
+	{
+		FScopeLock Lock(&GHealthWriteLock);
+		GStopEvent->Trigger();
+	}
 	GWriterThread->Join();
 	GWriterThread.Reset();
-	FPlatformProcess::ReturnSynchEventToPool(GStopEvent);
-	GStopEvent = nullptr;
+	{
+		FScopeLock Lock(&GHealthWriteLock);
+		FPlatformProcess::ReturnSynchEventToPool(GStopEvent);
+		GStopEvent = nullptr;
+	}
 
 	FTSTicker::GetCoreTicker().RemoveTicker(GTickerHandle);
 	GTickerHandle.Reset();
 
-	IFileManager& FileManager = IFileManager::Get();
-	const FString HealthPath = GetHealthPathForPid(FPlatformProcess::GetCurrentProcessId());
-	FileManager.Delete(*HealthPath, /*RequireExists=*/false, /*EvenReadOnly=*/true, /*Quiet=*/true);
-	FileManager.Delete(*(HealthPath + TEXT(".tmp")), /*RequireExists=*/false, /*EvenReadOnly=*/true, /*Quiet=*/true);
+	DeleteHealthFiles();
+}
+
+void FVibeUEHealthSignal::RequestStopFromAnyThread()
+{
+	// Bounded wait for the lock: the writer holds it only for one small file write, but this runs on the way to
+	// TerminateProcess and must never hang the exit. Without the lock, the flag and the delete still happen; only
+	// the wake-up is skipped (GStopEvent's lifetime is guarded by that lock), and the writer then leaves at its
+	// next wait timeout.
+	// A wall-clock deadline, not a count of 1 ms sleeps: a minimized or hidden process on Windows 11 does not get
+	// 1 ms timer resolution, so each Sleep(1) can last ~15.6 ms.
+	bool bLocked = GHealthWriteLock.TryLock();
+	const double Deadline = FPlatformTime::Seconds() + 0.2;
+	while (!bLocked && FPlatformTime::Seconds() < Deadline)
+	{
+		FPlatformProcess::SleepNoStats(0.001f);
+		bLocked = GHealthWriteLock.TryLock();
+	}
+
+	GStopRequested.store(true);
+	if (bLocked && GStopEvent)
+	{
+		GStopEvent->Trigger();
+	}
+	DeleteHealthFiles();
+
+	if (bLocked)
+	{
+		GHealthWriteLock.Unlock();
+	}
+}
+
+bool FVibeUEHealthSignal::IsWriterThreadOwned()
+{
+	return GWriterThread.IsValid();
 }
