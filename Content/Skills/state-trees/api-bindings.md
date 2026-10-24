@@ -395,6 +395,58 @@ unreal.StateTreeService.unbind_evaluator_property(
 )
 ```
 
+#### Reading Bindings (`get_bindings`)
+
+The bind/unbind functions write bindings; `get_bindings` reads them back. Use it to verify a bind
+landed, or to audit an existing tree (Python cannot read `StateTreeEditorData.EditorBindings`; it is
+protected).
+
+```python
+# Every binding in the asset
+for b in unreal.StateTreeService.get_bindings(st_path):
+    print(b.target_kind, b.target_state_path, b.target_node_name, b.target_property_path,
+          "<-", b.source_kind, b.source_node_name, b.source_property_path,
+          "OK" if b.source_resolves else "BROKEN")
+
+# Only bindings whose TARGET lives in one state (its tasks, enter conditions, considerations,
+# transitions and transition conditions, state parameters)
+chase = unreal.StateTreeService.get_bindings("/Game/AI/ST_Zombie_AI", "Root/Chase")
+is_dest_bound = any(b.target_kind == "Task" and b.target_property_path == "Destination" for b in chase)
+```
+
+Fields of each `FStateTreeBindingInfo` (Python drops the `b` prefix on bools):
+- `target_kind`: Task, Evaluator, GlobalTask, Condition, Consideration, Transition, Parameter, PropertyFunction, Unknown
+- `target_state_path` (empty for global nodes), `target_node_name` (display name), `target_node_struct`
+  (e.g. `StateTreeDelayTask`), `target_node_index` (raw array index in the owning list, NOT the
+  per-struct `task_match_index`), `target_transition_index` (-1 unless the target is a transition or
+  a transition condition), `target_property_path`
+- `source_kind`: RootParameter, ContextData, Evaluator, GlobalTask, Task, State (state parameters),
+  Condition, Consideration, TransitionEvent, StateEvent, PropertyFunction, Transition, Unknown
+- `source_state_path`, `source_node_name` (`Parameters` for root parameters, the context name such as
+  `Actor` for context data), `source_node_struct`, `source_property_path` (empty = whole struct/object)
+- `source_resolves`: False when the source node is gone or its property path no longer resolves
+- `is_output_binding`: True when the data flows the OTHER way: the target's Output property writes the
+  source (e.g. a task output writing a root parameter). Ordinary bindings read source -> target.
+- `target_node_struct` / `source_node_struct` for Blueprint nodes are the Blueprint class name (e.g.
+  `STT_Idle_C`), not the `StateTreeBlueprintTaskWrapper` struct; empty for parameters, transitions and
+  property functions (those also report `target_node_index == -1`; a SingleTask reports 0)
+- `raw`: debug form `<source struct guid>:<source_property_path> -> <target struct guid>:<target_property_path>`
+  (plus ` (output)` for output bindings), always raw property names, never editor display names
+
+`get_task_property_names` also reports bindings per property: `p.is_bound` and `p.bound_to`
+(e.g. `"RootParameter:Parameters.IdlingTime"`). Only the exact bound path is marked; a child of a
+bound struct property (`Offset.Z` under a bound `Offset`) reads `is_bound == False`. Array-element
+bindings (`Arr[2]`) are listed by `get_bindings` but never mark `is_bound`, because
+`get_task_property_names` does not descend into arrays. An output binding's `bound_to` ends in
+` (output)`: that property writes the named source.
+
+```python
+for p in unreal.StateTreeService.get_task_property_names(st_path, "Root/Idle", "FStateTreeDelayTask"):
+    print(p.name, p.is_bound, p.bound_to)
+# Duration True RootParameter:Parameters.IdlingTime
+# RandomDeviation False
+```
+
 ### Assigning a StateTree to a StateTreeComponent on a Blueprint
 
 `StateTreeComponent` has **two** properties that look related — only `StateTreeRef` is shown in the

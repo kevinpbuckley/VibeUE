@@ -2159,6 +2159,266 @@ static bool SetPropertyBagValueFromString(FInstancedPropertyBag& Bag, const FNam
 	}
 }
 
+#if WITH_EDITORONLY_DATA
+// ---- Binding reader helpers (GetBindings / GetTaskPropertyNames) ----
+
+/**
+ * Where a binding source or target struct ID lives in the editor data.
+ * Built per call from UStateTreeEditorData::VisitAllNodes and never retained past it.
+ */
+struct FBindingStructLocation
+{
+	EStateTreeBindableStructSource DataSource = EStateTreeBindableStructSource::Context;
+	const UStateTreeState* State = nullptr;
+	FString Name;
+	FString NodeStruct;
+	int32 NodeIndex = INDEX_NONE;
+	int32 TransitionIndex = INDEX_NONE;
+	FStateTreeDataView Value;
+};
+
+/** Engine node IDs: bindings on instance data use Node.ID, bindings on the node struct use GetNodeID(). */
+static bool EditorNodeHasID(const FStateTreeEditorNode& Node, const FGuid& ID)
+{
+	return Node.ID == ID || Node.GetNodeID() == ID;
+}
+
+/**
+ * Struct name of an editor node, e.g. "StateTreeDelayTask". Blueprint nodes live inside a wrapper struct
+ * (StateTreeBlueprintTaskWrapper / ConditionWrapper / EvaluatorWrapper / ConsiderationWrapper) whose instance
+ * object is the Blueprint class itself, so for those report the instance object's class name (e.g.
+ * "STT_Idle_C"): that is the name the task functions accept (BlueprintWrapperMatchesName).
+ */
+static FString EditorNodeStructName(const FStateTreeEditorNode& Node)
+{
+	const UScriptStruct* NodeStruct = Node.Node.GetScriptStruct();
+	if (!NodeStruct)
+	{
+		return FString();
+	}
+
+	const FString StructName = NodeStruct->GetName();
+	if (StructName.StartsWith(TEXT("StateTreeBlueprint")) && StructName.EndsWith(TEXT("Wrapper"))
+		&& IsValid(Node.InstanceObject))
+	{
+		return Node.InstanceObject->GetClass()->GetName();
+	}
+	return StructName;
+}
+
+/** Fill NodeIndex / TransitionIndex / NodeStruct for a located struct ID by scanning its owner's arrays. */
+static void FillBindingLocationIndices(const UStateTreeEditorData& EditorData, const FGuid& ID, FBindingStructLocation& InOutLocation)
+{
+	auto FindInNodes = [&ID, &InOutLocation](const TArray<FStateTreeEditorNode>& Nodes, const int32 TransitionIndex) -> bool
+	{
+		for (int32 NodeIndex = 0; NodeIndex < Nodes.Num(); ++NodeIndex)
+		{
+			if (EditorNodeHasID(Nodes[NodeIndex], ID))
+			{
+				InOutLocation.NodeIndex = NodeIndex;
+				InOutLocation.TransitionIndex = TransitionIndex;
+				InOutLocation.NodeStruct = EditorNodeStructName(Nodes[NodeIndex]);
+				return true;
+			}
+		}
+		return false;
+	};
+
+	if (const UStateTreeState* State = InOutLocation.State)
+	{
+		if (FindInNodes(State->Tasks, INDEX_NONE)
+			|| FindInNodes(State->EnterConditions, INDEX_NONE)
+			|| FindInNodes(State->Considerations, INDEX_NONE))
+		{
+			return;
+		}
+
+		if (EditorNodeHasID(State->SingleTask, ID))
+		{
+			InOutLocation.NodeIndex = 0;
+			InOutLocation.NodeStruct = EditorNodeStructName(State->SingleTask);
+			return;
+		}
+
+		for (int32 TransitionIndex = 0; TransitionIndex < State->Transitions.Num(); ++TransitionIndex)
+		{
+			const FStateTreeTransition& Transition = State->Transitions[TransitionIndex];
+			if (Transition.ID == ID || Transition.GetEventID() == ID)
+			{
+				InOutLocation.NodeIndex = TransitionIndex;
+				InOutLocation.TransitionIndex = TransitionIndex;
+				return;
+			}
+			if (FindInNodes(Transition.Conditions, TransitionIndex))
+			{
+				return;
+			}
+		}
+		return;
+	}
+
+	if (!FindInNodes(EditorData.Evaluators, INDEX_NONE))
+	{
+		FindInNodes(EditorData.GlobalTasks, INDEX_NONE);
+	}
+}
+
+/** Map every bindable struct ID in the tree (nodes, parameters, context, events, property functions) to its location. */
+static TMap<FGuid, FBindingStructLocation> BuildBindingStructMap(const UStateTreeEditorData& EditorData)
+{
+	TMap<FGuid, FBindingStructLocation> Locations;
+	EditorData.VisitAllNodes([&Locations](const UStateTreeState* State, const FStateTreeBindableStructDesc& Desc, const FStateTreeDataView Value)
+	{
+		if (Desc.ID.IsValid() && !Locations.Contains(Desc.ID))
+		{
+			FBindingStructLocation& Location = Locations.Add(Desc.ID);
+			Location.DataSource = Desc.DataSource;
+			Location.State = State;
+			Location.Name = Desc.Name.ToString();
+			Location.Value = Value;
+		}
+		return EStateTreeVisitor::Continue;
+	});
+
+	for (TPair<FGuid, FBindingStructLocation>& Pair : Locations)
+	{
+		FillBindingLocationIndices(EditorData, Pair.Key, Pair.Value);
+	}
+	return Locations;
+}
+
+/** Kind string for a bindable struct. Parameters are "RootParameter"/"State" as sources and "Parameter" as targets. */
+static FString BindableSourceToKind(const EStateTreeBindableStructSource Source, const bool bAsSource)
+{
+	switch (Source)
+	{
+	case EStateTreeBindableStructSource::Context:          return TEXT("ContextData");
+	case EStateTreeBindableStructSource::Parameter:        return bAsSource ? TEXT("RootParameter") : TEXT("Parameter");
+	case EStateTreeBindableStructSource::Evaluator:        return TEXT("Evaluator");
+	case EStateTreeBindableStructSource::GlobalTask:       return TEXT("GlobalTask");
+	case EStateTreeBindableStructSource::StateParameter:   return bAsSource ? TEXT("State") : TEXT("Parameter");
+	case EStateTreeBindableStructSource::Task:             return TEXT("Task");
+	case EStateTreeBindableStructSource::Condition:        return TEXT("Condition");
+	case EStateTreeBindableStructSource::Consideration:    return TEXT("Consideration");
+	case EStateTreeBindableStructSource::TransitionEvent:  return TEXT("TransitionEvent");
+	case EStateTreeBindableStructSource::StateEvent:       return TEXT("StateEvent");
+	case EStateTreeBindableStructSource::PropertyFunction: return TEXT("PropertyFunction");
+	case EStateTreeBindableStructSource::Transition:       return TEXT("Transition");
+	default:                                               break;
+	}
+	return TEXT("Unknown");
+}
+
+/**
+ * Property path built from the raw segment names (e.g. "Offset.Z", "Items[2].Value"), the same form
+ * FPropertyBindingPath::FromString accepts and get_task_property_names reports. Deliberately NOT
+ * FPropertyBindingPath::ToString(): in 5.8 that emits a segment's editor DisplayName when one is set
+ * (a root parameter "WaitTime" comes out as "Wait Time"), which no setter accepts back.
+ */
+static FString BindingPathToNameString(const FPropertyBindingPath& Path)
+{
+	FString Result;
+	for (const FPropertyBindingPathSegment& Segment : Path.GetSegments())
+	{
+		if (!Result.IsEmpty())
+		{
+			Result += TEXT(".");
+		}
+		Result += Segment.GetName().ToString();
+		if (Segment.GetArrayIndex() >= 0)
+		{
+			Result += FString::Printf(TEXT("[%d]"), Segment.GetArrayIndex());
+		}
+	}
+	return Result;
+}
+
+static bool BindingSourcePathResolves(const FPropertyBindingPath& SourcePath, const FPropertyBindingDataView& SourceValue)
+{
+	if (!SourceValue.GetStruct())
+	{
+		return false;
+	}
+	if (SourcePath.NumSegments() == 0)
+	{
+		return true;
+	}
+
+	// bHandleRedirects=true matches FPropertyBindingBindingCollection::RemoveInvalidBindings: a path the engine
+	// repairs (property GUID or core redirect after a renamed Blueprint variable) must not read as broken.
+	TArray<FPropertyBindingPathIndirection> Indirections;
+	constexpr bool bHandleRedirects = true;
+	if (SourceValue.GetMemory())
+	{
+		return SourcePath.ResolveIndirectionsWithValue(SourceValue, Indirections, /*OutError*/ nullptr, bHandleRedirects);
+	}
+	return SourcePath.ResolveIndirections(SourceValue.GetStruct(), Indirections, /*OutError*/ nullptr, bHandleRedirects);
+}
+
+static FStateTreeBindingInfo MakeBindingInfo(const TMap<FGuid, FBindingStructLocation>& Locations,
+	const FStateTreePropertyPathBinding& Binding)
+{
+	const FPropertyBindingPath& SourcePath = Binding.GetSourcePath();
+	const FPropertyBindingPath& TargetPath = Binding.GetTargetPath();
+
+	FStateTreeBindingInfo Info;
+	Info.bIsOutputBinding = Binding.IsOutputBinding();
+	Info.TargetPropertyPath = BindingPathToNameString(TargetPath);
+	Info.SourcePropertyPath = BindingPathToNameString(SourcePath);
+	Info.Raw = FString::Printf(TEXT("%s:%s -> %s:%s%s"),
+		*SourcePath.GetStructID().ToString(), *Info.SourcePropertyPath,
+		*TargetPath.GetStructID().ToString(), *Info.TargetPropertyPath,
+		Info.bIsOutputBinding ? TEXT(" (output)") : TEXT(""));
+
+	if (const FBindingStructLocation* Target = Locations.Find(TargetPath.GetStructID()))
+	{
+		Info.TargetKind = BindableSourceToKind(Target->DataSource, /*bAsSource*/ false);
+		Info.TargetStatePath = BuildStatePath(Target->State);
+		Info.TargetNodeName = Target->Name;
+		Info.TargetNodeStruct = Target->NodeStruct;
+		Info.TargetNodeIndex = Target->NodeIndex;
+		Info.TargetTransitionIndex = Target->TransitionIndex;
+	}
+	else
+	{
+		Info.TargetKind = TEXT("Unknown");
+	}
+
+	if (const FBindingStructLocation* Source = Locations.Find(SourcePath.GetStructID()))
+	{
+		Info.SourceKind = BindableSourceToKind(Source->DataSource, /*bAsSource*/ true);
+		Info.SourceStatePath = BuildStatePath(Source->State);
+		Info.SourceNodeName = Source->Name;
+		Info.SourceNodeStruct = Source->NodeStruct;
+		Info.bSourceResolves = BindingSourcePathResolves(SourcePath, Source->Value);
+	}
+	else
+	{
+		Info.SourceKind = TEXT("Unknown");
+	}
+
+	return Info;
+}
+
+/**
+ * "<SourceKind>:<SourceStatePath/><SourceNodeName>.<SourcePropertyPath>", the FStateTreePropertyInfo::BoundTo form,
+ * with " (output)" appended for an output binding (the target property WRITES the source, not the reverse).
+ */
+static FString FormatBindingSource(const FStateTreeBindingInfo& Info)
+{
+	FString Owner = Info.SourceStatePath;
+	if (!Info.SourceNodeName.IsEmpty())
+	{
+		Owner = Owner.IsEmpty() ? Info.SourceNodeName : Owner + TEXT("/") + Info.SourceNodeName;
+	}
+	if (!Info.SourcePropertyPath.IsEmpty())
+	{
+		Owner = Owner.IsEmpty() ? Info.SourcePropertyPath : Owner + TEXT(".") + Info.SourcePropertyPath;
+	}
+	return Info.SourceKind + TEXT(":") + Owner + (Info.bIsOutputBinding ? TEXT(" (output)") : TEXT(""));
+}
+#endif // WITH_EDITORONLY_DATA
+
 } // namespace UStateTreeServiceHelpers
 
 using namespace UStateTreeServiceHelpers;
@@ -4818,6 +5078,40 @@ TArray<FStateTreePropertyInfo> UStateTreeService::GetTaskPropertyNames(const FSt
 		AppendEditableProperties(InstanceStruct, InstanceMemory, Result, &SeenPropertyPaths);
 	}
 
+	// Report which exact property paths are binding targets on this task (instance data or node struct).
+	if (const FStateTreeEditorPropertyBindings* Bindings = EditorData->GetPropertyEditorBindings())
+	{
+		const FGuid InstanceID = TaskNode->ID;
+		const FGuid NodeID = TaskNode->GetNodeID();
+		TMap<FGuid, FBindingStructLocation> Locations;
+		bool bLocationsBuilt = false;
+		TMap<FString, FString> BoundToByPath;
+		for (const FStateTreePropertyPathBinding& Binding : Bindings->GetBindings())
+		{
+			const FGuid TargetID = Binding.GetTargetPath().GetStructID();
+			if (TargetID != InstanceID && TargetID != NodeID)
+			{
+				continue;
+			}
+			if (!bLocationsBuilt)
+			{
+				Locations = BuildBindingStructMap(*EditorData);
+				bLocationsBuilt = true;
+			}
+			const FStateTreeBindingInfo BindingInfo = MakeBindingInfo(Locations, Binding);
+			BoundToByPath.Add(BindingInfo.TargetPropertyPath, FormatBindingSource(BindingInfo));
+		}
+
+		for (FStateTreePropertyInfo& PropertyInfo : Result)
+		{
+			if (const FString* BoundTo = BoundToByPath.Find(PropertyInfo.Name))
+			{
+				PropertyInfo.bIsBound = true;
+				PropertyInfo.BoundTo = *BoundTo;
+			}
+		}
+	}
+
 	UE_LOG(LogStateTreeService, Log, TEXT("GetTaskPropertyNames: Found %d editable properties on task '%s'"),
 		Result.Num(), *TaskStructName);
 #endif
@@ -5210,6 +5504,59 @@ bool UStateTreeService::UnbindTaskProperty(const FString& AssetPath, const FStri
 #else
 	return false;
 #endif
+}
+
+TArray<FStateTreeBindingInfo> UStateTreeService::GetBindings(const FString& AssetPath, const FString& StatePath)
+{
+	TArray<FStateTreeBindingInfo> Result;
+
+#if WITH_EDITORONLY_DATA
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("GetBindings: Failed to load StateTree: %s"), *AssetPath);
+		return Result;
+	}
+
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData)
+	{
+		return Result;
+	}
+
+	const UStateTreeState* FilterState = nullptr;
+	if (!StatePath.IsEmpty())
+	{
+		FilterState = FindStateByPath(EditorData, StatePath);
+		if (!FilterState)
+		{
+			UE_LOG(LogStateTreeService, Warning, TEXT("GetBindings: State not found: %s"), *StatePath);
+			return Result;
+		}
+	}
+
+	const FStateTreeEditorPropertyBindings* Bindings = EditorData->GetPropertyEditorBindings();
+	if (!Bindings)
+	{
+		return Result;
+	}
+
+	const TMap<FGuid, FBindingStructLocation> Locations = BuildBindingStructMap(*EditorData);
+	for (const FStateTreePropertyPathBinding& Binding : Bindings->GetBindings())
+	{
+		if (FilterState)
+		{
+			const FBindingStructLocation* Target = Locations.Find(Binding.GetTargetPath().GetStructID());
+			if (!Target || Target->State != FilterState)
+			{
+				continue;
+			}
+		}
+		Result.Add(MakeBindingInfo(Locations, Binding));
+	}
+#endif
+
+	return Result;
 }
 
 bool UStateTreeService::AddEvaluator(const FString& AssetPath, const FString& EvaluatorStructName)
