@@ -26,6 +26,26 @@
 static const EAutomationTestFlags kInjectTestFlags =
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter;
 
+// Friend accessor: UInputService's private, non-UFUNCTION test surface (hold bookkeeping without PIE, hook state).
+struct FInputServiceTestAccess
+{
+	struct FState
+	{
+		bool bEndPieHooked = false;
+		bool bThrottleHooked = false;
+		int32 Holds = 0;
+		bool bReleaseGrace = false;
+	};
+	static void TrackKeyHold(const FName Key, float Seconds) { UInputService::TrackKeyHoldForTest(Key, Seconds); }
+	static bool ReleaseKeyHold(const FName Key)               { return UInputService::ReleaseKeyHoldForTest(Key); }
+	static FState State()
+	{
+		FState S;
+		UInputService::GetInjectionStateForTest(S.bEndPieHooked, S.bThrottleHooked, S.Holds, S.bReleaseGrace);
+		return S;
+	}
+};
+
 namespace VibeInjectTest
 {
 	static TSharedPtr<FJsonObject> ParseJson(const FString& Text)
@@ -93,6 +113,76 @@ bool FVibeInputInjectionGuardsTest::RunTest(const FString&)
 		TestTrue(TEXT("stop_injection with nothing held succeeds"), Stop->GetBoolField(TEXT("success")));
 		TestFalse(TEXT("and reports nothing was active"), Stop->GetBoolField(TEXT("was_active")));
 	}
+	return true;
+}
+
+// Without PIE: the hooks a hold registers (the FEditorDelegates::EndPIE handler, the ShouldDisableCPUThrottlingDelegates
+// entry, the release and grace tickers) are code in this DLL. On 5-8 only the end of PIE or the last release grace
+// removed them; ShutdownModule left them registered. ShutdownInjectionHooks must end every hold and remove both
+// registrations, during a hold and during its release grace alike, and a second call must be a no-op. The hold's
+// bookkeeping is filed through the test surface (no key event is sent) because the public API refuses without PIE.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeInputShutdownInjectionHooksTest,
+	"VibeUE.Input.ShutdownInjectionHooks", kInjectTestFlags)
+bool FVibeInputShutdownInjectionHooksTest::RunTest(const FString&)
+{
+	using namespace VibeInjectTest;
+	using FAccess = FInputServiceTestAccess;
+	if (!GEditor || GEditor->PlayWorld)
+	{
+		AddError(TEXT("Needs the editor with no PIE session running."));
+		return false;
+	}
+	const FAccess::FState Before = FAccess::State();
+	if (Before.Holds > 0 || Before.bEndPieHooked || Before.bThrottleHooked || Before.bReleaseGrace)
+	{
+		AddError(TEXT("An injection hold (or its release grace) is already active; run this test with none running."));
+		return false;
+	}
+	const int32 Baseline = ThrottleDelegates();
+	// A key no game binds; its 60 s release never comes due inside the test.
+	const FName Key(TEXT("F24"));
+
+	auto ExpectUnhooked = [this, Baseline](const TCHAR* When)
+	{
+		const FAccess::FState S = FAccess::State();
+		TestFalse(FString::Printf(TEXT("the EndPIE hook is removed %s"), When), S.bEndPieHooked);
+		TestFalse(FString::Printf(TEXT("the throttling entry's handle is reset %s"), When), S.bThrottleHooked);
+		TestEqual(FString::Printf(TEXT("the throttling entry is off GEditor %s"), When), ThrottleDelegates(), Baseline);
+		TestEqual(FString::Printf(TEXT("no hold remains %s"), When), S.Holds, 0);
+		TestFalse(FString::Printf(TEXT("no release grace remains %s"), When), S.bReleaseGrace);
+	};
+
+	// During a hold.
+	FAccess::TrackKeyHold(Key, 60.0f);
+	{
+		const FAccess::FState S = FAccess::State();
+		TestTrue(TEXT("a hold binds the EndPIE hook"), S.bEndPieHooked);
+		TestTrue(TEXT("a hold registers the throttling entry"), S.bThrottleHooked);
+		TestEqual(TEXT("one throttling entry on GEditor during the hold"), ThrottleDelegates(), Baseline + 1);
+		TestEqual(TEXT("one hold is filed"), S.Holds, 1);
+	}
+	UInputService::ShutdownInjectionHooks();
+	ExpectUnhooked(TEXT("after ShutdownInjectionHooks during a hold"));
+	UInputService::ShutdownInjectionHooks();
+	ExpectUnhooked(TEXT("after a second ShutdownInjectionHooks"));
+
+	// During the release grace: the hold is gone but its scope (and the grace ticker) is not.
+	FAccess::TrackKeyHold(Key, 60.0f);
+	TestTrue(TEXT("the hold is released (no key-up sent)"), FAccess::ReleaseKeyHold(Key));
+	{
+		const FAccess::FState S = FAccess::State();
+		TestTrue(TEXT("the release grace runs"), S.bReleaseGrace);
+		TestTrue(TEXT("the throttling entry stays through the grace"), S.bThrottleHooked);
+		TestTrue(TEXT("the EndPIE hook stays through the grace"), S.bEndPieHooked);
+	}
+	UInputService::ShutdownInjectionHooks();
+	ExpectUnhooked(TEXT("after ShutdownInjectionHooks during the release grace"));
+
+	// The hooks are lazy: a later hold registers them again, and its own teardown still works.
+	FAccess::TrackKeyHold(Key, 60.0f);
+	TestTrue(TEXT("a hold after shutdown registers the throttling entry again"), FAccess::State().bThrottleHooked);
+	UInputService::ShutdownInjectionHooks();
+	ExpectUnhooked(TEXT("after the final ShutdownInjectionHooks"));
 	return true;
 }
 

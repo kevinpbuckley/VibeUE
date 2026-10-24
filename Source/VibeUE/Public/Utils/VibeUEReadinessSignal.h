@@ -8,7 +8,8 @@
  * Per-process readiness signal for MCP agents (PR #527).
  *
  * VibeUE writes Project/Saved/VibeUE/Signals/editor-<pid>-true.json when FModule::RegisterToolsets()
- * reaches its end, and deletes it on module shutdown / editor pre-exit. Agents that launch the editor
+ * reaches its end, and deletes it on module shutdown / editor pre-exit / application will-terminate (the
+ * last is the only one a forced exit such as the Automation "Quit" reaches). Agents that launch the editor
  * via BuildAndLaunchGame.ps1|sh read `Editor-PID=<pid>` from the script output and watch for that one
  * file instead of polling MCP.
  *
@@ -50,6 +51,9 @@ public:
 	/** Write the signal for this process. Returns false (and logs) if the directory or file write fails. */
 	static bool Publish();
 
-	/** Delete this process's signal. Safe to call when it does not exist. */
+	/**
+	 * Delete this process's signal. Safe to call when it does not exist. Callable from any thread: off the game
+	 * thread it only deletes the files and leaves the MCP startup-grace ticker to the game thread.
+	 */
 	static void Remove();
 };

@@ -13,6 +13,9 @@
 #include "HAL/FileManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Editor.h"
+#include "Editor/EditorEngine.h"
+#include "Editor/EditorPerformanceSettings.h"
 
 // Pure verdict/budget logic (PerformanceVerdict.h) is exercised headless — no editor, no live frame
 // globals — and FrameTiming routes through the same helpers, so green here means the shipping verdict
@@ -474,6 +477,89 @@ bool FVibePerfStandaloneNameTest::RunTest(const FString&)
 	const FString Second = VibeUEPerformanceAnalysis::MakeStandaloneSessionStem(TEXT("repeat/name"));
 	TestNotEqual(TEXT("successive sessions have distinct destinations"), First, Second);
 	TestFalse(TEXT("unsafe slash removed"), First.Contains(TEXT("/")));
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// Background-throttling hook teardown
+// ---------------------------------------------------------------------------
+
+// The bug: SetBackgroundThrottling registered a ShouldDisableCPUThrottlingDelegates lambda (code in this DLL)
+// once, behind a function-local static, and nothing ever removed it: not on re-enable, not at module
+// shutdown. Now the entry exists exactly while throttling is off, ShutdownThrottlingHook removes it and puts
+// the setting back to its value from before the override, and a second shutdown is a no-op.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibePerfThrottlingHookTeardownTest,
+	"VibeUE.Performance.BackgroundThrottling.HookTeardown", kPerfTestFlags)
+bool FVibePerfThrottlingHookTeardownTest::RunTest(const FString&)
+{
+	if (!GEditor)
+	{
+		AddError(TEXT("Needs GEditor (ShouldDisableCPUThrottlingDelegates lives on the editor engine)."));
+		return false;
+	}
+	UEditorPerformanceSettings* Settings = GetMutableDefault<UEditorPerformanceSettings>();
+	if (!TestNotNull(TEXT("EditorPerformanceSettings"), Settings))
+	{
+		return false;
+	}
+
+	auto ReadBool = [](const FString& Json, const TCHAR* Field)
+	{
+		TSharedPtr<FJsonObject> Obj;
+		const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Json);
+		bool bValue = false;
+		return FJsonSerializer::Deserialize(Reader, Obj) && Obj.IsValid() && Obj->TryGetBoolField(Field, bValue) && bValue;
+	};
+	auto OverrideActive = [ReadBool]() { return ReadBool(UPerformanceService::GetBackgroundThrottling(), TEXT("delegate_override_active")); };
+	auto SetThrottling = [ReadBool](const bool bEnabled) { return ReadBool(UPerformanceService::SetBackgroundThrottling(bEnabled), TEXT("success")); };
+	auto Entries = []() { return GEditor ? GEditor->ShouldDisableCPUThrottlingDelegates.Num() : 0; };
+	auto ThrottleSetting = [Settings]() { return Settings->bThrottleCPUWhenNotForeground != 0; };
+
+	// An agent's live override cannot be put back faithfully: ending it and disabling again would record the
+	// overridden value as the "before" one and lose the user's real setting. Leave it alone and skip.
+	if (OverrideActive())
+	{
+		AddWarning(TEXT("Skipped: background throttling is disabled through PerformanceService in this session; re-enable it (set_background_throttling(True)) to run this test."));
+		return true;
+	}
+
+	// The setting is a bitfield, so no TGuardValue: snapshot it and put it back at the end.
+	const bool bSavedSetting = ThrottleSetting();
+
+	// From a known throttling-on setting, with no entry of this service's registered (no override is on).
+	const int32 Baseline = Entries();
+	Settings->bThrottleCPUWhenNotForeground = true;
+
+	// Re-enabling removes the entry (on 5-8 it stayed registered for the rest of the session).
+	TestTrue(TEXT("disabling throttling succeeds"), SetThrottling(false));
+	TestEqual(TEXT("one throttling entry while throttling is off"), Entries(), Baseline + 1);
+	TestFalse(TEXT("the setting is off while disabled"), ThrottleSetting());
+	TestTrue(TEXT("a second disable succeeds"), SetThrottling(false));
+	TestEqual(TEXT("a second disable adds no second entry"), Entries(), Baseline + 1);
+	TestTrue(TEXT("re-enabling succeeds"), SetThrottling(true));
+	TestEqual(TEXT("re-enabling removes the throttling entry"), Entries(), Baseline);
+	TestFalse(TEXT("no override after re-enabling"), OverrideActive());
+
+	// Shutdown with the override still on: entry gone, setting back to its value from before the first disable.
+	TestTrue(TEXT("disabling again succeeds"), SetThrottling(false));
+	TestEqual(TEXT("the entry is back while throttling is off"), Entries(), Baseline + 1);
+	UPerformanceService::ShutdownThrottlingHook();
+	TestEqual(TEXT("ShutdownThrottlingHook removes the throttling entry"), Entries(), Baseline);
+	TestTrue(TEXT("ShutdownThrottlingHook restores the setting from before the override (on)"), ThrottleSetting());
+	TestFalse(TEXT("no override after ShutdownThrottlingHook"), OverrideActive());
+	UPerformanceService::ShutdownThrottlingHook();
+	TestEqual(TEXT("a second ShutdownThrottlingHook removes nothing more"), Entries(), Baseline);
+	TestTrue(TEXT("and leaves the setting alone"), ThrottleSetting());
+
+	// A user who already runs unthrottled gets that back, not a forced "on".
+	Settings->bThrottleCPUWhenNotForeground = false;
+	TestTrue(TEXT("disabling from an off setting succeeds"), SetThrottling(false));
+	UPerformanceService::ShutdownThrottlingHook();
+	TestFalse(TEXT("ShutdownThrottlingHook restores an off setting as off"), ThrottleSetting());
+	TestEqual(TEXT("and removes the entry"), Entries(), Baseline);
+
+	// Put the setting back as it was (no override was on, and none is now).
+	Settings->bThrottleCPUWhenNotForeground = bSavedSetting;
 	return true;
 }
 

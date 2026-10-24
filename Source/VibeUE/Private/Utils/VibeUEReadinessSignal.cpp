@@ -138,7 +138,13 @@ void FVibeUEReadinessSignal::Remove()
 {
 	// Never leave a startup-grace ticker running past a Remove() (module shutdown / editor pre-exit):
 	// its callback must not touch signal state after teardown. Safe no-op when none is pending.
-	FVibeUEMcpStatus::CancelStartupGraceTicker();
+	// The ticker handle is plain game-thread state: a forced exit can reach Remove() from another thread (the
+	// console-control thread, a crashing worker), and then only the files are deleted. Such an exit either
+	// TerminateProcess()es right after or comes back through OnPreExit, which cancels it on the game thread.
+	if (IsInGameThread())
+	{
+		FVibeUEMcpStatus::CancelStartupGraceTicker();
+	}
 
 	IFileManager& FileManager = IFileManager::Get();
 	const FString SignalPath = GetSignalPath();

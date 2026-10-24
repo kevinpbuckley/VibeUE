@@ -25,6 +25,10 @@
 #include "PythonAPI/BehaviorTreeServiceInternal.h"
 #include "PythonAPI/UWorkflowService.h"
 #include "PythonAPI/UPIEActorService.h"
+#include "PythonAPI/UInputService.h"
+#include "PythonAPI/UPerformanceService.h"
+#include "Misc/CoreDelegates.h"
+#include "CoreGlobals.h"
 #if WITH_VIBEUE_EQS
 #include "PythonAPI/EnvQueryServiceInternal.h"
 #endif
@@ -345,6 +349,9 @@ void FModule::StartupModule()
 	// Register PreExit callback to cleanup Python references before Unreal GC
 	FCoreDelegates::OnPreExit.AddRaw(this, &FModule::OnPreExit);
 
+	// A forced exit skips OnPreExit and ShutdownModule; clean the signal files on WillTerminate too.
+	RegisterWillTerminateHook();
+
 	// Expose VibeUE service toolsets on UE 5.8's native ToolsetRegistry / MCP endpoint.
 	// The registry needs GEditor; register now if it's already up (late/hot-reload load),
 	// otherwise defer to PostEngineInit. Branch on GEditor directly to avoid the registry's
@@ -488,6 +495,9 @@ void FModule::UnregisterToolsets()
 
 void FModule::ShutdownModule()
 {
+	// The forced-exit hook points at this module object; drop it before the cleanup it duplicates.
+	UnregisterWillTerminateHook();
+
 	UWorkflowService::ShutdownJournal();
 	FVibeUEHealthSignal::Stop();
 	FVibeUEReadinessSignal::Remove();
@@ -495,6 +505,12 @@ void FModule::ShutdownModule()
 	// Unhook PIEActorService's EndPIE delegate. It is a raw static callback into this DLL, so it
 	// must not outlive the module (same reason as the helper caches below).
 	UPIEActorService::ShutdownEndPIEHook();
+
+	// Same reason: InputService's held injections/keys (EndPIE handler, throttling entry, hold tickers) and
+	// PerformanceService's background-throttling entry. At editor exit OnPreExit has already done both while
+	// GEditor still existed; here they are no-ops then, or only reset handles if GEditor is gone.
+	UInputService::ShutdownInjectionHooks();
+	UPerformanceService::ShutdownThrottlingHook();
 
 	// Release the BT node-class helper cache while FModuleManager / the asset registry still
 	// exist — ~FGraphNodeClassHelper unhooks their delegates, which is UB at static teardown.
@@ -534,7 +550,12 @@ void FModule::OnPreExit()
 	UWorkflowService::ShutdownJournal();
 	FVibeUEHealthSignal::Stop();
 	FVibeUEReadinessSignal::Remove();
-	
+
+	// GEditor still exists here (it is nulled in UEditorEngine::FinishDestroy, after this), so the throttling
+	// entries come off its array for real; ShutdownModule repeats both as no-ops.
+	UInputService::ShutdownInjectionHooks();
+	UPerformanceService::ShutdownThrottlingHook();
+
 	// Release all C++ Python service instances
 	// This is safe because we're just clearing our own pointers
 	UPythonTools::Shutdown();
@@ -547,6 +568,48 @@ void FModule::OnPreExit()
 	// the rest of the garbage collection.
 	
 	UE_LOG(LogTemp, Display, TEXT("VibeUE OnPreExit - C++ cleanup complete"));
+}
+
+void FModule::RegisterWillTerminateHook()
+{
+	if (!OnWillTerminateHandle.IsValid())
+	{
+		OnWillTerminateHandle = FCoreDelegates::GetApplicationWillTerminateDelegate().AddRaw(this, &FModule::OnApplicationWillTerminate);
+	}
+}
+
+void FModule::UnregisterWillTerminateHook()
+{
+	if (OnWillTerminateHandle.IsValid())
+	{
+		FCoreDelegates::GetApplicationWillTerminateDelegate().Remove(OnWillTerminateHandle);
+		OnWillTerminateHandle.Reset();
+	}
+}
+
+void FModule::OnApplicationWillTerminate()
+{
+	// FWindowsPlatformMisc::RequestExitWithStatus broadcasts this before TerminateProcess on a forced exit
+	// (and before PostQuitMessage on a soft one, which later runs OnPreExit/ShutdownModule as well — every call
+	// below is idempotent). Only the on-disk signals: the process is about to vanish, so nothing else matters
+	// to an outside watcher, and a stale editor-<pid>-true.json is what headless runs used to leave behind.
+	//
+	// It is NOT always the game thread: ConsoleCtrlHandler broadcasts it on the console-control thread (Ctrl-C,
+	// console close, logoff), and a crashing worker calls RequestExit(true) on itself — possibly the health
+	// writer. A Join there is a self-join or races the game thread's later Stop(), so off the game thread, or
+	// mid-crash, the writer is only flagged and woken; the game thread keeps ownership and joins it if it gets
+	// that far. The Automation "Quit" runs on the game thread and takes the full path (unless tests failed,
+	// which sets GIsCriticalError: the non-joining path deletes the same files).
+	if (IsInGameThread() && !GIsCriticalError)
+	{
+		FVibeUEHealthSignal::Stop();
+	}
+	else
+	{
+		FVibeUEHealthSignal::RequestStopFromAnyThread();
+	}
+	// Thread-aware itself: off the game thread it deletes the files and leaves the grace ticker alone.
+	FVibeUEReadinessSignal::Remove();
 }
 
 #undef LOCTEXT_NAMESPACE
