@@ -230,6 +230,11 @@ spawn can't do (they hit the editor world or refuse during PIE):
 `unreal.PIEActorService.spawn_actor("server", "/Script/Engine.StaticMeshActor", unreal.Transform())`
 (role selector `server`/`client`/`client:N`/`instance:N`; transient; `destroy_all()` to clean up;
 handles die with the PIE session). See the `pie-testing` skill.
+To call a UFUNCTION or RPC in PIE from Python with REAL net routing (plain Python calls run every RPC
+locally): `unreal.PIEActorService.call_function("client:1", "BP_Test_C_0", "Server_Foo", '{"Arg": 1}')`;
+its `callspace` field (`local`/`remote`/`local+remote`/`absorbed`) says whether an RPC was sent.
+`unreal.PIEActorService.console_command("server", "r.VSync 0")` runs a console command in one PIE world
+the same way.
 
 ---
 
