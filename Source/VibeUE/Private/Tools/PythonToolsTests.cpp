@@ -10,6 +10,8 @@
 #include "UObject/Package.h"
 #include "Misc/ScopeExit.h"
 #include "Editor.h"
+#include "Framework/Application/SlateApplication.h"
+#include "HAL/PlatformTime.h"
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
@@ -691,6 +693,285 @@ bool FVibePythonSafeLoadLevelRefusesTest::RunTest(const FString&)
 	}
 
 	TestTrue(TEXT("the open level never changed"), GEditor->GetEditorWorldContext().World() == EditorWorldBefore);
+	return true;
+}
+
+// vibeue.py (the `import vibeue` helper module) must import cleanly in the editor and expose every
+// gate helper by name: an agent that reads the skill and calls a missing helper loses a round-trip.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibePythonVibeueHelpersImportTest, "VibeUE.Python.VibeueHelpersImport",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVibePythonVibeueHelpersImportTest::RunTest(const FString&)
+{
+	const FString Json = UPythonTools::ExecutePythonCode(
+		TEXT("import vibeue\nprint('VibeueNames', sorted(n for n in dir(vibeue) if not n.startswith('_')))\n"),
+		/*bAutoSave=*/false);
+	TSharedPtr<FJsonObject> Obj;
+	FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json), Obj);
+	if (!TestTrue(TEXT("reply parses"), Obj.IsValid()))
+	{
+		return false;
+	}
+	FString Error;
+	Obj->TryGetStringField(TEXT("error_message"), Error);
+	if (!TestTrue(FString::Printf(TEXT("import vibeue runs (error: '%s')"), *Error), Obj->GetBoolField(TEXT("success"))))
+	{
+		return false;
+	}
+	const FString Output = Obj->GetStringField(TEXT("output"));
+	TestTrue(TEXT("the name list was printed"), Output.Contains(TEXT("VibeueNames")));
+
+	static const TCHAR* Expected[] = {
+		TEXT("wait_for"), TEXT("wait_until"), TEXT("wait_for_players"), TEXT("waits"), TEXT("cancel_all_waits"),
+		TEXT("Wait"), TEXT("player_ids"), TEXT("set_prop_pie"), TEXT("get_prop"), TEXT("set_array_prop"),
+		TEXT("dirty_snapshot"), TEXT("dirty_delta"), TEXT("viewport_state"), TEXT("gate_session"),
+		TEXT("mapping_context_priority"), TEXT("canvas_slot"), TEXT("set_canvas_slot"), TEXT("GateSession"),
+	};
+	for (const TCHAR* Name : Expected)
+	{
+		TestTrue(FString::Printf(TEXT("vibeue exposes %s"), Name), Output.Contains(FString::Printf(TEXT("'%s'"), Name)));
+	}
+	return true;
+}
+
+// vibeue.wait_for must never block: it returns a pending Wait at once (the editor does not tick
+// inside an execute_python_code call), lists it in vibeue.waits(), and cancel_all_waits() must
+// unregister every Slate post-tick handle, so a lost wait can always be ended. Then, across real
+// ticks, a wait on lambda: True must finish ok and leave the registry empty.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibePythonVibeueWaitForCompletesTest, "VibeUE.Python.VibeueWaitForCompletes",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+namespace VibeueWaitTest
+{
+	/** Run a snippet with auto-save off; returns its printed output, or sets OutError. */
+	static FString Run(const TCHAR* Code, bool& bOutSuccess, FString& OutError)
+	{
+		const FString Json = UPythonTools::ExecutePythonCode(Code, /*bAutoSave=*/false);
+		TSharedPtr<FJsonObject> Obj;
+		FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json), Obj);
+		bOutSuccess = Obj.IsValid() && Obj->GetBoolField(TEXT("success"));
+		OutError.Reset();
+		FString Output;
+		if (Obj.IsValid())
+		{
+			Obj->TryGetStringField(TEXT("error_message"), OutError);
+			Obj->TryGetStringField(TEXT("output"), Output);
+		}
+		return Output;
+	}
+}
+
+bool FVibePythonVibeueWaitForCompletesTest::RunTest(const FString&)
+{
+	bool bSuccess = false;
+	FString Error;
+	const FString Output = VibeueWaitTest::Run(TEXT(
+		"import vibeue\n"
+		"_vibeue_wait_probe = vibeue.wait_for(lambda: True, timeout_s=1, description='VibeueWaitForCompletes')\n"
+		"print('WaitExists', type(_vibeue_wait_probe).__name__, _vibeue_wait_probe.done)\n"
+		"print('WaitRegistered', _vibeue_wait_probe.registered)\n"
+		"print('WaitListed', _vibeue_wait_probe in vibeue.waits())\n"
+		"print('WaitActive', vibeue._active_wait_count() >= 1)\n"
+		"vibeue.cancel_all_waits()\n"
+		"print('WaitAfterCancel', vibeue._active_wait_count(), len(vibeue.waits()), _vibeue_wait_probe.done, _vibeue_wait_probe.cancelled)\n"
+		"del _vibeue_wait_probe\n"), bSuccess, Error);
+	if (!TestTrue(FString::Printf(TEXT("wait_for snippet runs (error: '%s')"), *Error), bSuccess))
+	{
+		return false;
+	}
+	const bool bSlate = FSlateApplication::IsInitialized();
+	TestTrue(FString::Printf(TEXT("wait_for returns a pending Wait (output: '%s')"), *Output), Output.Contains(TEXT("WaitExists Wait False")));
+	TestTrue(FString::Printf(TEXT("Wait.registered matches FSlateApplication::IsInitialized() (%s)"), bSlate ? TEXT("True") : TEXT("False")),
+		Output.Contains(bSlate ? TEXT("WaitRegistered True") : TEXT("WaitRegistered False")));
+	TestTrue(TEXT("vibeue.waits() lists it"), Output.Contains(TEXT("WaitListed True")));
+	TestTrue(TEXT("it is counted as active"), Output.Contains(TEXT("WaitActive True")));
+	TestTrue(TEXT("cancel_all_waits empties the registry and ends the wait"), Output.Contains(TEXT("WaitAfterCancel 0 0 True True")));
+
+	// Latent phase: real ticks. Without Slate no post-tick callback can ever run, so skip with a
+	// warning. Expected with Slate: done within a few frames, ok, registry empty.
+	if (!bSlate)
+	{
+		AddWarning(TEXT("Slate is not initialized in this process: the ticking half of VibeueWaitForCompletes was skipped."));
+		return true;
+	}
+	VibeueWaitTest::Run(TEXT(
+		"import vibeue\n"
+		"_vibeue_wait_latent = vibeue.wait_for(lambda: True, timeout_s=5, poll_s=0, description='VibeueWaitLatent')\n"),
+		bSuccess, Error);
+	if (!TestTrue(FString::Printf(TEXT("latent wait starts (error: '%s')"), *Error), bSuccess))
+	{
+		return false;
+	}
+
+	const double Started = FPlatformTime::Seconds();
+	ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([this, Started]()
+	{
+		bool bOk = false;
+		FString PollError;
+		const FString Poll = VibeueWaitTest::Run(TEXT(
+			"import vibeue\n"
+			"_w = _vibeue_wait_latent\n"
+			"print('WaitPoll', _w.done, _w.ok, _w.ticks > 0, vibeue._active_wait_count())\n"
+			"del _w\n"), bOk, PollError);
+		auto Cleanup = []()
+		{
+			bool bIgnored = false;
+			FString Ignored;
+			VibeueWaitTest::Run(TEXT("import vibeue\nvibeue.cancel_all_waits()\ndel _vibeue_wait_latent\n"), bIgnored, Ignored);
+		};
+		if (!bOk)
+		{
+			AddError(FString::Printf(TEXT("latent poll failed: %s"), *PollError));
+			Cleanup();
+			return true;
+		}
+		if (Poll.Contains(TEXT("WaitPoll True")))
+		{
+			TestTrue(FString::Printf(TEXT("the wait finished ok with an empty registry (poll: '%s')"), *Poll),
+				Poll.Contains(TEXT("WaitPoll True True True 0")));
+			Cleanup();
+			return true;
+		}
+		if (FPlatformTime::Seconds() - Started > 6.0)
+		{
+			if (Poll.Contains(TEXT("WaitPoll False False False")))
+			{
+				// Slate exists but never ticked (seen as a possibility in a -nullrhi Cmd host).
+				AddWarning(FString::Printf(TEXT("Slate never ticked the wait in 6 s; latent phase skipped (poll: '%s')"), *Poll));
+			}
+			else
+			{
+				AddError(FString::Printf(TEXT("the wait was ticked but did not finish within 6 s (poll: '%s')"), *Poll));
+			}
+			Cleanup();
+			return true;
+		}
+		return false;
+	}));
+	return true;
+}
+
+// vibeue.GateSession.enter() must be transactional (review find, 2026-10-23): it used to apply
+// set_background_throttling BEFORE reading the PIE settings, so a raise in between left throttling
+// changed with no __exit__ to restore it. Run the real class against fakes (perf=/settings=) so no
+// editor setting changes: A) the PIE read raises -> nothing changed, exception propagates;
+// B) the PIE write raises after throttling was applied -> both restored in reverse order,
+// exception propagates; C) the happy path applies both and exit() restores both. exit() after a
+// failed enter() must be a no-op. Headless-safe: no PIE, no real settings write.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibePythonVibeueGateSessionEntryFailureRestoresTest, "VibeUE.Python.VibeueGateSessionEntryFailureRestores",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVibePythonVibeueGateSessionEntryFailureRestoresTest::RunTest(const FString&)
+{
+	bool bSuccess = false;
+	FString Error;
+	const FString Output = VibeueWaitTest::Run(TEXT(R"PY(import json
+import vibeue
+
+def _vibeue_gate_entry_test():
+    calls = []
+
+    class FakePerf(object):
+        def __init__(self, enabled):
+            self.enabled = enabled
+        def get_background_throttling(self):
+            return json.dumps({"success": True, "throttling_enabled": self.enabled})
+        def set_background_throttling(self, value):
+            calls.append(("throttle", bool(value)))
+            self.enabled = bool(value)
+
+    class FakePie(object):
+        def __init__(self, mode, count, one):
+            self.success = True
+            self.net_mode = mode
+            self.num_clients = count
+            self.run_under_one_process = one
+        def get_editor_property(self, name):
+            return getattr(self, name)
+
+    class FakeSettings(object):
+        def __init__(self, fail_get=False, fail_set_mode=None):
+            self.pie = ("Standalone", 1, True)
+            self.fail_get = fail_get
+            self.fail_set_mode = fail_set_mode
+        def get_pie_settings(self):
+            if self.fail_get:
+                raise RuntimeError("VibeueGateFakeGetFailed")
+            return FakePie(*self.pie)
+        def set_pie_settings(self, mode, count, one):
+            calls.append(("pie", mode, count, one))
+            if mode == self.fail_set_mode:
+                raise RuntimeError("VibeueGateFakeSetFailed")
+            self.pie = (mode, count, one)
+            return True
+
+    # A: the PIE settings read raises. Reads come first now, so nothing may have been changed,
+    # the exception must propagate, and exit() must be a no-op.
+    perf, settings = FakePerf(True), FakeSettings(fail_get=True)
+    gs = vibeue.GateSession(clients=3, net_mode="ListenServer", throttle=False, perf=perf, settings=settings)
+    raised = None
+    try:
+        gs.enter()
+    except RuntimeError as exc:
+        raised = str(exc)
+    assert raised == "VibeueGateFakeGetFailed", "A: exception did not propagate: %r" % raised
+    assert calls == [], "A: a setting was changed before the read failed: %r" % calls
+    assert perf.enabled is True, "A: throttling left changed"
+    assert not gs.entered, "A: session marked entered"
+    gs.exit()
+    assert calls == [], "A: exit() after a failed enter() changed something: %r" % calls
+
+    # B: throttling is applied, then the PIE write raises. Throttling must be set back to its
+    # original value (True), PIE restored to its prior values, in reverse order, and the exception
+    # must propagate; exit() is then a no-op.
+    del calls[:]
+    perf, settings = FakePerf(True), FakeSettings(fail_set_mode="ListenServer")
+    gs = vibeue.GateSession(clients=3, net_mode="ListenServer", throttle=False, perf=perf, settings=settings)
+    raised = None
+    try:
+        gs.enter()
+    except RuntimeError as exc:
+        raised = str(exc)
+    assert raised == "VibeueGateFakeSetFailed", "B: exception did not propagate: %r" % raised
+    expected = [("throttle", False), ("pie", "ListenServer", 3, True),
+                ("pie", "Standalone", 1, True), ("throttle", True)]
+    assert calls == expected, "B: wrong apply/rollback sequence: %r" % calls
+    assert perf.enabled is True, "B: throttling not restored"
+    assert settings.pie == ("Standalone", 1, True), "B: PIE settings not restored: %r" % (settings.pie,)
+    assert not gs.entered, "B: session marked entered"
+    assert gs.state["throttle_applied"] is None and gs.state["pie_applied"] is None, "B: applied state kept"
+    n = len(calls)
+    gs.exit()
+    assert len(calls) == n, "B: exit() after rollback changed something: %r" % calls[n:]
+
+    # C: the happy path. enter() applies both, exit() restores both, a second exit() is a no-op.
+    del calls[:]
+    perf, settings = FakePerf(True), FakeSettings()
+    gs = vibeue.GateSession(clients=3, net_mode="ListenServer", throttle=False, perf=perf, settings=settings)
+    with gs as state:
+        assert sorted(state.keys()) == ["notes", "pie_applied", "pie_before", "throttle_applied", "throttle_before"], state
+        assert state["throttle_before"] is True and state["throttle_applied"] is False, state
+        assert state["pie_before"] == {"net_mode": "Standalone", "num_clients": 1, "run_under_one_process": True}, state
+        assert state["pie_applied"]["net_mode"] == "ListenServer" and state["pie_applied"]["num_clients"] == 3, state
+        assert perf.enabled is False and settings.pie == ("ListenServer", 3, True)
+    assert perf.enabled is True, "C: throttling not restored"
+    assert settings.pie == ("Standalone", 1, True), "C: PIE not restored: %r" % (settings.pie,)
+    n = len(calls)
+    gs.exit()
+    assert len(calls) == n, "C: second exit() changed something"
+    print("VibeueGateSessionCases A B C OK")
+
+try:
+    _vibeue_gate_entry_test()
+finally:
+    del _vibeue_gate_entry_test
+)PY"), bSuccess, Error);
+	if (!TestTrue(FString::Printf(TEXT("GateSession fake-service cases run (error: '%s')"), *Error), bSuccess))
+	{
+		return false;
+	}
+	TestTrue(FString::Printf(TEXT("all three GateSession cases passed (output: '%s')"), *Output),
+		Output.Contains(TEXT("VibeueGateSessionCases A B C OK")));
 	return true;
 }
 
