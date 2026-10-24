@@ -20,7 +20,10 @@
  * - near_clip_plane (float): Near clipping plane distance. Set -1 to restore the engine
  *     default; note the read-back then reports the *resolved* engine value (e.g. 10.0), not -1.
  * - far_clip_plane (float): Far clipping plane distance (0 = infinity)
- * - is_realtime (bool): Whether the viewport renders in realtime
+ * - is_realtime (bool): Whether the viewport renders in realtime right now, INCLUDING temporary
+ *     overrides (e.g. the "Background Process" override a backgrounded editor puts on every viewport)
+ * - realtime_base (bool): The user's own realtime setting, without overrides (the value the editor
+ *     saves to its ini). restore_viewport_info() compares and writes THIS one, never is_realtime.
  * - is_game_view (bool): Whether Game View mode is active (hides editor icons)
  * - allow_cinematic_control (bool): Whether cinematic sequences can control this viewport
  * - exposure_fixed (bool): Whether exposure is fixed (true) or auto/game-settings (false)
@@ -75,6 +78,10 @@ struct FViewportInfo
 
 	UPROPERTY(BlueprintReadWrite, Category = "Viewport")
 	int32 ViewportIndex = 0;
+
+	/** The base realtime flag without overrides (FEditorViewportClient::SaveRealtimeStateToConfig). */
+	UPROPERTY(BlueprintReadWrite, Category = "Viewport")
+	bool bRealtimeBase = true;
 };
 
 /**
@@ -90,6 +97,9 @@ struct FViewportInfo
  * - width / height (int): Pixel dimensions of the captured image.
  * - file_size_bytes (int): Size of the written PNG on disk (0 on failure).
  * - error_message (str): Reason on failure (empty on success).
+ * - view_applied (bool): capture_with_view only: True once the temporary view was applied to the
+ *     level viewport (and therefore restored afterwards); False when it refused before touching it.
+ *     Always False from capture_scene.
  */
 USTRUCT(BlueprintType)
 struct FSceneCaptureResult
@@ -113,6 +123,9 @@ struct FSceneCaptureResult
 
 	UPROPERTY(BlueprintReadWrite, Category = "Viewport")
 	FString ErrorMessage;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Viewport")
+	bool bViewApplied = false;
 };
 
 /**
@@ -161,10 +174,30 @@ struct FSceneCaptureResult
  *   #          unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem)
  *   #              .set_level_viewport_camera_info(location, rotation)
  *
+ *   # WARNING: set_fov / set_exposure PERSIST. The editor saves the level viewport's FOV and
+ *   # exposure to EditorPerProjectUserSettings.ini, so a script that changes them and exits
+ *   # leaves the user's viewport that way on every later launch (a fixed EV100 on a dim map
+ *   # renders the Lit viewport black). Snapshot first and restore afterwards:
+ *   info = unreal.ViewportService.get_viewport_info()
+ *   unreal.ViewportService.set_exposure(True, 12.0)
+ *   unreal.ViewportService.restore_viewport_info(info)
+ *
+ *   # Or let one call do apply -> capture -> restore. It restores on every ordinary failure or
+ *   # early return; only a crash caught by the Python runner's SEH guard (an access violation
+ *   # inside the draw) skips the restore. The snapshot is logged at Display first, so the
+ *   # values can be put back by hand:
+ *   res = unreal.ViewportService.capture_with_view(loc, rot, 1280, 720, "shot.png", 60.0, True, 10.0)
+ *
+ *   # Main editor window (a minimized window freezes PIE and makes capture_image refuse):
+ *   print(unreal.ViewportService.get_editor_window_state())
+ *   unreal.ViewportService.set_editor_window_state("restore")
+ *
  * @note ViewportService owns view type, view mode, FOV, clip planes, exposure, game view,
  *       cinematic control, realtime, camera speed, and layout. It does NOT set camera
  *       position/rotation (no set_camera_location / set_camera_rotation) — use the engine
- *       path above. (issue #471)
+ *       path above. (issue #471) The exceptions are restore_viewport_info(), which puts the
+ *       camera pose back as part of restoring a get_viewport_info() snapshot, and
+ *       capture_with_view(), which moves the camera only for the duration of its shot.
  */
 UCLASS(BlueprintType)
 class VIBEUE_API UViewportService : public UToolsetDefinition
@@ -183,6 +216,34 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
 	static FViewportInfo GetViewportInfo();
+
+	/**
+	 * Put the level viewport back to a snapshot taken by GetViewportInfo(), in one call.
+	 *
+	 * Restores: camera location and rotation, FOV, exposure (fixed + EV100, or game settings
+	 * when the snapshot's exposure_fixed is false), the BASE realtime setting (realtime_base, not
+	 * is_realtime, which includes temporary overrides such as a backgrounded editor's), and game
+	 * view. Each field is compared first and written only when it differs, so restoring an
+	 * unchanged snapshot writes nothing. View type, view mode, clip planes, cinematic control,
+	 * layout and camera speed are NOT restored. When the snapshot's viewport_type differs from
+	 * the current view type, the camera pose is skipped (with a Warning) rather than written into
+	 * the other view type's transform; switch the type back first to restore the pose too.
+	 *
+	 * Why it exists: set_fov / set_exposure PERSIST. The editor saves the level viewport's FOV
+	 * and exposure into EditorPerProjectUserSettings.ini, so a script that changes them and
+	 * exits leaves the user's viewport that way on every later launch.
+	 *
+	 * Python:
+	 *   info = unreal.ViewportService.get_viewport_info()
+	 *   # ... change FOV / exposure / camera ...
+	 *   unreal.ViewportService.restore_viewport_info(info)
+	 *
+	 * @param Info - A snapshot from GetViewportInfo().
+	 * @return True if a level viewport client was found and the snapshot applied; false
+	 *         (with a Warning log) when there is no level viewport.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
+	static bool RestoreViewportInfo(const FViewportInfo& Info);
 
 	// =================================================================
 	// View Type (Perspective / Orthographic)
@@ -437,6 +498,105 @@ public:
 		float OrthoWidth = 0.0f,
 		float FOV = 90.0f,
 		float ManualEV100 = 0.0f);
+
+	/**
+	 * Capture the REAL level viewport from a given camera, then restore the viewport.
+	 *
+	 * Snapshots GetViewportInfo(), applies the camera pose, the optional FOV and the optional
+	 * fixed exposure to the active level viewport, draws that viewport once (FViewport::Draw +
+	 * ReadPixels, the same path capture_image source='editor' uses) and writes a PNG. Then it
+	 * restores everything from the snapshot. The restore is scoped, so an ordinary failure or an
+	 * early return restores too. Caveat: an access violation inside the draw is caught by the
+	 * Python runner's SEH guard, and SEH unwinding runs no destructors, so then the shot's view
+	 * stays in the session (and is saved at the next layout save or exit). The snapshot's pose,
+	 * FOV and exposure are logged at Display ("CaptureWithView: snapshot ...") before anything is
+	 * applied, so they can be restored by hand with restore_viewport_info / set_fov / set_exposure.
+	 *
+	 * Unlike CaptureScene (an off-screen SceneCapture2D), this renders the level viewport
+	 * itself, so its view mode, show flags, game view and exposure apply. Refused (nothing
+	 * applied) during PIE, in a non-perspective view, while the viewport pilots an actor or is
+	 * locked to a cinematic camera (the camera would move that actor, and its FOV would win),
+	 * while the main editor window is minimized (see SetEditorWindowState("restore")), and when
+	 * the viewport has no drawable surface. A backgrounded editor has no converged auto
+	 * exposure, so pass bFixedExposure=True for a dependable brightness.
+	 *
+	 * @param Location - Camera world location for the shot.
+	 * @param Rotation - Camera world rotation for the shot (in Python use keyword args:
+	 *        unreal.Rotator(roll=0, pitch=-20, yaw=90)).
+	 * @param Width - Output width in pixels (1..8192). The viewport draws at its own size and the
+	 *        pixels are resized to Width x Height; an aspect ratio unlike the viewport's stretches.
+	 * @param Height - Output height in pixels (1..8192).
+	 * @param OutputPngPath - Where to write the PNG. Absolute paths are used as-is; a relative
+	 *        path lands under <Project>/Saved/VibeUE/Captures. A missing ".png" is appended.
+	 * @param FOV - Horizontal FOV in degrees for the shot (clamped to 5..170); 0 (default) keeps
+	 *        the viewport's current FOV.
+	 * @param bFixedExposure - True = fixed exposure at EV100 for the shot; false (default) keeps
+	 *        the viewport's current exposure setting.
+	 * @param EV100 - Fixed EV100 for the shot when bFixedExposure is true (higher = darker).
+	 * @return FSceneCaptureResult with bSuccess, OutputPath, Width/Height, FileSizeBytes, ErrorMessage.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
+	static FSceneCaptureResult CaptureWithView(
+		FVector Location,
+		FRotator Rotation,
+		int32 Width,
+		int32 Height,
+		const FString& OutputPngPath,
+		float FOV = 0.0f,
+		bool bFixedExposure = false,
+		float EV100 = 0.0f);
+
+	/**
+	 * C++ only (not a UFUNCTION, not reachable from Python): the apply-and-restore core of CaptureWithView.
+	 * Snapshots the active level viewport (logged at Display), applies the pose, the optional FOV (> 0) and
+	 * the optional fixed exposure, runs Body, and restores the snapshot when the scope ends, Body's early
+	 * returns included. It does NONE of CaptureWithView's refusal checks (PIE, view type, actor lock,
+	 * minimized window, surface size). Tests drive it to exercise the restore path without an RHI.
+	 *
+	 * @return False, with Body not run and nothing touched, when there is no level viewport client.
+	 */
+	static bool RunWithTemporaryView(
+		FVector Location,
+		FRotator Rotation,
+		float FOV,
+		bool bFixedExposure,
+		float EV100,
+		TFunctionRef<void()> Body);
+
+	// =================================================================
+	// Main editor window state
+	// =================================================================
+
+	/**
+	 * Read the main editor window's state.
+	 *
+	 * A minimized editor window freezes PIE (world time stays 0) and makes capture_image
+	 * refuse with "window is minimized"; SetEditorWindowState("restore") fixes that.
+	 *
+	 * @return JSON {"success": true, "is_minimized": bool, "is_maximized": bool,
+	 *         "is_foreground": bool, "is_visible": bool, "title": str}, or
+	 *         {"success": false, "error_code": "NO_WINDOW", "error_message": str} when there is no
+	 *         main editor window (headless / -nullrhi runs).
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
+	static FString GetEditorWindowState();
+
+	/**
+	 * Change the main editor window's state.
+	 *
+	 * "restore" un-minimizes; a window that is not minimized is left alone (a no-op that
+	 * succeeds), so a maximized window stays maximized. "front" un-minimizes if needed and then
+	 * asks the OS for the foreground; Windows may refuse that for a background process, and then
+	 * success is false and is_foreground says so. "minimize" and "maximize" do what they say.
+	 *
+	 * @param State - "restore" | "front" | "minimize" | "maximize" (case-insensitive).
+	 * @return JSON {"success": bool, "state": str, "was_minimized": bool, "is_minimized": bool,
+	 *         "is_maximized": bool, "is_foreground": bool, "is_visible": bool, "title": str};
+	 *         success is true when the requested state holds afterwards. Failures add
+	 *         "error_code" ("NO_WINDOW", "BAD_STATE" or "STATE_NOT_REACHED") and "error_message".
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
+	static FString SetEditorWindowState(const FString& State);
 
 private:
 	/** Helper: get the active FLevelEditorViewportClient, or nullptr */

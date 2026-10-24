@@ -53,7 +53,8 @@ tool in a toolset (the most token-heavy thing here); reach for a **skill** plus 
   (use `unreal` lowercase; narrow with `name_filter` / `method_filter`).
 - `list_python_subsystems` — list editor subsystems.
 - `capture_image` — screenshot as a real MCP image (see §6): `source` = `game` (PIE incl. UMG HUD),
-  `window` (whole editor window), or `editor` (viewport scene). Also saves a PNG under
+  `window` (whole editor window), or `editor` (viewport scene); `pie_instance` picks one PIE
+  instance's game viewport in a multi-player session. Also saves a PNG under
   `Saved/VibeUE/Captures` and returns the path.
 - `deep_research` — web search / page fetch / geocode (see §5).
 - `terrain_data` — real-world heightmaps + water splines (see §5).
@@ -186,7 +187,14 @@ After any **visible** change, capture and actually look before claiming success:
 capture_image                          # editor viewport scene (default when PIE is off)
 capture_image {"source": "game"}       # PIE game viewport INCLUDING the Slate/UMG HUD
 capture_image {"source": "window"}     # the whole editor window (any editor UI/panel)
+capture_image {"source": "game", "pie_instance": 1}   # one PIE instance in a multi-player session
 ```
+If it refuses with "window is minimized" (a minimized editor also freezes PIE), run
+`unreal.ViewportService.set_editor_window_state("restore")` in `execute_python_code` and retry.
+Scripts that change the viewport's FOV or exposure for a shot must restore them: those settings
+persist into the user's editor config. Snapshot with `info = unreal.ViewportService.get_viewport_info()`
+and finish with `unreal.ViewportService.restore_viewport_info(info)`, or use
+`unreal.ViewportService.capture_with_view(...)`, which restores by itself.
 `capture_image` returns a **real MCP image block** — you see the picture directly, no base64
 decoding, no token blowout — and saves a PNG under `Saved/VibeUE/Captures` (path in the result).
 `source="game"` is the ONLY way to screenshot the running game's HUD: Epic's `CaptureViewport`

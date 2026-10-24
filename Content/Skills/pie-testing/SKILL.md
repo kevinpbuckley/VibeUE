@@ -392,6 +392,22 @@ Slate/UMG HUD** and returns a real image block you can look at (plus a PNG under
 `Saved/VibeUE/Captures`). This replaces the old `Shot showui` + read-the-file workaround — and
 `CaptureViewport` can never see PIE or UI at all.
 
+**Multi-player PIE: pick the window with `pie_instance`.** Plain `source="game"` captures only the
+editor's current game viewport (one instance). Pass the PIE instance number to capture a specific
+one — no foreground-window juggling:
+
+```
+capture_image {"source": "game", "pie_instance": 0}   # first PIE window (the listen server)
+capture_image {"source": "game", "pie_instance": 2}   # client 2
+```
+
+The reply carries `pie_instance` (the instance captured). An unknown instance returns
+`error_code: "PIE_INSTANCE_NOT_FOUND"` with `available_pie_instances` (empty when PIE is not
+running); a dedicated-server instance has no viewport (`PIE_INSTANCE_NO_VIEWPORT`).
+
+**"window is minimized"?** A minimized editor also freezes PIE (world time stays 0). Restore it from
+`execute_python_code` with `unreal.ViewportService.set_editor_window_state("restore")`.
+
 ## Full-rate unfocused verification — `PerformanceService` (issue #549)
 
 An unfocused editor throttles to ~3 FPS, wrecking timed PIE runs. Disable throttling for the
