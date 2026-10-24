@@ -15,6 +15,7 @@
 #include "LandscapeSplineControlPoint.h"
 #include "LandscapeSplinesComponent.h"
 #include "Misc/ScopeExit.h"
+#include "RHIGlobals.h"
 
 namespace VibeLandscapeSplineTests
 {
@@ -43,20 +44,33 @@ namespace VibeLandscapeSplineTests
 
 // Check actual component-space geometry, not only a service create/read round trip:
 // the old getter used the same wrong transform and concealed misplaced points (#640).
+//
+// The fixture is built and deleted through the service, like PreserveSculptLayer. It used to
+// be a bare World->SpawnActor<ALandscape>() + DestroyActor, which crashed the NEXT garbage
+// collection's following tick and lost every test scheduled after this one: a spawned
+// landscape has no LandscapeGuid, ALandscapeProxy::PostRegisterAllComponents registers it with
+// ULandscapeSubsystem regardless, but ALandscapeProxy::UnregisterAllComponents only unregisters
+// when the guid is valid. The destroyed actor stayed in ULandscapeSubsystem::LandscapeActors,
+// GC nulled that UPROPERTY entry, and ULandscapeSubsystem::Tick dereferenced the null.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeLandscapeSplineCoordinatesTest,
 	"VibeUE.LandscapeService.Splines.ComponentCoordinates",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FVibeLandscapeSplineCoordinatesTest::RunTest(const FString&)
 {
-	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
-	if (!TestNotNull(TEXT("editor world"), World)) return false;
-	ALandscape* Landscape = World->SpawnActor<ALandscape>();
-	if (!TestNotNull(TEXT("test landscape"), Landscape)) return false;
-	ON_SCOPE_EXIT { World->DestroyActor(Landscape); };
-	Landscape->SetActorLabel(FString::Printf(TEXT("SplineCoordinates_%s"), *FGuid::NewGuid().ToString()));
-	const FString Label = Landscape->GetActorLabel();
-	Landscape->SetActorLocation(FVector(-151200, -151200, -870));
-	Landscape->SetActorScale3D(FVector(100));
+	using namespace VibeLandscapeSplineTests;
+	if (!TestNotNull(TEXT("editor"), GEditor)) return false;
+	const FString Label = FString::Printf(TEXT("SplineCoordinates_%s"), *FGuid::NewGuid().ToString());
+	// Same actor transform as the #640 repro (this location, no rotation, scale 100), so the
+	// expected component-local values below are unchanged. The smallest valid landscape (one
+	// component of 7 quads) is enough: the spline maths reads only the component transform.
+	const FLandscapeCreateResult CreatedLandscape = ULandscapeService::CreateLandscape(
+		FVector(-151200, -151200, -870), FRotator::ZeroRotator, FVector(100), 1, 7, 1, 1, Label);
+	if (!TestTrue(TEXT("create test landscape"), CreatedLandscape.bSuccess)) return false;
+	bool bDeleted = false;
+	ON_SCOPE_EXIT { if (!bDeleted) { ULandscapeService::DeleteLandscape(Label); } };
+	ALandscape* Landscape = FindLandscape(Label);
+	if (!TestNotNull(TEXT("find test landscape"), Landscape)) return false;
+	TestTrue(TEXT("fixture landscape has a valid guid"), Landscape->GetLandscapeGuid().IsValid());
 	const FVector Requested(19860.77, 8802.70, -2.04);
 	const FSplineCreateResult Created = ULandscapeService::CreateSplinePoint(Label, Requested, 1160);
 	if (!TestTrue(TEXT("create point"), Created.bSuccess)) return false;
@@ -82,11 +96,29 @@ bool FVibeLandscapeSplineCoordinatesTest::RunTest(const FString&)
 	if (!TestEqual(TEXT("one control point"), Info.ControlPoints.Num(), 1)) return false;
 	TestTrue(TEXT("getter reports actual component geometry"), Info.ControlPoints[0].Location.Equals(
 		Splines->GetComponentTransform().TransformPosition(Point->Location), 0.01));
+
+	// Regression for the post-test GC crash: after teardown the landscape subsystem must not
+	// still hold the destroyed actor. Read before any GC can run (DestroyActor does not collect);
+	// Get(true) because the actor is pending kill by now.
+	const TWeakObjectPtr<ALandscape> WeakLandscape(Landscape);
+	bDeleted = true;
+	TestTrue(TEXT("delete test landscape"), ULandscapeService::DeleteLandscape(Label));
+	if (const ALandscape* DyingLandscape = WeakLandscape.Get(/*bEvenIfPendingKill=*/true))
+	{
+		TestFalse(TEXT("destroyed landscape is unregistered from ULandscapeSubsystem"),
+			static_cast<bool>(DyingLandscape->bIsRegisteredWithSubsystem));
+	}
+	else
+	{
+		AddInfo(TEXT("regression check skipped: the landscape was already collected"));
+	}
 	return true;
 }
 
-// Requires a full editor with rendering (not -NullRHI): verifies raw per-layer
-// heightmaps and the merged result, including stale deformation after move/delete.
+// Verifies raw per-layer heightmaps and the merged result, including stale deformation
+// after move/delete. The two "deformed" height checks need a real RHI (the edit-layer merge
+// that applies the Splines layer does not deform anything under -NullRHI), so under -nullrhi
+// they are skipped with a warning; every other assertion still runs headless.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeLandscapeSplineLayersTest,
 	"VibeUE.LandscapeService.Splines.PreserveSculptLayer",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -123,7 +155,14 @@ bool FVibeLandscapeSplineLayersTest::RunTest(const FString&)
 	TestFalse(TEXT("editing layer remains unset"), Landscape->GetEditingLayer().IsValid());
 	TestTrue(TEXT("base heightmap byte-for-byte unchanged"), ReadHeights(Landscape, BaseGuid) == BaseBefore);
 	const TArray<uint16> Applied = ReadHeights(Landscape, FGuid());
-	TestTrue(TEXT("terrain actually deformed at the road"), Applied[30 * 64 + 30] > MergedBefore[30 * 64 + 30]);
+	if (GUsingNullRHI)
+	{
+		AddWarning(TEXT("SKIPPED (no RHI): 'terrain actually deformed at the road' needs the edit-layer merge; run with -RenderOffscreen to check it."));
+	}
+	else
+	{
+		TestTrue(TEXT("terrain actually deformed at the road"), Applied[30 * 64 + 30] > MergedBefore[30 * 64 + 30]);
+	}
 
 	// Even an explicitly scoped base layer must lose priority to the reserved layer.
 	{
@@ -143,7 +182,14 @@ bool FVibeLandscapeSplineLayersTest::RunTest(const FString&)
 	TestTrue(TEXT("rebuild moved spline"), ULandscapeService::ApplySplinesToLandscape(Label));
 	const TArray<uint16> Moved = ReadHeights(Landscape, FGuid());
 	TestEqual(TEXT("old road deformation removed"), Moved[30 * 64 + 30], MergedBefore[30 * 64 + 30]);
-	TestTrue(TEXT("new road position deformed"), Moved[48 * 64 + 30] > MergedBefore[48 * 64 + 30]);
+	if (GUsingNullRHI)
+	{
+		AddWarning(TEXT("SKIPPED (no RHI): 'new road position deformed' needs the edit-layer merge; run with -RenderOffscreen to check it."));
+	}
+	else
+	{
+		TestTrue(TEXT("new road position deformed"), Moved[48 * 64 + 30] > MergedBefore[48 * 64 + 30]);
+	}
 	TestTrue(TEXT("delete splines"), ULandscapeService::DeleteAllSplines(Label));
 	TestTrue(TEXT("rebuild empty spline layer"), ULandscapeService::ApplySplinesToLandscape(Label));
 	TestTrue(TEXT("deleting splines restores original heights"), ReadHeights(Landscape, FGuid()) == MergedBefore);
