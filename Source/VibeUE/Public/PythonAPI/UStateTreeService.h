@@ -741,6 +741,8 @@ public:
 	 *                       - Blueprint task class names (e.g. "STT_Rotate_C")
 	 *                       - Blueprint class object paths (e.g. "/Game/StateTree/STT_Rotate.STT_Rotate_C")
 	 *                       - Blueprint asset paths (e.g. "/Game/StateTree/STT_Rotate")
+	 *                       Blueprint tasks must be compiled first; a skeleton name ("SKEL_STT_Rotate_C")
+	 *                       resolves to the compiled "STT_Rotate_C" class, and other internal classes are refused.
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool AddTask(const FString& AssetPath, const FString& StatePath,
