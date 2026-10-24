@@ -13,6 +13,38 @@
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
+#include "Curves/CurveFloat.h"
+#include "Misc/Guid.h"
+#include "UObject/UObjectGlobals.h"
+
+namespace
+{
+	// Read a string-array reply field. False when the key is missing - every reply must carry it.
+	bool ReadReplyStringList(const TSharedPtr<FJsonObject>& Obj, const TCHAR* Field, TArray<FString>& Out)
+	{
+		Out.Reset();
+		const TArray<TSharedPtr<FJsonValue>>* Arr = nullptr;
+		if (!Obj.IsValid() || !Obj->TryGetArrayField(Field, Arr) || !Arr)
+		{
+			return false;
+		}
+		for (const TSharedPtr<FJsonValue>& Value : *Arr)
+		{
+			Out.Add(Value.IsValid() ? Value->AsString() : FString());
+		}
+		return true;
+	}
+
+	TSharedPtr<FJsonObject> RunPythonNoSave(const FString& Code)
+	{
+		// auto_save=false: these tests leave scratch packages dirty on purpose, and a sweep would write
+		// them to disk.
+		const FString Json = UPythonTools::ExecutePythonCode(Code, /*bAutoSave=*/false);
+		TSharedPtr<FJsonObject> Obj;
+		FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json), Obj);
+		return Obj;
+	}
+}
 
 // The execute_python_code reply must describe what the pre-run auto-save sweep ACTUALLY DID, not
 // echo the argument back. A caller already knows what it passed; the only thing it cannot otherwise
@@ -357,6 +389,308 @@ bool FVibePythonCodeMentioningPyFileTest::RunTest(const FString&)
 		}
 	}
 
+	return true;
+}
+
+// P8: every execute_python_code reply names the packages the SCRIPT dirtied and cleaned. Project
+// scripts used to snapshot get_dirty_content_packages() by hand around every audit and importer, and a
+// script that raised mid-edit left a widget dirty that a later auto_save=true call would have saved.
+//
+// The fixture is an in-memory curve in a scratch /Game package: never saved, and set clean again on
+// exit so no later auto_save=true test can write it. Every run here passes auto_save=false for the
+// same reason. The "cleaned" direction is covered through the pure diff below: no Python API clears a
+// package's dirty flag without saving it to disk.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibePythonDirtiedPackagesReportedTest, "VibeUE.Python.DirtiedPackagesReported",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVibePythonDirtiedPackagesReportedTest::RunTest(const FString&)
+{
+	// The diff the reply fields are built from.
+	{
+		TArray<FString> Dirtied;
+		TArray<FString> Cleaned;
+		UPythonTools::ComputeDirtyPackageDelta(
+			{ TEXT("/Game/B"), TEXT("/Game/A"), TEXT("/Game/Kept") },
+			{ TEXT("/Game/Kept"), TEXT("/Game/D"), TEXT("/Game/C") },
+			Dirtied, Cleaned);
+		TestEqual(TEXT("delta: two packages dirtied"), Dirtied.Num(), 2);
+		TestEqual(TEXT("delta: two packages cleaned"), Cleaned.Num(), 2);
+		if (Dirtied.Num() == 2 && Cleaned.Num() == 2)
+		{
+			TestEqual(TEXT("delta: dirtied is sorted (first)"), Dirtied[0], FString(TEXT("/Game/C")));
+			TestEqual(TEXT("delta: dirtied is sorted (second)"), Dirtied[1], FString(TEXT("/Game/D")));
+			TestEqual(TEXT("delta: cleaned is sorted (first)"), Cleaned[0], FString(TEXT("/Game/A")));
+			TestEqual(TEXT("delta: cleaned is sorted (second)"), Cleaned[1], FString(TEXT("/Game/B")));
+		}
+		TestFalse(TEXT("delta: a package dirty on both sides is in neither list"),
+			Dirtied.Contains(TEXT("/Game/Kept")) || Cleaned.Contains(TEXT("/Game/Kept")));
+	}
+
+	const UFunction* Getter = UPythonTools::StaticClass()->FindFunctionByName(
+		GET_FUNCTION_NAME_CHECKED(UPythonTools, GetDirtyPackages));
+	if (TestNotNull(TEXT("GetDirtyPackages is reflected"), Getter))
+	{
+		TestTrue(TEXT("GetDirtyPackages is AICallable"), Getter->HasMetaData(TEXT("AICallable")));
+		TestTrue(TEXT("GetDirtyPackages is BlueprintCallable (so Python binds it)"), Getter->HasAnyFunctionFlags(FUNC_BlueprintCallable));
+	}
+
+	if (!GEditor)
+	{
+		AddInfo(TEXT("No GEditor; skipping the end-to-end half."));
+		return true;
+	}
+
+	const FString Leaf = FString::Printf(TEXT("Dirty_%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+	const FString PackageName = FString(TEXT("/Game/__VibeUETest/")) + Leaf;
+	UPackage* Package = CreatePackage(*PackageName);
+	if (!TestNotNull(TEXT("created the scratch package"), Package))
+	{
+		return false;
+	}
+	UCurveFloat* Probe = NewObject<UCurveFloat>(Package, *Leaf, RF_Public | RF_Standalone);
+	if (!TestNotNull(TEXT("created the scratch curve"), Probe))
+	{
+		return false;
+	}
+	const TWeakObjectPtr<UPackage> WeakPackage(Package);
+	const TWeakObjectPtr<UCurveFloat> WeakProbe(Probe);
+	ON_SCOPE_EXIT
+	{
+		// Clean first, so nothing this test dirtied can be saved by a later sweep, then let GC have it.
+		if (UPackage* Leftover = WeakPackage.Get())
+		{
+			Leftover->SetDirtyFlag(false);
+		}
+		if (UCurveFloat* Leftover = WeakProbe.Get())
+		{
+			Leftover->ClearFlags(RF_Public | RF_Standalone);
+			Leftover->MarkAsGarbage();
+		}
+	};
+	Package->SetDirtyFlag(false);
+	TestFalse(TEXT("the scratch package starts clean"), UPythonTools::GetDirtyPackages().Contains(PackageName));
+
+	const FString ObjectPath = Probe->GetPathName();
+	TArray<FString> Dirtied;
+	TArray<FString> Cleaned;
+
+	// 1. The script dirties the package (UObject.modify() with no transaction marks it dirty), and
+	//    reads the dirty set mid-run through the Python binding.
+	{
+		const TSharedPtr<FJsonObject> Obj = RunPythonNoSave(FString::Printf(
+			TEXT("import unreal\n")
+			TEXT("_vibe_probe = unreal.find_object(None, '%s')\n")
+			TEXT("_vibe_probe.modify()\n")
+			TEXT("print('VIBEUE_DIRTY_MIDRUN', '%s' in list(unreal.PythonTools.get_dirty_packages()))\n")
+			TEXT("del _vibe_probe\n"),
+			*ObjectPath, *PackageName));
+		if (!TestTrue(TEXT("dirtying run: reply parses"), Obj.IsValid()))
+		{
+			return false;
+		}
+		TestTrue(TEXT("dirtying run succeeds"), Obj->GetBoolField(TEXT("success")));
+		TestTrue(TEXT("get_dirty_packages() sees the package mid-run"),
+			Obj->GetStringField(TEXT("output")).Contains(TEXT("VIBEUE_DIRTY_MIDRUN True")));
+		TestTrue(TEXT("dirtying run: dirtied_packages present"), ReadReplyStringList(Obj, TEXT("dirtied_packages"), Dirtied));
+		TestTrue(TEXT("dirtying run: cleaned_packages present"), ReadReplyStringList(Obj, TEXT("cleaned_packages"), Cleaned));
+		TestTrue(FString::Printf(TEXT("%s is reported in dirtied_packages"), *PackageName), Dirtied.Contains(PackageName));
+		TestFalse(TEXT("and not in cleaned_packages"), Cleaned.Contains(PackageName));
+		TestTrue(TEXT("the package really is dirty afterwards"), Package->IsDirty());
+		TestTrue(TEXT("GetDirtyPackages agrees from C++"), UPythonTools::GetDirtyPackages().Contains(PackageName));
+	}
+
+	// 2. Dirt that predates the run is never attributed to it.
+	{
+		const TSharedPtr<FJsonObject> Obj = RunPythonNoSave(TEXT("x = 1\n"));
+		if (!TestTrue(TEXT("no-op run: reply parses"), Obj.IsValid()))
+		{
+			return false;
+		}
+		TestTrue(TEXT("no-op run: dirtied_packages present"), ReadReplyStringList(Obj, TEXT("dirtied_packages"), Dirtied));
+		TestTrue(TEXT("no-op run: cleaned_packages present"), ReadReplyStringList(Obj, TEXT("cleaned_packages"), Cleaned));
+		TestFalse(TEXT("pre-existing dirt is not reported as dirtied"), Dirtied.Contains(PackageName));
+		TestFalse(TEXT("pre-existing dirt is not reported as cleaned"), Cleaned.Contains(PackageName));
+	}
+
+	// 3. A script that dirties and then RAISES - the motivating case - still reports it, on the error reply.
+	Package->SetDirtyFlag(false);
+	AddExpectedError(TEXT("LogPython"), EAutomationExpectedErrorFlags::Contains, 0);
+	{
+		const TSharedPtr<FJsonObject> Obj = RunPythonNoSave(FString::Printf(
+			TEXT("import unreal\n")
+			TEXT("unreal.find_object(None, '%s').modify()\n")
+			TEXT("raise RuntimeError('VibeUEDirtyThenRaise')\n"),
+			*ObjectPath));
+		if (!TestTrue(TEXT("raising run: reply parses"), Obj.IsValid()))
+		{
+			return false;
+		}
+		TestFalse(TEXT("raising run is reported as failed"), Obj->GetBoolField(TEXT("success")));
+		TestTrue(TEXT("raising run: dirtied_packages present on the error reply"), ReadReplyStringList(Obj, TEXT("dirtied_packages"), Dirtied));
+		TestTrue(TEXT("raising run: cleaned_packages present on the error reply"), ReadReplyStringList(Obj, TEXT("cleaned_packages"), Cleaned));
+		TestTrue(TEXT("the half-finished edit is reported in dirtied_packages"), Dirtied.Contains(PackageName));
+	}
+
+	return true;
+}
+
+// P15 (a): the resident-map list execute_python_code reports is readable from Python.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibePythonGetResidentMapsIsCallableTest, "VibeUE.Python.GetResidentMapsIsCallable",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVibePythonGetResidentMapsIsCallableTest::RunTest(const FString&)
+{
+	const UFunction* Getter = UPythonTools::StaticClass()->FindFunctionByName(
+		GET_FUNCTION_NAME_CHECKED(UPythonTools, GetResidentMaps));
+	if (!TestNotNull(TEXT("GetResidentMaps is reflected"), Getter))
+	{
+		return false;
+	}
+	TestTrue(TEXT("GetResidentMaps is AICallable"), Getter->HasMetaData(TEXT("AICallable")));
+	TestTrue(TEXT("GetResidentMaps is BlueprintCallable (so Python binds it)"), Getter->HasAnyFunctionFlags(FUNC_BlueprintCallable));
+	TestTrue(TEXT("GetResidentMaps is static"), Getter->HasAnyFunctionFlags(FUNC_Static));
+
+	if (!GEditor)
+	{
+		AddInfo(TEXT("No GEditor; skipping the resident-world half."));
+		return true;
+	}
+
+	// Same fixture as VibeUE.Python.ResidentMapDetection: a bare inactive world in a scratch package.
+	const FString Leaf = FString::Printf(TEXT("W_ResidentCallable_%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+	UPackage* Package = CreatePackage(*(FString(TEXT("/Game/__VibeUETest/")) + Leaf));
+	if (!TestNotNull(TEXT("created the scratch package"), Package))
+	{
+		return false;
+	}
+	UWorld* Probe = NewObject<UWorld>(Package, *Leaf, RF_Public | RF_Standalone);
+	if (!TestNotNull(TEXT("created the scratch world"), Probe))
+	{
+		return false;
+	}
+	Probe->WorldType = EWorldType::Inactive;
+	const FString ProbePath = Probe->GetPathName();
+	const TWeakObjectPtr<UWorld> WeakProbe(Probe);
+	ON_SCOPE_EXIT
+	{
+		if (UWorld* Leftover = WeakProbe.Get())
+		{
+			Leftover->ClearFlags(RF_Public | RF_Standalone);
+			Leftover->MarkAsGarbage();
+		}
+	};
+
+	const TArray<FString> FromStatic = UPythonTools::GetResidentMapWorlds();
+	const TArray<FString> FromUFunction = UPythonTools::GetResidentMaps();
+	// The UFUNCTION is the reply-path list minus streaming sublevels of the open level: never more.
+	bool bSubset = true;
+	for (const FString& Path : FromUFunction)
+	{
+		bSubset &= FromStatic.Contains(Path);
+	}
+	TestTrue(TEXT("the UFUNCTION lists nothing the reply-path static does not"), bSubset);
+	TestTrue(TEXT("the resident probe is listed"), FromUFunction.Contains(ProbePath));
+
+	// And from Python. The run itself warns about the probe (RESIDENT_MAPS) - expected here.
+	AddExpectedMessage(TEXT("RESIDENT_MAPS"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 0, /*IsRegex=*/false);
+	const TSharedPtr<FJsonObject> Obj = RunPythonNoSave(FString::Printf(
+		TEXT("import unreal\nprint('VIBEUE_RESIDENT', '%s' in list(unreal.PythonTools.get_resident_maps()))\n"), *ProbePath));
+	if (TestTrue(TEXT("Python run: reply parses"), Obj.IsValid()))
+	{
+		TestTrue(TEXT("Python run succeeds"), Obj->GetBoolField(TEXT("success")));
+		TestTrue(TEXT("unreal.PythonTools.get_resident_maps() lists the probe"),
+			Obj->GetStringField(TEXT("output")).Contains(TEXT("VIBEUE_RESIDENT True")));
+	}
+
+	return true;
+}
+
+// P15 (b): vibeue.safe_load_level refuses instead of loading when the load could not succeed or would
+// fatal the editor. Nothing here may actually load a level: every call is one that must raise.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibePythonSafeLoadLevelRefusesTest, "VibeUE.Python.SafeLoadLevelRefuses",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVibePythonSafeLoadLevelRefusesTest::RunTest(const FString&)
+{
+	if (!GEditor)
+	{
+		AddInfo(TEXT("No GEditor; skipping."));
+		return true;
+	}
+
+	const UWorld* EditorWorldBefore = GEditor->GetEditorWorldContext().World();
+	const FString Bogus = FString::Printf(TEXT("/Game/__VibeUETest/NoSuchMap_%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+
+	auto ExpectRefused = [this](const TCHAR* What, const FString& Target, const FString& ExpectedText)
+	{
+		const TSharedPtr<FJsonObject> Obj = RunPythonNoSave(FString::Printf(
+			TEXT("import unreal, vibeue\n")
+			TEXT("try:\n")
+			TEXT("    vibeue.safe_load_level('%s')\n")
+			TEXT("    print('VIBEUE_SAFE_LOAD NO_RAISE')\n")
+			TEXT("except vibeue.LevelLoadRefused as e:\n")
+			TEXT("    print('VIBEUE_SAFE_LOAD REFUSED', e)\n"),
+			*Target));
+		if (!TestTrue(FString::Printf(TEXT("%s: reply parses"), What), Obj.IsValid()))
+		{
+			return;
+		}
+		FString Error;
+		Obj->TryGetStringField(TEXT("error_message"), Error);
+		TestTrue(FString::Printf(TEXT("%s: the script ran (error: '%s')"), What, *Error), Obj->GetBoolField(TEXT("success")));
+		const FString Output = Obj->GetStringField(TEXT("output"));
+		TestTrue(FString::Printf(TEXT("%s: refused with LevelLoadRefused (output: '%s')"), What, *Output),
+			Output.Contains(TEXT("VIBEUE_SAFE_LOAD REFUSED")));
+		TestFalse(FString::Printf(TEXT("%s: did not fall through to load_level"), What), Output.Contains(TEXT("NO_RAISE")));
+		TestTrue(FString::Printf(TEXT("%s: the reason names '%s'"), What, *ExpectedText), Output.Contains(ExpectedText));
+	};
+
+	// Cases 1 and 3 need a session with no straggler of its own (they assert the exact reason).
+	const bool bNoPriorResident = UPythonTools::GetResidentMapWorlds().Num() == 0;
+
+	// 1. No resident map: a target the registry does not know is refused before load_level.
+	if (bNoPriorResident)
+	{
+		ExpectRefused(TEXT("bogus target"), Bogus, TEXT("no map at"));
+	}
+	else
+	{
+		AddInfo(TEXT("A map is already resident in this session; skipping the no-resident case."));
+	}
+
+	// 2. With a resident map: refused whatever the target, naming the straggler.
+	const FString Leaf = FString::Printf(TEXT("W_SafeLoadProbe_%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+	const FString ProbePackage = FString(TEXT("/Game/__VibeUETest/")) + Leaf;
+	UPackage* Package = CreatePackage(*ProbePackage);
+	if (!TestNotNull(TEXT("created the scratch package"), Package))
+	{
+		return false;
+	}
+	UWorld* Probe = NewObject<UWorld>(Package, *Leaf, RF_Public | RF_Standalone);
+	if (!TestNotNull(TEXT("created the scratch world"), Probe))
+	{
+		return false;
+	}
+	Probe->WorldType = EWorldType::Inactive;
+	const TWeakObjectPtr<UWorld> WeakProbe(Probe);
+	ON_SCOPE_EXIT
+	{
+		if (UWorld* Leftover = WeakProbe.Get())
+		{
+			Leftover->ClearFlags(RF_Public | RF_Standalone);
+			Leftover->MarkAsGarbage();
+		}
+	};
+
+	AddExpectedMessage(TEXT("RESIDENT_MAPS"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 0, /*IsRegex=*/false);
+	ExpectRefused(TEXT("another map resident"), Bogus, Leaf);
+	// 3. The target itself resident (the #613 shape) is refused without allow_resident_target.
+	if (bNoPriorResident)
+	{
+		ExpectRefused(TEXT("target itself resident"), ProbePackage, TEXT("itself resident"));
+	}
+
+	TestTrue(TEXT("the open level never changed"), GEditor->GetEditorWorldContext().World() == EditorWorldBefore);
 	return true;
 }
 
