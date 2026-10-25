@@ -48,7 +48,7 @@ Try set_settings_property with a property the class doesn't have. (Expected: ref
 
 ## One key only
 
-Add a comment line under [/Script/EngineSettings.GeneralProjectSettings] in DefaultGame.ini by hand. Then change the project description with set_settings_property and show me the diff of DefaultGame.ini. (Expected: only the Description line changes; the comment and every other line stay.) Put the old description back and remove the comment.
+Add a comment line under [/Script/EngineSettings.GeneralProjectSettings] in DefaultGame.ini by hand. Then change the project description with set_settings_property and show me the diff of DefaultGame.ini. (Expected: only the Description line changes, plus a blank last line if the file had none (the engine ends every file it saves with one); the comment and every other line stay.) Put the old description back and remove the comment.
 
 ---
 
