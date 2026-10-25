@@ -103,6 +103,8 @@ bool FVibeAnimMontageReadsDuringPIETest::RunTest(const FString&)
 		SectionsDuringPIE = UAnimMontageService::ListSections(MontagePath).Num();
 		SlotTracksDuringPIE = UAnimMontageService::ListSlotTracks(MontagePath).Num();
 		bBlendReadDuringPIE = UAnimMontageService::GetBlendSettings(MontagePath, BlendDuringPIE);
+		// The edit's refusal logs editor scripting's error once; a read logging it too would make it two.
+		AddExpectedError(TEXT("The Editor is currently in a play mode"), EAutomationExpectedErrorFlags::Contains, 1);
 		bBlendInSetDuringPIE = UAnimMontageService::SetBlendIn(MontagePath, Blend.BlendInTime + 0.5f);
 	}
 	TestEqual(TEXT("PlayWorld restored"), ToRawPtr(GEditor->PlayWorld), PlayWorldBefore);
