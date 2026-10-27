@@ -207,6 +207,8 @@ namespace
 		Context.Load(*BranchBaseName);
 	}
 
+	FString SettingsIniSectionOf(UClass* Class); // FindSettingsClass below looks a class up by its section
+
 	/** A settings class by path ("/Script/UnrealEd.EditorProjectAppearanceSettings") or name (a leading U is accepted) */
 	UClass* FindSettingsClass(const FString& InName)
 	{
@@ -217,7 +219,20 @@ namespace
 		}
 		if (Name.StartsWith(TEXT("/")))
 		{
-			return FindObject<UClass>(nullptr, *Name);
+			if (UClass* Found = FindObject<UClass>(nullptr, *Name))
+			{
+				return Found;
+			}
+			// a class whose ini section keeps an older name (ProjectPackagingSettings moved to
+			// DeveloperToolSettings and still writes [/Script/UnrealEd.ProjectPackagingSettings]) is found by that section
+			for (TObjectIterator<UClass> It; It; ++It)
+			{
+				if (It->HasAnyClassFlags(CLASS_Config) && !It->HasAnyClassFlags(CLASS_Abstract) && SettingsIniSectionOf(*It) == Name)
+				{
+					return *It;
+				}
+			}
+			return nullptr;
 		}
 		if (UClass* Found = FindFirstObject<UClass>(*Name, EFindFirstObjectOptions::ExactClass))
 		{
@@ -325,6 +340,68 @@ namespace
 		Property->ExportTextItem_Direct(Held, FromConfig.Memory, nullptr, nullptr, PPF_None);
 		OutNote = FString::Printf(TEXT("the config layers still resolve to %s (a higher layer, e.g. the user's Saved/Config, overrides it?)"), *Held);
 		return false;
+	}
+
+	/** Writes one config property of a default-config class into its Default*.ini layer, changing only
+	 *  that key's lines (the rest of the file and its comments stay), and applies the layers again */
+	bool WriteDefaultConfigKey(UClass* Class, const FProperty* Property, UObject* Settings, const FString& DefaultIni, FString& OutError)
+	{
+		const FString BranchName = Class->GetConfigName();
+		FConfigBranch* Branch = GConfig->FindBranch(Class->ClassConfigName, BranchName);
+		if (!Branch)
+		{
+			OutError = FString::Printf(TEXT("the config system has no branch %s"), *BranchName);
+			return false;
+		}
+		// the layer is keyed by the file's path as the hierarchy spelled it
+		FString LayerKey;
+		TArray<FString> LayerKeys;
+		for (const TPair<FString, FConfigCommandStream>& Layer : Branch->StaticLayers)
+		{
+			LayerKeys.Add(Layer.Key);
+			if (FPaths::IsSamePath(FPaths::ConvertRelativePathToFull(Layer.Key), FPaths::ConvertRelativePathToFull(DefaultIni)))
+			{
+				LayerKey = Layer.Key;
+			}
+		}
+		if (LayerKey.IsEmpty())
+		{
+			OutError = FString::Printf(TEXT("branch %s has no layer for it (layers: %s)"), *BranchName, *FString::Join(LayerKeys, TEXT(", ")));
+			return false;
+		}
+		if (Property->ArrayDim != 1 || CastField<FSetProperty>(Property))
+		{
+			OutError = TEXT("a fixed-size array or a set property is not written by this path; edit the file by hand");
+			return false;
+		}
+
+		const FString Section = SettingsIniSectionOf(Class);
+		// a property bound to a console variable is saved under the variable's name, as UObject::SaveConfig does
+		const FString& CVarName = Property->GetMetaData(TEXT("ConsoleVariable"));
+		const FString Key = CVarName.IsEmpty() ? Property->GetName() : CVarName;
+		const int32 PortFlags = CVarName.IsEmpty() ? PPF_SerializedAsImportText : PPF_SerializedAsImportText | PPF_ConsoleVariable;
+		bool bWritten;
+		if (const FArrayProperty* Array = CastField<FArrayProperty>(Property))
+		{
+			TArray<FString> Values;
+			FScriptArrayHelper_InContainer Items(Array, Settings);
+			for (int32 Index = 0; Index < Items.Num(); ++Index)
+			{
+				Array->Inner->ExportTextItem_Direct(Values.AddDefaulted_GetRef(), Items.GetRawPtr(Index), Items.GetRawPtr(Index), Settings, PortFlags);
+			}
+			bWritten = GConfig->SetArrayInSectionOfStaticLayer(*Section, FName(*Key), Values, false, BranchName, LayerKey, true);
+		}
+		else
+		{
+			FString Value;
+			Property->ExportText_InContainer(0, Value, Settings, Settings, Settings, PortFlags);
+			bWritten = GConfig->SetInSectionOfStaticLayer(*Section, FName(*Key), Value, BranchName, LayerKey, true);
+		}
+		if (!bWritten)
+		{
+			OutError = FString::Printf(TEXT("the engine did not write [%s] %s to layer %s"), *Section, *Key, *LayerKey);
+		}
+		return bWritten;
 	}
 	// ---- end of the project config file helpers ------------------------------------------------------------------
 
@@ -787,9 +864,20 @@ FProjectSettingResult UProjectSettingsService::SetSettingsProperty(const FString
 	if (Class->HasAnyClassFlags(CLASS_DefaultConfig))
 	{
 		SavedTo = Settings->GetDefaultConfigFilename();
-		if (!Settings->TryUpdateDefaultConfigFile())
+		// Only this key's lines change; the rest of the file, comments included, stays as it was.
+		// TryUpdateDefaultConfigFile() (the Settings window's save) rewrites the whole section with every property's value
+		// and drops its comments. These are the engine's own one-property layer writes (what UObject::SaveConfig calls with
+		// bSaveToLayer): an array as +/- lines relative to the lower layers, written line by line
+		// (FSinglePropertyConfigHelper), then the branch's layers are applied again so GConfig holds the new value.
+		if (IFileManager::Get().IsReadOnly(*SavedTo))
 		{
 			Result.ErrorMessage = FString::Printf(TEXT("Applied live but NOT saved: %s is read-only"), *SavedTo);
+			return Result;
+		}
+		FString Error;
+		if (!WriteDefaultConfigKey(Class, Property, Settings, SavedTo, Error))
+		{
+			Result.ErrorMessage = FString::Printf(TEXT("Applied live but NOT saved to %s: %s"), *SavedTo, *Error);
 			return Result;
 		}
 	}

@@ -45,3 +45,13 @@ Change the project description (GeneralProjectSettings, Description) with set_se
 Try set_settings_property with a property the class doesn't have. (Expected: refused, nothing changed.)
 
 ---
+
+## One key only
+
+Add a comment line under [/Script/EngineSettings.GeneralProjectSettings] in DefaultGame.ini by hand. Then change the project description with set_settings_property and show me the diff of DefaultGame.ini. (Expected: only the Description line changes, plus a blank last line if the file had none (the engine ends every file it saves with one); the comment and every other line stay.) Put the old description back and remove the comment.
+
+---
+
+Read ProjectPackagingSettings' IniSectionDenylist with get_settings_property twice: by its class path, "/Script/DeveloperToolSettings.ProjectPackagingSettings", and by the ini section it writes, "/Script/UnrealEd.ProjectPackagingSettings". Then add one element with set_ini_array on that section name and read it back. Put the old value back with set_settings_property. (Expected: both names read the same value; the write succeeds and both names read the new element.)
+
+---

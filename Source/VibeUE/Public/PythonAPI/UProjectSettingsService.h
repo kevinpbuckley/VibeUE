@@ -130,7 +130,9 @@ public:
 	// setting is the one the editor's Settings window uses (Developer/Settings SettingsSection.cpp Save()): change the
 	// settings object's CDO with Pre/PostEditChange, then TryUpdateDefaultConfigFile() for defaultconfig classes,
 	// UpdateGlobalUserConfigFile() / UpdateProjectUserConfigFile() for user config classes, SaveConfig() otherwise.
-	// These two functions do exactly that.
+	// These two functions do exactly that, except one thing: a defaultconfig class's Default*.ini
+	// changes only in the one key's lines, through the engine's one-property layer write, instead of
+	// TryUpdateDefaultConfigFile(), which rewrites the whole section and drops its comments.
 
 	/**
 	 * Set one config property of a settings class the way the editor's Settings window does: the value applies live
@@ -140,7 +142,8 @@ public:
 	 * to their user file, anything else to its config branch (Saved/Config).
 	 *
 	 * @param SettingsClass - Class path ("/Script/UnrealEd.EditorProjectAppearanceSettings") or name
-	 *                        ("EditorProjectAppearanceSettings", a leading U is accepted)
+	 *                        ("EditorProjectAppearanceSettings", a leading U is accepted), or the ini section a moved
+	 *                        class still writes ("/Script/UnrealEd.ProjectPackagingSettings")
 	 * @param PropertyName - C++ name ("bDisplayUnits"), case-insensitive; Python style ("display_units") also works
 	 * @param Value - Unreal text format: "True", "12.5", "Feet", arrays as "(Feet,Inches)", structs as "(X=1,Y=2)"
 	 * @return Operation result; ModifiedSettings lists "[Section] Property: old -> new (file)"

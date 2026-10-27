@@ -13,6 +13,8 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "EditorAssetLibrary.h"
 #include "Editor.h"
+#include "Misc/PackageName.h"
+#include "UObject/SoftObjectPath.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "AssetToolsModule.h"
 #include "Factories/AnimMontageFactory.h"
@@ -69,6 +71,34 @@ UAnimMontage* UAnimMontageService::LoadMontage(const FString& MontagePath)
 		return nullptr;
 	}
 
+	return Montage;
+}
+
+UAnimMontage* UAnimMontageService::LoadMontageToRead(const FString& MontagePath)
+{
+	// Editor scripting refuses every asset load while a play session runs (EditorScriptingHelpers::
+	// CheckIfInEditorAndPIE: "The Editor is currently in a play mode"), so during PIE every read returned -1, an
+	// empty string or an empty list, as for a montage that does not exist. A read loads the montage directly then;
+	// an edit keeps LoadMontage and stays refused, since a montage a live actor plays must not change under it.
+	if (!GEditor || !GEditor->PlayWorld)
+	{
+		return LoadMontage(MontagePath);
+	}
+	if (MontagePath.IsEmpty())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UAnimMontageService::LoadMontageToRead: Path is empty"));
+		return nullptr;
+	}
+
+	// A package path (/Game/X/AM_Y) names the asset /Game/X/AM_Y.AM_Y
+	const FString ObjectPath = MontagePath.Contains(TEXT("."))
+		? MontagePath
+		: MontagePath + TEXT(".") + FPackageName::GetShortName(MontagePath);
+	UAnimMontage* Montage = Cast<UAnimMontage>(FSoftObjectPath(ObjectPath).TryLoad());
+	if (!Montage)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UAnimMontageService::LoadMontageToRead: No AnimMontage at %s"), *MontagePath);
+	}
 	return Montage;
 }
 
@@ -265,7 +295,7 @@ TArray<FMontageInfo> UAnimMontageService::ListMontages(
 
 bool UAnimMontageService::GetMontageInfo(const FString& MontagePath, FMontageInfo& OutInfo)
 {
-	UAnimMontage* Montage = LoadMontage(MontagePath);
+	UAnimMontage* Montage = LoadMontageToRead(MontagePath);
 	if (!Montage)
 	{
 		return false;
@@ -290,7 +320,7 @@ TArray<FMontageInfo> UAnimMontageService::FindMontagesUsingAnimation(const FStri
 	TArray<FMontageInfo> AllMontages = ListMontages();
 	for (const FMontageInfo& Info : AllMontages)
 	{
-		UAnimMontage* Montage = LoadMontage(Info.MontagePath);
+		UAnimMontage* Montage = LoadMontageToRead(Info.MontagePath);
 		if (!Montage) continue;
 
 		bool bFound = false;
@@ -318,7 +348,7 @@ TArray<FMontageInfo> UAnimMontageService::FindMontagesUsingAnimation(const FStri
 
 float UAnimMontageService::GetMontageLength(const FString& MontagePath)
 {
-	UAnimMontage* Montage = LoadMontage(MontagePath);
+	UAnimMontage* Montage = LoadMontageToRead(MontagePath);
 	if (!Montage) return -1.0f;
 
 	return Montage->GetPlayLength();
@@ -326,7 +356,7 @@ float UAnimMontageService::GetMontageLength(const FString& MontagePath)
 
 FString UAnimMontageService::GetMontageSkeleton(const FString& MontagePath)
 {
-	UAnimMontage* Montage = LoadMontage(MontagePath);
+	UAnimMontage* Montage = LoadMontageToRead(MontagePath);
 	if (!Montage) return FString();
 
 	USkeleton* Skeleton = Montage->GetSkeleton();
@@ -367,7 +397,7 @@ bool UAnimMontageService::SetBlendOut(
 
 bool UAnimMontageService::GetBlendSettings(const FString& MontagePath, FVibeMontageBlendSettings& OutSettings)
 {
-	UAnimMontage* Montage = LoadMontage(MontagePath);
+	UAnimMontage* Montage = LoadMontageToRead(MontagePath);
 	if (!Montage) return false;
 
 	OutSettings.BlendInTime = Montage->BlendIn.GetBlendTime();
@@ -402,7 +432,7 @@ TArray<FMontageSectionInfo> UAnimMontageService::ListSections(const FString& Mon
 {
 	TArray<FMontageSectionInfo> Results;
 
-	UAnimMontage* Montage = LoadMontage(MontagePath);
+	UAnimMontage* Montage = LoadMontageToRead(MontagePath);
 	if (!Montage) return Results;
 
 	for (int32 i = 0; i < Montage->CompositeSections.Num(); ++i)
@@ -473,7 +503,7 @@ bool UAnimMontageService::GetSectionInfo(
 
 int32 UAnimMontageService::GetSectionIndexAtTime(const FString& MontagePath, float Time)
 {
-	UAnimMontage* Montage = LoadMontage(MontagePath);
+	UAnimMontage* Montage = LoadMontageToRead(MontagePath);
 	if (!Montage) return -1;
 
 	return Montage->GetSectionIndexFromPosition(Time);
@@ -481,7 +511,7 @@ int32 UAnimMontageService::GetSectionIndexAtTime(const FString& MontagePath, flo
 
 FString UAnimMontageService::GetSectionNameAtTime(const FString& MontagePath, float Time)
 {
-	UAnimMontage* Montage = LoadMontage(MontagePath);
+	UAnimMontage* Montage = LoadMontageToRead(MontagePath);
 	if (!Montage) return FString();
 
 	int32 Index = Montage->GetSectionIndexFromPosition(Time);
@@ -644,7 +674,7 @@ float UAnimMontageService::GetSectionLength(const FString& MontagePath, const FS
 
 FString UAnimMontageService::GetNextSection(const FString& MontagePath, const FString& SectionName)
 {
-	UAnimMontage* Montage = LoadMontage(MontagePath);
+	UAnimMontage* Montage = LoadMontageToRead(MontagePath);
 	if (!Montage) return FString();
 
 	const FName SectionFName(*SectionName);
@@ -717,7 +747,7 @@ TArray<FSectionLink> UAnimMontageService::GetAllSectionLinks(const FString& Mont
 {
 	TArray<FSectionLink> Results;
 
-	UAnimMontage* Montage = LoadMontage(MontagePath);
+	UAnimMontage* Montage = LoadMontageToRead(MontagePath);
 	if (!Montage) return Results;
 
 	for (const FCompositeSection& Section : Montage->CompositeSections)
@@ -748,7 +778,7 @@ TArray<FSlotTrackInfo> UAnimMontageService::ListSlotTracks(const FString& Montag
 {
 	TArray<FSlotTrackInfo> Results;
 
-	UAnimMontage* Montage = LoadMontage(MontagePath);
+	UAnimMontage* Montage = LoadMontageToRead(MontagePath);
 	if (!Montage) return Results;
 
 	for (int32 i = 0; i < Montage->SlotAnimTracks.Num(); ++i)
@@ -779,7 +809,7 @@ bool UAnimMontageService::GetSlotTrackInfo(
 	int32 TrackIndex,
 	FSlotTrackInfo& OutInfo)
 {
-	UAnimMontage* Montage = LoadMontage(MontagePath);
+	UAnimMontage* Montage = LoadMontageToRead(MontagePath);
 	if (!Montage) return false;
 
 	if (!ValidateTrackIndex(Montage, TrackIndex)) return false;
@@ -862,7 +892,7 @@ TArray<FString> UAnimMontageService::GetAllUsedSlotNames(const FString& MontageP
 {
 	TArray<FString> Results;
 
-	UAnimMontage* Montage = LoadMontage(MontagePath);
+	UAnimMontage* Montage = LoadMontageToRead(MontagePath);
 	if (!Montage) return Results;
 
 	for (const FSlotAnimationTrack& Track : Montage->SlotAnimTracks)
@@ -881,7 +911,7 @@ TArray<FAnimSegmentInfo> UAnimMontageService::ListAnimSegments(const FString& Mo
 {
 	TArray<FAnimSegmentInfo> Results;
 
-	UAnimMontage* Montage = LoadMontage(MontagePath);
+	UAnimMontage* Montage = LoadMontageToRead(MontagePath);
 	if (!Montage) return Results;
 
 	if (!ValidateTrackIndex(Montage, TrackIndex)) return Results;
@@ -921,7 +951,7 @@ bool UAnimMontageService::GetAnimSegmentInfo(
 	int32 SegmentIndex,
 	FAnimSegmentInfo& OutInfo)
 {
-	UAnimMontage* Montage = LoadMontage(MontagePath);
+	UAnimMontage* Montage = LoadMontageToRead(MontagePath);
 	if (!Montage) return false;
 
 	if (!ValidateSegmentIndex(Montage, TrackIndex, SegmentIndex)) return false;
@@ -1130,7 +1160,7 @@ TArray<FMontageNotifyInfo> UAnimMontageService::ListNotifies(const FString& Mont
 {
 	TArray<FMontageNotifyInfo> Results;
 
-	UAnimMontage* Montage = LoadMontage(MontagePath);
+	UAnimMontage* Montage = LoadMontageToRead(MontagePath);
 	if (!Montage) return Results;
 
 	for (int32 i = 0; i < Montage->Notifies.Num(); ++i)
@@ -1349,7 +1379,7 @@ TArray<FBranchingPointInfo> UAnimMontageService::ListBranchingPoints(const FStri
 {
 	TArray<FBranchingPointInfo> Results;
 
-	UAnimMontage* Montage = LoadMontage(MontagePath);
+	UAnimMontage* Montage = LoadMontageToRead(MontagePath);
 	if (!Montage) return Results;
 
 	int32 BPIndex = 0;
@@ -1462,7 +1492,7 @@ bool UAnimMontageService::IsBranchingPointAtTime(const FString& MontagePath, flo
 
 bool UAnimMontageService::GetEnableRootMotionTranslation(const FString& MontagePath)
 {
-	UAnimMontage* Montage = LoadMontage(MontagePath);
+	UAnimMontage* Montage = LoadMontageToRead(MontagePath);
 	if (!Montage) return false;
 
 	return Montage->bEnableRootMotionTranslation;
@@ -1482,7 +1512,7 @@ bool UAnimMontageService::SetEnableRootMotionTranslation(const FString& MontageP
 
 bool UAnimMontageService::GetEnableRootMotionRotation(const FString& MontagePath)
 {
-	UAnimMontage* Montage = LoadMontage(MontagePath);
+	UAnimMontage* Montage = LoadMontageToRead(MontagePath);
 	if (!Montage) return false;
 
 	return Montage->bEnableRootMotionRotation;
@@ -1505,7 +1535,7 @@ bool UAnimMontageService::GetRootMotionAtTime(
 	float Time,
 	FTransform& OutTransform)
 {
-	UAnimMontage* Montage = LoadMontage(MontagePath);
+	UAnimMontage* Montage = LoadMontageToRead(MontagePath);
 	if (!Montage) return false;
 
 	// Get root motion from the montage's underlying animation segments
