@@ -218,6 +218,34 @@ namespace
 	//     (Engine module, exported) for pin creation. Pin names for parameter-map nodes are the
 	//     fully-namespaced variable names, which the Niagara compiler reads directly.
 
+	struct FDynamicPinHookAccess : UNiagaraNodeWithDynamicPins
+	{
+		// Taking the inherited member pointer avoids a downcast or a fake UObject.
+		static auto GetHook() { return &FDynamicPinHookAccess::OnNewTypedPinAdded; }
+	};
+
+	// Parameter-map nodes need their default-pin bookkeeping and trailing Add pin.
+	// Raw CreatePin alone produces a graph that can assert when stack inputs are read.
+	// The public helper is not DLL-exported, but its node hook is virtual.
+	UEdGraphPin* AddMapParameterPin(UNiagaraNodeWithDynamicPins* Node, EEdGraphPinDirection Direction,
+		const FEdGraphPinType& Type, FName Name)
+	{
+		for (UEdGraphPin* Pin : Node->Pins)
+		{
+			if (Pin && Pin->Direction == Direction && Pin->PinName == TEXT("Add"))
+			{
+				const FEdGraphPinType AddType = Pin->PinType;
+				Pin->Modify();
+				Pin->PinType = Type;
+				Pin->PinName = Name;
+				Node->CreatePin(Direction, AddType, TEXT("Add"));
+				(Node->*FDynamicPinHookAccess::GetHook())(Pin);
+				return Pin;
+			}
+		}
+		return nullptr;
+	}
+
 	FProperty* FindCustomHlslProperty(UEdGraphNode* Node)
 	{
 		return Node ? Node->GetClass()->FindPropertyByName(TEXT("CustomHlsl")) : nullptr;
@@ -859,16 +887,16 @@ FNiagaraScratchResult UNiagaraScratchPadService::AddPin(
 	if (IsMapGet(Node))
 	{
 		const FString Namespaced = NormalizeNamespacedName(PinName, TEXT("Module"));
-		NewPin = Node->CreatePin(EGPD_Output, PinType, FName(*Namespaced));
+		NewPin = AddMapParameterPin(Cast<UNiagaraNodeWithDynamicPins>(Node), EGPD_Output, PinType, FName(*Namespaced));
 	}
 	else if (IsMapSet(Node))
 	{
 		const FString Namespaced = NormalizeNamespacedName(PinName, TEXT("Output"));
-		NewPin = Node->CreatePin(EGPD_Input, PinType, FName(*Namespaced));
+		NewPin = AddMapParameterPin(Cast<UNiagaraNodeWithDynamicPins>(Node), EGPD_Input, PinType, FName(*Namespaced));
 	}
 	else if (Node->IsA<UNiagaraNodeCustomHlsl>())
 	{
-		NewPin = Node->CreatePin(Dir, PinType, FName(*PinName));
+		NewPin = AddMapParameterPin(Cast<UNiagaraNodeWithDynamicPins>(Node), Dir, PinType, FName(*PinName));
 		// Rebuild the script signature so the new pin participates in compilation.
 		// Must NOT route through PostEditChangeProperty - that calls RefreshFromExternalChanges
 		// which calls ReallocatePins(false) which rebuilds pins from the stale signature
@@ -1090,7 +1118,7 @@ FNiagaraScratchResult UNiagaraScratchPadService::AddModuleInput(
 
 	MapGet->Modify();
 	const FEdGraphPinType PinType = MakeNiagaraPinType(Type);
-	UEdGraphPin* NewPin = MapGet->CreatePin(EGPD_Output, PinType, FName(*Namespaced));
+	UEdGraphPin* NewPin = AddMapParameterPin(MapGet, EGPD_Output, PinType, FName(*Namespaced));
 	if (!NewPin) { R.Message = TEXT("CreatePin returned null"); return R; }
 
 	Graph->NotifyGraphChanged();
@@ -1144,7 +1172,7 @@ FNiagaraScratchResult UNiagaraScratchPadService::AddModuleOutput(
 
 	MapSet->Modify();
 	const FEdGraphPinType PinType = MakeNiagaraPinType(Type);
-	UEdGraphPin* NewPin = MapSet->CreatePin(EGPD_Input, PinType, FName(*Namespaced));
+	UEdGraphPin* NewPin = AddMapParameterPin(MapSet, EGPD_Input, PinType, FName(*Namespaced));
 	if (!NewPin) { R.Message = TEXT("CreatePin returned null"); return R; }
 
 	Graph->NotifyGraphChanged();
@@ -1188,6 +1216,9 @@ namespace
 					for (const UEdGraphPin* Pin : Node->Pins)
 					{
 						if (!Pin) continue;
+						// Engine-created Map Get defaults are unnamed input pins, one
+						// per output. They are not duplicate parameter declarations.
+						if (IsMapGet(Node) && Pin->Direction == EGPD_Input && Pin->PinName.IsNone()) continue;
 						TSet<FName>& Names = (Pin->Direction == EGPD_Input) ? InputNames : OutputNames;
 						bool bAlreadyThere = false;
 						Names.Add(Pin->PinName, &bAlreadyThere);
