@@ -165,6 +165,17 @@ Save as AM_Reload_UpperBody in /Game/Tests/Montages/
 
 ---
 
+## Reads During Play In Editor
+
+With AM_Reload_UpperBody from above:
+1. Read its length, skeleton, sections, slot tracks and blend settings
+2. Start Play In Editor
+3. Read the same five again: each must match step 1 (not -1, an empty string or an empty list)
+4. Try set_blend_in on it: it must be refused while PIE runs, and its blend in must read as before
+5. Stop Play In Editor
+
+---
+
 ## Summary
 
 Verify:
@@ -177,3 +188,4 @@ Verify:
 7. Segment operations work (add, timing, rate, loop) - C++ required
 8. Multi-animation montage creates visible animations in each section
 9. Layered montage workflow sets up upper body slot
+10. Reads give the same answers during Play In Editor; edits stay refused there

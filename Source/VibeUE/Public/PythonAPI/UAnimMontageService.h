@@ -1172,6 +1172,9 @@ private:
 	/** Load an animation montage from path */
 	static class UAnimMontage* LoadMontage(const FString& MontagePath);
 
+	/** Load an animation montage to read it: LoadMontage, but during PIE (where editor scripting refuses every load) directly */
+	static class UAnimMontage* LoadMontageToRead(const FString& MontagePath);
+
 	/** Mark montage as modified for undo/redo and saving */
 	static void MarkMontageModified(class UAnimMontage* Montage);
 
