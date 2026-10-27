@@ -191,7 +191,6 @@ bool FVibeBlueprintServiceCollisionCustomChannelTest::RunTest(const FString&)
 	{
 		return false;
 	}
-	OverriddenComponent->SetCollisionResponseToChannel(ECC_Camera, ECR_Overlap);
 
 	// 0. Profile-only change. The untouched instance must end on the NEW profile name, not on
 	// "Custom": a redundant object-type/response write after the profile write would invalidate the
@@ -218,6 +217,33 @@ bool FVibeBlueprintServiceCollisionCustomChannelTest::RunTest(const FString&)
 		}
 	}
 
+	// Profile responses inherit the host project's custom-channel defaults (Interaction may
+	// already Ignore GameTraceChannel1). Seed only our fixture after the profile-only check so
+	// the writes below exercise real transitions, with one matching instance and one override.
+	UPrimitiveComponent* UntouchedBeforeWrite = FindInstanceComponent(UntouchedTag);
+	OverriddenComponent = FindInstanceComponent(OverrideTag);
+	if (!TestNotNull(TEXT("untouched instance present before seeding responses"), UntouchedBeforeWrite) ||
+		!TestNotNull(TEXT("overriding instance present before seeding responses"), OverriddenComponent))
+	{
+		return false;
+	}
+	FCollisionResponseContainer InitialResponses = Template->GetCollisionResponseToChannels();
+	InitialResponses.SetResponse(ECC_GameTraceChannel1, ECR_Block);
+	InitialResponses.SetResponse(ECC_Visibility, ECR_Overlap);
+	InitialResponses.SetResponse(ECC_Camera, ECR_Block);
+	Template->SetCollisionResponseToChannels(InitialResponses);
+	UntouchedBeforeWrite->SetCollisionResponseToChannels(InitialResponses);
+	OverriddenComponent->SetCollisionResponseToChannels(InitialResponses);
+	OverriddenComponent->SetCollisionResponseToChannel(ECC_Camera, ECR_Overlap);
+	FCollisionResponseContainer OverrideResponses = InitialResponses;
+	OverrideResponses.SetResponse(ECC_Camera, ECR_Overlap);
+	TestTrue(TEXT("precondition: the template has the seeded response table"),
+		Template->GetCollisionResponseToChannels() == InitialResponses);
+	TestTrue(TEXT("precondition: untouched placed instance matches the seeded template"),
+		UntouchedBeforeWrite->GetCollisionResponseToChannels() == InitialResponses);
+	TestTrue(TEXT("precondition: overriding placed instance differs only on Camera"),
+		OverriddenComponent->GetCollisionResponseToChannels() == OverrideResponses);
+
 	const ECollisionResponse OldChannel1 = Template->GetCollisionResponseToChannel(ECC_GameTraceChannel1);
 	TestNotEqual(TEXT("precondition: the template does not already ignore GameTraceChannel1"), static_cast<int32>(OldChannel1), static_cast<int32>(ECR_Ignore));
 
@@ -241,6 +267,8 @@ bool FVibeBlueprintServiceCollisionCustomChannelTest::RunTest(const FString&)
 	if (UPrimitiveComponent* UntouchedComponent = FindInstanceComponent(UntouchedTag))
 	{
 		TestEqual(TEXT("untouched placed instance received GameTraceChannel1 = Ignore"), static_cast<int32>(UntouchedComponent->GetCollisionResponseToChannel(ECC_GameTraceChannel1)), static_cast<int32>(ECR_Ignore));
+		TestTrue(TEXT("untouched placed instance received the template's full response table"),
+			UntouchedComponent->GetCollisionResponseToChannels() == Template->GetCollisionResponseToChannels());
 	}
 	else
 	{
@@ -250,6 +278,8 @@ bool FVibeBlueprintServiceCollisionCustomChannelTest::RunTest(const FString&)
 	{
 		TestEqual(TEXT("overriding instance kept its Camera override"), static_cast<int32>(OverrideComponent->GetCollisionResponseToChannel(ECC_Camera)), static_cast<int32>(ECR_Overlap));
 		TestEqual(TEXT("overriding instance kept its old GameTraceChannel1 response"), static_cast<int32>(OverrideComponent->GetCollisionResponseToChannel(ECC_GameTraceChannel1)), static_cast<int32>(OldChannel1));
+		TestTrue(TEXT("overriding instance kept its full response table"),
+			OverrideComponent->GetCollisionResponseToChannels() == OverrideResponses);
 	}
 	else
 	{
