@@ -371,4 +371,97 @@ bool FVibeSettingsIniArrayStringElementsTest::RunTest(const FString&)
 	return true;
 }
 
+// set_settings_property changes only the key it sets in a defaultconfig class's Default*.ini: the file's other lines,
+// a comment in the class's own section among them, stay, and no line but that key's is new. Here
+// GeneralProjectSettings.Description, with a comment planted in its section of DefaultGame.ini, put back afterwards.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeSettingsPropertyChangesOnlyItsKeyTest,
+	"VibeUE.ProjectSettings.SettingsPropertyChangesOnlyItsKey", kSettingsTestFlags)
+bool FVibeSettingsPropertyChangesOnlyItsKeyTest::RunTest(const FString&)
+{
+	using namespace VibeSettingsTest;
+	const FString File = DefaultGameIni();
+	FScopedConfigFileRestore Restore(File, TEXT("Game"));
+
+	const FString Class = TEXT("GeneralProjectSettings");
+	const FString Header = TEXT("[/Script/EngineSettings.GeneralProjectSettings]");
+	const FString Comment = FString(TEXT("; VibeUETest keeps this comment ")) + FGuid::NewGuid().ToString(EGuidFormats::Digits);
+	FString Text = ReadDisk(File);
+	const int32 At = Text.Find(Header);
+	Text = At == INDEX_NONE
+		? Text + TEXT("\r\n") + Header + TEXT("\r\n") + Comment + TEXT("\r\n")
+		: Text.Left(At + Header.Len()) + TEXT("\r\n") + Comment + Text.Mid(At + Header.Len());
+	WriteDisk(File, Text);
+	{
+		// the Game branch reads the planted file, as it would have at startup
+		FConfigContext Context = FConfigContext::ForceReloadIntoGConfig();
+		Context.bWriteDestIni = false;
+		Context.Load(TEXT("Game"));
+	}
+	TArray<FString> Before;
+	ReadDisk(File).ParseIntoArrayLines(Before);
+
+	const FString Old = UProjectSettingsService::GetSettingsProperty(Class, TEXT("Description"));
+	const FString Value = FString(TEXT("VibeUETest")) + FGuid::NewGuid().ToString(EGuidFormats::Digits);
+	const FProjectSettingResult Result = UProjectSettingsService::SetSettingsProperty(Class, TEXT("Description"), Value);
+	TestTrue(FString::Printf(TEXT("set_settings_property succeeded (%s)"), *Result.ErrorMessage), Result.bSuccess);
+
+	TArray<FString> After;
+	ReadDisk(File).ParseIntoArrayLines(After);
+	TestTrue(TEXT("DefaultGame.ini on disk holds the new Description line"), After.Contains(TEXT("Description=") + Value));
+	TestTrue(TEXT("the comment in the class's section is kept"), After.Contains(Comment));
+	for (const FString& Line : Before)
+	{
+		if (!Line.StartsWith(TEXT("Description=")))
+		{
+			TestTrue(FString::Printf(TEXT("the file's earlier line is kept: %s"), *Line), After.Contains(Line));
+		}
+	}
+	for (const FString& Line : After)
+	{
+		if (!Line.StartsWith(TEXT("Description=")))
+		{
+			TestTrue(FString::Printf(TEXT("no line but the Description line is new: %s"), *Line), Before.Contains(Line));
+		}
+	}
+
+	// put the live value back too (the file is restored by the guard)
+	TestTrue(TEXT("the old value goes back"), UProjectSettingsService::SetSettingsProperty(Class, TEXT("Description"), Old).bSuccess);
+	return true;
+}
+
+// A settings class is found by the ini section it writes when that keeps an older name: ProjectPackagingSettings moved
+// to DeveloperToolSettings and still writes [/Script/UnrealEd.ProjectPackagingSettings], the name its DefaultGame.ini
+// lines carry. get_settings_property by that name reads what the class path reads, and set_ini_array on that section
+// writes the class's array. IniSectionDenylist (TArray<FString>, defaultconfig in DefaultGame.ini), put back afterwards.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeSettingsClassByIniSectionTest,
+	"VibeUE.ProjectSettings.SettingsClassByIniSection", kSettingsTestFlags)
+bool FVibeSettingsClassByIniSectionTest::RunTest(const FString&)
+{
+	using namespace VibeSettingsTest;
+	const FString Class = TEXT("/Script/DeveloperToolSettings.ProjectPackagingSettings");
+	const FString Section = TEXT("/Script/UnrealEd.ProjectPackagingSettings");
+	const FString Key = TEXT("IniSectionDenylist");
+	if (!TestNotNull(TEXT("ProjectPackagingSettings is loaded"), FindObject<UClass>(nullptr, *Class)))
+	{
+		return false;
+	}
+	const FString File = DefaultGameIni();
+	FScopedConfigFileRestore Restore(File, TEXT("Game"));
+
+	const FString Old = UProjectSettingsService::GetSettingsProperty(Class, Key);
+	TestEqual(TEXT("get_settings_property by the ini section reads what the class path reads"),
+		UProjectSettingsService::GetSettingsProperty(Section, Key), Old);
+	const FString Marker = FString(TEXT("VibeUETest_")) + FGuid::NewGuid().ToString(EGuidFormats::Digits);
+	const FProjectSettingResult Result = UProjectSettingsService::SetIniArray(Section, Key, { Marker }, TEXT("DefaultGame.ini"));
+	TestTrue(FString::Printf(TEXT("set_ini_array on the ini section succeeds (%s)"), *Result.ErrorMessage), Result.bSuccess);
+	TestTrue(TEXT("the class default object holds the element"), UProjectSettingsService::GetSettingsProperty(Class, Key).Contains(Marker));
+	TestTrue(TEXT("DefaultGame.ini on disk holds the element"), ReadDisk(File).Contains(Marker));
+	TestTrue(TEXT("get_settings_property by the ini section reads it too"), UProjectSettingsService::GetSettingsProperty(Section, Key).Contains(Marker));
+
+	// put the live value back too (the file is restored by the guard)
+	TestTrue(TEXT("the old value goes back"), UProjectSettingsService::SetSettingsProperty(Class, Key, Old).bSuccess);
+	TestEqual(TEXT("the class default object is back"), UProjectSettingsService::GetSettingsProperty(Class, Key), Old);
+	return true;
+}
+
 #endif // WITH_AUTOMATION_TESTS
