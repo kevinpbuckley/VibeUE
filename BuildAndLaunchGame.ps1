@@ -119,7 +119,21 @@ try {
     }
 } catch {}
 
-# Second try: standard launcher installs (HKLM)
+# Second try: the Epic launcher's own install list, which is what the editor resolves
+# EngineAssociation from. The HKLM key below can go stale: after 5.8.4 was installed to a new
+# folder it still named the old 5.8.3 install, so the script built against the wrong engine.
+if (-not $enginePath) {
+    try {
+        $launcherDat = Join-Path $env:ProgramData "Epic\UnrealEngineLauncher\LauncherInstalled.dat"
+        $launcherInstall = (Get-Content $launcherDat -Raw | ConvertFrom-Json).InstallationList |
+            Where-Object { $_.AppName -eq "UE_$engineAssociation" } | Select-Object -First 1
+        if ($launcherInstall -and (Test-Path (Join-Path $launcherInstall.InstallLocation "Engine\Build\BatchFiles\Build.bat"))) {
+            $enginePath = $launcherInstall.InstallLocation
+        }
+    } catch {}
+}
+
+# Third try: standard launcher installs (HKLM)
 if (-not $enginePath) {
     try {
         $regPath = "HKLM:\SOFTWARE\EpicGames\Unreal Engine\$engineAssociation"
@@ -130,7 +144,7 @@ if (-not $enginePath) {
     } catch {}
 }
 
-# Third try: well-known path pattern (e.g. UE_5.7)
+# Fourth try: well-known path pattern (e.g. UE_5.7)
 if (-not $enginePath) {
     $candidates = @(
         "E:\Program Files\Epic Games\UE_$engineAssociation",
@@ -142,10 +156,10 @@ if (-not $enginePath) {
     }
 }
 
-# Fourth try: ask for a manual path rather than just giving up (the Epic launcher
+# Fifth try: ask for a manual path rather than just giving up (the Epic launcher
 # doesn't always register a drive, e.g. an engine installed on a non-default drive).
 if (-not $enginePath) {
-    Write-Host "Could not auto-detect Unreal Engine '$engineAssociation' from the registry or common install paths." -ForegroundColor Yellow
+    Write-Host "Could not auto-detect Unreal Engine '$engineAssociation' from the Epic launcher, the registry or common install paths." -ForegroundColor Yellow
     # Non-interactive session (CI, agent-run builds): fail fast instead of prompting.
     if ([Console]::IsInputRedirected -or ([Environment]::GetCommandLineArgs() -match '^-NonI')) {
         Write-Host "ERROR: Non-interactive session - cannot prompt for a path. Set the engine path manually or register the install." -ForegroundColor Red
