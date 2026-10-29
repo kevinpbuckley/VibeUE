@@ -1013,9 +1013,9 @@ namespace
 	/** Find the JSON value supplied for a parameter name (case-insensitive), or null. */
 	TSharedPtr<FJsonValue> FindArgument(const FJsonObject& Args, const FString& ParamName)
 	{
-		for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Args.Values)
+		for (const auto& Pair : Args.Values)
 		{
-			if (Pair.Key.Equals(ParamName, ESearchCase::IgnoreCase))
+			if (FString(Pair.Key).Equals(ParamName, ESearchCase::IgnoreCase))
 			{
 				return Pair.Value.IsValid() ? Pair.Value : MakeShared<FJsonValueNull>();
 			}
@@ -1061,12 +1061,12 @@ namespace
 		}
 
 		// Reject keys that name no parameter (a typo must not silently fall back to a default).
-		for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Args->Values)
+		for (const auto& Pair : Args->Values)
 		{
 			bool bKnown = false;
 			for (TFieldIterator<FProperty> It(Func); It && It->HasAnyPropertyFlags(CPF_Parm); ++It)
 			{
-				if (!It->HasAnyPropertyFlags(CPF_ReturnParm) && It->GetName().Equals(Pair.Key, ESearchCase::IgnoreCase))
+				if (!It->HasAnyPropertyFlags(CPF_ReturnParm) && It->GetName().Equals(FString(Pair.Key), ESearchCase::IgnoreCase))
 				{
 					bKnown = true;
 					break;
