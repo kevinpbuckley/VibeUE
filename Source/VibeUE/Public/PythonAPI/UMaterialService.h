@@ -7,7 +7,9 @@
 #include "UMaterialService.generated.h"
 
 /**
- * Information about a material parameter
+ * Information about a material parameter. Scalar/vector values are formatted to three decimals.
+ * DefaultValue is the inherited value before this instance's own override; bIsOverridden reports
+ * an override on this instance only. Layer association and index are not included.
  */
 USTRUCT(BlueprintType)
 struct FMaterialParameterInfo_Custom
@@ -106,6 +108,22 @@ struct FMaterialDetailedInfo
 
 	UPROPERTY(BlueprintReadWrite, Category = "Material")
 	TArray<FMaterialParameterInfo_Custom> Parameters;
+};
+
+/** Material read result carried entirely in the return value for MCP callers. */
+USTRUCT(BlueprintType)
+struct FMaterialInfoResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Material")
+	bool bSuccess = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Material")
+	FMaterialDetailedInfo Info;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Material")
+	FString ErrorMessage;
 };
 
 /**
@@ -292,6 +310,16 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (AICallable, DisplayName = "Get Material Info"))
 	static bool GetMaterialInfo(const FString& MaterialPath, FMaterialDetailedInfo& OutInfo);
+
+	/**
+	 * Get material or material-instance information with explicit success/error state.
+	 * Prefer this for MCP: UE 5.8 ToolsetRegistry serializes only the direct return value,
+	 * not GetMaterialInfo's OutInfo parameter. The legacy API remains unchanged.
+	 * @param MaterialPath - Full path to the material or material instance
+	 * @return Success and material details, or an error message with default-empty details
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (AICallable, DisplayName = "Get Material Info Result"))
+	static FMaterialInfoResult GetMaterialInfoResult(const FString& MaterialPath);
 
 	/**
 	 * Get an AI-friendly summary of a material.
