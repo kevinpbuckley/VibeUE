@@ -40,13 +40,15 @@ vector values are rounded to three decimals; `defaultValue` is the inherited val
 instance's override, and `bIsOverridden` reports only this instance. Layer association and index
 are not returned, so equal parameter names in different layers cannot be distinguished.
 Expression and texture-sample counts are populated only for base materials; the texture count
-includes parameter sample nodes, not all texture samples. Only the first shading model is reported.
+counts only parameter sample nodes, not all texture samples. Only the first shading model is reported.
 `Summarize` and `GetPropertyInfo` also use output references; they are not MCP substitutes.
-Existing C++/Blueprint/Python `get_material_info` callers are unchanged. In Python,
+The existing C++/Blueprint/Python `get_material_info` signature is unchanged, but its instance
+properties and parameter details now report effective values, inherited defaults and local overrides.
+`ListParameters` returns the corrected parameter details too. In Python,
 `get_material_info_result(path)` returns `.success`, `.info`, and `.error_message`.
 
-Regression: run `Automation RunTests VibeUE.Materials.GetMaterialInfoResult` in the
-Editor console. The test reads engine fixtures without creating or saving packages.
+Regression: run `Automation RunTests VibeUE.Materials.GetMaterialInfo` in the Editor console.
+One test creates an unsaved in-memory `/Game` package; the tests do not save assets.
 
 ### 🚨 Connecting Function Call Inputs: Use Bare Names, Not Display Names
 

@@ -230,6 +230,7 @@ struct FMaterialSummary
  *
  * Information:
  * - get_material_info: Get comprehensive material information
+ * - get_material_info_result: Get material information as a direct result for MCP
  * - summarize: Get AI-friendly material summary
  * - list_parameters: List all material parameters
  * - get_property_info: Get detailed property metadata
@@ -314,7 +315,8 @@ public:
 	/**
 	 * Get material or material-instance information with explicit success/error state.
 	 * Prefer this for MCP: UE 5.8 ToolsetRegistry serializes only the direct return value,
-	 * not GetMaterialInfo's OutInfo parameter. The legacy API remains unchanged.
+	 * not GetMaterialInfo's OutInfo parameter. The legacy signature remains unchanged;
+	 * both operations return corrected instance properties and parameter details.
 	 * @param MaterialPath - Full path to the material or material instance
 	 * @return Success and material details, or an error message with default-empty details
 	 */
