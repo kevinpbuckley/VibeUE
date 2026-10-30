@@ -197,10 +197,8 @@ on the Map Get node is likewise `Module.<Name>` — list pins with `get_node_pin
 
 ### What `apply_changes` does
 
-A single call:
-1. Walks every stack module across every emitter and calls `RefreshFromExternalChanges()` on each one referencing a scratch script (so new module inputs/outputs propagate to the stack UI).
-2. Calls `FNiagaraStackGraphUtilities::RebuildEmitterNodes` to rebuild the system's compiled emitter nodes.
-3. Marks dirty, recompiles, waits, saves.
+A single call validates scratch graphs, notifies the editor that each scratch script was applied,
+then recompiles and saves the system. The editor may reinitialize running instances of that system.
 
 Call it **once** at the end of a batch of graph edits — not after every node creation.
 

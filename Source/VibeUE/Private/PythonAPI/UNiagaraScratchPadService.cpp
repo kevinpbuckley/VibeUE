@@ -31,6 +31,7 @@
 // through the public UNiagaraNodeWithDynamicPins base class and instantiate them via
 // runtime class lookup (FindObject<UClass> on /Script/NiagaraEditor.NiagaraNode...).
 #include "EdGraphSchema_Niagara.h"
+#include "NiagaraEditorModule.h"
 #include "NiagaraEditorSettings.h"
 #include "NiagaraGraph.h"
 #include "NiagaraNodeCustomHlsl.h"
@@ -1301,16 +1302,8 @@ bool UNiagaraScratchPadService::ApplyChanges(const FString& SystemPath)
 		return false;
 	}
 
-	// Notify each scratch script graph that it has changed so its ChangeID bumps. This is what
-	// triggers callers (the stack function-call nodes that reference it) to pick up the new
-	// signature on next compile/refresh.
-	//
-	// We intentionally do NOT call FunctionCall->RefreshFromExternalChanges() on the stack-level
-	// function-call nodes here. That path runs ReallocatePins(false) which in some signature
-	// transitions (e.g. a scratch module growing new Module.* inputs) asserts inside the engine
-	// with "Array index out of bounds: 1 into an array of size 1". The full RequestCompile +
-	// WaitForCompilationComplete below performs the same rebuild safely - the system compile
-	// re-reads each function call's referenced script graph.
+	// Broadcast the native scratch-apply event so existing stack views refresh their inputs.
+	// Avoid RefreshFromExternalChanges: its pin reallocation can assert on signature changes.
 	for (FNiagaraEmitterHandle& Handle : System->GetEmitterHandles())
 	{
 		FVersionedNiagaraEmitterData* EmitterData = Handle.GetEmitterData();
@@ -1326,6 +1319,7 @@ bool UNiagaraScratchPadService::ApplyChanges(const FString& SystemPath)
 				}
 			}
 			Scratch->MarkPackageDirty();
+			FNiagaraEditorModule::Get().ScriptApplied(Scratch, FGuid());
 		}
 	}
 
