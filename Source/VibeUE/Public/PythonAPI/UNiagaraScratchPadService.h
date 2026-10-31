@@ -145,8 +145,8 @@ struct FNiagaraScratchConnectionInfo
  *   unreal.NiagaraScratchPadService.apply_changes(S)
  *
  * All graph mutations operate on the scratch script asset directly (no open editor required).
- * Call apply_changes() once at the end to refresh signatures, rebuild emitter nodes, recompile,
- * and save. Discover method signatures with discover_python_class('unreal.NiagaraScratchPadService').
+ * Call apply_changes() once at the end to notify the editor, recompile, and save.
+ * Discover method signatures with discover_python_class('unreal.NiagaraScratchPadService').
  */
 UCLASS(BlueprintType)
 class VIBEUE_API UNiagaraScratchPadService : public UToolsetDefinition
@@ -464,8 +464,8 @@ public:
 	// =================================================================
 
 	/**
-	 * Finalize scratch-pad edits: refresh every stack module that references a scratch script, rebuild the
-	 * system's emitter compiled nodes, recompile, and save. Call this once after a batch of graph edits.
+	 * Validate scratch graphs, notify the editor, recompile, and save. Call once after a batch of edits.
+	 * The editor may reinitialize running instances of the affected system.
 	 *
 	 * Before compiling, the scratch graphs are validated (e.g. duplicate same-named pins on Map Get/Set
 	 * nodes, which would fire a fatal engine assert inside RequestCompile) — a corrupt graph fails fast
