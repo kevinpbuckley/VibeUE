@@ -5,6 +5,7 @@
 #include "Materials/Material.h"
 #include "Materials/MaterialInstance.h"
 #include "Materials/MaterialInstanceConstant.h"
+#include "Materials/MaterialParameters.h"
 #include "Materials/MaterialExpressionParameter.h"
 #include "Materials/MaterialExpressionScalarParameter.h"
 #include "Materials/MaterialExpressionVectorParameter.h"
@@ -473,7 +474,7 @@ bool UMaterialService::GetMaterialInfo(const FString& MaterialPath, FMaterialDet
 		
 		// Get domain, blend mode, etc.
 		OutInfo.MaterialDomain = UEnum::GetValueAsString(Material->MaterialDomain);
-		OutInfo.BlendMode = UEnum::GetValueAsString(Material->BlendMode);
+		OutInfo.BlendMode = UEnum::GetValueAsString(Material->GetBlendMode());
 		OutInfo.ShadingModel = UEnum::GetValueAsString(Material->GetShadingModels().GetFirstShadingModel());
 		OutInfo.bTwoSided = Material->IsTwoSided();
 		OutInfo.ExpressionCount = Material->GetExpressions().Num();
@@ -504,9 +505,9 @@ bool UMaterialService::GetMaterialInfo(const FString& MaterialPath, FMaterialDet
 		if (UMaterial* BaseMat = MaterialInstance->GetMaterial())
 		{
 			OutInfo.MaterialDomain = UEnum::GetValueAsString(BaseMat->MaterialDomain);
-			OutInfo.BlendMode = UEnum::GetValueAsString(BaseMat->BlendMode);
-			OutInfo.ShadingModel = UEnum::GetValueAsString(BaseMat->GetShadingModels().GetFirstShadingModel());
-			OutInfo.bTwoSided = BaseMat->IsTwoSided();
+			OutInfo.BlendMode = UEnum::GetValueAsString(MaterialInstance->GetBlendMode());
+			OutInfo.ShadingModel = UEnum::GetValueAsString(MaterialInstance->GetShadingModels().GetFirstShadingModel());
+			OutInfo.bTwoSided = MaterialInstance->IsTwoSided();
 		}
 	}
 	else
@@ -518,6 +519,17 @@ bool UMaterialService::GetMaterialInfo(const FString& MaterialPath, FMaterialDet
 	OutInfo.Parameters = ListParameters(MaterialPath);
 
 	return true;
+}
+
+FMaterialInfoResult UMaterialService::GetMaterialInfoResult(const FString& MaterialPath)
+{
+	FMaterialInfoResult Result;
+	Result.bSuccess = GetMaterialInfo(MaterialPath, Result.Info);
+	if (!Result.bSuccess)
+	{
+		Result.ErrorMessage = FString::Printf(TEXT("Could not load a material or material instance at '%s'."), *MaterialPath);
+	}
+	return Result;
 }
 
 bool UMaterialService::Summarize(const FString& MaterialPath, FMaterialSummary& OutSummary)
@@ -705,6 +717,22 @@ TArray<FMaterialParameterInfo_Custom> UMaterialService::ListParameters(const FSt
 		return Parameters;
 	}
 
+	const UMaterialInstance* Instance = Cast<UMaterialInstance>(MatInterface);
+	const auto PopulateMetadata = [MatInterface, Instance](FMaterialParameterInfo_Custom& Info,
+		const FMaterialParameterInfo& Parameter, EMaterialParameterType Type)
+	{
+		const FHashedMaterialParameterInfo HashedParameter(Parameter);
+		FMaterialParameterMetadata Metadata;
+		if (MatInterface->GetParameterDefaultValue(Type, HashedParameter, Metadata) && !Metadata.Group.IsNone())
+		{
+			Info.Group = Metadata.Group.ToString();
+		}
+		if (Instance)
+		{
+			Info.bIsOverridden = Instance->GetParameterOverrideValue(Type, HashedParameter, Metadata);
+		}
+	};
+
 	// Get scalar parameters
 	TArray<FMaterialParameterInfo> ScalarParams;
 	TArray<FGuid> ScalarGuids;
@@ -715,14 +743,17 @@ TArray<FMaterialParameterInfo_Custom> UMaterialService::ListParameters(const FSt
 		FMaterialParameterInfo_Custom CustomInfo;
 		CustomInfo.ParameterName = Param.Name.ToString();
 		CustomInfo.ParameterType = TEXT("Scalar");
-		CustomInfo.Group = TEXT("");
+		PopulateMetadata(CustomInfo, Param, EMaterialParameterType::Scalar);
 
 		float Value;
 		FHashedMaterialParameterInfo HashedParam(Param);
 		if (MatInterface->GetScalarParameterValue(HashedParam, Value))
 		{
 			CustomInfo.CurrentValue = FString::Printf(TEXT("%.3f"), Value);
-			CustomInfo.DefaultValue = CustomInfo.CurrentValue;
+		}
+		if (MatInterface->GetScalarParameterDefaultValue(HashedParam, Value))
+		{
+			CustomInfo.DefaultValue = FString::Printf(TEXT("%.3f"), Value);
 		}
 
 		Parameters.Add(CustomInfo);
@@ -738,14 +769,17 @@ TArray<FMaterialParameterInfo_Custom> UMaterialService::ListParameters(const FSt
 		FMaterialParameterInfo_Custom CustomInfo;
 		CustomInfo.ParameterName = Param.Name.ToString();
 		CustomInfo.ParameterType = TEXT("Vector");
-		CustomInfo.Group = TEXT("");
+		PopulateMetadata(CustomInfo, Param, EMaterialParameterType::Vector);
 
 		FLinearColor Value;
 		FHashedMaterialParameterInfo HashedParam(Param);
 		if (MatInterface->GetVectorParameterValue(HashedParam, Value))
 		{
 			CustomInfo.CurrentValue = FString::Printf(TEXT("(R=%.3f,G=%.3f,B=%.3f,A=%.3f)"), Value.R, Value.G, Value.B, Value.A);
-			CustomInfo.DefaultValue = CustomInfo.CurrentValue;
+		}
+		if (MatInterface->GetVectorParameterDefaultValue(HashedParam, Value))
+		{
+			CustomInfo.DefaultValue = FString::Printf(TEXT("(R=%.3f,G=%.3f,B=%.3f,A=%.3f)"), Value.R, Value.G, Value.B, Value.A);
 		}
 
 		Parameters.Add(CustomInfo);
@@ -761,14 +795,18 @@ TArray<FMaterialParameterInfo_Custom> UMaterialService::ListParameters(const FSt
 		FMaterialParameterInfo_Custom CustomInfo;
 		CustomInfo.ParameterName = Param.Name.ToString();
 		CustomInfo.ParameterType = TEXT("Texture");
-		CustomInfo.Group = TEXT("");
+		PopulateMetadata(CustomInfo, Param, EMaterialParameterType::Texture);
 
 		UTexture* Texture = nullptr;
 		FHashedMaterialParameterInfo HashedParam(Param);
 		if (MatInterface->GetTextureParameterValue(HashedParam, Texture) && Texture)
 		{
 			CustomInfo.CurrentValue = Texture->GetPathName();
-			CustomInfo.DefaultValue = CustomInfo.CurrentValue;
+		}
+		Texture = nullptr;
+		if (MatInterface->GetTextureParameterDefaultValue(HashedParam, Texture) && Texture)
+		{
+			CustomInfo.DefaultValue = Texture->GetPathName();
 		}
 
 		Parameters.Add(CustomInfo);
