@@ -122,6 +122,27 @@ bool FWorkflowScenarioTest::RunTest(const FString&)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWorkflowScenarioPythonWaitTest, "VibeUE.Workflow.Scenario.PythonAndWaitUntil",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FWorkflowScenarioPythonWaitTest::RunTest(const FString&)
+{
+	// python sets shared globals, wait_until polls across ticks until the condition holds
+	const TSharedPtr<FJsonObject> Passing = ParseWorkflowJson(UWorkflowService::RunScenario(FString(R"json({"name":"python wait pass","steps":[)json"
+		R"json({"action":"python","code":"import time\n_vibeue_wait_t0 = time.time()\n_vibeue_wait_n = 0"},)json"
+		R"json({"action":"wait_until","expression":"time.time() - _vibeue_wait_t0 > 0.2","timeout_seconds":5,"poll_seconds":0.05},)json"
+		R"json({"action":"python","code":"_vibeue_wait_n += 1"},)json"
+		R"json({"action":"python_assert_number","expression":"_vibeue_wait_n","operator":"eq","expected":1}],"teardown":{"stop_pie":false}})json")));
+	const TSharedPtr<FJsonObject> Raising = ParseWorkflowJson(UWorkflowService::RunScenario(FString(R"json({"name":"python raises","steps":[)json"
+		R"json({"action":"python","code":"raise ValueError()"},{"action":"python_assert","expression":"1","expected":"1"}],"teardown":{"stop_pie":false}})json")));
+	const TSharedPtr<FJsonObject> TimingOut = ParseWorkflowJson(UWorkflowService::RunScenario(FString(R"json({"name":"wait_until timeout","steps":[)json"
+		R"json({"action":"wait_until","expression":"False","timeout_seconds":0.2},{"action":"python_assert","expression":"1","expected":"1"}],"teardown":{"stop_pie":false}})json")));
+	if (!TestTrue(TEXT("scenarios queued"), Passing.IsValid() && Raising.IsValid() && TimingOut.IsValid())) { return false; }
+	ADD_LATENT_AUTOMATION_COMMAND(FWaitWorkflowScenario(this, Passing->GetStringField(TEXT("scenarioId")), true));
+	ADD_LATENT_AUTOMATION_COMMAND(FWaitWorkflowScenario(this, Raising->GetStringField(TEXT("scenarioId")), false));
+	ADD_LATENT_AUTOMATION_COMMAND(FWaitWorkflowScenario(this, TimingOut->GetStringField(TEXT("scenarioId")), false));
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWorkflowScenarioValidationTest, "VibeUE.Workflow.Scenario.RejectInvalidAssertions",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FWorkflowScenarioValidationTest::RunTest(const FString&)
@@ -135,7 +156,10 @@ bool FWorkflowScenarioValidationTest::RunTest(const FString&)
 		TEXT(R"({"steps":[{"action":"python_assert_number","expression":"1","operator":"eq","expected":1,"tolerance":-1}]})"),
 		TEXT(R"({"steps":[{"action":"python_assert_number","expression":"1","operator":"lt","expected":2,"tolerance":1}]})"),
 		TEXT(R"({"smoke":"yes","steps":[{"action":"wait"}]})"),
-		TEXT(R"({"smoke":true,"steps":[{"action":"wait"}],"dependencies":["Saved/NoSuchScenarioDependency"]})")
+		TEXT(R"({"smoke":true,"steps":[{"action":"wait"}],"dependencies":["Saved/NoSuchScenarioDependency"]})"),
+		TEXT(R"({"smoke":true,"steps":[{"action":"python"}]})"),
+		TEXT(R"({"smoke":true,"steps":[{"action":"python","code":"  "}]})"),
+		TEXT(R"({"smoke":true,"steps":[{"action":"wait_until"}]})")
 	};
 	for (const FString& Spec : Invalid)
 	{
