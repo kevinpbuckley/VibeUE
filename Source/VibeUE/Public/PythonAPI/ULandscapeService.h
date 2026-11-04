@@ -8,6 +8,17 @@
 
 class ULandscapeLayerInfoObject;
 
+USTRUCT(BlueprintType)
+struct FLandscapeLayerInfoReplacementResult
+{
+	GENERATED_BODY()
+	UPROPERTY(BlueprintReadOnly, Category = "Landscape")
+	bool bSuccess = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Landscape")
+	FString Message;
+};
+
 /**
  * Information about a landscape paint layer
  */
@@ -1253,6 +1264,7 @@ public:
 	 * Rejects overlapping allocations, duplicate collision identities, and simultaneous source
 	 * and destination blend references. For distinct assets, Landscapes containing custom edit layers
 	 * or attached Landscape Blueprint brushes are rejected because their references may not be repaired.
+	 * Agents should use ReplaceLayerInfoWithResult to receive the reason and choose an explicit opt-in.
 	 * Undoable, target-Landscape only, no automatic save. Repeat calls remain subject to these checks.
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
@@ -1261,6 +1273,24 @@ public:
 		ULandscapeLayerInfoObject* FromLayerInfo,
 		ULandscapeLayerInfoObject* ToLayerInfo);
 
+	/** Replace LayerInfo with caller-visible risk information. The same validation, loading,
+	 * transaction and save rules as ReplaceLayerInfo apply. By default, brush and custom-layer
+	 * risks are returned without changing anything. Obtain user approval before setting
+	 * bAllowUnrepairedReferences: those references may remain unchanged. A successful result
+	 * does not mean external references were verified or repaired. Inspect Message on every call. */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Landscape")
+	static FLandscapeLayerInfoReplacementResult ReplaceLayerInfoWithResult(
+		const FString& LandscapeNameOrLabel,
+		ULandscapeLayerInfoObject* FromLayerInfo,
+		ULandscapeLayerInfoObject* ToLayerInfo,
+		bool bAllowUnrepairedReferences = false);
+
+private:
+	static bool ReplaceLayerInfoInternal(const FString& LandscapeNameOrLabel,
+		ULandscapeLayerInfoObject* FromLayerInfo, ULandscapeLayerInfoObject* ToLayerInfo,
+		bool bAllowUnrepairedReferences, FString& OutMessage);
+
+public:
 	/**
 	 * Remove a paint layer from a landscape.
 	 * Maps to action="remove_layer"

@@ -2,6 +2,7 @@
 
 #include "PythonAPI/ULandscapeService.h"
 #include "Landscape.h"
+#include "LandscapeBlueprintBrushBase.h"
 #include "LandscapeProxy.h"
 #include "LandscapeStreamingProxy.h"
 #include "LandscapeInfo.h"
@@ -2703,12 +2704,46 @@ bool ULandscapeService::AddLayer(
 	return true;
 }
 
+FLandscapeLayerInfoReplacementResult ULandscapeService::ReplaceLayerInfoWithResult(
+	const FString& LandscapeNameOrLabel,
+	ULandscapeLayerInfoObject* FromLayerInfo,
+	ULandscapeLayerInfoObject* ToLayerInfo,
+	bool bAllowUnrepairedReferences)
+{
+	FLandscapeLayerInfoReplacementResult Result;
+	Result.bSuccess = ReplaceLayerInfoInternal(LandscapeNameOrLabel, FromLayerInfo, ToLayerInfo, bAllowUnrepairedReferences, Result.Message);
+	if (!Result.bSuccess)
+	{
+		Result.Message = TEXT("Replacement did not complete; no changes made. Other safety checks still apply. ") + Result.Message;
+	}
+	return Result;
+}
+
 bool ULandscapeService::ReplaceLayerInfo(
 	const FString& LandscapeNameOrLabel,
 	ULandscapeLayerInfoObject* FromLayerInfo,
 	ULandscapeLayerInfoObject* ToLayerInfo)
 {
-	if (!IsInGameThread() || !GEditor || GEditor->PlayWorld) { return false; }
+	FString Message;
+	const bool bSuccess = ReplaceLayerInfoInternal(LandscapeNameOrLabel, FromLayerInfo, ToLayerInfo, false, Message);
+	if (!bSuccess && (Message.Contains(TEXT("brush references")) || Message.Contains(TEXT("Custom edit layer")) ||
+		Message.StartsWith(TEXT("All Landscape components")) || Message.StartsWith(TEXT("Load all Landscape components")) ||
+		Message.StartsWith(TEXT("Load and register all Landscape proxies")) || Message.StartsWith(TEXT("Ambiguous edit-layer references"))))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::ReplaceLayerInfo: %s"), *Message);
+	}
+	return bSuccess;
+}
+
+bool ULandscapeService::ReplaceLayerInfoInternal(
+	const FString& LandscapeNameOrLabel,
+	ULandscapeLayerInfoObject* FromLayerInfo,
+	ULandscapeLayerInfoObject* ToLayerInfo,
+	bool bAllowUnrepairedReferences,
+	FString& OutMessage)
+{
+	const auto Fail = [&](const FString& Reason) { OutMessage = Reason; return false; };
+	if (!IsInGameThread() || !GEditor || GEditor->PlayWorld) { return Fail(TEXT("Requires the Editor game thread with PIE stopped.")); }
 	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel);
 	ULandscapeInfo* Info = Landscape ? Landscape->GetLandscapeInfo() : nullptr;
 	if (!Info || !Landscape->GetWorld() || Landscape->GetWorld()->WorldType != EWorldType::Editor || !FromLayerInfo || !ToLayerInfo ||
@@ -2718,7 +2753,7 @@ bool ULandscapeService::ReplaceLayerInfo(
 		FromLayerInfo->GetPhysicalMaterial() != ToLayerInfo->GetPhysicalMaterial() ||
 		FromLayerInfo->GetMinimumCollisionRelevanceWeight() != ToLayerInfo->GetMinimumCollisionRelevanceWeight())
 	{
-		return false;
+		return Fail(TEXT("Landscape or LayerInfo assets are invalid, or their names, blend settings, physical materials or collision thresholds do not match."));
 	}
 	if (FromLayerInfo == ToLayerInfo) { return true; }
 
@@ -2726,27 +2761,25 @@ bool ULandscapeService::ReplaceLayerInfo(
 	if (World->IsPartitionedWorld())
 	{
 		// The engine's unloaded-component query only covers the persistent level.
-		if (Landscape->GetLevel() != World->PersistentLevel || !World->GetWorldPartition()->IsInitialized()) { return false; }
+		if (Landscape->GetLevel() != World->PersistentLevel || !World->GetWorldPartition()->IsInitialized()) { return Fail(TEXT("World Partition must be initialized and the Landscape must be in the persistent level.")); }
 	}
 	else
 	{
 		for (const ULevelStreaming* Level : World->GetStreamingLevels())
 		{
-			if (Level && (!Level->IsLevelLoaded() || !Level->IsLevelVisible())) { return false; }
+			if (Level && (!Level->IsLevelLoaded() || !Level->IsLevelVisible())) { return Fail(TEXT("Load and show all streaming levels before replacement.")); }
 		}
 	}
 	if (!Info->AreAllComponentsRegistered())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::ReplaceLayerInfo: All Landscape components must be registered"));
-		return false;
+		return Fail(TEXT("All Landscape components must be registered"));
 	}
 	const FIntRect Extent = Info->GetCompleteLandscapeExtent();
-	if (World->IsPartitionedWorld() && (Extent.Min.X > Extent.Max.X || Extent.Min.Y > Extent.Max.Y)) { return false; }
+	if (World->IsPartitionedWorld() && (Extent.Min.X > Extent.Max.X || Extent.Min.Y > Extent.Max.Y)) { return Fail(TEXT("Landscape extent is unavailable; save the new Landscape and load all proxies.")); }
 	if (Extent.Min.X <= Extent.Max.X && Extent.Min.Y <= Extent.Max.Y &&
 		Info->HasUnloadedComponentsInRegion(Extent.Min.X, Extent.Min.Y, Extent.Max.X, Extent.Max.Y))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::ReplaceLayerInfo: Load all Landscape components before replacing LayerInfo"));
-		return false;
+		return Fail(TEXT("Load all Landscape components before replacing LayerInfo"));
 	}
 
 	bool bFoundSource = false;
@@ -2790,7 +2823,7 @@ bool ULandscapeService::ReplaceLayerInfo(
 	});
 	for (const auto& Pair : Info->XYtoComponentMap)
 	{
-		if (!Pair.Value || !InspectedComponents.Contains(Pair.Value) || Pair.Key != Pair.Value->GetComponentKey()) { return false; }
+		if (!Pair.Value || !InspectedComponents.Contains(Pair.Value) || Pair.Key != Pair.Value->GetComponentKey()) { return Fail(TEXT("Landscape component inventory is incomplete or inconsistent.")); }
 	}
 	TSet<ALandscapeProxy*> LiveProxies;
 	for (TActorIterator<ALandscapeProxy> It(World, ALandscapeProxy::StaticClass(), EActorIteratorFlags::SkipPendingKill); It; ++It)
@@ -2798,14 +2831,14 @@ bool ULandscapeService::ReplaceLayerInfo(
 		ALandscapeProxy* Proxy = *It;
 		if (Proxy->GetLandscapeGuid() == Landscape->GetLandscapeGuid())
 		{
-			if (!Proxies.Contains(Proxy)) { return false; }
+			if (!Proxies.Contains(Proxy)) { return Fail(TEXT("A live Landscape proxy is missing from the registered inventory.")); }
 			LiveProxies.Add(Proxy);
 		}
 	}
 	for (ALandscapeProxy* Proxy : Proxies)
 	{
 		if (!IsValid(Proxy) || Proxy->GetWorld() != World || Proxy->GetLandscapeGuid() != Landscape->GetLandscapeGuid() ||
-			!Proxy->HasActorRegisteredAllComponents() || !LiveProxies.Contains(Proxy)) { return false; }
+			!Proxy->HasActorRegisteredAllComponents() || !LiveProxies.Contains(Proxy)) { return Fail(TEXT("A Landscape proxy is unavailable or unregistered.")); }
 	}
 	if (UWorldPartition* WorldPartition = World->GetWorldPartition())
 	{
@@ -2824,31 +2857,33 @@ bool ULandscapeService::ReplaceLayerInfo(
 		});
 		if (bMissingProxy)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::ReplaceLayerInfo: Load and register all Landscape proxies before replacing LayerInfo"));
-			return false;
+			return Fail(TEXT("Load and register all Landscape proxies before replacing LayerInfo"));
 		}
 	}
-	if (bWouldMerge || bUnmappedComponent) { return false; }
-	bool bHasBrush = false;
+	if (bWouldMerge) { return Fail(TEXT("Source and destination have overlapping allocations or collision identities.")); }
+	if (bUnmappedComponent) { return Fail(TEXT("A Landscape component is missing from the component map.")); }
+	bool bMissingBrush = false;
 	Landscape->ForEachLayerConst([&](const FLandscapeLayer& Layer)
 	{
-		bHasBrush |= !Layer.Brushes.IsEmpty();
-		return !bHasBrush;
+		for (const FLandscapeLayerBrush& Brush : Layer.Brushes)
+		{
+			const ALandscapeBlueprintBrushBase* Actor = Brush.GetBrush();
+			if (!IsValid(Actor)) { bMissingBrush = true; continue; }
+			OutMessage += FString::Printf(TEXT("Attached brush '%s': brush references may remain unchanged. "), *Actor->GetPathName());
+		}
+		return true;
 	});
-	if (bHasBrush)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::ReplaceLayerInfo: Landscape Blueprint brushes are unsupported"));
-		return false;
-	}
+	if (bMissingBrush) { return Fail(TEXT("An attached brush is unavailable; resolve the missing brush before retrying.")); }
 	TArray<ULandscapeEditLayerBase*> BlendLayers;
+	TArray<ULandscapeEditLayerBase*> CustomLayers;
 	for (ULandscapeEditLayerBase* EditLayer : Landscape->GetEditLayers())
 	{
-		if (!EditLayer) { return false; }
+		if (!EditLayer) { return Fail(TEXT("A Landscape edit layer is unavailable.")); }
 		// Custom layers can retain soft or indirect references invisible to this scan.
 		if (EditLayer->GetClass() != ULandscapeEditLayer::StaticClass() && EditLayer->GetClass() != ULandscapeEditLayerSplines::StaticClass())
 		{
-			UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::ReplaceLayerInfo: Custom edit layer '%s' is unsupported"), *EditLayer->GetName().ToString());
-			return false;
+			CustomLayers.Add(EditLayer);
+			OutMessage += FString::Printf(TEXT("Custom edit layer '%s' (%s): its references may remain unchanged. "), *EditLayer->GetName().ToString(), *EditLayer->GetGuid().ToString());
 		}
 		TArray<UObject*> References;
 		FReferenceFinder Finder(References, nullptr, true, true, false, false);
@@ -2857,10 +2892,23 @@ bool ULandscapeService::ReplaceLayerInfo(
 		{
 			if (References.Contains(ToLayerInfo))
 			{
-				UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::ReplaceLayerInfo: Ambiguous edit-layer references on '%s'"), *EditLayer->GetName().ToString());
-				return false;
+				return Fail(FString::Printf(TEXT("Ambiguous edit-layer references on '%s'; both LayerInfo assets are referenced."), *EditLayer->GetName().ToString()));
 			}
 			BlendLayers.Add(EditLayer);
+		}
+	}
+	if (!bFoundSource)
+	{
+		const FLandscapeTargetLayerSettings* Settings = Landscape->GetTargetLayers().Find(ToLayerInfo->GetLayerName());
+		if (!Settings || Settings->LayerInfoObj != ToLayerInfo) { return Fail(TEXT("The source is not allocated and the target does not already use the destination LayerInfo.")); }
+	}
+	if (!OutMessage.IsEmpty())
+	{
+		OutMessage += TEXT("External references are not verified or repaired.");
+		if (!bAllowUnrepairedReferences)
+		{
+			OutMessage += TEXT(" Obtain user approval before setting bAllowUnrepairedReferences.");
+			return false;
 		}
 	}
 	const auto RebindAllowList = [&](ULandscapeComponent* Component)
@@ -2869,8 +2917,6 @@ bool ULandscapeService::ReplaceLayerInfo(
 	};
 	if (!bFoundSource)
 	{
-		const FLandscapeTargetLayerSettings* Settings = Landscape->GetTargetLayers().Find(ToLayerInfo->GetLayerName());
-		if (!Settings || Settings->LayerInfoObj != ToLayerInfo) { return false; }
 		bool bStaleCache = !BlendLayers.IsEmpty();
 		for (ALandscapeProxy* Proxy : Proxies)
 		{
@@ -2888,6 +2934,7 @@ bool ULandscapeService::ReplaceLayerInfo(
 		if (!BlendLayers.IsEmpty())
 		{
 			for (ULandscapeEditLayerBase* EditLayer : BlendLayers) { EditLayer->Modify(); }
+			for (ULandscapeEditLayerBase* EditLayer : CustomLayers) { if (!BlendLayers.Contains(EditLayer)) { EditLayer->Modify(); } }
 			Landscape->ReplaceLayerSubstractiveBlendStatus(FromLayerInfo, ToLayerInfo, true);
 		}
 		for (ALandscapeProxy* Proxy : Proxies)
@@ -2916,6 +2963,7 @@ bool ULandscapeService::ReplaceLayerInfo(
 	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "ReplaceLayerInfo", "Replace Landscape Layer Info"));
 	Info->Modify();
 	for (ULandscapeEditLayerBase* EditLayer : BlendLayers) { EditLayer->Modify(); }
+	for (ULandscapeEditLayerBase* EditLayer : CustomLayers) { if (!BlendLayers.Contains(EditLayer)) { EditLayer->Modify(); } }
 	for (ALandscapeProxy* Proxy : Proxies)
 	{
 		Proxy->Modify();

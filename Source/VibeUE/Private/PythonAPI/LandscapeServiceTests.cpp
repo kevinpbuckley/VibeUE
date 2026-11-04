@@ -599,7 +599,7 @@ bool FVibeLandscapeLayerInfoReplacementTest::RunTest(const FString&)
 		FObjectPropertyBase* BlendKey = CastField<FObjectPropertyBase>(BlendProperty->KeyProp);
 		FBoolProperty* BlendValue = CastField<FBoolProperty>(BlendProperty->ValueProp);
 		if (!TestNotNull(TEXT("custom test blend key type"), BlendKey) || !TestNotNull(TEXT("custom test blend value type"), BlendValue)) { return false; }
-		FScriptMapHelper BlendMap(BlendProperty, BlendProperty->ContainerPtrToValuePtr<void>(Fixture.Landscape->GetEditLayer(BaseGuid)));
+		FScriptMapHelper BlendMap(BlendProperty, BlendProperty->ContainerPtrToValuePtr<void>(CustomLayer));
 		const auto FindBlend = [&](ULandscapeLayerInfoObject* Layer) -> int32
 		{
 			for (int32 I = 0; I < BlendMap.GetMaxIndex(); ++I)
@@ -630,7 +630,7 @@ bool FVibeLandscapeLayerInfoReplacementTest::RunTest(const FString&)
 			Edit.GetHeightDataFast(0, 0, 63, 63, CustomBeforeHeights.GetData(), 64);
 			Edit.GetWeightDataFast(From, 0, 0, 63, 63, CustomBeforeWeights.GetData(), 64);
 		}
-		AddExpectedMessage(TEXT("is unsupported"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1, false);
+		AddExpectedMessage(TEXT("Custom edit layer"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1, false);
 		if (!TestFalse(TEXT("custom edit layer rejects replacement"), ULandscapeService::ReplaceLayerInfo(Fixture.Label, From, To))) { return false; }
 		TestEqual(TEXT("custom rejection preserves target"), Fixture.Landscape->GetTargetLayers().FindChecked(TEXT("RoadSoil")).LayerInfoObj.Get(), From);
 		TestEqual(TEXT("custom rejection preserves reimport path"), Fixture.Landscape->GetTargetLayers().FindChecked(TEXT("RoadSoil")).ReimportLayerFilePath, ReimportPath);
@@ -655,6 +655,52 @@ bool FVibeLandscapeLayerInfoReplacementTest::RunTest(const FString&)
 		}
 		TestTrue(TEXT("custom rejection preserves heights"), CustomBeforeHeights == CustomAfterHeights);
 		TestTrue(TEXT("custom rejection preserves weights"), CustomBeforeWeights == CustomAfterWeights);
+		const FLandscapeLayerInfoReplacementResult CustomRefused = ULandscapeService::ReplaceLayerInfoWithResult(Fixture.Label, From, To);
+		TestFalse(TEXT("custom layer requires opt-in"), CustomRefused.bSuccess);
+		TestTrue(TEXT("custom layer warning identifies layer"), CustomRefused.Message.Contains(CustomLayer->GetName().ToString()));
+		TestEqual(TEXT("detailed custom refusal preserves target"), Fixture.Landscape->GetTargetLayers().FindChecked(TEXT("RoadSoil")).LayerInfoObj.Get(), From);
+		ULandscapeLayerInfoObject* Unused = MakeLayer(TEXT("RoadSoil"));
+		const FLandscapeLayerInfoReplacementResult NoSource = ULandscapeService::ReplaceLayerInfoWithResult(Fixture.Label, To, Unused);
+		TestFalse(TEXT("unallocated source is rejected before requesting approval"), NoSource.bSuccess);
+		TestTrue(TEXT("unallocated source reason is actionable"), NoSource.Message.Contains(TEXT("source is not allocated")) && !NoSource.Message.Contains(TEXT("Obtain user approval")));
+		const int32 ConflictingBlend = BlendMap.AddDefaultValue_Invalid_NeedsRehash();
+		BlendKey->SetObjectPropertyValue(BlendMap.GetKeyPtr(ConflictingBlend), To);
+		BlendValue->SetPropertyValue(BlendMap.GetValuePtr(ConflictingBlend), false);
+		BlendMap.Rehash();
+		const int32 QueueBeforeConflict = GEditor->Trans->GetQueueLength();
+		const FLandscapeLayerInfoReplacementResult Conflict = ULandscapeService::ReplaceLayerInfoWithResult(Fixture.Label, From, To, true);
+		TestFalse(TEXT("opt-in cannot bypass conflicting custom references"), Conflict.bSuccess);
+		TestTrue(TEXT("conflict result explains hard rejection"), Conflict.Message.Contains(TEXT("Ambiguous")) && !Conflict.Message.Contains(TEXT("Obtain user approval")));
+		TestEqual(TEXT("conflict opens no transaction"), GEditor->Trans->GetQueueLength(), QueueBeforeConflict);
+		const int32 ToConflictIndex = FindBlend(To);
+		if (!TestTrue(TEXT("conflicting blend preserved"), ToConflictIndex != INDEX_NONE)) { return false; }
+		BlendMap.RemoveAt(ToConflictIndex);
+		const FLandscapeLayerInfoReplacementResult CustomAllowed = ULandscapeService::ReplaceLayerInfoWithResult(Fixture.Label, From, To, true);
+		if (!TestTrue(TEXT("custom layer permits explicit opt-in"), CustomAllowed.bSuccess)) { return false; }
+		TestTrue(TEXT("custom success retains warning"), CustomAllowed.Message.Contains(CustomLayer->GetName().ToString()));
+		TestEqual(TEXT("custom opt-in changes target"), Fixture.Landscape->GetTargetLayers().FindChecked(TEXT("RoadSoil")).LayerInfoObj.Get(), To);
+		TestEqual(TEXT("custom opt-in removes old blend key"), FindBlend(From), INDEX_NONE);
+		if (TestTrue(TEXT("custom opt-in moves blend key"), FindBlend(To) != INDEX_NONE)) { TestTrue(TEXT("custom blend value preserved"), BlendValue->GetPropertyValue(BlendMap.GetValuePtr(FindBlend(To)))); }
+		if (!TestTrue(TEXT("undo custom opt-in"), GEditor->UndoTransaction())) { return false; }
+		TestEqual(TEXT("undo custom opt-in restores target"), Fixture.Landscape->GetTargetLayers().FindChecked(TEXT("RoadSoil")).LayerInfoObj.Get(), From);
+		TestTrue(TEXT("undo custom opt-in restores blend"), FindBlend(From) != INDEX_NONE && FindBlend(To) == INDEX_NONE);
+		if (!TestTrue(TEXT("redo custom opt-in"), GEditor->RedoTransaction())) { return false; }
+		const int32 RedoneBlend = FindBlend(To);
+		if (!TestTrue(TEXT("redo custom opt-in moves blend"), FindBlend(From) == INDEX_NONE && RedoneBlend != INDEX_NONE)) { return false; }
+		BlendMap.RemoveAt(RedoneBlend);
+		const int32 StaleBlend = BlendMap.AddDefaultValue_Invalid_NeedsRehash();
+		BlendKey->SetObjectPropertyValue(BlendMap.GetKeyPtr(StaleBlend), From);
+		BlendValue->SetPropertyValue(BlendMap.GetValuePtr(StaleBlend), true);
+		BlendMap.Rehash();
+		const FLandscapeLayerInfoReplacementResult Repaired = ULandscapeService::ReplaceLayerInfoWithResult(Fixture.Label, From, To, true);
+		TestTrue(TEXT("opt-in repairs stale custom blend"), Repaired.bSuccess);
+		TestTrue(TEXT("stale custom blend moves to destination"), FindBlend(From) == INDEX_NONE && FindBlend(To) != INDEX_NONE);
+		if (!TestTrue(TEXT("undo custom stale-blend repair"), GEditor->UndoTransaction())) { return false; }
+		TestTrue(TEXT("undo repair restores stale custom blend"), FindBlend(From) != INDEX_NONE && FindBlend(To) == INDEX_NONE);
+		if (!TestTrue(TEXT("redo custom stale-blend repair"), GEditor->RedoTransaction())) { return false; }
+		TestTrue(TEXT("redo repair moves custom blend"), FindBlend(From) == INDEX_NONE && FindBlend(To) != INDEX_NONE);
+		if (!TestTrue(TEXT("undo repair before original replacement"), GEditor->UndoTransaction())) { return false; }
+		if (!TestTrue(TEXT("undo custom opt-in after redo"), GEditor->UndoTransaction())) { return false; }
 		if (!TestTrue(TEXT("custom layer removed"), Fixture.Landscape->DeleteLayer(Fixture.Landscape->GetLayerIndex(CustomGuid)))) { return false; }
 		TestEqual(TEXT("original layer count restored"), Fixture.Landscape->GetEditLayers().Num(), OriginalLayerCount);
 		TestNull(TEXT("custom component data removed"), Component->GetLayerData(CustomGuid));
@@ -677,8 +723,19 @@ bool FVibeLandscapeLayerInfoReplacementTest::RunTest(const FString&)
 		const int32 QueueBeforeBrushRejection = GEditor->Trans->GetQueueLength();
 		const int32 RedoBeforeBrushRejection = GEditor->Trans->GetUndoCount();
 		const bool bDirtyBeforeBrushRejection = Fixture.Landscape->GetOutermost()->IsDirty();
+		{
+			FLandscapeLayer* LayerWithBrush = nullptr;
+			Fixture.Landscape->ForEachLayerConst([&](const FLandscapeLayer& Layer) { if (Layer.Brushes.ContainsByPredicate([&](const FLandscapeLayerBrush& Entry) { return Entry.GetBrush() == Brush; })) { LayerWithBrush = const_cast<FLandscapeLayer*>(&Layer); return false; } return true; });
+			if (!TestNotNull(TEXT("brush layer found"), LayerWithBrush)) { return false; }
+			LayerWithBrush->Brushes.AddDefaulted();
+			ON_SCOPE_EXIT { LayerWithBrush->Brushes.Pop(); };
+			const FLandscapeLayerInfoReplacementResult Missing = ULandscapeService::ReplaceLayerInfoWithResult(Fixture.Label, From, To, true);
+			TestFalse(TEXT("opt-in cannot bypass missing brush"), Missing.bSuccess);
+			TestTrue(TEXT("missing brush reason returned"), Missing.Message.Contains(TEXT("unavailable")) && !Missing.Message.Contains(TEXT("Obtain user approval")));
+			TestEqual(TEXT("missing brush opens no transaction"), GEditor->Trans->GetQueueLength(), QueueBeforeBrushRejection);
+		}
 		TestTrue(TEXT("identical layer is a no-op with an attached brush"), ULandscapeService::ReplaceLayerInfo(Fixture.Label, From, From));
-		AddExpectedMessage(TEXT("Landscape Blueprint brushes are unsupported"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1, false);
+		AddExpectedMessage(TEXT("brush references may remain unchanged"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1, false);
 		const bool bBrushReplaced = ULandscapeService::ReplaceLayerInfo(Fixture.Label, From, To);
 		if (!TestFalse(TEXT("attached brush rejects replacement"), bBrushReplaced))
 		{
@@ -714,6 +771,21 @@ bool FVibeLandscapeLayerInfoReplacementTest::RunTest(const FString&)
 		}
 		TestTrue(TEXT("brush rejection preserves heights"), BeforeHeights == BrushHeights);
 		TestTrue(TEXT("brush rejection preserves weights"), BeforeWeights == BrushWeights);
+		const FLandscapeLayerInfoReplacementResult Refused = ULandscapeService::ReplaceLayerInfoWithResult(Fixture.Label, From, To);
+		TestFalse(TEXT("detailed result defaults to refusal"), Refused.bSuccess);
+		TestTrue(TEXT("refusal explains brush risk"), Refused.Message.Contains(TEXT("brush")) && Refused.Message.Contains(TEXT("reference")));
+		TestEqual(TEXT("detailed brush refusal preserves transaction count"), GEditor->Trans->GetQueueLength(), QueueBeforeBrushRejection);
+		TestEqual(TEXT("detailed brush refusal preserves redo count"), GEditor->Trans->GetUndoCount(), RedoBeforeBrushRejection);
+		TestEqual(TEXT("detailed brush refusal preserves target"), Fixture.Landscape->GetTargetLayers().FindChecked(TEXT("RoadSoil")).LayerInfoObj.Get(), From);
+		TestEqual(TEXT("detailed brush refusal preserves brush"), Brush->LayerInfo.Get(), From);
+		TestFalse(TEXT("opt-in still rejects incompatible asset"), ULandscapeService::ReplaceLayerInfoWithResult(Fixture.Label, From, WrongName, true).bSuccess);
+		const FLandscapeLayerInfoReplacementResult Allowed = ULandscapeService::ReplaceLayerInfoWithResult(Fixture.Label, From, To, true);
+		if (!TestTrue(TEXT("explicit opt-in permits replacement"), Allowed.bSuccess)) { return false; }
+		TestTrue(TEXT("success retains risk warning"), Allowed.Message.Contains(TEXT("brush")) && Allowed.Message.Contains(TEXT("reference")));
+		TestEqual(TEXT("opt-in does not claim brush repair"), Brush->LayerInfo.Get(), From);
+		TestEqual(TEXT("opt-in changes target"), Fixture.Landscape->GetTargetLayers().FindChecked(TEXT("RoadSoil")).LayerInfoObj.Get(), To);
+		if (!TestTrue(TEXT("undo opt-in replacement"), GEditor->UndoTransaction())) { return false; }
+		TestEqual(TEXT("undo restores target after opt-in"), Fixture.Landscape->GetTargetLayers().FindChecked(TEXT("RoadSoil")).LayerInfoObj.Get(), From);
 	}
 	TestTrue(TEXT("replace"), ULandscapeService::ReplaceLayerInfo(Fixture.Label, From, To));
 	TestEqual(TEXT("replacement preserves reimport path"), Fixture.Landscape->GetTargetLayers().FindChecked(TEXT("RoadSoil")).ReimportLayerFilePath, ReimportPath);
