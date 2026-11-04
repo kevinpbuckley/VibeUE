@@ -6,6 +6,8 @@
 #include "ToolsetRegistry/ToolsetDefinition.h"
 #include "ULandscapeService.generated.h"
 
+class ULandscapeLayerInfoObject;
+
 /**
  * Information about a landscape paint layer
  */
@@ -626,6 +628,8 @@ struct FLineTraceHit
  * - modify_spline_point: Modify a control point (param: world_location, NOT location)
  * - delete_spline_point: Delete a control point
  * - delete_all_splines: Remove all splines from a landscape
+ * - rebuild_splines: Rebuild target spline meshes/collision and request spline-layer refresh
+ * - split_spline_segment: Split a segment at an interior curve fraction
  * - apply_splines_to_landscape: Apply spline deformation to the terrain
  * - set_spline_segment_meshes: Assign meshes to a spline segment
  * - set_spline_point_mesh: Assign a mesh to a control point
@@ -1240,6 +1244,22 @@ public:
 		const FString& LandscapeNameOrLabel,
 		const FString& LayerInfoAssetPath);
 
+	/** Replace a same-name, same-blend paint LayerInfo through the native editor workflow.
+	 * Both assets must also have the same blend group, physical material and collision relevance threshold.
+	 * Requires all Landscape components to be loaded and registered. In non-World-Partition
+	 * worlds all streaming levels must be loaded and visible; in World Partition the Landscape
+	 * must be in the persistent level and its proxies must be loaded and registered. A new
+	 * World Partition Landscape may need to be saved to establish its descriptor-backed extent.
+	 * Rejects overlapping allocations, duplicate collision identities, and simultaneous source
+	 * and destination blend references. Landscapes containing custom edit layers are rejected.
+	 * Undoable, target-Landscape only, no automatic save. Supports repeat calls.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
+	static bool ReplaceLayerInfo(
+		const FString& LandscapeNameOrLabel,
+		ULandscapeLayerInfoObject* FromLayerInfo,
+		ULandscapeLayerInfoObject* ToLayerInfo);
+
 	/**
 	 * Remove a paint layer from a landscape.
 	 * Maps to action="remove_layer"
@@ -1367,7 +1387,9 @@ public:
 	// =================================================================
 
 	/**
-	 * Check if a landscape exists with the given name or label.
+	 * Check if a loaded landscape exists with the given name or label.
+	 * Returns true for ambiguous matches or matches in inactive levels; those cannot be edited
+	 * by identifier until the name is unique and the level is active.
 	 *
 	 * @param LandscapeNameOrLabel - Name or label to search for
 	 * @return True if landscape exists
@@ -1727,6 +1749,31 @@ public:
 	static bool DeleteAllSplines(
 		const FString& LandscapeNameOrLabel);
 
+	/** Rebuild only this Landscape's spline meshes/collision and request its procedural layer update.
+	 * Does not stamp the active/base edit layer or create an Undo entry. Layer merging is deferred.
+	 * Call after Undo/Redo when live collision needs explicit recovery, including after clear-all.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape|Splines")
+	static bool RebuildSplines(const FString& LandscapeNameOrLabel);
+
+	/** Ensure one native specialized Spline Edit Layer on this Landscape; return its index or -1.
+	 * Reuses an existing spline layer without renaming it. Rejects a conflicting ordinary layer
+	 * name, missing target, layer-count limit, or PIE. Preserves base data and active edit layer.
+	 * Creation is undoable; merging is deferred. Does not save or stamp the base layer.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape|Splines")
+	static int32 EnsureSplineEditLayer(const FString& LandscapeNameOrLabel, FName LayerName = TEXT("Splines"));
+
+	/** Split an ordinary segment at a normalized interior Hermite-curve fraction (not distance).
+	 * Returns the new control-point index; the second segment is appended. Existing indices stay valid.
+	 * Preserves segment mesh/material, terrain, collision and render settings; interpolates point
+	 * width/falloff/roll/mesh offset. The new point has no control-point mesh. Socket endpoints and
+	 * degenerate tangents are rejected before mutation. Does not change endpoint transforms.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape|Splines")
+	static FSplineCreateResult SplitSplineSegment(
+		const FString& LandscapeNameOrLabel, int32 SegmentIndex, float SplitFraction);
+
 	/**
 	 * Apply terrain deformation and layer painting for all splines.
 	 * Maps to action="apply_splines_to_landscape"
@@ -1754,8 +1801,9 @@ public:
 	 * are used in random order along the segment.
 	 *
 	 * Call this AFTER connecting points (connect_spline_points) to set the
-	 * visual mesh on each segment. Then call apply_splines_to_landscape to
-	 * regenerate mesh components and terrain deformation.
+	 * visual mesh on each segment. Use rebuild_splines to explicitly refresh meshes and the
+	 * procedural Spline Edit Layer. apply_splines_to_landscape uses the reserved spline layer,
+	 * or an explicitly selected unlocked editing layer when no reserved layer exists.
 	 *
 	 * @param LandscapeNameOrLabel - Name or label of the landscape
 	 * @param SegmentIndex - Index of the segment to modify (from get_spline_info)
@@ -2197,7 +2245,7 @@ public:
 		float BlendWeight = 0.5f);
 
 private:
-	static class ALandscape* FindLandscapeByIdentifier(const FString& NameOrLabel);
+	static class ALandscape* FindLandscapeByIdentifier(const FString& NameOrLabel, bool* bOutUnavailable = nullptr);
 	static class UWorld* GetEditorWorld();
 	static class ULandscapeInfo* GetLandscapeInfoForActor(class ALandscapeProxy* Landscape);
 	static void PopulateLandscapeInfo(class ALandscapeProxy* Landscape, FLandscapeInfo_Custom& OutInfo);

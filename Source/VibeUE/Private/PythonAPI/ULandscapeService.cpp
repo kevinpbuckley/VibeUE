@@ -20,7 +20,12 @@
 #include "EditorSubsystem.h"
 #include "Subsystems/EditorActorSubsystem.h"
 #include "Engine/World.h"
+#include "Engine/LevelStreaming.h"
 #include "EngineUtils.h"
+#include "WorldPartition/WorldPartition.h"
+#include "WorldPartition/WorldPartitionHelpers.h"
+#include "WorldPartition/WorldPartitionActorDescInstance.h"
+#include "WorldPartition/Landscape/LandscapeActorDesc.h"
 #include "Materials/MaterialInterface.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
@@ -38,6 +43,7 @@
 #include "Misc/PackageName.h"
 #include "HAL/FileManager.h"
 #include "UObject/Package.h"
+#include "UObject/UObjectGlobals.h"
 
 // =================================================================
 // Helper Methods
@@ -52,39 +58,40 @@ UWorld* ULandscapeService::GetEditorWorld()
 	return nullptr;
 }
 
-ALandscape* ULandscapeService::FindLandscapeByIdentifier(const FString& NameOrLabel)
+ALandscape* ULandscapeService::FindLandscapeByIdentifier(const FString& NameOrLabel, bool* bOutUnavailable)
 {
+	if (bOutUnavailable) { *bOutUnavailable = false; }
 	UWorld* World = GetEditorWorld();
 	if (!World)
 	{
 		return nullptr;
 	}
 
-	for (TActorIterator<ALandscape> It(World); It; ++It)
+	ALandscape* Match = nullptr;
+	for (TActorIterator<ALandscape> It(World, ALandscape::StaticClass(), EActorIteratorFlags::SkipPendingKill); It; ++It)
 	{
 		ALandscape* Landscape = *It;
 		if (Landscape->GetActorLabel().Equals(NameOrLabel, ESearchCase::IgnoreCase) ||
 			Landscape->GetName().Equals(NameOrLabel, ESearchCase::IgnoreCase))
 		{
-			return Landscape;
-		}
-	}
-
-	// Also check ALandscapeProxy in case it's a streaming proxy
-	for (TActorIterator<ALandscapeProxy> It(World); It; ++It)
-	{
-		ALandscapeProxy* Proxy = *It;
-		if (Proxy->GetActorLabel().Equals(NameOrLabel, ESearchCase::IgnoreCase) ||
-			Proxy->GetName().Equals(NameOrLabel, ESearchCase::IgnoreCase))
-		{
-			ALandscape* AsLandscape = Cast<ALandscape>(Proxy);
-			if (AsLandscape)
+			if (Match && Match != Landscape)
 			{
-				return AsLandscape;
+				if (bOutUnavailable) { *bOutUnavailable = true; }
+				UE_LOG(LogTemp, Warning, TEXT("ULandscapeService: Landscape identifier '%s' is ambiguous"), *NameOrLabel);
+				return nullptr;
 			}
+			Match = Landscape;
 		}
 	}
-
+	if (Match)
+	{
+		for (TActorIterator<ALandscape> It(World); It; ++It)
+		{
+			if (*It == Match) { return Match; }
+		}
+		if (bOutUnavailable) { *bOutUnavailable = true; }
+		UE_LOG(LogTemp, Warning, TEXT("ULandscapeService: Landscape identifier '%s' is in an inactive level"), *NameOrLabel);
+	}
 	return nullptr;
 }
 
@@ -703,7 +710,7 @@ FLandscapeCreateResult ULandscapeService::CreateLandscape(
 
 	// A timed-out create_landscape call keeps running and usually completes, so a
 	// blind retry would stack a second landscape under the same label.
-	if (!LandscapeLabel.IsEmpty() && FindLandscapeByIdentifier(LandscapeLabel))
+	if (!LandscapeLabel.IsEmpty() && LandscapeExists(LandscapeLabel))
 	{
 		Result.ErrorMessage = FString::Printf(
 			TEXT("Landscape '%s' already exists. A timed-out create_landscape may still have completed in the background — check landscape_exists() before retrying, or delete the existing landscape / use a different label."),
@@ -888,7 +895,13 @@ FHeightmapImportResult ULandscapeService::ImportHeightmap(
 {
 	FHeightmapImportResult Result;
 
-	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel);
+	bool bUnavailable = false;
+	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel, &bUnavailable);
+	if (bUnavailable)
+	{
+		Result.ErrorMessage = FString::Printf(TEXT("Landscape identifier '%s' is ambiguous or in an inactive level"), *LandscapeNameOrLabel);
+		return Result;
+	}
 	if (!Landscape)
 	{
 		const FHeightmapDimensions Dims = GetHeightmapDimensions(FilePath);
@@ -2690,6 +2703,256 @@ bool ULandscapeService::AddLayer(
 	return true;
 }
 
+bool ULandscapeService::ReplaceLayerInfo(
+	const FString& LandscapeNameOrLabel,
+	ULandscapeLayerInfoObject* FromLayerInfo,
+	ULandscapeLayerInfoObject* ToLayerInfo)
+{
+	if (!IsInGameThread() || !GEditor || GEditor->PlayWorld) { return false; }
+	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel);
+	ULandscapeInfo* Info = Landscape ? Landscape->GetLandscapeInfo() : nullptr;
+	if (!Info || !Landscape->GetWorld() || Landscape->GetWorld()->WorldType != EWorldType::Editor || !FromLayerInfo || !ToLayerInfo ||
+		FromLayerInfo->GetLayerName().IsNone() || FromLayerInfo->GetLayerName() != ToLayerInfo->GetLayerName() ||
+		FromLayerInfo->GetBlendMethod() != ToLayerInfo->GetBlendMethod() ||
+		FromLayerInfo->GetBlendGroup() != ToLayerInfo->GetBlendGroup() ||
+		FromLayerInfo->GetPhysicalMaterial() != ToLayerInfo->GetPhysicalMaterial() ||
+		FromLayerInfo->GetMinimumCollisionRelevanceWeight() != ToLayerInfo->GetMinimumCollisionRelevanceWeight())
+	{
+		return false;
+	}
+	if (FromLayerInfo == ToLayerInfo) { return true; }
+
+	UWorld* World = Landscape->GetWorld();
+	if (World->IsPartitionedWorld())
+	{
+		// The engine's unloaded-component query only covers the persistent level.
+		if (Landscape->GetLevel() != World->PersistentLevel || !World->GetWorldPartition()->IsInitialized()) { return false; }
+	}
+	else
+	{
+		for (const ULevelStreaming* Level : World->GetStreamingLevels())
+		{
+			if (Level && (!Level->IsLevelLoaded() || !Level->IsLevelVisible())) { return false; }
+		}
+	}
+	if (!Info->AreAllComponentsRegistered())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::ReplaceLayerInfo: All Landscape components must be registered"));
+		return false;
+	}
+	const FIntRect Extent = Info->GetCompleteLandscapeExtent();
+	if (World->IsPartitionedWorld() && (Extent.Min.X > Extent.Max.X || Extent.Min.Y > Extent.Max.Y)) { return false; }
+	if (Extent.Min.X <= Extent.Max.X && Extent.Min.Y <= Extent.Max.Y &&
+		Info->HasUnloadedComponentsInRegion(Extent.Min.X, Extent.Min.Y, Extent.Max.X, Extent.Max.Y))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::ReplaceLayerInfo: Load all Landscape components before replacing LayerInfo"));
+		return false;
+	}
+
+	bool bFoundSource = false;
+	bool bWouldMerge = false;
+	bool bUnmappedComponent = false;
+	TSet<ULandscapeComponent*> InspectedComponents;
+	TArray<ALandscapeProxy*> Proxies;
+	const auto Inspect = [&](const TArray<FWeightmapLayerAllocationInfo>& Allocations)
+	{
+		bool bFrom = false;
+		bool bTo = false;
+		for (const FWeightmapLayerAllocationInfo& Allocation : Allocations)
+		{
+			bFrom |= Allocation.LayerInfo == FromLayerInfo;
+			bTo |= Allocation.LayerInfo == ToLayerInfo;
+		}
+		bFoundSource |= bFrom;
+		bWouldMerge |= bFrom && bTo;
+	};
+	Info->ForEachLandscapeProxy([&](ALandscapeProxy* Proxy)
+	{
+		Proxies.Add(Proxy);
+		for (const auto& Pair : Proxy->GetTargetLayers()) { bFoundSource |= Pair.Value.LayerInfoObj == FromLayerInfo; }
+		for (ULandscapeComponent* Component : Proxy->LandscapeComponents)
+		{
+			if (!Component) { continue; }
+			InspectedComponents.Add(Component);
+			bUnmappedComponent |= Info->XYtoComponentMap.FindRef(Component->GetComponentKey()) != Component;
+			Inspect(Component->GetWeightmapLayerAllocations(false));
+			Inspect(Component->MobileWeightmapLayerAllocations);
+			Component->ForEachLayer([&](const FGuid&, FLandscapeLayerComponentData& Data) { Inspect(Data.WeightmapData.LayerAllocations); });
+		}
+		for (ULandscapeHeightfieldCollisionComponent* Component : Proxy->CollisionComponents)
+		{
+			if (Component && Component->ComponentLayerInfos.Contains(FromLayerInfo) && Component->ComponentLayerInfos.Contains(ToLayerInfo))
+			{
+				bWouldMerge = true;
+			}
+		}
+		return true;
+	});
+	for (const auto& Pair : Info->XYtoComponentMap)
+	{
+		if (!Pair.Value || !InspectedComponents.Contains(Pair.Value) || Pair.Key != Pair.Value->GetComponentKey()) { return false; }
+	}
+	TSet<ALandscapeProxy*> LiveProxies;
+	for (TActorIterator<ALandscapeProxy> It(World, ALandscapeProxy::StaticClass(), EActorIteratorFlags::SkipPendingKill); It; ++It)
+	{
+		ALandscapeProxy* Proxy = *It;
+		if (Proxy->GetLandscapeGuid() == Landscape->GetLandscapeGuid())
+		{
+			if (!Proxies.Contains(Proxy)) { return false; }
+			LiveProxies.Add(Proxy);
+		}
+	}
+	for (ALandscapeProxy* Proxy : Proxies)
+	{
+		if (!IsValid(Proxy) || Proxy->GetWorld() != World || Proxy->GetLandscapeGuid() != Landscape->GetLandscapeGuid() ||
+			!Proxy->HasActorRegisteredAllComponents() || !LiveProxies.Contains(Proxy)) { return false; }
+	}
+	if (UWorldPartition* WorldPartition = World->GetWorldPartition())
+	{
+		bool bMissingProxy = false;
+		FWorldPartitionHelpers::ForEachActorDescInstance<ALandscapeProxy>(WorldPartition, [&](const FWorldPartitionActorDescInstance* Instance)
+		{
+			const FLandscapeActorDesc* Desc = static_cast<const FLandscapeActorDesc*>(Instance->GetActorDesc());
+			if (Desc->GridGuid != Landscape->GetOriginalLandscapeGuid() && Desc->GridGuid != Landscape->GetLandscapeGuid() &&
+				Desc->GetSceneOutlinerParent() != Landscape->GetActorGuid()) { return true; }
+			ALandscapeProxy* Proxy = Instance->IsLoaded() ? Cast<ALandscapeProxy>(Instance->GetActor(false)) : nullptr;
+			// A removed proxy may remain resident, so IsLoaded alone does not establish registration.
+			bMissingProxy = !IsValid(Proxy) || Proxy->GetWorld() != World || Proxy->GetLevel() != World->PersistentLevel ||
+				Proxy->GetLandscapeGuid() != Landscape->GetLandscapeGuid() ||
+				!Proxy->HasActorRegisteredAllComponents() || !Proxies.Contains(Proxy) || !LiveProxies.Contains(Proxy);
+			return !bMissingProxy;
+		});
+		if (bMissingProxy)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::ReplaceLayerInfo: Load and register all Landscape proxies before replacing LayerInfo"));
+			return false;
+		}
+	}
+	if (bWouldMerge || bUnmappedComponent) { return false; }
+	TArray<ULandscapeEditLayerBase*> BlendLayers;
+	for (ULandscapeEditLayerBase* EditLayer : Landscape->GetEditLayers())
+	{
+		if (!EditLayer) { return false; }
+		// Custom layers can retain soft or indirect references invisible to this scan.
+		if (EditLayer->GetClass() != ULandscapeEditLayer::StaticClass() && EditLayer->GetClass() != ULandscapeEditLayerSplines::StaticClass())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::ReplaceLayerInfo: Custom edit layer '%s' is unsupported"), *EditLayer->GetName().ToString());
+			return false;
+		}
+		TArray<UObject*> References;
+		FReferenceFinder Finder(References, nullptr, true, true, false, false);
+		Finder.FindReferences(EditLayer);
+		if (References.Contains(FromLayerInfo))
+		{
+			if (References.Contains(ToLayerInfo))
+			{
+				UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::ReplaceLayerInfo: Ambiguous edit-layer references on '%s'"), *EditLayer->GetName().ToString());
+				return false;
+			}
+			BlendLayers.Add(EditLayer);
+		}
+	}
+	const auto RebindAllowList = [&](ULandscapeComponent* Component)
+	{
+		if (Component->LayerAllowList.Remove(FromLayerInfo) > 0) { Component->LayerAllowList.AddUnique(ToLayerInfo); }
+	};
+	if (!bFoundSource)
+	{
+		const FLandscapeTargetLayerSettings* Settings = Landscape->GetTargetLayers().Find(ToLayerInfo->GetLayerName());
+		if (!Settings || Settings->LayerInfoObj != ToLayerInfo) { return false; }
+		bool bStaleCache = !BlendLayers.IsEmpty();
+		for (ALandscapeProxy* Proxy : Proxies)
+		{
+			for (ULandscapeComponent* Component : Proxy->LandscapeComponents)
+			{
+				if (Component && Component->LayerAllowList.Contains(FromLayerInfo)) { bStaleCache = true; }
+			}
+			for (ULandscapeHeightfieldCollisionComponent* Component : Proxy->CollisionComponents)
+			{
+				if (Component && Component->ComponentLayerInfos.Contains(FromLayerInfo)) { bStaleCache = true; }
+			}
+		}
+		if (!bStaleCache) { return true; }
+		FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "RepairLayerInfoCache", "Repair Landscape Layer Info References"));
+		if (!BlendLayers.IsEmpty())
+		{
+			for (ULandscapeEditLayerBase* EditLayer : BlendLayers) { EditLayer->Modify(); }
+			Landscape->ReplaceLayerSubstractiveBlendStatus(FromLayerInfo, ToLayerInfo, true);
+		}
+		for (ALandscapeProxy* Proxy : Proxies)
+		{
+			for (ULandscapeComponent* Component : Proxy->LandscapeComponents)
+			{
+				if (!Component || !Component->LayerAllowList.Contains(FromLayerInfo)) { continue; }
+				Component->Modify();
+				RebindAllowList(Component);
+			}
+			for (ULandscapeHeightfieldCollisionComponent* Component : Proxy->CollisionComponents)
+			{
+				if (!Component || !Component->ComponentLayerInfos.Contains(FromLayerInfo)) { continue; }
+				Component->Modify();
+				for (TObjectPtr<ULandscapeLayerInfoObject>& Layer : Component->ComponentLayerInfos)
+				{
+					if (Layer == FromLayerInfo) { Layer = ToLayerInfo; }
+				}
+			}
+		}
+		return true;
+	}
+
+	const FLandscapeTargetLayerSettings* ExistingTarget = Landscape->GetTargetLayers().Find(FromLayerInfo->GetLayerName());
+	const FString ReimportPath = ExistingTarget ? ExistingTarget->ReimportLayerFilePath : FString();
+	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "ReplaceLayerInfo", "Replace Landscape Layer Info"));
+	Info->Modify();
+	for (ULandscapeEditLayerBase* EditLayer : BlendLayers) { EditLayer->Modify(); }
+	for (ALandscapeProxy* Proxy : Proxies)
+	{
+		Proxy->Modify();
+		for (ULandscapeComponent* Component : Proxy->LandscapeComponents) { if (Component) { Component->Modify(); } }
+		for (ULandscapeHeightfieldCollisionComponent* Component : Proxy->CollisionComponents) { if (Component) { Component->Modify(); } }
+	}
+	// Same call used by the Landscape Paint target-layer picker. It preserves the
+	// active edit layer and replaces all edit-layer allocations without stamping paint.
+	Info->ReplaceLayer(FromLayerInfo, ToLayerInfo);
+	if (!ReimportPath.IsEmpty())
+	{
+		FLandscapeTargetLayerSettings Settings = Landscape->GetTargetLayers().FindChecked(ToLayerInfo->GetLayerName());
+		Settings.ReimportLayerFilePath = ReimportPath;
+		Landscape->UpdateTargetLayer(ToLayerInfo->GetLayerName(), Settings);
+	}
+	const auto Rebind = [&](TArray<FWeightmapLayerAllocationInfo>& Allocations)
+	{
+		for (FWeightmapLayerAllocationInfo& Allocation : Allocations)
+		{
+			if (Allocation.LayerInfo == FromLayerInfo) { Allocation.LayerInfo = ToLayerInfo; }
+		}
+	};
+	for (ALandscapeProxy* Proxy : Proxies)
+	{
+		// Native replacement schedules a weightmap refresh; do not leave serialized
+		// derived/mobile/collision identities pointing at the old asset until that tick.
+		for (ULandscapeComponent* Component : Proxy->LandscapeComponents)
+		{
+			if (!Component) { continue; }
+			Rebind(Component->GetWeightmapLayerAllocations(false));
+			Rebind(Component->MobileWeightmapLayerAllocations);
+			RebindAllowList(Component);
+		}
+		for (ULandscapeHeightfieldCollisionComponent* Component : Proxy->CollisionComponents)
+		{
+			if (!Component) { continue; }
+			for (TObjectPtr<ULandscapeLayerInfoObject>& Layer : Component->ComponentLayerInfos)
+			{
+				if (Layer == FromLayerInfo) { Layer = ToLayerInfo; }
+			}
+		}
+	}
+	Info->UpdateComponentLayerAllowList();
+	UE_LOG(LogTemp, Log, TEXT("ULandscapeService::ReplaceLayerInfo: Rebound '%s' to '%s' on '%s' (not saved)"),
+		*FromLayerInfo->GetPathName(), *ToLayerInfo->GetPathName(), *LandscapeNameOrLabel);
+	return true;
+}
+
 bool ULandscapeService::RemoveLayer(
 	const FString& LandscapeNameOrLabel,
 	const FString& LayerName)
@@ -3092,7 +3355,9 @@ bool ULandscapeService::SetLandscapeCollision(
 
 bool ULandscapeService::LandscapeExists(const FString& LandscapeNameOrLabel)
 {
-	return FindLandscapeByIdentifier(LandscapeNameOrLabel) != nullptr;
+	bool bUnavailable = false;
+	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel, &bUnavailable);
+	return Landscape != nullptr || bUnavailable;
 }
 
 bool ULandscapeService::LayerExists(
@@ -3840,6 +4105,28 @@ bool ULandscapeService::GetHoleAtLocation(
 // Landscape Splines
 // =================================================================
 
+namespace
+{
+	void DeleteLandscapeSplineSegment(ULandscapeSplinesComponent* Component, ULandscapeSplineSegment* Segment)
+	{
+		Segment->Modify();
+		Segment->DeleteSplinePoints();
+		Component->GetSegments().Remove(Segment);
+		for (int32 End = 0; End < 2; ++End)
+		{
+			if (ULandscapeSplineControlPoint* Point = Segment->Connections[End].ControlPoint)
+			{
+				Point->Modify();
+				Point->ConnectedSegments.Remove(FLandscapeSplineConnection(Segment, End));
+				if (Point->GetOuterSafe())
+				{
+					Point->UpdateSplinePoints();
+				}
+			}
+		}
+	}
+}
+
 FSplineCreateResult ULandscapeService::CreateSplinePoint(
 	const FString& LandscapeNameOrLabel,
 	FVector WorldLocation,
@@ -4276,13 +4563,13 @@ bool ULandscapeService::DeleteSplinePoint(
 	ULandscapeSplineControlPoint* CP = SplinesComp->GetControlPoints()[PointIndex];
 	if (!CP)
 	{
-		SplinesComp->GetControlPoints().RemoveAt(PointIndex);
-		return true;
+		return false;
 	}
 
 	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "DeleteSplinePoint", "Delete Spline Point"));
 	SplinesComp->Modify();
 	CP->Modify();
+	CP->DeleteSplinePoints();
 
 	// Collect connected segments to delete
 	TArray<ULandscapeSplineSegment*> SegsToDelete;
@@ -4290,35 +4577,19 @@ bool ULandscapeService::DeleteSplinePoint(
 	{
 		if (Conn.Segment)
 		{
-			SegsToDelete.Add(Conn.Segment);
+			SegsToDelete.AddUnique(Conn.Segment);
 		}
 	}
 
-	// Remove each connected segment and its references from the other control point
 	for (ULandscapeSplineSegment* Seg : SegsToDelete)
 	{
-		Seg->Modify();
-
-		// Remove back-reference from the OTHER control point
-		for (int32 ConnIdx = 0; ConnIdx < 2; ConnIdx++)
-		{
-			ULandscapeSplineControlPoint* OtherCP = Seg->Connections[ConnIdx].ControlPoint.Get();
-			if (OtherCP && OtherCP != CP)
-			{
-				OtherCP->Modify();
-				OtherCP->ConnectedSegments.RemoveAll([Seg](const FLandscapeSplineConnection& C)
-				{
-					return C.Segment == Seg;
-				});
-				OtherCP->UpdateSplinePoints();
-			}
-		}
-
-		SplinesComp->GetSegments().Remove(Seg);
+		DeleteLandscapeSplineSegment(SplinesComp, Seg);
 	}
 
+	CP->ConnectedSegments.Empty();
 	SplinesComp->GetControlPoints().RemoveAt(PointIndex);
 
+	Landscape->RequestSplineLayerUpdate();
 	SplinesComp->MarkRenderStateDirty();
 	Landscape->MarkPackageDirty();
 
@@ -4349,15 +4620,185 @@ bool ULandscapeService::DeleteAllSplines(const FString& LandscapeNameOrLabel)
 	int32 NumPoints   = SplinesComp->GetControlPoints().Num();
 	int32 NumSegments = SplinesComp->GetSegments().Num();
 
+	const auto Segments = SplinesComp->GetSegments();
+	for (ULandscapeSplineSegment* Segment : Segments)
+	{
+		if (Segment)
+		{
+			DeleteLandscapeSplineSegment(SplinesComp, Segment);
+		}
+	}
+	for (ULandscapeSplineControlPoint* Point : SplinesComp->GetControlPoints())
+	{
+		if (Point)
+		{
+			Point->Modify();
+			Point->DeleteSplinePoints();
+			Point->ConnectedSegments.Empty();
+		}
+	}
 	SplinesComp->GetControlPoints().Empty();
 	SplinesComp->GetSegments().Empty();
 
+	Landscape->RequestSplineLayerUpdate();
 	SplinesComp->MarkRenderStateDirty();
 	Landscape->MarkPackageDirty();
 
 	UE_LOG(LogTemp, Log, TEXT("ULandscapeService::DeleteAllSplines: Cleared %d points and %d segments from '%s'"),
 		NumPoints, NumSegments, *LandscapeNameOrLabel);
 	return true;
+}
+
+int32 ULandscapeService::EnsureSplineEditLayer(const FString& LandscapeNameOrLabel, FName LayerName)
+{
+	if (!IsInGameThread() || !GEditor || GEditor->PlayWorld) { return INDEX_NONE; }
+	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel);
+	if (!Landscape || Landscape->IsTemplate() || !Landscape->GetWorld()
+		|| Landscape->GetWorld()->WorldType != EWorldType::Editor)
+	{
+		return INDEX_NONE;
+	}
+	if (const ULandscapeEditLayerBase* Existing = Landscape->FindEditLayerOfTypeConst(ULandscapeEditLayerSplines::StaticClass()))
+	{
+		return Landscape->GetLayerIndex(Existing->GetGuid());
+	}
+	if (LayerName.IsNone()) { LayerName = TEXT("Splines"); }
+	if (Landscape->GetLayerIndex(LayerName) != INDEX_NONE || Landscape->IsMaxLayersReached()) { return INDEX_NONE; }
+	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "EnsureSplineEditLayer", "Create Spline Edit Layer"));
+	return Landscape->CreateLayer(LayerName, ULandscapeEditLayerSplines::StaticClass());
+}
+
+bool ULandscapeService::RebuildSplines(const FString& LandscapeNameOrLabel)
+{
+	if (!IsInGameThread() || !GEditor || GEditor->PlayWorld) { return false; }
+	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel);
+	if (!Landscape || !Landscape->GetWorld() || Landscape->GetWorld()->WorldType != EWorldType::Editor)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::RebuildSplines: Landscape '%s' not found"), *LandscapeNameOrLabel);
+		return false;
+	}
+
+	// Derived-data recovery must not add an Undo entry or discard the caller's Redo.
+	if (ULandscapeSplinesComponent* Component = Landscape->GetSplinesComponent())
+	{
+		Component->RebuildAllSplines(true);
+		Component->MarkRenderStateDirty();
+	}
+	Landscape->RequestSplineLayerUpdate();
+	Landscape->MarkPackageDirty();
+	return true;
+}
+
+FSplineCreateResult ULandscapeService::SplitSplineSegment(
+	const FString& LandscapeNameOrLabel, int32 SegmentIndex, float SplitFraction)
+{
+	FSplineCreateResult Result;
+	if (!IsInGameThread() || !GEditor || GEditor->PlayWorld)
+	{
+		Result.ErrorMessage = TEXT("Spline splitting requires the idle Editor game thread");
+		return Result;
+	}
+	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel);
+	ULandscapeSplinesComponent* Component = Landscape && Landscape->GetWorld() && Landscape->GetWorld()->WorldType == EWorldType::Editor
+		? Landscape->GetSplinesComponent() : nullptr;
+	if (!Component || !Component->GetSegments().IsValidIndex(SegmentIndex))
+	{
+		Result.ErrorMessage = TEXT("Landscape or spline segment not found");
+		return Result;
+	}
+	if (!FMath::IsFinite(SplitFraction) || SplitFraction <= 0.0f || SplitFraction >= 1.0f)
+	{
+		Result.ErrorMessage = TEXT("SplitFraction must be finite and strictly between 0 and 1");
+		return Result;
+	}
+
+	ULandscapeSplineSegment* Segment = Component->GetSegments()[SegmentIndex];
+	ULandscapeSplineControlPoint* Start = Segment ? Segment->Connections[0].ControlPoint.Get() : nullptr;
+	ULandscapeSplineControlPoint* End = Segment ? Segment->Connections[1].ControlPoint.Get() : nullptr;
+	if (!Start || !End || Start == End || Start->GetOuterSafe() != Component || End->GetOuterSafe() != Component)
+	{
+		Result.ErrorMessage = TEXT("Segment must have two distinct control points on the target component");
+		return Result;
+	}
+	// shortcut: socket-connected splits are unsupported; add their transform contract before enabling them.
+	if (!Segment->Connections[0].SocketName.IsNone() || !Segment->Connections[1].SocketName.IsNone())
+	{
+		Result.ErrorMessage = TEXT("Socket-connected segment splits are not supported");
+		return Result;
+	}
+	const FVector StartTangent = Start->Rotation.Vector() * Segment->Connections[0].TangentLen;
+	const FVector EndTangent = End->Rotation.Vector() * -Segment->Connections[1].TangentLen;
+	const FVector Location = FMath::CubicInterp(Start->Location, StartTangent, End->Location, EndTangent, SplitFraction);
+	const FVector Tangent = FMath::CubicInterpDerivative(Start->Location, StartTangent, End->Location, EndTangent, SplitFraction);
+	if (Location.ContainsNaN() || Tangent.ContainsNaN() || Tangent.IsNearlyZero())
+	{
+		Result.ErrorMessage = TEXT("Segment has a non-finite or degenerate split tangent");
+		return Result;
+	}
+
+	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "SplitSplineSegment", "Split Spline Segment"));
+	Component->Modify();
+	Segment->Modify();
+	End->Modify();
+	ULandscapeSplineControlPoint* Point = NewObject<ULandscapeSplineControlPoint>(Component, NAME_None, RF_Transactional);
+	Result.PointIndex = Component->GetControlPoints().Num();
+	Component->GetControlPoints().Add(Point);
+	Point->Location = Location;
+	Point->Rotation = Tangent.Rotation();
+	Point->Rotation.Roll = FMath::Lerp(Start->Rotation.Roll, End->Rotation.Roll, SplitFraction);
+	Point->Width = FMath::Lerp(Start->Width, End->Width, SplitFraction);
+	Point->LayerWidthRatio = FMath::Lerp(Start->LayerWidthRatio, End->LayerWidthRatio, SplitFraction);
+	Point->SideFalloff = FMath::Lerp(Start->SideFalloff, End->SideFalloff, SplitFraction);
+	Point->EndFalloff = FMath::Lerp(Start->EndFalloff, End->EndFalloff, SplitFraction);
+	Point->LeftSideFalloffFactor = FMath::Lerp(Start->LeftSideFalloffFactor, End->LeftSideFalloffFactor, SplitFraction);
+	Point->RightSideFalloffFactor = FMath::Lerp(Start->RightSideFalloffFactor, End->RightSideFalloffFactor, SplitFraction);
+	Point->LeftSideLayerFalloffFactor = FMath::Lerp(Start->LeftSideLayerFalloffFactor, End->LeftSideLayerFalloffFactor, SplitFraction);
+	Point->RightSideLayerFalloffFactor = FMath::Lerp(Start->RightSideLayerFalloffFactor, End->RightSideLayerFalloffFactor, SplitFraction);
+	Point->SegmentMeshOffset = FMath::Lerp(Start->SegmentMeshOffset, End->SegmentMeshOffset, SplitFraction);
+	Point->LayerName = Segment->LayerName;
+	Point->bRaiseTerrain = Segment->bRaiseTerrain;
+	Point->bLowerTerrain = Segment->bLowerTerrain;
+
+	ULandscapeSplineSegment* NewSegment = NewObject<ULandscapeSplineSegment>(Component, NAME_None, RF_Transactional);
+	Component->GetSegments().Add(NewSegment);
+	NewSegment->Connections[0].ControlPoint = Point;
+	NewSegment->Connections[0].TangentLen = static_cast<float>(Tangent.Size() * (1.0f - SplitFraction));
+	NewSegment->Connections[1] = Segment->Connections[1];
+	NewSegment->Connections[1].TangentLen *= 1.0f - SplitFraction;
+	NewSegment->LayerName = Segment->LayerName;
+	NewSegment->SplineMeshes = Segment->SplineMeshes;
+	NewSegment->bRaiseTerrain = Segment->bRaiseTerrain;
+	NewSegment->bLowerTerrain = Segment->bLowerTerrain;
+	NewSegment->BodyInstance = Segment->BodyInstance;
+	NewSegment->bCastShadow = Segment->bCastShadow;
+	NewSegment->bHiddenInGame = Segment->bHiddenInGame;
+	NewSegment->bPlaceSplineMeshesInStreamingLevels = Segment->bPlaceSplineMeshesInStreamingLevels;
+	NewSegment->RandomSeed = Segment->RandomSeed;
+	NewSegment->LDMaxDrawDistance = Segment->LDMaxDrawDistance;
+	NewSegment->TranslucencySortPriority = Segment->TranslucencySortPriority;
+	NewSegment->RuntimeVirtualTextures = Segment->RuntimeVirtualTextures;
+	NewSegment->VirtualTextureLodBias = Segment->VirtualTextureLodBias;
+	NewSegment->VirtualTextureCullMips = Segment->VirtualTextureCullMips;
+	NewSegment->VirtualTextureMainPassMaxDrawDistance = Segment->VirtualTextureMainPassMaxDrawDistance;
+	NewSegment->VirtualTextureRenderPassType = Segment->VirtualTextureRenderPassType;
+	NewSegment->bRenderCustomDepth = Segment->bRenderCustomDepth;
+	NewSegment->CustomDepthStencilWriteMask = Segment->CustomDepthStencilWriteMask;
+	NewSegment->CustomDepthStencilValue = Segment->CustomDepthStencilValue;
+	NewSegment->HLODLayerOverrideForSplinePartitioning = Segment->HLODLayerOverrideForSplinePartitioning;
+	End->ConnectedSegments.Remove(FLandscapeSplineConnection(Segment, 1));
+	End->ConnectedSegments.Add(FLandscapeSplineConnection(NewSegment, 1));
+	Segment->Connections[0].TangentLen *= SplitFraction;
+	Segment->Connections[1].ControlPoint = Point;
+	Segment->Connections[1].TangentLen = static_cast<float>(-Tangent.Size() * SplitFraction);
+	Point->ConnectedSegments.Add(FLandscapeSplineConnection(Segment, 1));
+	Point->ConnectedSegments.Add(FLandscapeSplineConnection(NewSegment, 0));
+	Segment->UpdateSplinePoints();
+	NewSegment->UpdateSplinePoints();
+	Landscape->RequestSplineLayerUpdate();
+	Component->MarkRenderStateDirty();
+	Landscape->MarkPackageDirty();
+	Result.bSuccess = true;
+	return Result;
 }
 
 bool ULandscapeService::ApplySplinesToLandscape(const FString& LandscapeNameOrLabel)
