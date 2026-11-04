@@ -2276,7 +2276,7 @@ public:
 		float BlendWeight = 0.5f);
 
 private:
-	static class ALandscape* FindLandscapeByIdentifier(const FString& NameOrLabel, bool* bOutUnavailable = nullptr);
+	static class ALandscape* FindLandscapeByIdentifier(const FString& NameOrLabel, bool* bOutUnavailable = nullptr, FString* OutUnavailableReason = nullptr);
 	static class UWorld* GetEditorWorld();
 	static class ULandscapeInfo* GetLandscapeInfoForActor(class ALandscapeProxy* Landscape);
 	static void PopulateLandscapeInfo(class ALandscapeProxy* Landscape, FLandscapeInfo_Custom& OutInfo);

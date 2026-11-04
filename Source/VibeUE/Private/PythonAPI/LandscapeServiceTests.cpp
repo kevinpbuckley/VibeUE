@@ -27,6 +27,7 @@
 #include "Misc/Guid.h"
 #include "Misc/ScopeExit.h"
 #include "PhysicalMaterials/PhysicalMaterial.h"
+#include "ScopedTransaction.h"
 #include "UObject/Package.h"
 #include "UObject/StrongObjectPtr.h"
 #include "UObject/UnrealType.h"
@@ -150,11 +151,24 @@ bool FVibeLandscapeHiddenTargetTest::RunTest(const FString&)
 	const bool bExists = ULandscapeService::LandscapeExists(Fixture.Label);
 	const bool bRebuilt = ULandscapeService::RebuildSplines(Fixture.Label);
 	const FHeightmapImportResult Import = ULandscapeService::ImportHeightmap(Fixture.Label, TEXT("unused.raw"));
+	ULandscapeLayerInfoObject* Layer = NewObject<ULandscapeLayerInfoObject>(GetTransientPackage(), NAME_None, RF_Transient);
+	Layer->SetLayerName(TEXT("HiddenTargetTest"), false);
+	const FLandscapeLayerInfoReplacementResult Replacement = ULandscapeService::ReplaceLayerInfoWithResult(Fixture.Label, Layer, Layer);
+	const FSplineCreateResult Split = ULandscapeService::SplitSplineSegment(Fixture.Label, 0, 0.5f);
+	const FLandscapeSplineInfo SplineInfo = ULandscapeService::GetSplineInfo(Fixture.Label);
+	const FWeightMapExportResult Export = ULandscapeService::ExportWeightMap(Fixture.Label, TEXT("Unused"), TEXT("unused.png"));
+	const FLandscapeNoiseResult Noise = ULandscapeService::ApplyNoise(Fixture.Label, 0, 0, 100, 1);
 	Level->bIsVisible = bWasVisible;
 	TestTrue(TEXT("hidden target still exists"), bExists);
 	TestFalse(TEXT("hidden target cannot be edited"), bRebuilt);
 	TestFalse(TEXT("hidden target cannot auto-create on import"), Import.bSuccess);
 	TestTrue(TEXT("hidden import explains unavailable target"), Import.ErrorMessage.Contains(TEXT("inactive")));
+	TestTrue(TEXT("hidden replacement explains unavailable target"), !Replacement.bSuccess && Replacement.Message.Contains(TEXT("inactive")));
+	TestTrue(TEXT("hidden split explains unavailable target"), !Split.bSuccess && Split.ErrorMessage.Contains(TEXT("inactive")));
+	TestTrue(TEXT("hidden spline info explains unavailable target"), !SplineInfo.bSuccess && SplineInfo.ErrorMessage.Contains(TEXT("inactive")));
+	TestTrue(TEXT("hidden export explains unavailable target"), !Export.bSuccess && Export.ErrorMessage.Contains(TEXT("inactive")));
+	TestTrue(TEXT("hidden noise explains unavailable target"), !Noise.bSuccess && Noise.ErrorMessage.Contains(TEXT("inactive")));
+	TestTrue(TEXT("visible target still accepts no-op replacement"), ULandscapeService::ReplaceLayerInfoWithResult(Fixture.Label, Layer, Layer).bSuccess);
 	TestEqual(TEXT("hidden target spline preserved"), Fixture.Component->GetSegments().Num(), 1);
 	return true;
 }
@@ -176,10 +190,23 @@ bool FVibeLandscapeAmbiguousTargetTest::RunTest(const FString&)
 	const FHeightmapImportResult Import = ULandscapeService::ImportHeightmap(First.Label, TEXT("unused.raw"));
 	TestFalse(TEXT("ambiguous import rejected"), Import.bSuccess);
 	TestTrue(TEXT("ambiguous import reports ambiguity"), Import.ErrorMessage.Contains(TEXT("ambiguous")));
+	ULandscapeLayerInfoObject* Layer = NewObject<ULandscapeLayerInfoObject>(GetTransientPackage(), NAME_None, RF_Transient);
+	Layer->SetLayerName(TEXT("AmbiguousTargetTest"), false);
+	const FLandscapeLayerInfoReplacementResult Replacement = ULandscapeService::ReplaceLayerInfoWithResult(First.Label, Layer, Layer);
+	const FSplineCreateResult Split = ULandscapeService::SplitSplineSegment(First.Label, 0, 0.5f);
+	const FLandscapeSplineInfo SplineInfo = ULandscapeService::GetSplineInfo(First.Label);
+	const FWeightMapImportResult WeightImport = ULandscapeService::ImportWeightMap(First.Label, TEXT("Unused"), TEXT("unused.png"));
+	const FLandscapeNoiseResult Noise = ULandscapeService::ApplyNoise(First.Label, 0, 0, 100, 1);
+	TestTrue(TEXT("ambiguous replacement explains ambiguity"), !Replacement.bSuccess && Replacement.Message.Contains(TEXT("ambiguous")));
+	TestTrue(TEXT("ambiguous split explains ambiguity"), !Split.bSuccess && Split.ErrorMessage.Contains(TEXT("ambiguous")));
+	TestTrue(TEXT("ambiguous spline info explains ambiguity"), !SplineInfo.bSuccess && SplineInfo.ErrorMessage.Contains(TEXT("ambiguous")));
+	TestTrue(TEXT("ambiguous weight import explains ambiguity"), !WeightImport.bSuccess && WeightImport.ErrorMessage.Contains(TEXT("ambiguous")));
+	TestTrue(TEXT("ambiguous noise explains ambiguity"), !Noise.bSuccess && Noise.ErrorMessage.Contains(TEXT("ambiguous")));
 	TestFalse(TEXT("ambiguous target rejected"), ULandscapeService::DeleteAllSplines(First.Label));
 	TestEqual(TEXT("first landscape unchanged"), First.Component->GetSegments().Num(), 1);
 	TestEqual(TEXT("second landscape unchanged"), Second.Component->GetSegments().Num(), 1);
 	Second.Landscape->SetActorLabel(Second.Label, false);
+	TestTrue(TEXT("unique target still accepts no-op replacement"), ULandscapeService::ReplaceLayerInfoWithResult(First.Label, Layer, Layer).bSuccess);
 	First.Landscape->SetActorLabel(Second.Landscape->GetName(), false);
 	TestFalse(TEXT("name-label collision rejected"), ULandscapeService::DeleteAllSplines(Second.Landscape->GetName()));
 	TestEqual(TEXT("name collision preserves first"), First.Component->GetSegments().Num(), 1);
@@ -200,6 +227,26 @@ bool FVibeLandscapeSplineDeletionTest::RunTest(const FString&)
 	ULandscapeSplineControlPoint* Start = Segment->Connections[0].ControlPoint;
 	ULandscapeSplineControlPoint* End = Segment->Connections[1].ControlPoint;
 	TestTrue(TEXT("generated mesh fixture"), Fixture.MeshCount() > 0);
+	Fixture.Component->SetFlags(RF_Transactional);
+	Start->SetFlags(RF_Transactional);
+	const float OriginalWidth = Start->Width;
+	{
+		FScopedTransaction PreviousEdit(NSLOCTEXT("VibeUELandscapeTests", "PreviousSplineEdit", "Previous Spline Edit"));
+		Start->Modify();
+		Start->Width = OriginalWidth + 10.0f;
+	}
+	Fixture.Component->GetControlPoints().Add(nullptr);
+	ON_SCOPE_EXIT { Fixture.Component->GetControlPoints().Remove(nullptr); };
+	if (!TestTrue(TEXT("delete empty spline point slot"), ULandscapeService::DeleteSplinePoint(Fixture.Label, 2))) { return false; }
+	if (!TestEqual(TEXT("empty slot removed without changing other points"), Fixture.Component->GetControlPoints().Num(), 2)) { return false; }
+	TestEqual(TEXT("empty slot deletion keeps segment"), Fixture.Component->GetSegments().Num(), 1);
+	TestEqual(TEXT("start point identity preserved"), Fixture.Component->GetControlPoints()[0].Get(), Start);
+	TestEqual(TEXT("end point identity preserved"), Fixture.Component->GetControlPoints()[1].Get(), End);
+	TestTrue(TEXT("Undo reaches prior valid edit, not invalid slot"), GEditor->UndoTransaction());
+	TestEqual(TEXT("Undo restores prior width"), Start->Width, OriginalWidth);
+	TestEqual(TEXT("Undo does not reintroduce null slot"), Fixture.Component->GetControlPoints().Num(), 2);
+	TestTrue(TEXT("Redo prior valid edit"), GEditor->RedoTransaction());
+	TestEqual(TEXT("Redo restores edited width"), Start->Width, OriginalWidth + 10.0f);
 	AddExpectedError(TEXT("ULandscapeService::DeleteSplinePoint: Invalid index -1"), EAutomationExpectedErrorFlags::Contains, 1);
 	TestFalse(TEXT("invalid delete rejected"), ULandscapeService::DeleteSplinePoint(Fixture.Label, -1));
 	TestEqual(TEXT("invalid delete preserves points"), Fixture.Component->GetControlPoints().Num(), 2);
