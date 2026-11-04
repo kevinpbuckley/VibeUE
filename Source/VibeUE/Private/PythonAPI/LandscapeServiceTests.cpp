@@ -9,6 +9,7 @@
 #include "Async/Async.h"
 #include "Components/SplineMeshComponent.h"
 #include "Editor.h"
+#include "Editor/Transactor.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "Engine/Level.h"
@@ -657,6 +658,62 @@ bool FVibeLandscapeLayerInfoReplacementTest::RunTest(const FString&)
 		if (!TestTrue(TEXT("custom layer removed"), Fixture.Landscape->DeleteLayer(Fixture.Landscape->GetLayerIndex(CustomGuid)))) { return false; }
 		TestEqual(TEXT("original layer count restored"), Fixture.Landscape->GetEditLayers().Num(), OriginalLayerCount);
 		TestNull(TEXT("custom component data removed"), Component->GetLayerData(CustomGuid));
+	}
+	{
+		FActorSpawnParameters BrushParams;
+		BrushParams.ObjectFlags = RF_Transient | RF_Transactional;
+		BrushParams.OverrideLevel = Fixture.Landscape->GetLevel();
+		AVibeUELandscapeServiceTestBrush* Brush = GEditor->GetEditorWorldContext().World()->SpawnActor<AVibeUELandscapeServiceTestBrush>(BrushParams);
+		if (!TestNotNull(TEXT("custom brush spawned"), Brush)) { return false; }
+		ON_SCOPE_EXIT { Fixture.Landscape->RemoveBrush(Brush); Brush->Destroy(); };
+		Brush->LayerInfo = From;
+		Brush->SetActorTickEnabled(false);
+		Fixture.Landscape->AddBrushToLayer(0, Brush);
+		if (!TestEqual(TEXT("brush attached to standard edit layer"), Fixture.Landscape->GetBrushLayer(Brush), 0) ||
+			!TestTrue(TEXT("brush listed on landscape"), Fixture.Landscape->GetBrushesForLayer(0).Contains(Brush)) ||
+			!TestEqual(TEXT("brush owner landscape"), Brush->GetOwningLandscape(), Fixture.Landscape) ||
+			!TestEqual(TEXT("standard edit layer class"), Fixture.Landscape->GetEditLayer(0)->GetClass(), ULandscapeEditLayer::StaticClass())) { return false; }
+		if (!TestNotNull(TEXT("editor transactor"), GEditor->Trans.Get())) { return false; }
+		const int32 QueueBeforeBrushRejection = GEditor->Trans->GetQueueLength();
+		const int32 RedoBeforeBrushRejection = GEditor->Trans->GetUndoCount();
+		const bool bDirtyBeforeBrushRejection = Fixture.Landscape->GetOutermost()->IsDirty();
+		TestTrue(TEXT("identical layer is a no-op with an attached brush"), ULandscapeService::ReplaceLayerInfo(Fixture.Label, From, From));
+		AddExpectedMessage(TEXT("Landscape Blueprint brushes are unsupported"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1, false);
+		const bool bBrushReplaced = ULandscapeService::ReplaceLayerInfo(Fixture.Label, From, To);
+		if (!TestFalse(TEXT("attached brush rejects replacement"), bBrushReplaced))
+		{
+			TestTrue(TEXT("undo unexpected brush replacement"), GEditor->UndoTransaction());
+			return false;
+		}
+		TestEqual(TEXT("brush rejection preserves reference"), Brush->LayerInfo.Get(), From);
+		TestEqual(TEXT("brush rejection preserves transaction count"), GEditor->Trans->GetQueueLength(), QueueBeforeBrushRejection);
+		TestEqual(TEXT("brush rejection preserves redo count"), GEditor->Trans->GetUndoCount(), RedoBeforeBrushRejection);
+		TestEqual(TEXT("brush rejection preserves package dirty state"), Fixture.Landscape->GetOutermost()->IsDirty(), bDirtyBeforeBrushRejection);
+		TestEqual(TEXT("brush rejection preserves target"), Fixture.Landscape->GetTargetLayers().FindChecked(TEXT("RoadSoil")).LayerInfoObj.Get(), From);
+		TestEqual(TEXT("brush rejection preserves reimport path"), Fixture.Landscape->GetTargetLayers().FindChecked(TEXT("RoadSoil")).ReimportLayerFilePath, ReimportPath);
+		TestEqual(TEXT("brush rejection preserves active layer"), Fixture.Landscape->GetEditingLayer(), Editing);
+		TestEqual(TEXT("brush rejection preserves ownership"), Brush->GetOwningLandscape(), Fixture.Landscape);
+		TestTrue(TEXT("brush rejection preserves attachment"), Fixture.Landscape->GetBrushesForLayer(0).Contains(Brush));
+		TestEqual(TEXT("brush rejection preserves paint allocation"), Component->GetWeightmapLayerAllocations(BaseGuid)[0].LayerInfo.Get(), From);
+		TestEqual(TEXT("brush rejection preserves rendered allocation count"), Component->GetWeightmapLayerAllocations(false).Num(), RenderedAllocationCount);
+		for (const FWeightmapLayerAllocationInfo& Allocation : Component->GetWeightmapLayerAllocations(false))
+		{
+			TestNotEqual(TEXT("brush rejection leaves destination absent from rendered allocations"), Allocation.LayerInfo.Get(), To);
+		}
+		TestEqual(TEXT("brush rejection preserves mobile allocation"), Component->MobileWeightmapLayerAllocations[0].LayerInfo.Get(), From);
+		TestEqual(TEXT("brush rejection preserves collision allocation"), Collision->ComponentLayerInfos[0].Get(), From);
+		TestTrue(TEXT("brush rejection preserves allowlist"), Component->LayerAllowList.Contains(From) && Component->LayerAllowList.Contains(Unrelated));
+		TArray<uint16> BrushHeights;
+		BrushHeights.SetNumZeroed(64 * 64);
+		TArray<uint8> BrushWeights;
+		BrushWeights.SetNumZeroed(64 * 64);
+		{
+			FLandscapeEditDataInterface Edit(Info, BaseGuid);
+			Edit.GetHeightDataFast(0, 0, 63, 63, BrushHeights.GetData(), 64);
+			Edit.GetWeightDataFast(From, 0, 0, 63, 63, BrushWeights.GetData(), 64);
+		}
+		TestTrue(TEXT("brush rejection preserves heights"), BeforeHeights == BrushHeights);
+		TestTrue(TEXT("brush rejection preserves weights"), BeforeWeights == BrushWeights);
 	}
 	TestTrue(TEXT("replace"), ULandscapeService::ReplaceLayerInfo(Fixture.Label, From, To));
 	TestEqual(TEXT("replacement preserves reimport path"), Fixture.Landscape->GetTargetLayers().FindChecked(TEXT("RoadSoil")).ReimportLayerFilePath, ReimportPath);

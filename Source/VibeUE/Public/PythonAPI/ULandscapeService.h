@@ -1251,8 +1251,9 @@ public:
 	 * must be in the persistent level and its proxies must be loaded and registered. A new
 	 * World Partition Landscape may need to be saved to establish its descriptor-backed extent.
 	 * Rejects overlapping allocations, duplicate collision identities, and simultaneous source
-	 * and destination blend references. Landscapes containing custom edit layers are rejected.
-	 * Undoable, target-Landscape only, no automatic save. Supports repeat calls.
+	 * and destination blend references. For distinct assets, Landscapes containing custom edit layers
+	 * or attached Landscape Blueprint brushes are rejected because their references may not be repaired.
+	 * Undoable, target-Landscape only, no automatic save. Repeat calls remain subject to these checks.
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static bool ReplaceLayerInfo(

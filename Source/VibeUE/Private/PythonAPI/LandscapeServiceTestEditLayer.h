@@ -3,6 +3,7 @@
 #pragma once
 
 #include "LandscapeEditLayer.h"
+#include "LandscapeBlueprintBrushBase.h"
 #include "LandscapeServiceTestEditLayer.generated.h"
 
 // Abstract keeps this fixture out of the editor's layer picker.
@@ -26,4 +27,13 @@ public:
 		return ERenderFlags::RenderMode_Recorded | ERenderFlags::BlendMode_SeparateBlend;
 	}
 #endif
+};
+
+UCLASS(Transient, NotBlueprintable, NotBlueprintType, NotPlaceable, HideDropdown)
+class AVibeUELandscapeServiceTestBrush : public ALandscapeBlueprintBrushBase
+{
+	GENERATED_BODY()
+public:
+	UPROPERTY()
+	TObjectPtr<ULandscapeLayerInfoObject> LayerInfo;
 };

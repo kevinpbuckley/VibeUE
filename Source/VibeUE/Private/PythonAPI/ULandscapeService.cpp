@@ -2829,6 +2829,17 @@ bool ULandscapeService::ReplaceLayerInfo(
 		}
 	}
 	if (bWouldMerge || bUnmappedComponent) { return false; }
+	bool bHasBrush = false;
+	Landscape->ForEachLayerConst([&](const FLandscapeLayer& Layer)
+	{
+		bHasBrush |= !Layer.Brushes.IsEmpty();
+		return !bHasBrush;
+	});
+	if (bHasBrush)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::ReplaceLayerInfo: Landscape Blueprint brushes are unsupported"));
+		return false;
+	}
 	TArray<ULandscapeEditLayerBase*> BlendLayers;
 	for (ULandscapeEditLayerBase* EditLayer : Landscape->GetEditLayers())
 	{
