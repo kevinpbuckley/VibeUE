@@ -2892,7 +2892,7 @@ bool UBlueprintService::GetVariableInfo(
 			// Property flags
 			OutInfo.bIsInstanceEditable = (VarDesc.PropertyFlags & CPF_DisableEditOnInstance) == 0;
 			OutInfo.bIsExposeOnSpawn = (VarDesc.PropertyFlags & CPF_ExposeOnSpawn) != 0;
-			OutInfo.bIsPrivate = VarDesc.VarType.bIsConst;
+			OutInfo.bIsPrivate = VarDesc.HasMetaData(FBlueprintMetadata::MD_Private) && VarDesc.GetMetaData(FBlueprintMetadata::MD_Private).Equals(TEXT("true"), ESearchCase::IgnoreCase);
 			OutInfo.bIsBlueprintReadOnly = (VarDesc.PropertyFlags & CPF_BlueprintReadOnly) != 0;
 			OutInfo.bIsExposeToCinematics = (VarDesc.PropertyFlags & CPF_Interp) != 0;
 
