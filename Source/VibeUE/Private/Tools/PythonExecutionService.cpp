@@ -271,6 +271,12 @@ static bool ContainsDangerousPattern(const FString& Code, FString& OutPattern, F
 	return false;
 }
 
+static FString EncodePythonSource(const FString& Code)
+{
+	const FTCHARToUTF8 Utf8(*Code);
+	return FBase64::Encode(reinterpret_cast<const uint8*>(Utf8.Get()), Utf8.Length());
+}
+
 namespace VibeUE
 {
 
@@ -288,11 +294,32 @@ FString FPythonExecutionService::MakeCodeCommand(const FString& Code)
 	}
 	// Bytes, as the plugin compiles them, so a coding cookie reads the same. builtins, because an
 	// earlier call may have rebound compile or exec in the console globals every call shares.
-	const FTCHARToUTF8 Utf8(*Code);
-	const FString Encoded = FBase64::Encode(reinterpret_cast<const uint8*>(Utf8.Get()), Utf8.Length());
 	return FString::Printf(
 		TEXT("__import__('builtins').exec(__import__('builtins').compile(__import__('base64').b64decode('%s'), '<string>', 'exec', dont_inherit=True))"),
-		*Encoded);
+		*EncodePythonSource(Code));
+}
+
+FString FPythonExecutionService::MakeFreshNamespaceCommand(const FString& Code)
+{
+	return FString::Printf(
+		TEXT("__import__('builtins').exec(__import__('builtins').compile(__import__('base64').b64decode('%s'), '<string>', 'exec', dont_inherit=True), {'__name__': '__main__'})"),
+		*EncodePythonSource(Code));
+}
+
+FString FPythonExecutionService::MakeNeedsAwaitCommand(const FString& Code)
+{
+	return FString::Printf(TEXT("__import__('vibeue_await').needs_await('%s')"), *EncodePythonSource(Code));
+}
+
+FString FPythonExecutionService::MakeAwaitBeginCommand(int64 RunId, const FString& Code, bool bFreshNamespace)
+{
+	return FString::Printf(TEXT("__import__('vibeue_await').begin(%lld, '%s'%s)"),
+		(long long)RunId, *EncodePythonSource(Code), bFreshNamespace ? TEXT("") : TEXT(", globals()"));
+}
+
+FString FPythonExecutionService::MakeAwaitRunCommand(const TCHAR* Function, int64 RunId)
+{
+	return FString::Printf(TEXT("__import__('vibeue_await').%s(%lld)"), Function, (long long)RunId);
 }
 
 bool FPythonExecutionService::ContainsUnsafePattern(const FString& Code, FString& OutPattern, FString& OutReason)
@@ -303,7 +330,8 @@ bool FPythonExecutionService::ContainsUnsafePattern(const FString& Code, FString
 TResult<FPythonExecutionResult> FPythonExecutionService::ExecuteCode(
 	const FString& Code,
 	EPythonFileExecutionScope ExecutionScope,
-	int32 TimeoutMs)
+	int32 TimeoutMs,
+	bool bFreshNamespace)
 {
 	// Validate Python is available
 	auto AvailableResult = IsPythonAvailable();
@@ -343,26 +371,37 @@ TResult<FPythonExecutionResult> FPythonExecutionService::ExecuteCode(
 	// Setup command. ExecuteFile is the only mode that runs several statements, and it would take
 	// code mentioning a .py file for a file path: MakeCodeCommand keeps such code running as code.
 	FPythonCommandEx Command;
-	Command.Command = MakeCodeCommand(Code);
+	Command.Command = bFreshNamespace ? MakeFreshNamespaceCommand(Code) : MakeCodeCommand(Code);
 	Command.ExecutionMode = EPythonCommandExecutionMode::ExecuteFile;
 	Command.FileExecutionScope = ExecutionScope;
 	Command.Flags = EPythonCommandFlags::None;
 
-	// Execute with timing and timeout handling
-	double StartTime = FPlatformTime::Seconds();
-	double ExecutionTimeMs = 0.0; // measured for the main execution (excludes the post-crash probe)
-	bool bSuccess = false;
-	bool bCrashed = false;
-	FString CrashMessage;
-
 	// Get Python plugin first (outside of SEH block)
-	IPythonScriptPlugin* PythonPlugin = IPythonScriptPlugin::Get();
-	if (!PythonPlugin)
+	if (!IPythonScriptPlugin::Get())
 	{
 		return TResult<FPythonExecutionResult>::Error(
 			ErrorCodes::PYTHON_NOT_AVAILABLE,
 			TEXT("Python plugin is not initialized")
 		);
+	}
+
+	double ExecutionTimeMs = 0.0; // measured for the main execution (excludes the post-crash probe)
+	bool bCrashed = false;
+	FString CrashMessage;
+	const bool bSuccess = RunGuardedCommand(Command, ExecutionTimeMs, bCrashed, CrashMessage);
+
+	return RecordRunOutcome(Command, bSuccess, bCrashed, CrashMessage, ExecutionTimeMs, RunId, StartedUtc, TimeoutMs, /*bCancelled=*/false);
+}
+
+bool FPythonExecutionService::RunGuardedCommand(FPythonCommandEx& Command, double& ExecutionTimeMs, bool& bCrashed, FString& CrashMessage)
+{
+	const double StartTime = FPlatformTime::Seconds();
+	bool bSuccess = false;
+	bCrashed = false;
+	IPythonScriptPlugin* PythonPlugin = IPythonScriptPlugin::Get();
+	if (!PythonPlugin)
+	{
+		return false;
 	}
 
 #if PLATFORM_WINDOWS
@@ -428,6 +467,20 @@ TResult<FPythonExecutionResult> FPythonExecutionService::ExecuteCode(
 	ExecutionTimeMs = (FPlatformTime::Seconds() - StartTime) * 1000.0;
 #endif
 
+	return bSuccess;
+}
+
+TResult<FPythonExecutionResult> FPythonExecutionService::RecordRunOutcome(
+	const FPythonCommandEx& Command,
+	bool bSuccess,
+	bool bCrashed,
+	const FString& CrashMessage,
+	double ExecutionTimeMs,
+	int64 RunId,
+	const FDateTime& StartedUtc,
+	int32 TimeoutMs,
+	bool bCancelled)
+{
 	const FDateTime FinishedUtc = FDateTime::UtcNow();
 
 	// Build the outcome record once so EVERY completed run is persisted (B2) — including the error
@@ -448,6 +501,14 @@ TResult<FPythonExecutionResult> FPythonExecutionService::ExecuteCode(
 		// (issue #608). Only this path warrants that suspicion.
 		OutErrorCode = ErrorCodes::PYTHON_EDITOR_CRASH;
 		OutErrorMessage = CrashMessage;
+	}
+	else if (bCancelled)
+	{
+		Result = ConvertExecutionResult(Command, ExecutionTimeMs);
+		Result.bSuccess = false;
+		Result.ErrorMessage = TEXT("The script was cancelled.");
+		OutErrorCode = ErrorCodes::OPERATION_CANCELLED;
+		OutErrorMessage = Result.ErrorMessage;
 	}
 	else
 	{
