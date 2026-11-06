@@ -17,6 +17,7 @@
 
 // Include service headers after PythonTypes
 #include "Tools/PythonExecutionService.h"
+#include "Settings/VibeUEEditorSettings.h"
 #include "Tools/PythonDiscoveryService.h"
 #include "Tools/PythonSchemaService.h"
 #include "WorldPartition/WorldPartition.h"
@@ -370,6 +371,11 @@ FString UPythonTools::ExecutePythonCode(const FString& Code, bool bAutoSave)
 	{
 		AutoSaveNote = TEXT("opted_out");
 		UE_LOG(LogPythonTools, Verbose, TEXT("Auto-save skipped: auto_save=false — running the script without flushing dirty packages"));
+	}
+	else if (GetDefault<UVibeUEEditorSettings>()->bDisablePythonAutoSave)
+	{
+		AutoSaveNote = TEXT("disabled_by_setting");
+		UE_LOG(LogPythonTools, Verbose, TEXT("Auto-save skipped: disabled in Editor Preferences > Plugins > VibeUE"));
 	}
 	else
 	{
