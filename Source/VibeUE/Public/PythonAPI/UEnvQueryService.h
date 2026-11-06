@@ -535,10 +535,14 @@ public:
 	 * handed. Node paths are POSITIONAL and shift after any AddOption / RemoveOption / MoveOption /
 	 * AddTest / RemoveTest / MoveTest — re-read GetQuery first, or this tunes the wrong node and
 	 * reports success.
+	 *
+	 * bCommitAndSave=false imports and verifies in memory
+	 * only, on an existing graph, without Modify, graph initialization, commit or save. The
+	 * caller must finish its batch with a committing write and reload/read back the saved asset.
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|EQS")
 	static FEQSPropertySetResult SetPropertyValue(const FString& AssetPath, const FString& NodePath,
-		const FString& PropertyName, const FString& Value);
+		const FString& PropertyName, const FString& Value, bool bCommitAndSave = true);
 
 	/**
 	 * Write the literal held by an FAIDataProviderValue-derived property — ScoringFactor,
