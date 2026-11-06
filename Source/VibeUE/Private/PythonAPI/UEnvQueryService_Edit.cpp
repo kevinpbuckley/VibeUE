@@ -336,12 +336,13 @@ namespace VibeEQSEdit
 	 */
 	bool BeginPropertyWrite(const FString& AssetPath, const FString& NodePath,
 		const FString& PropertyName, UEnvQuery*& OutQuery, UEnvironmentQueryGraph*& OutGraph,
-		UObject*& OutInstance, FProperty*& OutProperty, FEQSPropertySetResult& OutResult)
+		UObject*& OutInstance, FProperty*& OutProperty, FEQSPropertySetResult& OutResult,
+		bool bInitializeGraph = true)
 	{
 		OutInstance = nullptr;
 		OutProperty = nullptr;
 
-		const FString OpenError = VibeEQS::OpenWriteGuard(AssetPath, OutQuery, OutGraph);
+		const FString OpenError = VibeEQS::OpenWriteGuard(AssetPath, OutQuery, OutGraph, bInitializeGraph);
 		if (!OpenError.IsEmpty())
 		{
 			OutResult = PropertyError(OpenError);
@@ -1096,7 +1097,7 @@ FString UEnvQueryService::SetTestEnabled(const FString& AssetPath, const FString
 }
 
 FEQSPropertySetResult UEnvQueryService::SetPropertyValue(const FString& AssetPath,
-	const FString& NodePath, const FString& PropertyName, const FString& Value)
+	const FString& NodePath, const FString& PropertyName, const FString& Value, bool bCommitAndSave)
 {
 	UEnvQuery* Query = nullptr;
 	UEnvironmentQueryGraph* Graph = nullptr;
@@ -1104,7 +1105,7 @@ FEQSPropertySetResult UEnvQueryService::SetPropertyValue(const FString& AssetPat
 	FProperty* Property = nullptr;
 	FEQSPropertySetResult Result;
 	if (!BeginPropertyWrite(AssetPath, NodePath, PropertyName, Query, Graph, Instance, Property,
-		Result))
+		Result, bCommitAndSave))
 	{
 		return Result;
 	}
@@ -1114,7 +1115,11 @@ FEQSPropertySetResult UEnvQueryService::SetPropertyValue(const FString& AssetPat
 	// is that a REFUSED write below still leaves the package marked dirty — stated plainly rather
 	// than traded away, because a cosmetic dirty flag is worth less than a correct undo snapshot,
 	// and the value itself is restored either way.
-	Instance->Modify();
+	// A deferred import has no undo/dirty side effects.
+	if (bCommitAndSave)
+	{
+		Instance->Modify();
+	}
 
 	FString ImportError;
 	if (!VibeEQS::ImportPropertyValue(Property, Instance, Instance, Value, ImportError))
@@ -1134,6 +1139,17 @@ FEQSPropertySetResult UEnvQueryService::SetPropertyValue(const FString& AssetPat
 	}
 
 	const FString ValueAfterImport = VibeEQS::ExportPropertyValue(Property, Instance);
+	if (!bCommitAndSave)
+	{
+		Result.ValueAfterWrite = GetPropertyValue(AssetPath, NodePath, PropertyName);
+		Result.bSuccess = Result.ValueAfterWrite == ValueAfterImport;
+		if (!Result.bSuccess)
+		{
+			Result.Error = FString::Printf(TEXT("Deferred readback differs for '%s' on '%s' in %s"),
+				*PropertyName, *NodePath, *AssetPath);
+		}
+		return Result;
+	}
 	return FinishPropertyWrite(Query, Graph, AssetPath, NodePath, PropertyName, ValueAfterImport,
 		Result.ResolvedNodeClass);
 }
@@ -1389,7 +1405,7 @@ FString UEnvQueryService::SetTestEnabled(const FString&, const FString&, bool)
 }
 
 FEQSPropertySetResult UEnvQueryService::SetPropertyValue(const FString&, const FString&,
-	const FString&, const FString&)
+	const FString&, const FString&, bool)
 {
 	FEQSPropertySetResult Result;
 	Result.Error = GEQSEditUnavailable;

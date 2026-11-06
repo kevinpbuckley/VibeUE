@@ -138,9 +138,11 @@ namespace VibeEQS
 	 * and that one is not side-effect-free — see its own comment. No refusal ever writes.
 	 *
 	 * BT counterpart: VibeBT::OpenWriteGuard.
+	 * bInitializeGraph=false requires an existing graph and skips initialization;
+	 * path, PIE, open-editor, locked-graph and poisoned-query refusals still apply.
 	 */
 	FString OpenWriteGuard(const FString& AssetPath, UEnvQuery*& OutQuery,
-		UEnvironmentQueryGraph*& OutGraph);
+		UEnvironmentQueryGraph*& OutGraph, bool bInitializeGraph = true);
 
 	/**
 	 * Lay the graph out, regenerate UEnvQuery::Options from it, recompute the displayed weights and
