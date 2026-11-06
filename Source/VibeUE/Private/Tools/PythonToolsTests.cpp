@@ -18,6 +18,7 @@
 #include "Curves/CurveFloat.h"
 #include "Misc/Guid.h"
 #include "UObject/UObjectGlobals.h"
+#include "Settings/VibeUEEditorSettings.h"
 
 namespace
 {
@@ -102,13 +103,38 @@ bool FVibePythonAutoSaveReportTest::RunTest(const FString&)
 		{
 			// A legitimate skip is fine in an automation run, but it must say which one.
 			const bool bKnownReason = Note == TEXT("previous_run_crashed") || Note == TEXT("editor_unavailable")
-				|| Note == TEXT("pie_active") || Note == TEXT("save_failed");
+				|| Note == TEXT("pie_active") || Note == TEXT("save_failed") || Note == TEXT("disabled_by_setting");
 			TestTrue(FString::Printf(TEXT("skip reason is a documented code (got '%s')"), *Note), bKnownReason);
 		}
 		// Either way it must never claim the caller opted out — the caller asked for the sweep.
 		TestNotEqual(TEXT("auto_save=true never reports opted_out"), Note, FString(TEXT("opted_out")));
 	}
 
+	return true;
+}
+
+// The "Disable Python Auto-Save" editor setting overrides auto_save=true: the sweep is reported as
+// not run, with its own note, and nothing is listed as written.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibePythonAutoSaveDisabledBySettingTest, "VibeUE.Python.AutoSaveDisabledBySetting",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVibePythonAutoSaveDisabledBySettingTest::RunTest(const FString&)
+{
+	TGuardValue<bool> DisableAutoSave(GetMutableDefault<UVibeUEEditorSettings>()->bDisablePythonAutoSave, true);
+	const FString Json = UPythonTools::ExecutePythonCode(TEXT("x = 1\n"), /*bAutoSave=*/true);
+	TSharedPtr<FJsonObject> Obj;
+	FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json), Obj);
+	if (!TestTrue(TEXT("reply parses as JSON"), Obj.IsValid()))
+	{
+		return false;
+	}
+	TestFalse(TEXT("auto_save reports the sweep did not run"), Obj->GetBoolField(TEXT("auto_save")));
+	TestEqual(TEXT("auto_save_note names the setting"), Obj->GetStringField(TEXT("auto_save_note")), FString(TEXT("disabled_by_setting")));
+	const TArray<TSharedPtr<FJsonValue>>* Saved = nullptr;
+	if (TestTrue(TEXT("saved_packages present"), Obj->TryGetArrayField(TEXT("saved_packages"), Saved)))
+	{
+		TestEqual(TEXT("nothing written while the setting is on"), Saved->Num(), 0);
+	}
 	return true;
 }
 
