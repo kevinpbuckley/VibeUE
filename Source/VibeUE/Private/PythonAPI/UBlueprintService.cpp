@@ -3502,6 +3502,8 @@ bool UBlueprintService::AddFunctionLocalVariable(
 	LocalVar.VarName = FName(*VariableName);
 	LocalVar.VarGuid = FGuid::NewGuid();
 	LocalVar.VarType = PinType;
+	// Match FBlueprintEditorUtils::AddLocalVariable: graph locals must be writable by Blueprint nodes.
+	LocalVar.PropertyFlags |= CPF_BlueprintVisible;
 	LocalVar.FriendlyName = VariableName;
 	LocalVar.DefaultValue = DefaultValue;
 	LocalVar.Category = FText::FromString(TEXT("Local Variables"));
