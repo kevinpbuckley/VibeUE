@@ -36,8 +36,9 @@ struct FBlueprintVariableInfo
 
 /**
  * Information about a single UEdGraph attached to a Blueprint.
- * Returned by ListGraphs — one entry per graph tab visible in the
- * Blueprint editor (ubergraph pages, functions, macros, delegate signatures).
+ * Returned by ListGraphs — one entry per graph object, including interface,
+ * nested and extension graphs. Distinct objects may have the same GraphName;
+ * name-keyed consumers must reject ambiguity instead of overwriting entries.
  */
 USTRUCT(BlueprintType)
 struct FBlueprintGraphInfo
@@ -48,7 +49,7 @@ struct FBlueprintGraphInfo
 	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
 	FString GraphName;
 
-	/** "Ubergraph" | "Function" | "Macro" | "DelegateSignature" */
+	/** "Ubergraph" | "Function" | "Macro" | "DelegateSignature" | "Interface (<name>)" | "Subgraph" | "Other" */
 	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
 	FString GraphKind;
 
@@ -1154,13 +1155,13 @@ public:
 	static TArray<FVibeBlueprintFunctionInfo> ListFunctions(const FString& BlueprintPath);
 
 	/**
-	 * Enumerate every UEdGraph attached to a Blueprint — ubergraph pages, functions,
-	 * macros, and delegate signature graphs.
+	 * Enumerate every graph returned by this Blueprint's GetAllGraphs, including
+	 * interface, nested and extension graphs, deduplicated by object identity.
 	 *
-	 * Use this when you don't know the exact name of a graph tab. The default
-	 * Blueprint editor only exposes "EventGraph" by name; user-created ubergraph
-	 * pages (e.g. "Graph_PlayerInput") and inherited function graphs are invisible
-	 * without this enumeration.
+	 * Use this when you don't know the exact name of a graph tab.
+	 * The four original collections retain their order and kinds; missing graphs
+	 * follow in Engine traversal order. Distinct objects with the same name remain
+	 * separate entries so callers can detect ambiguous name-based lookup.
 	 *
 	 * @param BlueprintPath - Full path to the blueprint (e.g., "/Game/Blueprints/BP_Player_Test")
 	 * @return Array of FBlueprintGraphInfo, one per graph
