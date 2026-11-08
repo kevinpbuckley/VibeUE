@@ -32,6 +32,7 @@
 #include "Engine/StaticMesh.h"         // ranking what a multi-asset import returns
 #include "Engine/SkeletalMesh.h"
 #include "Animation/Skeleton.h"
+#include "Animation/AnimSequence.h"    // wait out in-flight async compression before force-deleting a clip
 #include "PhysicsEngine/PhysicsAsset.h"
 #include "Materials/MaterialInterface.h"
 #include "UObject/SoftObjectPath.h"
@@ -544,6 +545,14 @@ FUnattendedDeleteResult UAssetDiscoveryService::DeleteAssetUnattended(const FStr
 	{
 		Result.ErrorMessage = FString::Printf(TEXT("Failed to load asset: %s"), *AssetPath);
 		return Result;
+	}
+
+	// An anim sequence may still be compressing on a worker thread (the save that created
+	// it a moment ago queued the build); force-deleting mid-build hands the worker a dying
+	// data model and crashes in FTransform::Blend. Finish any in-flight compression first.
+	if (UAnimSequence* AnimSeqToDelete = Cast<UAnimSequence>(Asset))
+	{
+		AnimSeqToDelete->WaitOnExistingCompression(false);
 	}
 
 	// ForceDeleteObjects can still open a read-only-package prompt even when confirmation is

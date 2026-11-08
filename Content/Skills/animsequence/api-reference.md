@@ -72,6 +72,40 @@ euler = AnimSequenceService.quat_to_euler(quat) -> Rotator
 result = AnimSequenceService.retarget_preview(anim_path, target_skeleton) -> AnimationEditResult
 ```
 
+### Pose Authoring Methods (AnimSequenceService)
+
+Author poses by component-space intent instead of raw local keys: place an end
+bone with IK, shape a hand by name, then interpolate between the authored key
+frames. Typical loop: `solve_limb_ik` + `apply_hand_pose` at each key frame,
+`interpolate_bone_frames` over each span, `capture_animation_sequence` to review.
+
+```python
+# Two-bone IK at one frame: put EndBone's origin at a component-space target.
+# Pole hint picks the bend direction ((0,0,0) = keep current bend).
+# end_aim/end_up ((0,0,0) = keep orientation) aim the end bone's +X/+Z axes.
+result = AnimSequenceService.solve_limb_ik(
+    anim_path, frame,
+    "upperarm_r", "lowerarm_r", "hand_r",   # a descending chain (twist bones between are fine)
+    unreal.Vector(-34, 34, 118),            # target for hand_r's origin
+    unreal.Vector(-50, 28, 95),             # pole: elbow points here
+    unreal.Vector(0, 0, 0),                 # keep hand orientation...
+    unreal.Vector(0, 0, 0)
+) -> AnimationEditResult
+
+# Named hand pose at one frame: fist, open, point, relax, spread.
+# Axes are derived from the skeleton's own knuckle geometry (works on MetaHumans,
+# the UE5 Mannequin, any rig with thumb/index/middle/ring/pinky_01.._03 naming).
+# Deterministic: finger keys are rebuilt from the reference pose, so applying a
+# pose twice gives the same result. alpha scales the pose (0.3 = 30% curl).
+result = AnimSequenceService.apply_hand_pose(
+    anim_path, frame, "hand_r", "open", 1.0) -> AnimationEditResult
+
+# Replace the frames strictly between two authored keys with an eased blend.
+# easing: "smooth" (smoothstep), "linear", "ease_in", "ease_out"
+result = AnimSequenceService.interpolate_bone_frames(
+    anim_path, [], 10, 28, "smooth") -> AnimationEditResult   # [] = all animated bones
+```
+
 ### Visual Capture Methods (AnimSequenceService)
 
 > **Default Output Folder:** `Saved/VibeUE/Screenshots/<AnimationName>/`
@@ -114,6 +148,10 @@ results = unreal.AnimSequenceService.capture_animation_sequence(
 for r in results:
     print(f"Frame {r.captured_frame}: {r.image_path}")
 ```
+
+> Captures render in a **private preview scene**: the open level is never touched or
+> dirtied, they work while PIE is active, and a failed capture returns the result
+> struct with `error_message` set (never a bare `None`).
 
 > **⚠️ Captures come back all-black when there is no skeletal mesh to render.**
 > These methods render the animation onto the skeleton's **preview mesh**. A sequence that

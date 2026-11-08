@@ -1778,6 +1778,104 @@ public:
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Pose")
 	static TArray<FBonePose> GetReferencePose(const FString& SkeletonPath);
 
+	// ============================================================================
+	// POSE AUTHORING (component-space targets instead of raw local keys)
+	// ============================================================================
+
+	/**
+	 * Solve a two-bone IK chain at one frame: place EndBone's origin at TargetLocation
+	 * (component space) by rewriting RootBone's and MidBone's rotation keys. Bone lengths
+	 * are taken from the animation itself, so this works for any character's proportions.
+	 *
+	 * @param AnimPath - Path to the animation asset
+	 * @param Frame - Frame to author
+	 * @param RootBone - First bone of the chain (e.g. "upperarm_r")
+	 * @param MidBone - Middle bone (e.g. "lowerarm_r")
+	 * @param EndBone - End bone whose origin is placed (e.g. "hand_r")
+	 * @param TargetLocation - Component-space goal for EndBone's origin (clamped to reach)
+	 * @param PoleHint - Component-space point the middle joint bends toward
+	 *                   (pass (0,0,0) to keep the current bend direction)
+	 * @param EndAimDirection - Optional component-space direction for EndBone's +X axis
+	 *                          (the axis pointing along the bone); (0,0,0) keeps the
+	 *                          end bone's current component-space orientation
+	 * @param EndUpDirection - Optional component-space direction for EndBone's +Z axis;
+	 *                         only used when EndAimDirection is set
+	 * @return Edit result; ModifiedBones lists the keys written
+	 *
+	 * Example (palm-up reach at frame 28):
+	 *   result = unreal.AnimSequenceService.solve_limb_ik(
+	 *       "/Game/Anims/AS_Offer", 28,
+	 *       "upperarm_r", "lowerarm_r", "hand_r",
+	 *       unreal.Vector(-34, 34, 118),   # wrist goal
+	 *       unreal.Vector(-50, 28, 95),    # elbow points down-back
+	 *       unreal.Vector(-0.33, 0.93, -0.07),  # fingers forward
+	 *       unreal.Vector(0.18, 0.15, 0.97))    # palm up
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Pose")
+	static FAnimationEditResult SolveLimbIK(
+		const FString& AnimPath,
+		int32 Frame,
+		const FString& RootBone,
+		const FString& MidBone,
+		const FString& EndBone,
+		FVector TargetLocation,
+		FVector PoleHint,
+		FVector EndAimDirection,
+		FVector EndUpDirection);
+
+	/**
+	 * Apply a named hand pose at one frame. Finger axes are derived from the skeleton's
+	 * own geometry (knuckle positions relative to the hand bone), never from per-rig axis
+	 * conventions, so the same call works on MetaHumans, the UE5 Mannequin, and any rig
+	 * using the standard finger naming (thumb/index/middle/ring/pinky + _01.._03 and the
+	 * hand bone's _l/_r suffix, metacarpals optional).
+	 *
+	 * Finger keys are rebuilt from the skeleton reference pose, so the call is
+	 * deterministic and idempotent: applying "fist" twice gives the same fist.
+	 *
+	 * @param AnimPath - Path to the animation asset
+	 * @param Frame - Frame to author
+	 * @param HandBone - Hand bone name ("hand_r" or "hand_l")
+	 * @param PoseName - One of: "fist", "open", "point", "relax", "spread"
+	 * @param Alpha - Pose strength 0..1 (0.3 = fingers 30% of the way to the pose)
+	 * @return Edit result; ModifiedBones lists every finger bone written
+	 *
+	 * Example:
+	 *   result = unreal.AnimSequenceService.apply_hand_pose(
+	 *       "/Game/Anims/AS_Offer", 28, "hand_r", "open", 1.0)
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Pose")
+	static FAnimationEditResult ApplyHandPose(
+		const FString& AnimPath,
+		int32 Frame,
+		const FString& HandBone,
+		const FString& PoseName,
+		float Alpha = 1.0f);
+
+	/**
+	 * Replace every frame strictly between FromFrame and ToFrame with an eased
+	 * interpolation of those two frames' keys. Author sparse key poses (with
+	 * solve_limb_ik / apply_hand_pose / copy_pose), then interpolate each span.
+	 *
+	 * @param AnimPath - Path to the animation asset
+	 * @param BoneNames - Bones to interpolate (empty = every animated bone)
+	 * @param FromFrame - First key frame (left untouched)
+	 * @param ToFrame - Second key frame (left untouched)
+	 * @param Easing - "smooth" (smoothstep, default), "linear", "ease_in", "ease_out"
+	 * @return Edit result; StartFrame/EndFrame report the rewritten span
+	 *
+	 * Example:
+	 *   unreal.AnimSequenceService.interpolate_bone_frames(
+	 *       "/Game/Anims/AS_Offer", [], 10, 28, "smooth")
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Pose")
+	static FAnimationEditResult InterpolateBoneFrames(
+		const FString& AnimPath,
+		const TArray<FString>& BoneNames,
+		int32 FromFrame,
+		int32 ToFrame,
+		const FString& Easing = TEXT("smooth"));
+
 	/**
 	 * Convert a quaternion to Euler angles (degrees).
 	 *
@@ -1833,8 +1931,7 @@ public:
 	 * @param CameraAngle - Camera angle: "front", "side", "back", "three_quarter", "top" (default: "three_quarter")
 	 * @param ImageWidth - Width of output image in pixels (default: 512)
 	 * @param ImageHeight - Height of output image in pixels (default: 512)
-	 * @param OutResult - Capture result with file info
-	 * @return True if capture was successful
+	 * @return Capture result; on failure bSuccess is false and ErrorMessage says why
 	 *
 	 * Example:
 	 *   result = unreal.AnimSequenceService.capture_animation_pose(
@@ -1846,19 +1943,20 @@ public:
 	 *   )
 	 *   if result.success:
 	 *       print(f"Captured to: {result.image_path}")
+	 *   else:
+	 *       print(result.error_message)
 	 *
-	 * Note: This spawns a temporary actor, sets the pose, renders to texture,
-	 * and exports to PNG - all without affecting the current viewport or taking screenshots.
+	 * Note: The mesh is rendered in a private preview scene - the open level is never
+	 * touched or dirtied, and the capture works while PIE is active.
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Capture")
-	static bool CaptureAnimationPose(
+	static FAnimationPoseCaptureResult CaptureAnimationPose(
 		const FString& AnimPath,
 		float Time,
 		const FString& OutputPath,
 		const FString& CameraAngle,
 		int32 ImageWidth,
-		int32 ImageHeight,
-		FAnimationPoseCaptureResult& OutResult);
+		int32 ImageHeight);
 
 	/**
 	 * Capture multiple frames of an animation as a sequence of images.
@@ -1899,6 +1997,13 @@ private:
 
 	/** Load an animation sequence from path */
 	static class UAnimSequence* LoadAnimSequence(const FString& AnimPath);
+
+	/**
+	 * Resolve an asset path without going through the editor asset library, which
+	 * returns null while PIE is active (issue #671). Accepts both "/Game/A/B" and
+	 * "/Game/A/B.B" forms. Works regardless of PIE state.
+	 */
+	static UObject* LoadAssetAnyState(const FString& AssetPath);
 
 	/** Convert additive type enum to string */
 	static FString AdditiveTypeToString(int32 Type);
