@@ -34,6 +34,13 @@ keywords:
   - learned constraints
   - mirror
   - copy pose
+  - ik
+  - two-bone ik
+  - hand pose
+  - fingers
+  - gesture
+  - fist
+  - interpolate
   - create animation
   - swing
   - wave
@@ -51,6 +58,13 @@ keywords:
 # Animation Sequence & Editing Skill
 
 This skill covers the **inspect → profile → preview → validate → bake** workflow for safe animation bone edits with correct bone-space handling and constraint validation.
+
+For gesture/limb work, prefer the **pose authoring** calls over raw local keys: `solve_limb_ik`
+(two-bone IK to a component-space target), `apply_hand_pose` (named fist/open/point/relax/spread,
+axes derived from the skeleton's own knuckle geometry), `interpolate_bone_frames` (eased spans
+between authored keys), then `capture_animation_sequence` to review frames as PNGs — captures
+render in a private preview scene, never the open level, and work during PIE. Details in
+`api-reference.md` → "Pose Authoring Methods".
 
 > **Loading skills:** skills load via the engine's `AgentSkillToolset` (`ListSkills` / `GetSkills`) —
 > there is no `vibeue-skills-manager` tool. Run the VibeUE services below with `execute_python_code`
