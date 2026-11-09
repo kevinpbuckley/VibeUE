@@ -432,7 +432,7 @@ static bool BeginPythonRun(const FString& Code, bool bAutoSave, FPythonRunContex
 	}
 	else if (GetDefault<UVibeUEEditorSettings>()->bDisablePythonAutoSave)
 	{
-		AutoSaveNote = TEXT("disabled_by_setting");
+		Run.AutoSaveNote = TEXT("disabled_by_setting");
 		UE_LOG(LogPythonTools, Verbose, TEXT("Auto-save skipped: disabled in Editor Preferences > Plugins > VibeUE"));
 	}
 	else
