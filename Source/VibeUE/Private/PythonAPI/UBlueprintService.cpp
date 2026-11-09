@@ -12504,9 +12504,14 @@ bool UBlueprintService::AddInterface(
 
 	// Resolve interface class - try multiple strategies
 	UClass* InterfaceClass = nullptr;
+	// Native interfaces (/Script/...) are classes, not Blueprint assets; load them directly.
+	if (InterfacePath.StartsWith(TEXT("/Script/")))
+	{
+		InterfaceClass = LoadClass<UInterface>(nullptr, *InterfacePath);
+	}
 
 	// Strategy 1: Try loading as a Blueprint asset path
-	UBlueprint* InterfaceBP = Cast<UBlueprint>(StaticLoadObject(UBlueprint::StaticClass(), nullptr, *InterfacePath));
+	UBlueprint* InterfaceBP = InterfaceClass ? nullptr : Cast<UBlueprint>(StaticLoadObject(UBlueprint::StaticClass(), nullptr, *InterfacePath));
 	if (InterfaceBP)
 	{
 		InterfaceClass = InterfaceBP->GeneratedClass;
