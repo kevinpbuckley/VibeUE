@@ -5,6 +5,7 @@
 #include "Engine/CollisionProfile.h"     // Custom collision channel names (set_collision_settings)
 #include "PythonAPI/BlueprintClassResolve.h" // Short-name ambiguity policy (VibeBlueprintClassResolve)
 #include "Engine/Blueprint.h"
+#include "EdGraph/EdGraph.h"
 #include "Engine/BlueprintGeneratedClass.h"
 #include "Engine/Level.h"                // Level Blueprint resolution (LoadBlueprint on a map path)
 #include "Engine/LevelScriptBlueprint.h"
@@ -439,6 +440,18 @@ namespace
 		if (ClassName.IsEmpty())
 		{
 			return nullptr;
+		}
+
+		// Fully qualified paths identify an exact loaded class, including
+		// BlueprintGeneratedClass subclasses and classes in transient fixtures.
+		// The short-name ExactClass search below intentionally matches UClass
+		// itself; it must not turn a loaded generated-class path into an asset load.
+		if (ClassName.StartsWith(TEXT("/")))
+		{
+			if (UClass* ExactClass = FindObject<UClass>(nullptr, *ClassName))
+			{
+				return ExactClass;
+			}
 		}
 
 		// discover_nodes historically emitted skeleton-class names (SKEL_<BP>_C) for Blueprint
@@ -1278,22 +1291,23 @@ TArray<FBlueprintGraphInfo> UBlueprintService::ListGraphs(const FString& Bluepri
 		return Graphs;
 	}
 
-	// Emit one FBlueprintGraphInfo per graph in a given collection
-	auto AppendGraphs = [&Graphs](const TArray<UEdGraph*>& Source, const TCHAR* Kind)
+	TSet<UEdGraph*> Seen;
+	const auto AppendGraph = [&Graphs, &Seen](UEdGraph* Graph, const TCHAR* Kind)
+	{
+		if (!Graph || Seen.Contains(Graph)) { return; }
+		Seen.Add(Graph);
+		FBlueprintGraphInfo Info;
+		Info.GraphName = Graph->GetName();
+		Info.GraphKind = Kind;
+		Info.NodeCount = Graph->Nodes.Num();
+		Info.GraphPath = Graph->GetPathName();
+		Graphs.Add(MoveTemp(Info));
+	};
+	const auto AppendGraphs = [&AppendGraph](const TArray<UEdGraph*>& Source, const TCHAR* Kind)
 	{
 		for (UEdGraph* Graph : Source)
 		{
-			if (!Graph)
-			{
-				continue;
-			}
-
-			FBlueprintGraphInfo Info;
-			Info.GraphName = Graph->GetName();
-			Info.GraphKind = Kind;
-			Info.NodeCount = Graph->Nodes.Num();
-			Info.GraphPath = Graph->GetPathName();
-			Graphs.Add(MoveTemp(Info));
+			AppendGraph(Graph, Kind);
 		}
 	};
 
@@ -1313,19 +1327,28 @@ TArray<FBlueprintGraphInfo> UBlueprintService::ListGraphs(const FString& Bluepri
 	for (const FBPInterfaceDescription& Intf : Blueprint->ImplementedInterfaces)
 	{
 		const FString IntfName = Intf.Interface ? Intf.Interface->GetName() : TEXT("Unknown");
+		const FString IntfKind = FString::Printf(TEXT("Interface (%s)"), *IntfName);
 		for (UEdGraph* Graph : Intf.Graphs)
 		{
-			if (!Graph)
-			{
-				continue;
-			}
-			FBlueprintGraphInfo Info;
-			Info.GraphName = Graph->GetName();
-			Info.GraphKind = FString::Printf(TEXT("Interface (%s)"), *IntfName);
-			Info.NodeCount = Graph->Nodes.Num();
-			Info.GraphPath = Graph->GetPathName();
-			Graphs.Add(MoveTemp(Info));
+			AppendGraph(Graph, *IntfKind);
 		}
+	}
+
+	// Match FindGraph's search universe. Nested graphs and Blueprint extensions are also
+	// discoverable by explicit name and must not disappear from a complete graph inventory.
+	TArray<UEdGraph*> AllGraphs;
+	Blueprint->GetAllGraphs(AllGraphs);
+	TSet<UEdGraph*> ChildGraphs;
+	for (UEdGraph* Graph : AllGraphs)
+	{
+		if (!Graph) { continue; }
+		TArray<UEdGraph*> Children;
+		Graph->GetAllChildrenGraphs(Children);
+		for (UEdGraph* Child : Children) { ChildGraphs.Add(Child); }
+	}
+	for (UEdGraph* Graph : AllGraphs)
+	{
+		AppendGraph(Graph, ChildGraphs.Contains(Graph) ? TEXT("Subgraph") : TEXT("Other"));
 	}
 
 	return Graphs;
@@ -3407,12 +3430,11 @@ bool UBlueprintService::AddFunctionParameter(
 
 		if (ResultNodes.Num() == 0)
 		{
-			// Create result node if it doesn't exist
-			UK2Node_FunctionResult* ResultNode = NewObject<UK2Node_FunctionResult>(FunctionGraph);
-			FunctionGraph->AddNode(ResultNode, false, false);
-			ResultNode->CreateNewGuid();
-			ResultNode->PostPlacedNewNode();
-			ResultNode->AllocateDefaultPins();
+			// PostPlacedNewNode can already allocate pins while syncing the entry.
+			// The canonical creator allocates only when that hook left no pins.
+			FGraphNodeCreator<UK2Node_FunctionResult> Creator(*FunctionGraph);
+			UK2Node_FunctionResult* ResultNode = Creator.CreateNode(false);
+			Creator.Finalize();
 			ResultNodes.Add(ResultNode);
 		}
 
