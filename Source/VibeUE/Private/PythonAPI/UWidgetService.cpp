@@ -2078,7 +2078,26 @@ bool UWidgetService::SetProperty(
 		}
 	}
 
-	if (Resolved.Property->ImportText_Direct(*NormalizedValue, Resolved.ValuePtr, Resolved.TargetObject, PPF_None) == nullptr)
+	// Delegate export uses this sentinel for an unbound value, but delegate text
+	// import does not accept it. Clear through the reflected delegate API instead.
+	bool bClearedDelegate = false;
+	const FString TrimmedValue = NormalizedValue.TrimStartAndEnd();
+	if (TrimmedValue.IsEmpty() || TrimmedValue == TEXT("(null).None"))
+	{
+		if (CastField<FDelegateProperty>(Resolved.Property))
+		{
+			Resolved.TargetObject->Modify();
+			static_cast<FScriptDelegate*>(Resolved.ValuePtr)->Unbind();
+			bClearedDelegate = true;
+		}
+		else if (FMulticastDelegateProperty* Delegate = CastField<FMulticastDelegateProperty>(Resolved.Property))
+		{
+			Resolved.TargetObject->Modify();
+			Delegate->ClearDelegate(Resolved.TargetObject, Resolved.ValuePtr);
+			bClearedDelegate = true;
+		}
+	}
+	if (!bClearedDelegate && Resolved.Property->ImportText_Direct(*NormalizedValue, Resolved.ValuePtr, Resolved.TargetObject, PPF_None) == nullptr)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::SetProperty: Failed to parse value '%s' for property '%s'"), *PropertyValue, *PropertyName);
 		return false;
