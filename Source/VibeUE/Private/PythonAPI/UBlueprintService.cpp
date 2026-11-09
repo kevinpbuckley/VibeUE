@@ -2891,7 +2891,9 @@ bool UBlueprintService::GetVariableInfo(
 
 			// Property flags
 			OutInfo.bIsInstanceEditable = (VarDesc.PropertyFlags & CPF_DisableEditOnInstance) == 0;
-			OutInfo.bIsExposeOnSpawn = (VarDesc.PropertyFlags & CPF_ExposeOnSpawn) != 0;
+			// BlueprintEditorLibrary authors metadata; compilation adds the flag to the generated property.
+			OutInfo.bIsExposeOnSpawn = VarDesc.HasMetaData(FBlueprintMetadata::MD_ExposeOnSpawn)
+				|| (VarDesc.PropertyFlags & CPF_ExposeOnSpawn) != 0;
 			OutInfo.bIsPrivate = VarDesc.HasMetaData(FBlueprintMetadata::MD_Private) && VarDesc.GetMetaData(FBlueprintMetadata::MD_Private).Equals(TEXT("true"), ESearchCase::IgnoreCase);
 			OutInfo.bIsBlueprintReadOnly = (VarDesc.PropertyFlags & CPF_BlueprintReadOnly) != 0;
 			OutInfo.bIsExposeToCinematics = (VarDesc.PropertyFlags & CPF_Interp) != 0;
@@ -5696,7 +5698,7 @@ TArray<FBlueprintNodeInfo> UBlueprintService::GetNodesInGraph(
 					PinInfo.PinType = Pin->PinType.PinCategory.ToString();
 					PinInfo.bIsInput = (Pin->Direction == EGPD_Input);
 					PinInfo.bIsConnected = Pin->LinkedTo.Num() > 0;
-					PinInfo.DefaultValue = Pin->DefaultValue;
+					PinInfo.DefaultValue = Pin->GetDefaultAsString();
 					PinInfo.DefaultObject = GetPinDefaultObjectPath(Pin);
 					NodeInfo.Pins.Add(PinInfo);
 				}
@@ -5820,7 +5822,7 @@ namespace
 			PinInfo.PinType = Pin->PinType.PinCategory.ToString();
 			PinInfo.bIsInput = (Pin->Direction == EGPD_Input);
 			PinInfo.bIsConnected = Pin->LinkedTo.Num() > 0;
-			PinInfo.DefaultValue = Pin->DefaultValue;
+			PinInfo.DefaultValue = Pin->GetDefaultAsString();
 			PinInfo.DefaultObject = GetPinDefaultObjectPath(Pin);
 			NodeInfo.Pins.Add(PinInfo);
 		}
@@ -6513,7 +6515,7 @@ TArray<FBlueprintPinInfo> UBlueprintService::GetNodePins(
 		PinInfo.PinType = Pin->PinType.PinCategory.ToString();
 		PinInfo.bIsInput = (Pin->Direction == EGPD_Input);
 		PinInfo.bIsConnected = Pin->LinkedTo.Num() > 0;
-		PinInfo.DefaultValue = Pin->DefaultValue;
+		PinInfo.DefaultValue = Pin->GetDefaultAsString();
 		PinInfo.DefaultObject = GetPinDefaultObjectPath(Pin);
 
 		PinInfos.Add(PinInfo);
@@ -7422,6 +7424,8 @@ bool UBlueprintService::GetNodeDetails(
 	const FString& NodeId,
 	FBlueprintNodeDetailedInfo& OutInfo)
 {
+	// Callers may reuse the output; replace the prior snapshot rather than append pins.
+	OutInfo = FBlueprintNodeDetailedInfo{};
 	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
 	if (!Blueprint)
 	{
@@ -7525,7 +7529,7 @@ bool UBlueprintService::GetNodeDetails(
 		PinInfo.bIsHidden = Pin->bHidden;
 		PinInfo.bIsArray = Pin->PinType.ContainerType == EPinContainerType::Array;
 		PinInfo.bIsReference = Pin->PinType.bIsReference;
-		PinInfo.DefaultValue = Pin->DefaultValue;
+		PinInfo.DefaultValue = Pin->GetDefaultAsString();
 		PinInfo.Tooltip = Pin->PinToolTip;
 
 		// Check if can split
@@ -7630,6 +7634,31 @@ bool UBlueprintService::SetNodePinValue(
 	// string path below.
 	const UEdGraphSchema* Schema = Graph->GetSchema();
 	const FName PinCategory = Pin->PinType.PinCategory;
+
+	// ApplyPinDefault cannot clear a reference pin ("None" or empty fails to load).
+	const bool bReferencePin = PinCategory == UEdGraphSchema_K2::PC_Class || PinCategory == UEdGraphSchema_K2::PC_SoftClass
+		|| PinCategory == UEdGraphSchema_K2::PC_Object || PinCategory == UEdGraphSchema_K2::PC_SoftObject;
+	if (bReferencePin && (Value.IsEmpty() || Value.Equals(TEXT("None"), ESearchCase::IgnoreCase)))
+	{
+		if (!Schema)
+		{
+			UE_LOG(LogTemp, Error, TEXT("SetNodePinValue: Cannot clear reference pin '%s' without a schema"), *PinName);
+			return false;
+		}
+		const FName ActualPinName = Pin->PinName;
+		Schema->TrySetDefaultObject(*Pin, nullptr);
+		// A class change can reconstruct the node's pins; never read the old pin pointer.
+		Node = FindNodeById(Graph, NodeId);
+		Pin = Node ? Node->FindPin(ActualPinName, EGPD_Input) : nullptr;
+		if (!Pin || Pin->DefaultObject || !Pin->GetDefaultAsString().IsEmpty())
+		{
+			UE_LOG(LogTemp, Error, TEXT("SetNodePinValue: Schema did not clear reference pin '%s' on node '%s'"), *PinName, *NodeId);
+			return false;
+		}
+		FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+		UE_LOG(LogTemp, Log, TEXT("SetNodePinValue: Cleared reference pin '%s' on node '%s'"), *PinName, *NodeId);
+		return true;
+	}
 
 	{
 		FString PinDefaultError;
@@ -8212,8 +8241,9 @@ FString UBlueprintService::CreateNodeByKey(
 		NewNode = NewObject<UEdGraphNode>(Graph, NodeClass);
 		Graph->AddNode(NewNode, false, false);
 		NewNode->CreateNewGuid();
-		NewNode->PostPlacedNewNode();
 		NewNode->AllocateDefaultPins();
+		// Match UBlueprintNodeSpawner: placement callbacks may require allocated pins.
+		NewNode->PostPlacedNewNode();
 		NewNode->NodePosX = PosX;
 		NewNode->NodePosY = PosY;
 	}
@@ -10078,8 +10108,9 @@ UEdGraphNode* UBlueprintService::CreateNodeFromDesc(
 			NewNode->NodePosY = PosY;
 			Graph->AddNode(NewNode, false, false);
 			NewNode->CreateNewGuid();
-			NewNode->PostPlacedNewNode();
 			NewNode->AllocateDefaultPins();
+			// Match UBlueprintNodeSpawner: placement callbacks may require allocated pins.
+			NewNode->PostPlacedNewNode();
 			return NewNode;
 		}
 		else if (KeyType.Equals(TEXT("STRUCT"), ESearchCase::IgnoreCase))
