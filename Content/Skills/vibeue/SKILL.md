@@ -202,7 +202,8 @@ exec(open(r"C:/scripts/build.py").read())
 content AND world package headlessly (issue #433: this avoids the modal save dialog that would hang
 the call). Every reply reports what actually happened: `auto_save` (true only when the sweep really
 ran), `auto_save_note` (empty when it ran, otherwise `opted_out`, `previous_run_crashed`,
-`editor_unavailable`, `pie_active`, or `save_failed`) and `saved_packages` (the package names it
+`editor_unavailable`, `pie_active`, `save_failed`, or `disabled_by_setting` when the "Disable Python
+Auto-Save" editor preference is on) and `saved_packages` (the package names it
 wrote). `auto_save` is the OUTCOME, not an echo of your argument -- so `auto_save: true,
 saved_packages: []` means "swept, nothing was dirty", never "skipped". Pass `auto_save=false` to run
 the script WITHOUT that sweep -- use it when you do not want in-flight editor edits flushed to disk,
