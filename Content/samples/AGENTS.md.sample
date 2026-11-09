@@ -1,6 +1,6 @@
-# VibeUE — AI agent guide (Unreal Engine 5.8)
+# VibeUE — AI agent guide (Unreal Engine 5.9)
 
-VibeUE **extends Unreal 5.8's native AI toolset system** — its services, tools, and skills register
+VibeUE **extends Unreal 5.9's native AI toolset system** — its services, tools, and skills register
 into the engine's `ToolsetRegistry` and are reachable through the MCP tools you already have.
 
 **ALWAYS use the MCP tools / Python API for Unreal operations — NEVER read `.uasset` files from disk.**

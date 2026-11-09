@@ -2,11 +2,11 @@
 
 # VibeUE — AI-Powered Unreal Engine Development
 
-### 🧩 MCP Expansion + AI Editor Toolset for Unreal Engine 5.8+
+### 🧩 MCP Expansion + AI Editor Toolset for Unreal Engine 5.9+
 
 https://www.vibeue.com/
 
-[![Unreal Engine](https://img.shields.io/badge/Unreal%20Engine-5.8%2B-orange)](https://www.unrealengine.com)
+[![Unreal Engine](https://img.shields.io/badge/Unreal%20Engine-5.9%2B-orange)](https://www.unrealengine.com)
 [![MCP](https://img.shields.io/badge/MCP-Model%20Context%20Protocol-blue)](https://modelcontextprotocol.io)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white)](https://discord.gg/hZs73ST59a)
@@ -14,7 +14,7 @@ https://www.vibeue.com/
 
 </div>
 
-**VibeUE is the MCP Expansion + AI Editor Toolset for Unreal Engine 5.8+.** Unreal 5.8 added a
+**VibeUE is the MCP Expansion + AI Editor Toolset for Unreal Engine 5.9+.** Unreal 5.8 added a
 built-in MCP server and AI toolsets; VibeUE is an **MCP Expansion** that plugs straight into them and
 adds a deep **AI Editor Toolset** — a library of editor capabilities — Blueprints, materials, landscape, foliage, animation, Niagara, UMG, audio, StateTree,
 Behavior Trees & Blackboards, gameplay tags, input, UVs, **performance/profiling**, and more — registered into the engine's own
@@ -33,7 +33,7 @@ your editor through Unreal's standard MCP endpoint.
 
 ## ✨ What VibeUE adds
 
-Unreal 5.8 ships its own AI toolsets (Blueprints, materials, actors, assets, meshes, data tables, …).
+Unreal 5.9 ships its own AI toolsets (Blueprints, materials, actors, assets, meshes, data tables, …).
 VibeUE **complements** them — it focuses on the domains and depth the engine doesn't cover:
 
 - **Terrain & world** — Landscape sculpting/heightmaps/splines, landscape auto-materials + RVT,
@@ -92,7 +92,7 @@ Pair with the `profiling` and `frame-rate` skills for the full CPU/GPU drill-dow
 
 ## 🏗️ Architecture
 
-VibeUE plugs into three native UE 5.8+ systems:
+VibeUE plugs into three native UE 5.9+ systems:
 
 1. **Toolsets** (`ToolsetRegistry`) — VibeUE's services register as `UToolsetDefinition`s, so their
    methods become AICallable tools on the MCP endpoint. They're also `BlueprintCallable`, so the same
@@ -112,7 +112,7 @@ multi-step task into one round-trip and reaches every VibeUE service plus the fu
 
 ## 🚀 Installation & setup
 
-**Requirements:** Unreal Engine **5.8+** · Git
+**Requirements:** Unreal Engine **5.9+** · Git
 
 ### Step 1 — Set up Unreal's native MCP (do this FIRST)
 

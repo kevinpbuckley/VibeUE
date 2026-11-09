@@ -65,9 +65,9 @@ if not "%~1"=="" (
 REM Search for Unreal Engine installation using registry (standard method)
 echo Searching for Unreal Engine installation...
 
-REM Supported engine versions, newest first (VibeUE currently targets 5.8;
+REM Supported engine versions, newest first (VibeUE currently targets 5.9;
 REM older versions are kept as fallback for branches/forks still on them).
-set "UE_VERSIONS=5.8 5.7 5.6 5.5 5.4 5.3"
+set "UE_VERSIONS=5.9 5.8 5.7 5.6 5.5 5.4 5.3"
 
 echo Checking common Unreal Engine installation paths...
 for %%V in (%UE_VERSIONS%) do (
@@ -117,7 +117,7 @@ echo.
 
 :manual_ue_prompt
 set "UE_PATH_INPUT="
-set /p "UE_PATH_INPUT=Enter the full path to your Unreal Engine install (e.g. D:\Program Files\Epic Games\UE_5.8), or press Enter to abort: "
+set /p "UE_PATH_INPUT=Enter the full path to your Unreal Engine install (e.g. D:\Program Files\Epic Games\UE_5.9), or press Enter to abort: "
 if "%UE_PATH_INPUT%"=="" goto :ue_not_found
 if exist "%UE_PATH_INPUT%\Engine\Build\BatchFiles\RunUAT.bat" (
     set "UE_PATH=%UE_PATH_INPUT%"
