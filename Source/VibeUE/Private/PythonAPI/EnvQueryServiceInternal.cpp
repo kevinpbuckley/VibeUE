@@ -420,7 +420,7 @@ namespace VibeEQS
 	}
 
 	FString OpenWriteGuard(const FString& AssetPath, UEnvQuery*& OutQuery,
-		UEnvironmentQueryGraph*& OutGraph)
+		UEnvironmentQueryGraph*& OutGraph, bool bInitializeGraph)
 	{
 		OutQuery = nullptr;
 		OutGraph = nullptr;
@@ -490,10 +490,18 @@ namespace VibeEQS
 			}
 		}
 
-		const FString GraphError = EnsureGraph(Query);
-		if (!GraphError.IsEmpty())
+		if (bInitializeGraph)
 		{
-			return GraphError;
+			const FString GraphError = EnsureGraph(Query);
+			if (!GraphError.IsEmpty())
+			{
+				return GraphError;
+			}
+		}
+		else if (GEQSPoisonedQueries.Contains(FObjectKey(Query)))
+		{
+			// Keep the poisoned-query refusal without EnsureGraph's rebuild/Modify side effects.
+			return PoisonRefusal(Query);
 		}
 
 		UEnvironmentQueryGraph* Graph = Cast<UEnvironmentQueryGraph>(Query->EdGraph);

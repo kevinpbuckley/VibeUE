@@ -45,6 +45,7 @@ Also provides (agent helpers for PIE, async tools, and asset GC):
 - mapping_context_priority() / canvas_slot() / set_canvas_slot() — small API-trap wrappers.
 """
 
+import asyncio
 import contextlib
 import inspect
 import json
@@ -364,12 +365,39 @@ def pie_worlds():
 _PENDING = {}
 
 
+async def exec_tool_await(toolset_name, tool_name, args=None, unwrap=True):
+    """Call a ToolsetRegistry tool from a script that uses top-level await, and wait for its result.
+
+    The editor ticks while this waits, so a genuinely-async tool (e.g.
+    EditorAppToolset.CaptureAssetImage) finishes here, in one execute_python_code call:
+
+        import vibeue
+        image = await vibeue.exec_tool_await("EditorToolset.EditorAppToolset", "CaptureAssetImage", {...})
+
+    Args are schema-filled and the result decoded exactly like exec_tool(). Raises RuntimeError on a
+    tool error.
+    """
+    args = dict(args or {})
+    tool_schema = _find_tool_schema(get_toolset_schema(toolset_name), tool_name)
+    if tool_schema is not None:
+        _fill_args_from_schema(tool_schema, args)
+    res = unreal.ToolsetRegistry.execute_tool(toolset_name, tool_name, json.dumps(args))
+    while not res.is_complete and not res.error:
+        await asyncio.sleep(0)
+    if res.error:
+        raise RuntimeError("{}::{} failed: {}".format(toolset_name, tool_name, res.error))
+    out = _decode_stable(res.get_value_as_json_string())
+    if unwrap and isinstance(out, dict) and "returnValue" in out:
+        return _decode_stable(out["returnValue"])
+    return out
+
+
 def exec_tool_async(toolset_name, tool_name, args=None, key=None):
     """Fire a genuinely-async ToolsetRegistry tool and stash its pending result for a later collect.
 
-    Some engine tools (e.g. EditorAppToolset.CaptureAssetImage) never reach is_complete inside one
-    execute_python_code call — the editor does not tick mid-script. Fire on one call with this, then
-    collect_tool_result(key) on the NEXT call. Args are schema-filled exactly like exec_tool(). The
+    Some engine tools (e.g. EditorAppToolset.CaptureAssetImage) never reach is_complete inside a
+    script without an await — the editor does not tick mid-script. Fire on one call with this, then
+    collect_tool_result(key) on the NEXT call, or await exec_tool_await() in one call instead. Args are schema-filled exactly like exec_tool(). The
     raw result object is stored in the module-level _PENDING dict (which persists across calls) under
     `key`, defaulting to "<toolset>.<tool>". Returns the key.
     """

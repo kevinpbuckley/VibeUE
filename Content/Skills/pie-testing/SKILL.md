@@ -368,7 +368,8 @@ print(unreal.InputService.inject_key("SpaceBar"))
 ```
 
 A Python call blocks the game thread, so PIE does not tick while it runs: inject in one call and
-read the game state in a LATER call, two or more frames on. While a hold is active the editor stays
+read the game state in a LATER call, two or more frames on, or in the same call after a top-level
+`await asyncio.sleep(...)`, which lets the editor tick. While a hold is active the editor stays
 off its background frame rate, so an unfocused editor does not starve the hold. The action calls
 take `pie_instance` to pick a PIE world: -1, the default, is the first PIE world with a local player
 (the lowest instance number — the listen server's window, or client 1 under a dedicated server), and

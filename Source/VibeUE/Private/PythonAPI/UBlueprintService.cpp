@@ -5,6 +5,7 @@
 #include "Engine/CollisionProfile.h"     // Custom collision channel names (set_collision_settings)
 #include "PythonAPI/BlueprintClassResolve.h" // Short-name ambiguity policy (VibeBlueprintClassResolve)
 #include "Engine/Blueprint.h"
+#include "EdGraph/EdGraph.h"
 #include "Engine/BlueprintGeneratedClass.h"
 #include "Engine/Level.h"                // Level Blueprint resolution (LoadBlueprint on a map path)
 #include "Engine/LevelScriptBlueprint.h"
@@ -439,6 +440,18 @@ namespace
 		if (ClassName.IsEmpty())
 		{
 			return nullptr;
+		}
+
+		// Fully qualified paths identify an exact loaded class, including
+		// BlueprintGeneratedClass subclasses and classes in transient fixtures.
+		// The short-name ExactClass search below intentionally matches UClass
+		// itself; it must not turn a loaded generated-class path into an asset load.
+		if (ClassName.StartsWith(TEXT("/")))
+		{
+			if (UClass* ExactClass = FindObject<UClass>(nullptr, *ClassName))
+			{
+				return ExactClass;
+			}
 		}
 
 		// discover_nodes historically emitted skeleton-class names (SKEL_<BP>_C) for Blueprint
@@ -1278,22 +1291,23 @@ TArray<FBlueprintGraphInfo> UBlueprintService::ListGraphs(const FString& Bluepri
 		return Graphs;
 	}
 
-	// Emit one FBlueprintGraphInfo per graph in a given collection
-	auto AppendGraphs = [&Graphs](const TArray<UEdGraph*>& Source, const TCHAR* Kind)
+	TSet<UEdGraph*> Seen;
+	const auto AppendGraph = [&Graphs, &Seen](UEdGraph* Graph, const TCHAR* Kind)
+	{
+		if (!Graph || Seen.Contains(Graph)) { return; }
+		Seen.Add(Graph);
+		FBlueprintGraphInfo Info;
+		Info.GraphName = Graph->GetName();
+		Info.GraphKind = Kind;
+		Info.NodeCount = Graph->Nodes.Num();
+		Info.GraphPath = Graph->GetPathName();
+		Graphs.Add(MoveTemp(Info));
+	};
+	const auto AppendGraphs = [&AppendGraph](const TArray<UEdGraph*>& Source, const TCHAR* Kind)
 	{
 		for (UEdGraph* Graph : Source)
 		{
-			if (!Graph)
-			{
-				continue;
-			}
-
-			FBlueprintGraphInfo Info;
-			Info.GraphName = Graph->GetName();
-			Info.GraphKind = Kind;
-			Info.NodeCount = Graph->Nodes.Num();
-			Info.GraphPath = Graph->GetPathName();
-			Graphs.Add(MoveTemp(Info));
+			AppendGraph(Graph, Kind);
 		}
 	};
 
@@ -1313,19 +1327,28 @@ TArray<FBlueprintGraphInfo> UBlueprintService::ListGraphs(const FString& Bluepri
 	for (const FBPInterfaceDescription& Intf : Blueprint->ImplementedInterfaces)
 	{
 		const FString IntfName = Intf.Interface ? Intf.Interface->GetName() : TEXT("Unknown");
+		const FString IntfKind = FString::Printf(TEXT("Interface (%s)"), *IntfName);
 		for (UEdGraph* Graph : Intf.Graphs)
 		{
-			if (!Graph)
-			{
-				continue;
-			}
-			FBlueprintGraphInfo Info;
-			Info.GraphName = Graph->GetName();
-			Info.GraphKind = FString::Printf(TEXT("Interface (%s)"), *IntfName);
-			Info.NodeCount = Graph->Nodes.Num();
-			Info.GraphPath = Graph->GetPathName();
-			Graphs.Add(MoveTemp(Info));
+			AppendGraph(Graph, *IntfKind);
 		}
+	}
+
+	// Match FindGraph's search universe. Nested graphs and Blueprint extensions are also
+	// discoverable by explicit name and must not disappear from a complete graph inventory.
+	TArray<UEdGraph*> AllGraphs;
+	Blueprint->GetAllGraphs(AllGraphs);
+	TSet<UEdGraph*> ChildGraphs;
+	for (UEdGraph* Graph : AllGraphs)
+	{
+		if (!Graph) { continue; }
+		TArray<UEdGraph*> Children;
+		Graph->GetAllChildrenGraphs(Children);
+		for (UEdGraph* Child : Children) { ChildGraphs.Add(Child); }
+	}
+	for (UEdGraph* Graph : AllGraphs)
+	{
+		AppendGraph(Graph, ChildGraphs.Contains(Graph) ? TEXT("Subgraph") : TEXT("Other"));
 	}
 
 	return Graphs;
@@ -2891,7 +2914,9 @@ bool UBlueprintService::GetVariableInfo(
 
 			// Property flags
 			OutInfo.bIsInstanceEditable = (VarDesc.PropertyFlags & CPF_DisableEditOnInstance) == 0;
-			OutInfo.bIsExposeOnSpawn = (VarDesc.PropertyFlags & CPF_ExposeOnSpawn) != 0;
+			// BlueprintEditorLibrary authors metadata; compilation adds the flag to the generated property.
+			OutInfo.bIsExposeOnSpawn = VarDesc.HasMetaData(FBlueprintMetadata::MD_ExposeOnSpawn)
+				|| (VarDesc.PropertyFlags & CPF_ExposeOnSpawn) != 0;
 			OutInfo.bIsPrivate = VarDesc.HasMetaData(FBlueprintMetadata::MD_Private) && VarDesc.GetMetaData(FBlueprintMetadata::MD_Private).Equals(TEXT("true"), ESearchCase::IgnoreCase);
 			OutInfo.bIsBlueprintReadOnly = (VarDesc.PropertyFlags & CPF_BlueprintReadOnly) != 0;
 			OutInfo.bIsExposeToCinematics = (VarDesc.PropertyFlags & CPF_Interp) != 0;
@@ -3405,12 +3430,11 @@ bool UBlueprintService::AddFunctionParameter(
 
 		if (ResultNodes.Num() == 0)
 		{
-			// Create result node if it doesn't exist
-			UK2Node_FunctionResult* ResultNode = NewObject<UK2Node_FunctionResult>(FunctionGraph);
-			FunctionGraph->AddNode(ResultNode, false, false);
-			ResultNode->CreateNewGuid();
-			ResultNode->PostPlacedNewNode();
-			ResultNode->AllocateDefaultPins();
+			// PostPlacedNewNode can already allocate pins while syncing the entry.
+			// The canonical creator allocates only when that hook left no pins.
+			FGraphNodeCreator<UK2Node_FunctionResult> Creator(*FunctionGraph);
+			UK2Node_FunctionResult* ResultNode = Creator.CreateNode(false);
+			Creator.Finalize();
 			ResultNodes.Add(ResultNode);
 		}
 
@@ -3502,6 +3526,8 @@ bool UBlueprintService::AddFunctionLocalVariable(
 	LocalVar.VarName = FName(*VariableName);
 	LocalVar.VarGuid = FGuid::NewGuid();
 	LocalVar.VarType = PinType;
+	// Match FBlueprintEditorUtils::AddLocalVariable: graph locals must be writable by Blueprint nodes.
+	LocalVar.PropertyFlags |= CPF_BlueprintVisible;
 	LocalVar.FriendlyName = VariableName;
 	LocalVar.DefaultValue = DefaultValue;
 	LocalVar.Category = FText::FromString(TEXT("Local Variables"));
@@ -5696,7 +5722,7 @@ TArray<FBlueprintNodeInfo> UBlueprintService::GetNodesInGraph(
 					PinInfo.PinType = Pin->PinType.PinCategory.ToString();
 					PinInfo.bIsInput = (Pin->Direction == EGPD_Input);
 					PinInfo.bIsConnected = Pin->LinkedTo.Num() > 0;
-					PinInfo.DefaultValue = Pin->DefaultValue;
+					PinInfo.DefaultValue = Pin->GetDefaultAsString();
 					PinInfo.DefaultObject = GetPinDefaultObjectPath(Pin);
 					NodeInfo.Pins.Add(PinInfo);
 				}
@@ -5820,7 +5846,7 @@ namespace
 			PinInfo.PinType = Pin->PinType.PinCategory.ToString();
 			PinInfo.bIsInput = (Pin->Direction == EGPD_Input);
 			PinInfo.bIsConnected = Pin->LinkedTo.Num() > 0;
-			PinInfo.DefaultValue = Pin->DefaultValue;
+			PinInfo.DefaultValue = Pin->GetDefaultAsString();
 			PinInfo.DefaultObject = GetPinDefaultObjectPath(Pin);
 			NodeInfo.Pins.Add(PinInfo);
 		}
@@ -6513,7 +6539,7 @@ TArray<FBlueprintPinInfo> UBlueprintService::GetNodePins(
 		PinInfo.PinType = Pin->PinType.PinCategory.ToString();
 		PinInfo.bIsInput = (Pin->Direction == EGPD_Input);
 		PinInfo.bIsConnected = Pin->LinkedTo.Num() > 0;
-		PinInfo.DefaultValue = Pin->DefaultValue;
+		PinInfo.DefaultValue = Pin->GetDefaultAsString();
 		PinInfo.DefaultObject = GetPinDefaultObjectPath(Pin);
 
 		PinInfos.Add(PinInfo);
@@ -7422,6 +7448,8 @@ bool UBlueprintService::GetNodeDetails(
 	const FString& NodeId,
 	FBlueprintNodeDetailedInfo& OutInfo)
 {
+	// Callers may reuse the output; replace the prior snapshot rather than append pins.
+	OutInfo = FBlueprintNodeDetailedInfo{};
 	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
 	if (!Blueprint)
 	{
@@ -7525,7 +7553,7 @@ bool UBlueprintService::GetNodeDetails(
 		PinInfo.bIsHidden = Pin->bHidden;
 		PinInfo.bIsArray = Pin->PinType.ContainerType == EPinContainerType::Array;
 		PinInfo.bIsReference = Pin->PinType.bIsReference;
-		PinInfo.DefaultValue = Pin->DefaultValue;
+		PinInfo.DefaultValue = Pin->GetDefaultAsString();
 		PinInfo.Tooltip = Pin->PinToolTip;
 
 		// Check if can split
@@ -7630,6 +7658,31 @@ bool UBlueprintService::SetNodePinValue(
 	// string path below.
 	const UEdGraphSchema* Schema = Graph->GetSchema();
 	const FName PinCategory = Pin->PinType.PinCategory;
+
+	// ApplyPinDefault cannot clear a reference pin ("None" or empty fails to load).
+	const bool bReferencePin = PinCategory == UEdGraphSchema_K2::PC_Class || PinCategory == UEdGraphSchema_K2::PC_SoftClass
+		|| PinCategory == UEdGraphSchema_K2::PC_Object || PinCategory == UEdGraphSchema_K2::PC_SoftObject;
+	if (bReferencePin && (Value.IsEmpty() || Value.Equals(TEXT("None"), ESearchCase::IgnoreCase)))
+	{
+		if (!Schema)
+		{
+			UE_LOG(LogTemp, Error, TEXT("SetNodePinValue: Cannot clear reference pin '%s' without a schema"), *PinName);
+			return false;
+		}
+		const FName ActualPinName = Pin->PinName;
+		Schema->TrySetDefaultObject(*Pin, nullptr);
+		// A class change can reconstruct the node's pins; never read the old pin pointer.
+		Node = FindNodeById(Graph, NodeId);
+		Pin = Node ? Node->FindPin(ActualPinName, EGPD_Input) : nullptr;
+		if (!Pin || Pin->DefaultObject || !Pin->GetDefaultAsString().IsEmpty())
+		{
+			UE_LOG(LogTemp, Error, TEXT("SetNodePinValue: Schema did not clear reference pin '%s' on node '%s'"), *PinName, *NodeId);
+			return false;
+		}
+		FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+		UE_LOG(LogTemp, Log, TEXT("SetNodePinValue: Cleared reference pin '%s' on node '%s'"), *PinName, *NodeId);
+		return true;
+	}
 
 	{
 		FString PinDefaultError;
@@ -8212,8 +8265,9 @@ FString UBlueprintService::CreateNodeByKey(
 		NewNode = NewObject<UEdGraphNode>(Graph, NodeClass);
 		Graph->AddNode(NewNode, false, false);
 		NewNode->CreateNewGuid();
-		NewNode->PostPlacedNewNode();
 		NewNode->AllocateDefaultPins();
+		// Match UBlueprintNodeSpawner: placement callbacks may require allocated pins.
+		NewNode->PostPlacedNewNode();
 		NewNode->NodePosX = PosX;
 		NewNode->NodePosY = PosY;
 	}
@@ -10078,8 +10132,9 @@ UEdGraphNode* UBlueprintService::CreateNodeFromDesc(
 			NewNode->NodePosY = PosY;
 			Graph->AddNode(NewNode, false, false);
 			NewNode->CreateNewGuid();
-			NewNode->PostPlacedNewNode();
 			NewNode->AllocateDefaultPins();
+			// Match UBlueprintNodeSpawner: placement callbacks may require allocated pins.
+			NewNode->PostPlacedNewNode();
 			return NewNode;
 		}
 		else if (KeyType.Equals(TEXT("STRUCT"), ESearchCase::IgnoreCase))
@@ -12473,9 +12528,14 @@ bool UBlueprintService::AddInterface(
 
 	// Resolve interface class - try multiple strategies
 	UClass* InterfaceClass = nullptr;
+	// Native interfaces (/Script/...) are classes, not Blueprint assets; load them directly.
+	if (InterfacePath.StartsWith(TEXT("/Script/")))
+	{
+		InterfaceClass = LoadClass<UInterface>(nullptr, *InterfacePath);
+	}
 
 	// Strategy 1: Try loading as a Blueprint asset path
-	UBlueprint* InterfaceBP = Cast<UBlueprint>(StaticLoadObject(UBlueprint::StaticClass(), nullptr, *InterfacePath));
+	UBlueprint* InterfaceBP = InterfaceClass ? nullptr : Cast<UBlueprint>(StaticLoadObject(UBlueprint::StaticClass(), nullptr, *InterfacePath));
 	if (InterfaceBP)
 	{
 		InterfaceClass = InterfaceBP->GeneratedClass;

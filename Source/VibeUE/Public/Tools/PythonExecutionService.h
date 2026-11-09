@@ -37,12 +37,52 @@ public:
 	 * @param Code Python code to execute
 	 * @param ExecutionScope Private (isolated) or Public (shared console state)
 	 * @param TimeoutMs Maximum execution time in milliseconds (0 = no timeout)
+	 * @param bFreshNamespace Run in a new namespace instead of the globals every call shares
 	 * @return Execution result with output, errors, and timing
 	 */
 	TResult<FPythonExecutionResult> ExecuteCode(
 		const FString& Code,
 		EPythonFileExecutionScope ExecutionScope = EPythonFileExecutionScope::Private,
-		int32 TimeoutMs = 30000
+		int32 TimeoutMs = 30000,
+		bool bFreshNamespace = false
+	);
+
+	/**
+	 * Run one Python command under the crash guard. After a caught crash, probes whether the interpreter
+	 * survived and says so in CrashMessage.
+	 *
+	 * @param Command The command to run; holds its output and result afterwards
+	 * @param ExecutionTimeMs How long the command took, not counting the probe
+	 * @param bCrashed Set when the guard caught a crash
+	 * @param CrashMessage What crashed, when bCrashed is set
+	 * @return What the Python plugin returned for the command
+	 */
+	bool RunGuardedCommand(FPythonCommandEx& Command, double& ExecutionTimeMs, bool& bCrashed, FString& CrashMessage);
+
+	/**
+	 * Turn what a finished script did into its result, and persist that. Persisted on the error paths too,
+	 * because the code has already run in the editor even when the caller has since timed out.
+	 *
+	 * @param Command The script's output and result: one command's, or several steps' put together
+	 * @param bSuccess What the Python plugin returned
+	 * @param bCrashed Whether the crash guard caught a crash
+	 * @param CrashMessage What crashed
+	 * @param ExecutionTimeMs How long the script took
+	 * @param RunId The run's id, from FVibeUEPythonResultLog::NextRunId
+	 * @param StartedUtc When the script started
+	 * @param TimeoutMs The client timeout to flag an overrun against (0 = none)
+	 * @param bCancelled Whether the script ended because it was cancelled
+	 */
+	TResult<FPythonExecutionResult> RecordRunOutcome(
+		const FPythonCommandEx& Command,
+		bool bSuccess,
+		bool bCrashed,
+		const FString& CrashMessage,
+		double ExecutionTimeMs,
+		int64 RunId,
+		const FDateTime& StartedUtc,
+		int32 TimeoutMs,
+		bool bCancelled
 	);
 
 	/**
@@ -112,6 +152,18 @@ public:
 	 * @return The command text for FPythonCommandEx::Command
 	 */
 	static FString MakeCodeCommand(const FString& Code);
+
+	/** As MakeCodeCommand, always base64-encoded and in a new namespace rather than the shared globals. */
+	static FString MakeFreshNamespaceCommand(const FString& Code);
+
+	/** Expression that evaluates to whether Code needs a top-level await run (Content/Python/vibeue_await.py). */
+	static FString MakeNeedsAwaitCommand(const FString& Code);
+
+	/** Statement that starts Code as an await run, in the shared globals unless bFreshNamespace. */
+	static FString MakeAwaitBeginCommand(int64 RunId, const FString& Code, bool bFreshNamespace);
+
+	/** Expression that calls Function (step, cancel, discard) on an await run. */
+	static FString MakeAwaitRunCommand(const TCHAR* Function, int64 RunId);
 
 private:
 	/**

@@ -103,11 +103,15 @@ bool FVibeEQSClassDiscoveryTest::RunTest(const FString&)
 #include "Engine/World.h"
 #include "EnvironmentQuery/EnvQuery.h"
 #include "EnvironmentQuery/EnvQueryOption.h"
+#include "EnvironmentQuery/Tests/EnvQueryTest_Distance.h"
 #include "EnvironmentQueryGraph.h"
 #include "EnvironmentQueryGraphNode_Option.h"
 #include "EnvironmentQueryGraphNode_Root.h"
 #include "UObject/Package.h"
 #include "UObject/UObjectGlobals.h"
+#include "UObject/StructOnScope.h"
+#include "Misc/FileHelper.h"
+#include "PackageTools.h"
 
 /**
  * Spawn an option node and link it to the graph root, mirroring what
@@ -3308,6 +3312,80 @@ bool FVibeEQSInputBoundsTest::RunTest(const FString&)
 
 	// The refusals above must not have disturbed the asset.
 	TestFalse(TEXT("query still readable"), UEnvQueryService::GetQuery(Path).StartsWith(TEXT("ERROR")));
+	return true;
+#endif
+}
+
+// Deferred property writes: import and verify in memory, commit with a later write.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeEQSDeferredPropertyTest,
+	"VibeUE.EQS.Properties.DeferredCommit", kEQSTestFlags)
+bool FVibeEQSDeferredPropertyTest::RunTest(const FString&)
+{
+#if !WITH_VIBEUE_EQS
+	AddError(TEXT("DeferredCommit requires EnvironmentQueryEditor"));
+	return false;
+#else
+	const FString Path = FString(kEQSTestDir) / TEXT("EQS_DeferredCommitTest");
+	FEQSScopedFixtureReset Reset(Path);
+	TestEqual(TEXT("created"), UEnvQueryService::CreateQuery(Path), FString());
+	TestEqual(TEXT("option added"), UEnvQueryService::AddOption(Path,
+		TEXT("EnvQueryGenerator_ActorsOfClass"), -1), FString(TEXT("Option[0]")));
+	const FString TestPath = UEnvQueryService::AddTest(Path, TEXT("Option[0]"),
+		TEXT("EnvQueryTest_Distance"), -1);
+	UEnvQuery* Query = LoadObject<UEnvQuery>(nullptr, *Path);
+	if (!TestNotNull(TEXT("query"), Query) || Query->GetOptions().Num() != 1
+		|| Query->GetOptions()[0]->Tests.Num() != 1)
+	{
+		return false;
+	}
+	UEnvQueryTest* Distance = Query->GetOptions()[0]->Tests[0];
+	Distance->TestOrder = 73; // Initialize/UpdateAsset resets this: detect even a no-save rebuild.
+	TestFalse(TEXT("fixture starts clean"), Query->GetPackage()->IsDirty());
+	TArray<uint8> Before, AfterDeferred, AfterCommit;
+	const FString Filename = VibeEQSTest::FixtureFilename(Path);
+	TestTrue(TEXT("saved baseline"), FFileHelper::LoadFileToArray(Before, *Filename));
+	const FString Context = TEXT("/Script/AIModule.EnvQueryContext_Item");
+
+	// Called through reflection so the row fails cleanly if bCommitAndSave is missing.
+	UFunction* Setter = UEnvQueryService::StaticClass()->FindFunctionByName(TEXT("SetPropertyValue"));
+	if (!TestNotNull(TEXT("setter"), Setter)) { return false; }
+	FStructOnScope Params(Setter);
+	for (const TPair<FName, FString>& Param : TArray<TPair<FName, FString>>{
+		{TEXT("AssetPath"), Path}, {TEXT("NodePath"), TestPath},
+		{TEXT("PropertyName"), TEXT("DistanceTo")}, {TEXT("Value"), Context}})
+	{
+		FStrProperty* Property = FindFProperty<FStrProperty>(Setter, Param.Key);
+		if (!TestNotNull(TEXT("string parameter"), Property)) { return false; }
+		Property->SetPropertyValue_InContainer(Params.GetStructMemory(), Param.Value);
+	}
+	FBoolProperty* Commit = FindFProperty<FBoolProperty>(Setter, TEXT("bCommitAndSave"));
+	TestNotNull(TEXT("deferred argument is exposed"), Commit);
+	if (Commit) { Commit->SetPropertyValue_InContainer(Params.GetStructMemory(), false); }
+	GetMutableDefault<UEnvQueryService>()->ProcessEvent(Setter, Params.GetStructMemory());
+	const FStructProperty* Return = FindFProperty<FStructProperty>(Setter, TEXT("ReturnValue"));
+	if (!TestNotNull(TEXT("setter result"), Return)) { return false; }
+	const FEQSPropertySetResult& Deferred = *Return->ContainerPtrToValuePtr<FEQSPropertySetResult>(Params.GetStructMemory());
+	TestTrue(FString::Printf(TEXT("deferred import: %s"), *Deferred.Error), Deferred.bSuccess);
+	TestTrue(TEXT("deferred readback is the native class"), Deferred.ValueAfterWrite.Contains(Context));
+	TestEqual(TEXT("deferred result matches independent read"), Deferred.ValueAfterWrite,
+		UEnvQueryService::GetPropertyValue(Path, TestPath, TEXT("DistanceTo")));
+	TestFalse(TEXT("deferred import does not mark dirty"), Query->GetPackage()->IsDirty());
+	TestEqual(TEXT("deferred import does not rebuild"), Distance->TestOrder, 73);
+	TestTrue(TEXT("baseline still readable"), FFileHelper::LoadFileToArray(AfterDeferred, *Filename));
+	TestTrue(TEXT("deferred import writes no file bytes"), Before == AfterDeferred);
+
+	const FEQSPropertySetResult Default = UEnvQueryService::SetPropertyValue(Path, TestPath,
+		TEXT("DistanceTo"), Context); // Deliberately omit the optional argument.
+	TestTrue(FString::Printf(TEXT("default commit: %s"), *Default.Error), Default.bSuccess);
+	TestEqual(TEXT("default path rebuilds"), Distance->TestOrder, 0);
+	TestFalse(TEXT("default path saves clean"), Query->GetPackage()->IsDirty());
+	TestTrue(TEXT("committed file readable"), FFileHelper::LoadFileToArray(AfterCommit, *Filename));
+	TestTrue(TEXT("default path writes changed bytes"), Before != AfterCommit);
+	FText ReloadError;
+	TestTrue(TEXT("reload committed query"), UPackageTools::ReloadPackages({Query->GetPackage()},
+		ReloadError, EReloadPackagesInteractionMode::AssumePositive));
+	TestEqual(TEXT("native class survives reload"),
+		UEnvQueryService::GetPropertyValue(Path, TestPath, TEXT("DistanceTo")), Default.ValueAfterWrite);
 	return true;
 #endif
 }

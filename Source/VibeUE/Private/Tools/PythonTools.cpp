@@ -14,9 +14,15 @@
 #include "Engine/Level.h"          // ULevel::OwningWorld, for the sublevel filter in GetResidentMaps
 #include "Engine/LevelStreaming.h" // ULevelStreaming::GetLoadedLevel
 #include "FileHelpers.h" // FEditorFileUtils + UEditorLoadingAndSavingUtils (headless SavePackages)
+#include "Containers/Ticker.h"
+#include "Framework/Application/SlateApplication.h"
+#include "HAL/PlatformTime.h"
+#include "Misc/DateTime.h"
+#include "UObject/GarbageCollection.h"
 
 // Include service headers after PythonTypes
 #include "Tools/PythonExecutionService.h"
+#include "Settings/VibeUEEditorSettings.h"
 #include "Tools/PythonDiscoveryService.h"
 #include "Tools/PythonSchemaService.h"
 #include "WorldPartition/WorldPartition.h"
@@ -254,11 +260,7 @@ static TSharedPtr<FPythonDiscoveryService> DiscoveryServiceInstance;
 static TSharedPtr<FPythonSchemaService> SchemaServiceInstance;
 static TSharedPtr<FServiceContext> ServiceContextInstance;
 
-UPythonTools::UPythonTools()
-{
-}
-
-TSharedPtr<FPythonExecutionService> UPythonTools::GetExecutionService()
+static TSharedPtr<FPythonExecutionService> GetOrCreateExecutionService()
 {
 	if (!ExecutionServiceInstance.IsValid())
 	{
@@ -271,6 +273,73 @@ TSharedPtr<FPythonExecutionService> UPythonTools::GetExecutionService()
 		ExecutionServiceInstance->Initialize();
 	}
 	return ExecutionServiceInstance;
+}
+
+namespace
+{
+	/** What a run reports besides the script's own outcome. Filled before the script starts. */
+	struct FPythonRunContext
+	{
+		// Names of the packages written by the pre-execution auto-save sweep. Reported in the result JSON
+		// (saved_packages) so an agent can see, and pass on, exactly what was flushed to disk before the
+		// script ran. Empty when auto_save is false, when the sweep is skipped, or when nothing was dirty.
+		TArray<FString> SavedPackageNames;
+
+		// Whether the sweep actually ran, and why not when it did not. Reported verbatim in the result
+		// JSON: the caller already knows what it PASSED as auto_save, so echoing the argument back tells
+		// it nothing — what it cannot otherwise tell is whether its unsaved editor edits reached disk.
+		bool bAutoSaveRan = false;
+		FString AutoSaveNote;
+
+		TArray<FString> DirtyBeforeRun;
+	};
+
+	/** A script paused at a top-level await, which the core ticker advances once per frame (TickAwaitRuns). */
+	struct FPythonAwaitRun
+	{
+		FPythonRunContext Context;
+		int64 RunId = 0;
+		FString CancelKey;
+		FDateTime StartedUtc;
+		double StartSeconds = 0.0;
+		// Everything the script has printed so far, each step's output appended, so its end reads as one command's.
+		FPythonCommandEx Output;
+		TFunction<void(const FString&)> OnDone;
+		bool bCancelRequested = false;
+		bool bCancelSent = false;
+	};
+
+	constexpr int32 MaxAwaitRuns = 8;
+	TArray<TUniquePtr<FPythonAwaitRun>> GAwaitRuns; // Game thread only
+	FTSTicker::FDelegateHandle GAwaitTickerHandle;
+	bool bSteppingAwaitRuns = false;
+	int32 GSyncPythonRunDepth = 0;
+}
+
+static FString SerializeReply(const TSharedPtr<FJsonObject>& Obj)
+{
+	FString JsonString;
+	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
+	FJsonSerializer::Serialize(Obj.ToSharedRef(), Writer);
+	return JsonString;
+}
+
+// Attach the auto-save report to a JSON reply, so every reply (success or error) carries auto_save +
+// saved_packages.
+static void AddSaveInfo(const FPythonRunContext& Run, const TSharedPtr<FJsonObject>& Obj)
+{
+	Obj->SetBoolField(TEXT("auto_save"), Run.bAutoSaveRan);
+	Obj->SetStringField(TEXT("auto_save_note"), Run.AutoSaveNote);
+	SetStringArrayField(Obj, TEXT("saved_packages"), Run.SavedPackageNames);
+}
+
+UPythonTools::UPythonTools()
+{
+}
+
+TSharedPtr<FPythonExecutionService> UPythonTools::GetExecutionService()
+{
+	return GetOrCreateExecutionService();
 }
 
 TSharedPtr<FPythonDiscoveryService> UPythonTools::GetDiscoveryService()
@@ -317,7 +386,9 @@ void UPythonTools::Shutdown()
 	UE_LOG(LogPythonTools, Log, TEXT("UPythonTools::Shutdown - All service instances released"));
 }
 
-FString UPythonTools::ExecutePythonCode(const FString& Code, bool bAutoSave)
+// The sweep and the snapshot before a script, shared by both ways of running one. False means the
+// script must not run, and OutEarlyReply is the reply.
+static bool BeginPythonRun(const FString& Code, bool bAutoSave, FPythonRunContext& Run, FString& OutEarlyReply)
 {
 	// Efficient engine readiness check - once ready, never check again
 	static bool bEngineReady = false;
@@ -326,7 +397,8 @@ FString UPythonTools::ExecutePythonCode(const FString& Code, bool bAutoSave)
 		// Check engine, editor, and that we're past initial load phase
 		if (!GEngine || !GEditor || GIsInitialLoad)
 		{
-			return TEXT("Unreal Engine Loading");
+			OutEarlyReply = TEXT("Unreal Engine Loading");
+			return false;
 		}
 		bEngineReady = true;
 	}
@@ -345,42 +417,39 @@ FString UPythonTools::ExecutePythonCode(const FString& Code, bool bAutoSave)
 			// Nothing ran, so nothing was dirtied or cleaned; the keys are still present.
 			SetStringArrayField(ErrorObj, TEXT("dirtied_packages"), TArray<FString>());
 			SetStringArrayField(ErrorObj, TEXT("cleaned_packages"), TArray<FString>());
-			FString JsonString;
-			TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
-			FJsonSerializer::Serialize(ErrorObj.ToSharedRef(), Writer);
-			return JsonString;
+			OutEarlyReply = SerializeReply(ErrorObj);
+			return false;
 		}
 	}
 
-	// Names of the packages written by the pre-execution auto-save sweep. Reported in the result JSON
-	// (saved_packages) so an agent can see, and pass on, exactly what was flushed to disk before the
-	// script ran. Empty when auto_save is false, when the sweep is skipped, or when nothing was dirty.
-	TArray<FString> SavedPackageNames;
-
-	// Whether the sweep actually ran, and why not when it did not. Reported verbatim in the result
-	// JSON: the caller already knows what it PASSED as auto_save, so echoing the argument back tells
-	// it nothing — what it cannot otherwise tell is whether its unsaved editor edits reached disk.
-	bool bAutoSaveRan = false;
-	FString AutoSaveNote;
-
 	// Auto-save all dirty packages (headless) before executing Python code, unless the caller opted
 	// out (auto_save=false), the previous run crashed (dirty assets may be corrupt), GEditor is
-	// missing, or we're in PIE.
+	// missing, we're in PIE, or a script is paused at an await (its edits are half done).
 	if (!bAutoSave)
 	{
-		AutoSaveNote = TEXT("opted_out");
+		Run.AutoSaveNote = TEXT("opted_out");
 		UE_LOG(LogPythonTools, Verbose, TEXT("Auto-save skipped: auto_save=false — running the script without flushing dirty packages"));
+	}
+	else if (GetDefault<UVibeUEEditorSettings>()->bDisablePythonAutoSave)
+	{
+		Run.AutoSaveNote = TEXT("disabled_by_setting");
+		UE_LOG(LogPythonTools, Verbose, TEXT("Auto-save skipped: disabled in Editor Preferences > Plugins > VibeUE"));
 	}
 	else
 	{
 		if (bLastPythonExecutionCrashed)
 		{
-			AutoSaveNote = TEXT("previous_run_crashed");
+			Run.AutoSaveNote = TEXT("previous_run_crashed");
 			UE_LOG(LogPythonTools, Warning, TEXT("Skipping auto-save: previous Python execution crashed — dirty assets may be corrupt"));
+		}
+		else if (GAwaitRuns.Num() > 0)
+		{
+			Run.AutoSaveNote = TEXT("await_run_in_progress");
+			UE_LOG(LogPythonTools, Verbose, TEXT("Skipping auto-save: %d script(s) paused at an await"), GAwaitRuns.Num());
 		}
 		else if (!GEditor)
 		{
-			AutoSaveNote = TEXT("editor_unavailable");
+			Run.AutoSaveNote = TEXT("editor_unavailable");
 			UE_LOG(LogPythonTools, Warning, TEXT("Cannot auto-save: GEditor is not available"));
 		}
 		// GIsPlayInEditorWorld alone is not enough: the engine sets it only while the PIE world itself
@@ -389,7 +458,7 @@ FString UPythonTools::ExecutePythonCode(const FString& Code, bool bAutoSave)
 		// Same test as the engine's EditorScriptingHelpers::CheckIfInEditorAndPIE.
 		else if (GEditor->PlayWorld || GIsPlayInEditorWorld)
 		{
-			AutoSaveNote = TEXT("pie_active");
+			Run.AutoSaveNote = TEXT("pie_active");
 			UE_LOG(LogPythonTools, Warning, TEXT("Cannot auto-save: Currently in PIE mode"));
 		}
 		else
@@ -408,7 +477,7 @@ FString UPythonTools::ExecutePythonCode(const FString& Code, bool bAutoSave)
 
 			// The sweep reached the point of inspecting the editor's dirty set — that is what
 			// "it ran" means, whether or not anything was dirty.
-			bAutoSaveRan = true;
+			Run.bAutoSaveRan = true;
 
 			if (DirtyPackages.Num() == 0)
 			{
@@ -421,7 +490,7 @@ FString UPythonTools::ExecutePythonCode(const FString& Code, bool bAutoSave)
 				{
 					if (DirtyPackage)
 					{
-						SavedPackageNames.Add(DirtyPackage->GetName());
+						Run.SavedPackageNames.Add(DirtyPackage->GetName());
 					}
 				}
 
@@ -434,87 +503,64 @@ FString UPythonTools::ExecutePythonCode(const FString& Code, bool bAutoSave)
 				{
 					// Some or all of the targeted packages did not reach disk. Say so rather than
 					// letting SavedPackages imply a clean flush.
-					bAutoSaveRan = false;
-					AutoSaveNote = TEXT("save_failed");
+					Run.bAutoSaveRan = false;
+					Run.AutoSaveNote = TEXT("save_failed");
 					UE_LOG(LogPythonTools, Warning, TEXT("Auto-save (headless) completed with warnings or errors"));
 				}
 			}
 		}
 	}
 
-	// Attach the auto-save report to any JSON result object returned below, so every reply (success
-	// or error) carries auto_save + saved_packages.
-	auto AddSaveInfo = [&bAutoSaveRan, &AutoSaveNote, &SavedPackageNames](const TSharedPtr<FJsonObject>& Obj)
-	{
-		Obj->SetBoolField(TEXT("auto_save"), bAutoSaveRan);
-		Obj->SetStringField(TEXT("auto_save_note"), AutoSaveNote);
-		TArray<TSharedPtr<FJsonValue>> SavedArray;
-		for (const FString& Name : SavedPackageNames)
-		{
-			SavedArray.Add(MakeShared<FJsonValueString>(Name));
-		}
-		Obj->SetArrayField(TEXT("saved_packages"), SavedArray);
-	};
-
-	// What the script itself dirtied and cleaned (filled once it has run). Attached to every JSON
-	// reply below, empty when the script never ran, so callers can rely on both keys.
-	TArray<FString> DirtiedPackageNames;
-	TArray<FString> CleanedPackageNames;
-	auto AddDirtyInfo = [&DirtiedPackageNames, &CleanedPackageNames](const TSharedPtr<FJsonObject>& Obj)
-	{
-		SetStringArrayField(Obj, TEXT("dirtied_packages"), DirtiedPackageNames);
-		SetStringArrayField(Obj, TEXT("cleaned_packages"), CleanedPackageNames);
-	};
-
-	auto Service = GetExecutionService();
-	if (!Service.IsValid() || !Service.Get())
+	auto RefuseWith = [&Run, &OutEarlyReply](const TCHAR* ErrorCode, const TCHAR* Message)
 	{
 		TSharedPtr<FJsonObject> ErrorObj = MakeShared<FJsonObject>();
 		ErrorObj->SetBoolField(TEXT("success"), false);
-		ErrorObj->SetStringField(TEXT("error_code"), TEXT("PYTHON_SERVICE_UNAVAILABLE"));
-		ErrorObj->SetStringField(TEXT("error_message"), TEXT("Python execution service is not available"));
-		AddSaveInfo(ErrorObj);
-		AddDirtyInfo(ErrorObj);
-		FString JsonString;
-		TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
-		FJsonSerializer::Serialize(ErrorObj.ToSharedRef(), Writer);
-		return JsonString;
+		ErrorObj->SetStringField(TEXT("error_code"), ErrorCode);
+		ErrorObj->SetStringField(TEXT("error_message"), Message);
+		AddSaveInfo(Run, ErrorObj);
+		SetStringArrayField(ErrorObj, TEXT("dirtied_packages"), TArray<FString>());
+		SetStringArrayField(ErrorObj, TEXT("cleaned_packages"), TArray<FString>());
+		OutEarlyReply = SerializeReply(ErrorObj);
+		return false;
+	};
+
+	TSharedPtr<FPythonExecutionService> Service = GetOrCreateExecutionService();
+	if (!Service.IsValid() || !Service.Get())
+	{
+		return RefuseWith(TEXT("PYTHON_SERVICE_UNAVAILABLE"), TEXT("Python execution service is not available"));
 	}
 
 	// Extra safety: verify service context is valid
 	if (!ServiceContextInstance.IsValid())
 	{
-		TSharedPtr<FJsonObject> ErrorObj = MakeShared<FJsonObject>();
-		ErrorObj->SetBoolField(TEXT("success"), false);
-		ErrorObj->SetStringField(TEXT("error_code"), TEXT("SERVICE_CONTEXT_INVALID"));
-		ErrorObj->SetStringField(TEXT("error_message"), TEXT("Service context is not properly initialized"));
-		AddSaveInfo(ErrorObj);
-		AddDirtyInfo(ErrorObj);
-		FString JsonString;
-		TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
-		FJsonSerializer::Serialize(ErrorObj.ToSharedRef(), Writer);
-		return JsonString;
+		return RefuseWith(TEXT("SERVICE_CONTEXT_INVALID"), TEXT("Service context is not properly initialized"));
 	}
 
 	// Snapshot the dirty set immediately around the script. The auto-save sweep above has already
 	// run, so its saves are not attributed to the script, and dirt that predates this call never shows
 	// up as "dirtied". Taken on the error path too: a script that raised half-way through an edit is
 	// exactly the one whose stray dirt a later auto_save=true call would otherwise flush to disk.
-	const TArray<FString> DirtyBeforeRun = GetDirtyPackages(/*bIncludeMaps=*/true);
+	Run.DirtyBeforeRun = UPythonTools::GetDirtyPackages(/*bIncludeMaps=*/true);
+	return true;
+}
 
-	auto Result = Service->ExecuteCode(Code);
+// The reply for a script that has ended, with what it left behind.
+static FString FinishPythonRun(const FPythonRunContext& Run, const TResult<FPythonExecutionResult>& Result)
+{
+	TArray<FString> DirtiedPackageNames;
+	TArray<FString> CleanedPackageNames;
 
 	// After an SEH-caught crash the editor may hold half-torn objects, and the after-snapshot walks every
 	// UPackage outside the crash guard - so skip it and report empty lists rather than risk a second crash.
 	if (!(Result.IsError() && Result.GetErrorCode() == FString(ErrorCodes::PYTHON_EDITOR_CRASH)))
 	{
-		ComputeDirtyPackageDelta(DirtyBeforeRun, GetDirtyPackages(/*bIncludeMaps=*/true), DirtiedPackageNames, CleanedPackageNames);
+		UPythonTools::ComputeDirtyPackageDelta(Run.DirtyBeforeRun, UPythonTools::GetDirtyPackages(/*bIncludeMaps=*/true), DirtiedPackageNames, CleanedPackageNames);
 	}
 
 	// Maps this run has left resident (see GetResidentMapWorlds). Computed here, BEFORE the error
 	// branch, because the run that strands a map is frequently the same run that raised - that was
 	// the shape of the crash this check exists to prevent - so the failing reply must carry it too.
-	const TArray<FString> ResidentMaps = GetResidentMapWorlds();
+	const TArray<FString> ResidentMaps = UPythonTools::GetResidentMapWorlds();
 	if (ResidentMaps.Num() > 0)
 	{
 		UE_LOG(LogPythonTools, Warning,
@@ -525,16 +571,6 @@ FString UPythonTools::ExecutePythonCode(const FString& Code, bool bAutoSave)
 			TEXT("registry, and change level with LevelEditorSubsystem.load_level."),
 			ResidentMaps.Num(), *FString::Join(ResidentMaps, TEXT(", ")));
 	}
-
-	auto AddResidentInfo = [&ResidentMaps](const TSharedPtr<FJsonObject>& Obj)
-	{
-		TArray<TSharedPtr<FJsonValue>> Arr;
-		for (const FString& MapPath : ResidentMaps)
-		{
-			Arr.Add(MakeShared<FJsonValueString>(MapPath));
-		}
-		Obj->SetArrayField(TEXT("resident_maps"), Arr);
-	};
 
 	if (Result.IsError())
 	{
@@ -552,13 +588,11 @@ FString UPythonTools::ExecutePythonCode(const FString& Code, bool bAutoSave)
 		ErrorObj->SetBoolField(TEXT("success"), false);
 		ErrorObj->SetStringField(TEXT("error_code"), Result.GetErrorCode());
 		ErrorObj->SetStringField(TEXT("error_message"), Result.GetErrorMessage());
-		AddSaveInfo(ErrorObj);
-		AddResidentInfo(ErrorObj);
-		AddDirtyInfo(ErrorObj);
-		FString JsonString;
-		TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
-		FJsonSerializer::Serialize(ErrorObj.ToSharedRef(), Writer);
-		return JsonString;
+		AddSaveInfo(Run, ErrorObj);
+		SetStringArrayField(ErrorObj, TEXT("resident_maps"), ResidentMaps);
+		SetStringArrayField(ErrorObj, TEXT("dirtied_packages"), DirtiedPackageNames);
+		SetStringArrayField(ErrorObj, TEXT("cleaned_packages"), CleanedPackageNames);
+		return SerializeReply(ErrorObj);
 	}
 
 	// Successful execution — safe to auto-save again
@@ -566,13 +600,252 @@ FString UPythonTools::ExecutePythonCode(const FString& Code, bool bAutoSave)
 
 	// Carry the auto-save report through to the success JSON alongside the execution result.
 	FPythonExecutionResult Value = Result.GetValue();
-	Value.bAutoSave = bAutoSaveRan;
-	Value.AutoSaveNote = AutoSaveNote;
-	Value.SavedPackages = SavedPackageNames;
+	Value.bAutoSave = Run.bAutoSaveRan;
+	Value.AutoSaveNote = Run.AutoSaveNote;
+	Value.SavedPackages = Run.SavedPackageNames;
 	Value.ResidentMaps = ResidentMaps;
 	Value.DirtiedPackages = DirtiedPackageNames;
 	Value.CleanedPackages = CleanedPackageNames;
-	return ConvertExecutionResultToJson(Value);
+	return UPythonTools::ConvertExecutionResultToJson(Value);
+}
+
+FString UPythonTools::ExecutePythonCode(const FString& Code, bool bAutoSave, bool bFreshNamespace)
+{
+	FPythonRunContext Run;
+	FString EarlyReply;
+	if (!BeginPythonRun(Code, bAutoSave, Run, EarlyReply))
+	{
+		return EarlyReply;
+	}
+
+	++GSyncPythonRunDepth;
+	const TResult<FPythonExecutionResult> Result = GetExecutionService()->ExecuteCode(Code, EPythonFileExecutionScope::Private, 30000, bFreshNamespace);
+	--GSyncPythonRunDepth;
+	return FinishPythonRun(Run, Result);
+}
+
+// One await script's end: its outcome is recorded like any other run's, and its caller answered.
+static void EndAwaitRun(FPythonExecutionService& Service, FPythonAwaitRun& Run, bool bSuccess, bool bCrashed, const FString& CrashMessage, bool bCancelled)
+{
+	const double ExecutionTimeMs = (FPlatformTime::Seconds() - Run.StartSeconds) * 1000.0;
+	const TResult<FPythonExecutionResult> Result = Service.RecordRunOutcome(
+		Run.Output, bSuccess, bCrashed, CrashMessage, ExecutionTimeMs, Run.RunId, Run.StartedUtc, /*TimeoutMs=*/0, bCancelled);
+	Run.OnDone(FinishPythonRun(Run.Context, Result));
+}
+
+// One iteration of one await script. True when it has ended and its caller has been answered.
+static bool StepAwaitRun(FPythonExecutionService& Service, FPythonAwaitRun& Run)
+{
+	double IgnoredMs = 0.0;
+	bool bCrashed = false;
+	FString CrashMessage;
+
+	if (Run.bCancelRequested && !Run.bCancelSent)
+	{
+		Run.bCancelSent = true;
+		FPythonCommandEx CancelCommand;
+		CancelCommand.Command = FPythonExecutionService::MakeAwaitRunCommand(TEXT("cancel"), Run.RunId);
+		CancelCommand.ExecutionMode = EPythonCommandExecutionMode::ExecuteStatement;
+		CancelCommand.Flags = EPythonCommandFlags::None;
+		Service.RunGuardedCommand(CancelCommand, IgnoredMs, bCrashed, CrashMessage);
+	}
+
+	FPythonCommandEx Command;
+	bool bSuccess = false;
+	if (!bCrashed)
+	{
+		Command.Command = FPythonExecutionService::MakeAwaitRunCommand(TEXT("step"), Run.RunId);
+		Command.ExecutionMode = EPythonCommandExecutionMode::EvaluateStatement;
+		Command.Flags = EPythonCommandFlags::None;
+		bSuccess = Service.RunGuardedCommand(Command, IgnoredMs, bCrashed, CrashMessage);
+		Run.Output.LogOutput.Append(Command.LogOutput);
+	}
+
+	if (!bCrashed && bSuccess && Command.CommandResult.Contains(TEXT("running")))
+	{
+		return false;
+	}
+
+	if (bCrashed || !bSuccess)
+	{
+		// The traceback, which RecordRunOutcome reads as it does a one-command run's.
+		Run.Output.CommandResult = Command.CommandResult;
+
+		FPythonCommandEx DiscardCommand;
+		DiscardCommand.Command = FPythonExecutionService::MakeAwaitRunCommand(TEXT("discard"), Run.RunId);
+		DiscardCommand.ExecutionMode = EPythonCommandExecutionMode::ExecuteStatement;
+		DiscardCommand.Flags = EPythonCommandFlags::None;
+		bool bDiscardCrashed = false;
+		FString IgnoredMessage;
+		Service.RunGuardedCommand(DiscardCommand, IgnoredMs, bDiscardCrashed, IgnoredMessage);
+	}
+
+	const bool bCancelled = !bCrashed && bSuccess && Command.CommandResult.Contains(TEXT("cancelled"));
+	EndAwaitRun(Service, Run, bSuccess, bCrashed, CrashMessage, bCancelled);
+	return true;
+}
+
+// Each frame on the core ticker, where a script may do what it may do in a one-command run (a task on
+// the game thread, by contrast, may not load or import). A script stays paused while anything else has
+// the editor in a state it could not safely run in: another Python run pumping the ticker from inside,
+// garbage collection, a package save, a slow task or a modal dialog.
+static bool TickAwaitRuns(float /*DeltaTime*/)
+{
+	const bool bModal = FSlateApplication::IsInitialized() && FSlateApplication::Get().GetActiveModalWindow().IsValid();
+	if (bSteppingAwaitRuns || GSyncPythonRunDepth > 0 || IsGarbageCollecting() || UE::IsSavingPackage() || GIsSlowTask || bModal)
+	{
+		return true;
+	}
+
+	if (ExecutionServiceInstance.IsValid())
+	{
+		TGuardValue<bool> Stepping(bSteppingAwaitRuns, true);
+		TSharedPtr<FPythonExecutionService> Service = ExecutionServiceInstance;
+		for (int32 Index = GAwaitRuns.Num() - 1; Index >= 0; --Index)
+		{
+			if (StepAwaitRun(*Service, *GAwaitRuns[Index]))
+			{
+				GAwaitRuns.RemoveAt(Index);
+			}
+		}
+	}
+
+	if (GAwaitRuns.Num() == 0)
+	{
+		GAwaitTickerHandle.Reset();
+		return false;
+	}
+	return true;
+}
+
+bool UPythonTools::NeedsAwaitRun(const FString& Code)
+{
+	// Almost no script mentions either word, and those that do not stay one command cheaper.
+	if (!Code.Contains(TEXT("await")) && !Code.Contains(TEXT("async")))
+	{
+		return false;
+	}
+
+	TSharedPtr<FPythonExecutionService> Service = GetExecutionService();
+	if (!Service.IsValid() || Service->IsPythonAvailable().IsError())
+	{
+		return false;
+	}
+
+	FPythonCommandEx Command;
+	Command.Command = FPythonExecutionService::MakeNeedsAwaitCommand(Code);
+	Command.ExecutionMode = EPythonCommandExecutionMode::EvaluateStatement;
+	Command.Flags = EPythonCommandFlags::None;
+	double IgnoredMs = 0.0;
+	bool bCrashed = false;
+	FString IgnoredMessage;
+	const bool bSuccess = Service->RunGuardedCommand(Command, IgnoredMs, bCrashed, IgnoredMessage);
+	return bSuccess && !bCrashed && Command.CommandResult.TrimStartAndEnd() == TEXT("True");
+}
+
+void UPythonTools::StartAwaitRun(const FString& Code, bool bAutoSave, bool bFreshNamespace, const FString& CancelKey, TFunction<void(const FString&)> OnDone)
+{
+	check(IsInGameThread());
+
+	if (GAwaitRuns.Num() >= MaxAwaitRuns)
+	{
+		TSharedPtr<FJsonObject> ErrorObj = MakeShared<FJsonObject>();
+		ErrorObj->SetBoolField(TEXT("success"), false);
+		ErrorObj->SetStringField(TEXT("error_code"), TEXT("BUSY"));
+		ErrorObj->SetStringField(TEXT("error_message"), FString::Printf(
+			TEXT("The script was not run: %d scripts are already paused at an await, the most the editor takes at once. Try again when one has finished."),
+			MaxAwaitRuns));
+		OnDone(SerializeReply(ErrorObj));
+		return;
+	}
+
+	TUniquePtr<FPythonAwaitRun> Run = MakeUnique<FPythonAwaitRun>();
+	FString EarlyReply;
+	if (!BeginPythonRun(Code, bAutoSave, Run->Context, EarlyReply))
+	{
+		OnDone(EarlyReply);
+		return;
+	}
+
+	Run->OnDone = MoveTemp(OnDone);
+	FString BlockedPattern;
+	FString BlockedReason;
+	if (FPythonExecutionService::ContainsUnsafePattern(Code, BlockedPattern, BlockedReason))
+	{
+		Run->OnDone(FinishPythonRun(Run->Context, TResult<FPythonExecutionResult>::Error(
+			ErrorCodes::PYTHON_UNSAFE_CODE,
+			FString::Printf(TEXT("Blocked unsafe Python code: %s. %s"), *BlockedPattern, *BlockedReason))));
+		return;
+	}
+
+	Run->RunId = FVibeUEPythonResultLog::NextRunId();
+	Run->CancelKey = CancelKey;
+	Run->StartedUtc = FDateTime::UtcNow();
+	Run->StartSeconds = FPlatformTime::Seconds();
+
+	TSharedPtr<FPythonExecutionService> Service = GetExecutionService();
+	FPythonCommandEx Command;
+	Command.Command = FPythonExecutionService::MakeAwaitBeginCommand(Run->RunId, Code, bFreshNamespace);
+	Command.ExecutionMode = EPythonCommandExecutionMode::ExecuteFile;
+	Command.FileExecutionScope = EPythonFileExecutionScope::Private;
+	Command.Flags = EPythonCommandFlags::None;
+	double IgnoredMs = 0.0;
+	bool bCrashed = false;
+	FString CrashMessage;
+	const bool bSuccess = Service->RunGuardedCommand(Command, IgnoredMs, bCrashed, CrashMessage);
+	Run->Output.LogOutput.Append(Command.LogOutput);
+	if (bCrashed || !bSuccess)
+	{
+		Run->Output.CommandResult = Command.CommandResult;
+		EndAwaitRun(*Service, *Run, bSuccess, bCrashed, CrashMessage, /*bCancelled=*/false);
+		return;
+	}
+
+	GAwaitRuns.Add(MoveTemp(Run));
+	if (!GAwaitTickerHandle.IsValid())
+	{
+		GAwaitTickerHandle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateStatic(&TickAwaitRuns), 0.0f);
+	}
+}
+
+void UPythonTools::CancelAwaitRuns(const FString& CancelKey)
+{
+	check(IsInGameThread());
+	for (const TUniquePtr<FPythonAwaitRun>& Run : GAwaitRuns)
+	{
+		if (Run->CancelKey == CancelKey)
+		{
+			Run->bCancelRequested = true;
+		}
+	}
+}
+
+void UPythonTools::AbandonAwaitRuns()
+{
+	check(IsInGameThread());
+	if (GAwaitTickerHandle.IsValid())
+	{
+		FTSTicker::GetCoreTicker().RemoveTicker(GAwaitTickerHandle);
+		GAwaitTickerHandle.Reset();
+	}
+
+	// Called at editor exit, when Python may be partly shut down, so the scripts are not told: they end
+	// with the interpreter. Their callers still get an answer.
+	TArray<TUniquePtr<FPythonAwaitRun>> Abandoned = MoveTemp(GAwaitRuns);
+	GAwaitRuns.Reset();
+	for (const TUniquePtr<FPythonAwaitRun>& Run : Abandoned)
+	{
+		TSharedPtr<FJsonObject> ErrorObj = MakeShared<FJsonObject>();
+		ErrorObj->SetBoolField(TEXT("success"), false);
+		ErrorObj->SetStringField(TEXT("error_code"), ErrorCodes::OPERATION_CANCELLED);
+		ErrorObj->SetStringField(TEXT("error_message"), TEXT("The editor is shutting down; the script stopped at an await."));
+		Run->OnDone(SerializeReply(ErrorObj));
+	}
+}
+
+int32 UPythonTools::GetAwaitRunCount()
+{
+	return GAwaitRuns.Num();
 }
 
 FString UPythonTools::DiscoverPythonModule(const FString& ModuleName)

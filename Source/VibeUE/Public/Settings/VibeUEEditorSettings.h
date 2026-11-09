@@ -22,6 +22,14 @@ public:
 	UPROPERTY(config, EditAnywhere, Category = "API", meta = (DisplayName = "API Key", PasswordField = true))
 	FString ApiKey;
 
+	/**
+	 * When enabled, execute_python_code never runs its pre-execution auto-save sweep, even when a
+	 * caller passes auto_save=true. Dirty packages stay in memory until something saves them
+	 * explicitly. Off by default, which keeps the current auto-save behavior.
+	 */
+	UPROPERTY(config, EditAnywhere, Category = "Python", meta = (DisplayName = "Disable Python Auto-Save"))
+	bool bDisablePythonAutoSave = false;
+
 	//~ Place the settings panel under Editor Preferences > Plugins > VibeUE
 	virtual FName GetContainerName() const override { return TEXT("Editor"); }
 	virtual FName GetCategoryName() const override { return TEXT("Plugins"); }

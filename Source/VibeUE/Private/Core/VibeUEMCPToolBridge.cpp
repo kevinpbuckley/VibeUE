@@ -11,6 +11,7 @@
 
 #include "Async/Async.h"
 #include "Core/VibeUEToolCancel.h" // Private/Core: module-private
+#include "Tools/PythonTools.h"
 #include "Misc/IQueuedWork.h"
 #include "Misc/QueuedThreadPool.h"
 #include "Dom/JsonObject.h"
@@ -51,6 +52,8 @@ namespace
 	{
 		return ToolName == TEXT("deep_research") || ToolName == TEXT("terrain_data");
 	}
+
+	const TCHAR* const PythonToolName = TEXT("execute_python_code");
 
 	/**
 	 * The off-game-thread calls, running or waiting for a thread, by request id, for CancelAsync, the exit sweep and the
@@ -417,8 +420,25 @@ namespace
 				return;
 			}
 
-			auto Execute = [ToolName, Args = MoveTemp(Args), OnComplete]()
+			auto Execute = [ToolName, Args = MoveTemp(Args), OnComplete, Key = RequestKey(RequestId)]()
 			{
+				// A script with a top-level await is answered when it ends, with the editor ticking until then.
+				const FString* Code = ToolName == PythonToolName ? Args.Find(TEXT("code")) : nullptr;
+				if (Code && UPythonTools::NeedsAwaitRun(*Code))
+				{
+					FToolExecuteFunc Unused;
+					FString ErrorJson;
+					if (!FToolRegistry::Get().PrepareToolCall(ToolName, Args, Unused, ErrorJson))
+					{
+						DeliverResult(ErrorJson, OnComplete);
+						return;
+					}
+					const FString* AutoSave = Args.Find(TEXT("auto_save"));
+					const FString* FreshNamespace = Args.Find(TEXT("fresh_namespace"));
+					UPythonTools::StartAwaitRun(*Code, !AutoSave || AutoSave->ToBool(), FreshNamespace && FreshNamespace->ToBool(), Key,
+						[OnComplete](const FString& Reply) { DeliverResult(Reply, OnComplete); });
+					return;
+				}
 				DeliverResult(FToolRegistry::Get().ExecuteTool(ToolName, Args), OnComplete);
 			};
 
@@ -437,6 +457,21 @@ namespace
 		// it reaches every call with that id, other clients' too (see GRunningCalls).
 		virtual void CancelAsync(const FModelContextProtocolToolRequestId& RequestId) override
 		{
+			if (Name == PythonToolName)
+			{
+				// The same limitation: another client's script with this id is cancelled too.
+				auto CancelScripts = [Key = RequestKey(RequestId)]() { UPythonTools::CancelAwaitRuns(Key); };
+				if (IsInGameThread())
+				{
+					CancelScripts();
+				}
+				else
+				{
+					AsyncTask(ENamedThreads::GameThread, MoveTemp(CancelScripts));
+				}
+				return;
+			}
+
 			TArray<TSharedRef<FVibeUEToolCancel, ESPMode::ThreadSafe>> Cancels;
 			{
 				FScopeLock Guard(&GRunningCallsLock);
@@ -518,6 +553,8 @@ namespace VibeUEMCPToolBridge
 	// also runs on every ModelContextProtocol.RefreshTools, which must not cancel live calls.
 	void CancelAllRunning()
 	{
+		UPythonTools::AbandonAwaitRuns();
+
 		if (bOffGameThreadPoolShutDown)
 		{
 			return; // Done already (OnPreExit, then ShutdownModule): no call is left and no pool is made after it

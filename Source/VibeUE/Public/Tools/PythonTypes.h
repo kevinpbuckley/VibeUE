@@ -131,7 +131,7 @@ struct VIBEUE_API FPythonExecutionResult
 
 	/**
 	 * Empty when the sweep ran and completed cleanly. Otherwise a short machine-readable reason:
-	 * "opted_out", "previous_run_crashed", "editor_unavailable", "pie_active", or "save_failed"
+	 * "opted_out", "disabled_by_setting", "previous_run_crashed", "editor_unavailable", "pie_active", or "save_failed"
 	 * (the sweep ran but the package save reported errors, so SavedPackages lists what it attempted).
 	 */
 	FString AutoSaveNote;

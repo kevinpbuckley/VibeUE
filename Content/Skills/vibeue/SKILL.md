@@ -202,7 +202,8 @@ exec(open(r"C:/scripts/build.py").read())
 content AND world package headlessly (issue #433: this avoids the modal save dialog that would hang
 the call). Every reply reports what actually happened: `auto_save` (true only when the sweep really
 ran), `auto_save_note` (empty when it ran, otherwise `opted_out`, `previous_run_crashed`,
-`editor_unavailable`, `pie_active`, or `save_failed`) and `saved_packages` (the package names it
+`editor_unavailable`, `pie_active`, `save_failed`, or `disabled_by_setting` when the "Disable Python
+Auto-Save" editor preference is on) and `saved_packages` (the package names it
 wrote). `auto_save` is the OUTCOME, not an echo of your argument -- so `auto_save: true,
 saved_packages: []` means "swept, nothing was dirty", never "skipped". Pass `auto_save=false` to run
 the script WITHOUT that sweep -- use it when you do not want in-flight editor edits flushed to disk,
@@ -300,6 +301,32 @@ Performance/Insights tracing is the one net-new VibeUE service â€” `unreal.
 the `profiling` skill) â€” because Unreal 5.8 ships no performance toolset.
 
 
+## Waiting inside one call: top-level await
+
+A script with a top-level `await` keeps the editor ticking at each await, and the reply arrives when
+the script ends, with everything it printed. Scripts without one run as they always have.
+
+```python
+import asyncio, unreal, vibeue
+
+await asyncio.sleep(0)    # one editor frame
+await asyncio.sleep(2.0)  # two seconds of wall time, with the editor running
+# An async engine tool, finished in this one call (no exec_tool_async + collect_tool_result):
+image = await vibeue.exec_tool_await("EditorToolset.EditorAppToolset", "CaptureAssetImage", {...})
+```
+
+- Other calls and the user can change the editor while a script is paused: re-fetch what you need
+  after each await. Do not keep level objects in variables across an await; a level change with one
+  still held can crash the editor.
+- A paused script does not advance during garbage collection, a save, a slow task or a modal dialog.
+- Over MCP only. A client's `notifications/cancelled` raises CancelledError at the current await.
+  At most 8 scripts can be paused at once; past that the call answers `BUSY`.
+- While any script is paused, other calls skip the auto-save sweep (`auto_save_note`:
+  `await_run_in_progress`), and their `dirtied_packages` can include what the paused script changed.
+
+`fresh_namespace=true` (with or without await) runs a script in a namespace dropped when it ends,
+instead of the globals every call shares, so a top-level variable cannot keep a level alive.
+
 ## Gate and audit helpers in `vibeue`
 
 `import vibeue` also carries the helpers that gate harnesses used to hand-roll. Each has a docstring
@@ -309,7 +336,8 @@ with an example (`help(vibeue.wait_for)`).
 import unreal, vibeue
 
 # Waits never block: the editor does not tick inside a call, and time.sleep() on the game thread
-# freezes every PIE net driver. Start the wait in one call, read it in a later one (or chain .then).
+# freezes every PIE net driver. Start the wait in one call, read it in a later one (or chain .then),
+# or use top-level await (below) to wait inside one call.
 w = vibeue.wait_for(lambda: some_condition(), timeout_s=10, description="seated")
 vibeue.wait_for_players(3, timeout_s=20).then(lambda w: print("players", w.ok, w.result))
 # ... next call:
