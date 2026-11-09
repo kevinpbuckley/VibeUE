@@ -336,14 +336,16 @@ struct FStateTreePropertyInfo
 };
 
 /**
- * One property binding in a StateTree, as returned by get_bindings.
+ * One property binding in a StateTree. Internal to the binding reader that fills FStateTreePropertyInfo::bIsBound
+ * and BoundTo; it is no longer returned by a tool. UE 5.9 has its own FStateTreeBindingInfo (StateTreeEditorTypes.h)
+ * reachable as unreal.StateTreeEditorData.get_bindings(state), so the VibeUE name is prefixed to avoid the collision.
  * Kinds are strings. Target kinds: Task, Evaluator, GlobalTask, Condition, Consideration, Transition,
  * Parameter, PropertyFunction, Unknown. Source kinds: RootParameter, ContextData, Evaluator, GlobalTask,
  * Task, State (state parameters), Condition, Consideration, TransitionEvent, StateEvent, PropertyFunction,
  * Transition, Unknown.
  */
 USTRUCT(BlueprintType)
-struct FStateTreeBindingInfo
+struct FVibeUEStateTreeBindingInfo
 {
 	GENERATED_BODY()
 
@@ -952,19 +954,6 @@ public:
 	static bool UnbindTaskProperty(const FString& AssetPath, const FString& StatePath,
 	                               const FString& TaskStructName, const FString& TaskPropertyPath,
 	                               int32 TaskMatchIndex = -1);
-
-	/**
-	 * List the property bindings in a StateTree (read-only; the reader for every bind_* / unbind_* function).
-	 * With an empty StatePath, returns every binding in the asset. With a StatePath (e.g. "Root/Chase"),
-	 * returns only bindings whose TARGET lives in that state: its tasks, enter conditions, considerations,
-	 * transitions and transition conditions, state parameters, and property functions bound into them.
-	 * Returns an empty array (and logs a warning) when the asset or state is not found.
-	 * Data normally flows source -> target; entries with bIsOutputBinding flow target -> source.
-	 * Example: unreal.StateTreeService.get_bindings("/Game/AI/ST_Zombie_AI", "Root/Chase")
-	 * @param StatePath Optional state path filter; empty means the whole asset.
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
-	static TArray<FStateTreeBindingInfo> GetBindings(const FString& AssetPath, const FString& StatePath = TEXT(""));
 
 	/** Remove a task from a state by struct type name. */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")

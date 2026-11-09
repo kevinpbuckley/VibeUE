@@ -9,6 +9,7 @@
 #include "Materials/MaterialInstanceConstant.h"
 #include "PythonAPI/UMaterialService.h"
 #include "Serialization/JsonSerializer.h"
+#include "AsyncFunctionResult/AsyncFunctionResultString.h"
 #include "ToolsetRegistry/UToolsetRegistry.h"
 #include "UObject/Class.h"
 #include "UObject/Package.h"
@@ -204,7 +205,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMaterialInfoRegistryTest, "VibeUE.Materials.Ge
 
 bool FMaterialInfoRegistryTest::RunTest(const FString&)
 {
-	UToolCallAsyncResultString* Call = UToolsetRegistry::ExecuteTool(TEXT("VibeUE.MaterialService"),
+	UAsyncFunctionResultString* Call = UToolsetRegistry::ExecuteTool(TEXT("VibeUE.MaterialService"),
 		TEXT("GetMaterialInfoResult"), TEXT("{\"materialPath\":\"/Engine/EngineMaterials/PPVolumeMaterialInstance\"}"));
 	if (!TestNotNull(TEXT("Registry returned a result"), Call) ||
 		!TestTrue(TEXT("Registry call completed synchronously"), Call->bIsComplete) ||

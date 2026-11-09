@@ -2160,7 +2160,7 @@ static bool SetPropertyBagValueFromString(FInstancedPropertyBag& Bag, const FNam
 }
 
 #if WITH_EDITORONLY_DATA
-// ---- Binding reader helpers (GetBindings / GetTaskPropertyNames) ----
+// ---- Binding reader helpers (GetTaskPropertyNames bIsBound/BoundTo) ----
 
 /**
  * Where a binding source or target struct ID lives in the editor data.
@@ -2355,13 +2355,13 @@ static bool BindingSourcePathResolves(const FPropertyBindingPath& SourcePath, co
 	return SourcePath.ResolveIndirections(SourceValue.GetStruct(), Indirections, /*OutError*/ nullptr, bHandleRedirects);
 }
 
-static FStateTreeBindingInfo MakeBindingInfo(const TMap<FGuid, FBindingStructLocation>& Locations,
+static FVibeUEStateTreeBindingInfo MakeBindingInfo(const TMap<FGuid, FBindingStructLocation>& Locations,
 	const FStateTreePropertyPathBinding& Binding)
 {
 	const FPropertyBindingPath& SourcePath = Binding.GetSourcePath();
 	const FPropertyBindingPath& TargetPath = Binding.GetTargetPath();
 
-	FStateTreeBindingInfo Info;
+	FVibeUEStateTreeBindingInfo Info;
 	Info.bIsOutputBinding = Binding.IsOutputBinding();
 	Info.TargetPropertyPath = BindingPathToNameString(TargetPath);
 	Info.SourcePropertyPath = BindingPathToNameString(SourcePath);
@@ -2404,7 +2404,7 @@ static FStateTreeBindingInfo MakeBindingInfo(const TMap<FGuid, FBindingStructLoc
  * "<SourceKind>:<SourceStatePath/><SourceNodeName>.<SourcePropertyPath>", the FStateTreePropertyInfo::BoundTo form,
  * with " (output)" appended for an output binding (the target property WRITES the source, not the reverse).
  */
-static FString FormatBindingSource(const FStateTreeBindingInfo& Info)
+static FString FormatBindingSource(const FVibeUEStateTreeBindingInfo& Info)
 {
 	FString Owner = Info.SourceStatePath;
 	if (!Info.SourceNodeName.IsEmpty())
@@ -5098,7 +5098,7 @@ TArray<FStateTreePropertyInfo> UStateTreeService::GetTaskPropertyNames(const FSt
 				Locations = BuildBindingStructMap(*EditorData);
 				bLocationsBuilt = true;
 			}
-			const FStateTreeBindingInfo BindingInfo = MakeBindingInfo(Locations, Binding);
+			const FVibeUEStateTreeBindingInfo BindingInfo = MakeBindingInfo(Locations, Binding);
 			BoundToByPath.Add(BindingInfo.TargetPropertyPath, FormatBindingSource(BindingInfo));
 		}
 
@@ -5504,59 +5504,6 @@ bool UStateTreeService::UnbindTaskProperty(const FString& AssetPath, const FStri
 #else
 	return false;
 #endif
-}
-
-TArray<FStateTreeBindingInfo> UStateTreeService::GetBindings(const FString& AssetPath, const FString& StatePath)
-{
-	TArray<FStateTreeBindingInfo> Result;
-
-#if WITH_EDITORONLY_DATA
-	UStateTree* StateTree = LoadStateTree(AssetPath);
-	if (!StateTree)
-	{
-		UE_LOG(LogStateTreeService, Warning, TEXT("GetBindings: Failed to load StateTree: %s"), *AssetPath);
-		return Result;
-	}
-
-	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
-	if (!EditorData)
-	{
-		return Result;
-	}
-
-	const UStateTreeState* FilterState = nullptr;
-	if (!StatePath.IsEmpty())
-	{
-		FilterState = FindStateByPath(EditorData, StatePath);
-		if (!FilterState)
-		{
-			UE_LOG(LogStateTreeService, Warning, TEXT("GetBindings: State not found: %s"), *StatePath);
-			return Result;
-		}
-	}
-
-	const FStateTreeEditorPropertyBindings* Bindings = EditorData->GetPropertyEditorBindings();
-	if (!Bindings)
-	{
-		return Result;
-	}
-
-	const TMap<FGuid, FBindingStructLocation> Locations = BuildBindingStructMap(*EditorData);
-	for (const FStateTreePropertyPathBinding& Binding : Bindings->GetBindings())
-	{
-		if (FilterState)
-		{
-			const FBindingStructLocation* Target = Locations.Find(Binding.GetTargetPath().GetStructID());
-			if (!Target || Target->State != FilterState)
-			{
-				continue;
-			}
-		}
-		Result.Add(MakeBindingInfo(Locations, Binding));
-	}
-#endif
-
-	return Result;
 }
 
 bool UStateTreeService::AddEvaluator(const FString& AssetPath, const FString& EvaluatorStructName)

@@ -71,8 +71,11 @@ namespace
 
 	FString RequestKey(const FModelContextProtocolToolRequestId& RequestId)
 	{
-		// The id's own operator== and hash are not exported; its JSON text is what Epic hashes too.
-		return RequestId.RequestId.IsValid() ? RequestId.RequestId->AsString() : FString();
+		// UE 5.9 made the JSON id private; GetRequestId() is the public accessor. Its own operator== and
+		// GetTypeHash ARE exported in 5.9, so this could key on the struct -- but the string is also the
+		// correlation key handed to UPythonTools::CancelAwaitRuns, so one string form serves both.
+		const TSharedPtr<FJsonValue>& Id = RequestId.GetRequestId();
+		return Id.IsValid() ? Id->AsString() : FString();
 	}
 
 	/** Turn a tool's JSON string into the MCP result and hand it over (safe from any thread). */
