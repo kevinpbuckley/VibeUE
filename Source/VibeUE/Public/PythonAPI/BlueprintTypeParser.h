@@ -53,7 +53,7 @@ public:
 	static bool IsClassType(const FString& TypeString);  // TSubclassOf<T>
 	static bool IsEnumType(const FString& TypeString);
 
-	// Type resolution (public for use by UEnumStructService and other services)
+	// Type resolution (public for use by the services)
 	static UScriptStruct* FindStructByName(const FString& StructName);
 	static UClass* FindClassByName(const FString& ClassName);
 	static UEnum* FindEnumByName(const FString& EnumName);

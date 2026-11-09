@@ -135,9 +135,6 @@ public class VibeUE : ModuleRules
 				"PropertyBindingUtils",    // For FPropertyBindingBindableStructDescriptor (base of FStateTreeBindableStructDesc)
 				"GameplayTags",           // For FGameplayTag (required by StateTree)
 				"AudioEditor",            // For SoundCue graph classes (USoundCueGraphNode, USoundCueGraph, USoundCueFactoryNew)
-				"MetasoundEngine",        // For UMetaSoundSource, UMetaSoundBuilderSubsystem, UMetaSoundSourceBuilder
-				"MetasoundFrontend",      // For FMetaSoundFrontendDocumentBuilder, FMetasoundFrontendClassName, ISearchEngine
-				"MetasoundGraphCore",     // For core MetaSound graph types
 				"MeshDescription",        // For FMeshDescription / TVertexInstanceAttributesRef (UV editing)
 				"StaticMeshDescription",  // For FStaticMeshAttributes / FStaticMeshOperations / FUVMapParameters
 				"ToolsetRegistry",        // UE 5.8 native AI toolset registry — exposes services as AICallable tools on Epic's MCP endpoint
@@ -163,7 +160,6 @@ public class VibeUE : ModuleRules
 					"LevelEditor",         // For global keyboard shortcuts
 					"StatusBar",           // For panel drawer integration
 					"ContentBrowser",      // For content browser selection queries
-					"MetasoundEditor",     // For UMetaSoundEditorSubsystem (FindOrBeginBuilding, BuildToAsset)
 					"AIGraph",             // UAIGraphNode, FGraphNodeClassHelper (BT node class discovery)
 					"BehaviorTreeEditor",  // UBehaviorTreeGraph / UBehaviorTreeGraphNode_* — the BT EdGraph write path
 				"GameplayTagsEditor",  // For IGameplayTagsEditorModule (add/remove/rename tags at editor time)

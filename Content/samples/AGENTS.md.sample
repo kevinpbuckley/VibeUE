@@ -104,10 +104,10 @@ is ready.
   mandatory param shape for you).
 - **PIE**: `EditorAppToolset.StartPIE` / `StopPIE` / `IsPIERunning` — via `vibeue.exec_tool`
   (bare `StartPIE` works; the raw path demands the full options shape), or `call_tool`.
-- **Logs**: `LogsToolset.GetLogEntries` — via `execute_tool` or `call_tool` (or read the `.log` file).
-- **DataTables / DataAssets / enum-struct basics**: Epic's `DataTableTools` / `DataAssetTools` /
-  `ObjectTools` (via `execute_tool` or `call_tool`). (VibeUE keeps only `EnumStructService` for
-  create/edit of user enums & structs.)
+- **Logs**: `ConsoleToolset.LogsToolset.GetLogEntries` (LogsToolset moved into ConsoleToolset in 5.9) — via `execute_tool` or `call_tool` (or read the `.log` file).
+- **DataTables / DataAssets / user enums & structs**: Epic's `DataTableTools` / `DataAssetTools` /
+  `UserDefinedEnumToolset` / `UserDefinedStructToolset` / `ObjectTools` (via `execute_tool` or
+  `call_tool`). VibeUE no longer ships an enum/struct service - 5.9 covers it.
 
 ---
 

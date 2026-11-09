@@ -277,7 +277,7 @@ Source/VibeUE/Private/PythonAPI/Fab/FabLibraryClient.{h,cpp}# paged GET …/ue/l
 Source/VibeUE/Private/PythonAPI/Fab/FabManifestClient.{h,cpp}# POST …/artifacts/{id}/manifest
 Source/VibeUE/Private/PythonAPI/Fab/FabImportDriver.{h,cpp} # FFabDownloadRequest + workflow glue
 Source/VibeUE/Private/PythonAPI/FabServiceTests.cpp    # WITH_AUTOMATION_TESTS: JSON contract + filter logic
-Content/Skills/fab/SKILL.md                            # agent-facing usage skill (+ sub-docs as needed)
+Skills/fab/SKILL.md                            # agent-facing usage skill (+ sub-docs as needed)
 test_prompts/fab/fab_tests.md                          # NL prompt pack (discover → import → verify)
 docs/design/fab-service-spec.md                        # this doc
 ```

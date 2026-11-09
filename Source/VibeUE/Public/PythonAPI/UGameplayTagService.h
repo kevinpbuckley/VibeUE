@@ -8,94 +8,28 @@
 #include "UGameplayTagService.generated.h"
 
 /**
- * Information about a single gameplay tag.
- * Python access: info = unreal.GameplayTagService.get_tag_info("Cube.StartChasing")
+ * Gameplay Tag Service - the Python FGameplayTag escape hatch, and nothing else.
  *
- * Properties:
- * - tag_name (str): Full tag name (e.g., "Cube.StartChasing")
- * - comment (str): Developer comment associated with the tag
- * - source (str): Where the tag was defined (e.g., "DefaultGameplayTags.ini", "Native")
- * - is_explicit (bool): Whether this tag was explicitly defined (vs. implied parent)
- * - child_count (int): Number of direct child tags
- * - redirected_to (str): If the requested name was renamed, the tag it now redirects to
- *   (empty if no redirect). All other fields describe the redirect target in that case.
- */
-USTRUCT(BlueprintType)
-struct FVibeGameplayTagInfo
-{
-	GENERATED_BODY()
-
-	UPROPERTY(BlueprintReadWrite, Category = "GameplayTags")
-	FString TagName;
-
-	UPROPERTY(BlueprintReadWrite, Category = "GameplayTags")
-	FString RedirectedTo;
-
-	UPROPERTY(BlueprintReadWrite, Category = "GameplayTags")
-	FString Comment;
-
-	UPROPERTY(BlueprintReadWrite, Category = "GameplayTags")
-	FString Source;
-
-	UPROPERTY(BlueprintReadWrite, Category = "GameplayTags")
-	bool bIsExplicit = false;
-
-	UPROPERTY(BlueprintReadWrite, Category = "GameplayTags")
-	int32 ChildCount = 0;
-};
-
-/**
- * Result of a bulk gameplay tag add operation.
- * Python access: result = unreal.GameplayTagService.add_tags(["Cube.StartChasing"])
+ * Trimmed on the 5-9 branch. UE 5.9's GameplayTagsToolset (11 tools) covers tag CRUD and
+ * queries: AddTag, RemoveTag, RenameTag, MoveTags, ListTags, ListTagsInSource, GetTagInfo,
+ * AddTagSource, ListTagSources, ListTagSourceRoots, FindReferencersByTag. VibeUE's has_tag,
+ * get_tag_info, get_children and add_tags were cut as duplicates of those.
  *
- * Properties:
- * - success (bool): Whether the operation succeeded
- * - error_message (str): Error message if failed (empty if success)
- * - tags_modified (Array[str]): Tags that were successfully modified
- */
-USTRUCT(BlueprintType)
-struct FGameplayTagResult
-{
-	GENERATED_BODY()
-
-	UPROPERTY(BlueprintReadWrite, Category = "GameplayTags")
-	bool bSuccess = false;
-
-	UPROPERTY(BlueprintReadWrite, Category = "GameplayTags")
-	FString ErrorMessage;
-
-	UPROPERTY(BlueprintReadWrite, Category = "GameplayTags")
-	TArray<FString> TagsModified;
-};
-
-/**
- * Gameplay Tag Service - Python API for querying and bulk-adding Gameplay Tags.
- *
- * This service provides:
- * - Bulk-adding new tags (to INI config + runtime registration)
- * - Querying tag information and direct children
- * - Checking tag existence
+ * What survives is the one thing a toolset cannot do, because a tool returns JSON and this
+ * returns a live struct VALUE into the calling Python session: Python cannot construct an
+ * FGameplayTag (TagName is read-only, and MakeLiteralGameplayTag takes a tag, not a string),
+ * which otherwise blocks every tag-typed engine API.
  *
  * Python Usage:
  *   import unreal
  *
- *   # Add multiple tags at once
- *   result = unreal.GameplayTagService.add_tags(["Cube.StartChasing", "Cube.StopChasing"], "Chase events")
+ *   tag = unreal.GameplayTagService.request_tag("Ability.Fire")
+ *   asc.has_matching_gameplay_tag(tag)
  *
- *   # Check if a tag exists
- *   exists = unreal.GameplayTagService.has_tag("Cube.StartChasing")
+ *   c = unreal.GameplayTagService.request_tag_container(["State.Stunned", "State.Rooted"])
  *
- *   # Get detailed tag info
- *   info = unreal.GameplayTagService.get_tag_info("Cube.StartChasing")  # info struct or None (NOT a tuple)
- *
- *   # Get direct children of a tag
- *   children = unreal.GameplayTagService.get_children("Cube")
- *
- * @note This service owns: has_tag, get_tag_info, get_children, add_tags (bulk).
- *       Single-tag create / rename / remove are the engine's GameplayTagsToolset —
- *       reach them with call_tool (run describe_toolset on the GameplayTags toolset for
- *       the exact action names). There is no rename_tag / remove_tag on this service.
- * @note Tags are written to DefaultGameplayTags.ini by default and registered at runtime.
+ * @note Registering, renaming, removing or listing tags is the engine's GameplayTagsToolset
+ *       via call_tool. Request a tag here only to obtain its value for a Python call.
  */
 UCLASS(BlueprintType)
 class VIBEUE_API UGameplayTagService : public UToolsetDefinition
@@ -106,36 +40,6 @@ public:
 	// =================================================================
 	// Query Operations
 	// =================================================================
-
-	/**
-	 * Check if a gameplay tag exists.
-	 *
-	 * @param TagName - Full tag name (e.g., "Cube.StartChasing")
-	 * @return True if the tag is registered. NOTE: also true for the OLD name of a renamed
-	 *         tag (renames register a redirect) — use get_tag_info(name).redirected_to to
-	 *         tell a real tag from a redirected one.
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|GameplayTags")
-	static bool HasTag(const FString& TagName);
-
-	/**
-	 * Get detailed information about a specific tag.
-	 *
-	 * @param TagName - Full tag name
-	 * @param OutInfo - Output structure with tag details
-	 * @return True if tag was found
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|GameplayTags")
-	static bool GetTagInfo(const FString& TagName, FVibeGameplayTagInfo& OutInfo);
-
-	/**
-	 * Get direct children of a tag.
-	 *
-	 * @param ParentTag - Parent tag name (e.g., "Cube" returns "Cube.StartChasing", "Cube.StopChasing")
-	 * @return Array of child tag information
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|GameplayTags")
-	static TArray<FVibeGameplayTagInfo> GetChildren(const FString& ParentTag);
 
 	/**
 	 * Look up a registered gameplay tag by name and return the real FGameplayTag VALUE.
@@ -171,24 +75,4 @@ public:
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|GameplayTags")
 	static FGameplayTagContainer RequestTagContainer(const TArray<FString>& TagNames);
 
-#if WITH_EDITOR
-	// =================================================================
-	// Add Operations
-	// =================================================================
-
-	/**
-	 * Add multiple gameplay tags at once.
-	 *
-	 * @param TagNames - Array of full tag names
-	 * @param Comment - Optional developer comment (applied to all)
-	 * @param TagSource - Config file source (default: "DefaultGameplayTags.ini")
-	 * @return Operation result with list of tags modified
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|GameplayTags")
-	static FGameplayTagResult AddTags(const TArray<FString>& TagNames, const FString& Comment = TEXT(""), const FString& TagSource = TEXT("DefaultGameplayTags.ini"));
-#endif // WITH_EDITOR
-
-private:
-	/** Helper to populate FVibeGameplayTagInfo from the tag manager */
-	static FVibeGameplayTagInfo BuildTagInfo(const FString& TagName);
 };

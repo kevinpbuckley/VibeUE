@@ -148,26 +148,32 @@ the same `AgentSkillToolset.ListSkills` / `GetSkills` the engine's own skills us
   the agent can open sibling pages and scripts
 - `UAgentSkill` C++/Blueprint classes still work and are listed alongside markdown skills
 
-VibeUE today is off-convention on three counts:
+VibeUE was off-convention on three counts, all now fixed on this branch:
 
-1. Skills live in **`Content/Skills/`**, which is *not* a discovery root — only `<Plugin>/Skills/` is.
-2. A **116-line Python shim** (`Content/Python/init_unreal.py`) reads each markdown file and
-   synthesises a `UAgentSkill` subclass per file, with CDO-updating reload support
-   (`VibeUE.ReloadSkills`). All of that is now the engine's job.
-3. The shim registers **every file** as its own skill (39 `SKILL.md` + 53 sub-docs = 92 markdown
-   files). The native model registers **39** skills and expects sub-docs to be reached through
-   relative links — but only **3 of 39** `SKILL.md` files currently link their sub-docs as
-   `[text](file.md)`. The other 36 name them in backticks (`` `api-bindings` ``), which worked only
-   because the shim registered each separately. Under native discovery those pages become
-   unreachable.
+1. Skills lived in **`Content/Skills/`**, which is *not* a discovery root — only `<Plugin>/Skills/`
+   is. → **moved to `Skills/`**, so the engine serves them as `/Skills/VibeUE/<pack>`.
+2. A **116-line Python shim** (`Content/Python/init_unreal.py`) read each markdown file and
+   synthesised a `UAgentSkill` subclass per file, with CDO-updating reload support. → **deleted**,
+   along with the `VibeUE.ReloadSkills` console command and Module.cpp's now-unused
+   `IPythonScriptPlugin` include. The engine re-reads the files on every call, so reload is free.
+3. The shim registered **every file** as its own skill (39 `SKILL.md` + 53 sub-docs). The native
+   model registers one skill per `SKILL.md` and expects sub-docs to be reached through **relative
+   links**, which the engine rewrites to absolute paths — but only 3 of 39 `SKILL.md` files linked
+   their sub-docs that way; the rest named them in backticks (`` `api-bindings` ``), which worked
+   only because the shim registered each separately. → every pack now ends with a **Reference
+   pages** section of relative links to its sub-docs and `scripts/` samples (28 packs updated).
 
-**Migration:** move `Content/Skills/` → `Skills/`, convert backticked sub-doc references into
-relative markdown links in the 36 affected `SKILL.md` files, delete the Python shim and the
-`ReloadSkills` command. All 39 `SKILL.md` files already carry `name:` + `description:` frontmatter, so
-no frontmatter work is needed. Verify a top-level `Skills/` folder survives UAT `BuildPlugin`
-packaging for the FAB build; if it does not, keep `Content/Skills/` and call
-`AddSearchRoot(<ContentDir>/Skills, "VibeUE")` from `Module.cpp` — that yields the identical
-`/Skills/VibeUE/...` keys.
+Converting the backticked *prose* mentions was deliberately not attempted: stems like `color` and
+`reference` also occur as ordinary backticked words, so a blind rewrite would have produced wrong
+links. An explicit link section makes every page reachable without touching the prose.
+
+Frontmatter needed no work — all packs already carry `name:` and `description:`, which is exactly
+what `ParseSkillText` reads.
+
+**Packaging** was the one real risk, and it is handled: UAT `BuildPlugin` auto-includes only the
+`.uplugin`, `Source/`, `Content/` and `Resources/`; anything else ships only if listed in
+`Config/FilterPlugin.ini`. A `/Skills/...` entry was added there, so the FAB package still carries
+the skills from their new home.
 
 **Every removal must sweep the skills too.** A cut tool that is still documented in a skill is worse
 than no skill: the agent is told to call something that no longer exists.
@@ -200,4 +206,49 @@ fills `FStateTreePropertyInfo::bIsBound`/`BoundTo`, whose struct is renamed
 `state-trees/api-bindings.md` now documents the engine API, and the `SKILL.md` index entry points at
 it.
 
-**Not yet started:** everything in §3, and the §4 skills migration.
+
+### Stage A — whole-service cuts (done)
+
+**1050 -> 996 AI-callable tools, 38 -> 35 service classes.**
+
+| Service | Was | Now | Why |
+|---|---|---|---|
+| `MetaSoundService` | 20 | **deleted** | `MetaSoundToolset` (42) covers it and more: builder/preset lifecycle, graph pages, variables, interfaces, `DescribeGraph`/`DescribeNode`, `DiffPages`, node-class discovery. Also dropped the `MetasoundEngine`/`Frontend`/`GraphCore`/`Editor` module deps and the `MetaSound` plugin dependency |
+| `EnumStructService` | 20 | **deleted** | `UserDefinedStructToolset` (14) + `UserDefinedEnumToolset` (8) cover every method and add move/reorder, bitflags, tooltips, editable-on-instance and savegame flags |
+| `NiagaraService` | 6 | **deleted** | `NiagaraToolsets` (57): stack input data replaces rapid-iteration params, `GetEmitterData` replaces lifecycle, `GetStackIssues` + `GetSystemCompileState` replace `DebugActivation`, schema tools + EditorToolset `diff` replace `CompareSystems` |
+| `NiagaraEmitterService` | 6 | **3** | cut `SetSimTarget` (-> `SetEmitterData`), `GetRapidIterationParameters` (-> `GetStackInputData`) and `SetColorTint` (-> `SetStackInputData` on Scale Color). Kept `GetColorCurveKeys` / `SetColorCurveKeys` / `ShiftColorHue`: a ColorFromCurve module stores keyframe **data**, not an input value, so no stack-input write reaches it — the skill's own live-verified note says curve keys "CANNOT be modified via rapid iteration parameters". Dead `ListModules`/`AddModule` and two orphaned USTRUCTs went with `SetColorTint`, their only caller |
+| `GameplayTagService` | 6 | **2** | cut `HasTag`, `GetTagInfo`, `GetChildren`, `AddTags` -> `GameplayTagsToolset` (11), which also adds sources, referencers, rename and move |
+
+**The GameplayTagService correction is worth recording.** It was first deleted outright on the
+strength of the tool-name comparison, then partly restored: `RequestTag` / `RequestTagContainer`
+are **not** replaceable by a toolset. Python cannot construct an `FGameplayTag` (`TagName` is
+read-only, `MakeLiteralGameplayTag` takes a tag rather than a string), and a tool call returns JSON,
+not a live struct value into the calling `execute_python_code` session. Those two tools are the only
+way to obtain a usable tag value for `has_matching_gameplay_tag`,
+`send_gameplay_event_to_actor`, `assign_tag_set_by_caller_magnitude` or tag-keyed `TMap` authoring.
+The `gas` skill had this documented as a live-verified finding; the tool-name diff alone would have
+destroyed it. **Read the skills before cutting, not only the headers.**
+
+**Skills swept with the code** (a cut tool still documented in a skill is worse than no skill):
+deleted the `metasounds`, `enum-struct`, `gameplay-tags` and `niagara-systems` skill packs; rewrote
+`niagara-emitters` (SKILL.md + color.md, deleted reference.md and build_emitter.txt, rewrote
+recolor_emitter.txt, repointed scratch-pad.md's sim-target and spawn-rate guidance at
+`SetEmitterData` / `SetStackInputData`); repointed the dead skill references in `gas`, `sound-cues`
+and the `vibeue` index; corrected `AGENTS.md.sample` for enums/structs and for `LogsToolset` having
+moved into `ConsoleToolset`. The rewritten niagara pages use **relative markdown links**, which is
+what 5.9's native skill discovery rewrites (see §4).
+
+### Not yet done
+
+- `TransactionService` (14): verified split rather than the 5.8 doc's clean cut. `BeginTransaction` /
+  `EndTransaction` / `CancelTransaction` are native (`unreal.ScopedEditorTransaction`), and
+  `GetHistory` / `GetUndoDescription` / `GetRedoDescription` / `GetState` are `UUndoHistoryToolset`.
+  But **Python exposes no undo/redo stepping** (`PyEditor.cpp` has none, and `GEditor` is not
+  scriptable), so `Undo`/`Redo`/`UndoMultiple`/`RedoMultiple`/`CanUndo`/`CanRedo`/`ResetBuffer`
+  have no engine equivalent and must stay. 7 cut, 7 kept.
+- The §3 trims: Blueprint (110), StateTree (99), Widget (43), Skeleton (39), EnvQuery (24),
+  BehaviorTree+Blackboard (34), Material pair (52), EngineSettings/ProjectSettings (29),
+  Performance (17), Actor (11), Viewport (22), AssetDiscovery (7), and cutting VibeUE's own input
+  injection while keeping `InputService`'s asset authoring.
+- Converting the remaining backticked sub-doc *prose* mentions into inline links (optional; the
+  Reference pages section already makes every page reachable).

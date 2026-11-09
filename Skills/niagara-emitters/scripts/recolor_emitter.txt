@@ -1,0 +1,27 @@
+# Copyright Buckley Builds LLC 2026 All Rights Reserved.
+
+# recolor_emitter.txt — Recolour a Niagara emitter by rotating its ColorFromCurve hue.
+#
+# Sample script for the niagara-emitters skill. Run via execute_python_code.
+# shift_color_hue rotates the colour wheel and PRESERVES the authored gradient, saturation and
+# alpha. A multiplicative tint does not: equal channels only brighten/dim, and a zero channel
+# kills it outright. For a value-driven emitter (no ColorFromCurve) set Scale Color through
+# Epic NiagaraToolsets.SetStackInputData instead — VibeUE's tint/rapid-iteration writes were cut
+# on the 5-9 branch because the engine covers them.
+import unreal
+nes = unreal.NiagaraEmitterService
+
+SYSTEM = "/Game/VFX/NS_SkillTest"
+EMITTER = "MyEmitter"
+
+# Curve-driven or not? An empty list means there is no ColorFromCurve module to rotate.
+keys = nes.get_color_curve_keys(SYSTEM, EMITTER, "ColorFromCurve")
+if not keys:
+    print("No ColorFromCurve on this emitter - set Scale Color via Epic SetStackInputData instead.")
+else:
+    # Degrees: 120=toward green, 180=cyan/opposite, 240=blue/purple, -60=toward red
+    print("shift_color_hue:", nes.shift_color_hue(SYSTEM, EMITTER, 120.0, "ColorFromCurve"))
+
+# Compile via the ENGINE NiagaraToolsets (system/compile CRUD is engine-owned), then save:
+# call_tool("NiagaraToolsets.NiagaraToolset_System", "<compile tool>", {... SYSTEM ...})
+unreal.EditorAssetLibrary.save_asset(SYSTEM)

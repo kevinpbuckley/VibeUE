@@ -1,6 +1,6 @@
 # Skill Pack Review — Consolidation Alignment
 
-Reviewing every `Content/Skills/<name>/SKILL.md` (+ sub-docs) after the 5.8 consolidation. For each:
+Reviewing every `Skills/<name>/SKILL.md` (+ sub-docs) after the 5.8 consolidation. For each:
 **delete** if a fully-cut service made it dead/redundant with an engine toolset; **rewrite** to point
 basics at the engine tool and keep only VibeUE's delta where the service was trimmed; **verify** if the
 service was kept.

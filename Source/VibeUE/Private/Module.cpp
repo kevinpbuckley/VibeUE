@@ -10,7 +10,6 @@
 #include "HAL/PlatformFileManager.h"
 #include "HAL/FileManager.h"
 #include "Tools/PythonTools.h"
-#include "IPythonScriptPlugin.h"
 #include "ToolsetRegistry/UToolsetRegistry.h"
 #include "ToolsetRegistry/ToolsetDefinition.h"
 #include "Core/VibeUEMCPToolBridge.h"
@@ -306,24 +305,6 @@ static FAutoConsoleCommandWithArgsAndOutputDevice GenerateAgentConfigCommand(
 	FConsoleCommandWithArgsAndOutputDeviceDelegate::CreateStatic(GenerateVibeUEAgentConfig)
 );
 
-// Re-scan Content/Skills and refresh the registered AgentSkill CDOs so skill edits are served
-// without an editor restart (issue #557). init_unreal.py upserts: existing classes get fresh
-// markdown, new packs register; deleted packs linger until the next launch.
-static FAutoConsoleCommand ReloadSkillsCommand(
-	TEXT("VibeUE.ReloadSkills"),
-	TEXT("Re-read Content/Skills markdown into the registered AgentSkills (no editor restart needed)."),
-	FConsoleCommandDelegate::CreateLambda([]()
-	{
-		IPythonScriptPlugin* Python = IPythonScriptPlugin::Get();
-		if (!Python || !Python->IsPythonAvailable())
-		{
-			UE_LOG(LogTemp, Warning, TEXT("VibeUE.ReloadSkills: Python is not available."));
-			return;
-		}
-		const FString ScriptPath = FVibeUEPaths::GetPluginContentDir() / TEXT("Python") / TEXT("init_unreal.py");
-		Python->ExecPythonCommand(*ScriptPath);
-	})
-);
 
 void FModule::StartupModule()
 {

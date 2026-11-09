@@ -36,90 +36,26 @@ struct FNiagaraColorCurveKey
 };
 
 /**
- * Information about a module input
- */
-USTRUCT(BlueprintType)
-struct FNiagaraModuleInputInfo
-{
-	GENERATED_BODY()
-
-	UPROPERTY(BlueprintReadWrite, Category = "Niagara")
-	FString InputName;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Niagara")
-	FString InputType;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Niagara")
-	FString CurrentValue;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Niagara")
-	FString DefaultValue;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Niagara")
-	bool bIsLinked = false;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Niagara")
-	FString LinkedSource;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Niagara")
-	bool bIsEditable = true;
-};
-
-/**
- * Information about a module in an emitter
- */
-USTRUCT(BlueprintType)
-struct FNiagaraModuleInfo_Custom
-{
-	GENERATED_BODY()
-
-	UPROPERTY(BlueprintReadWrite, Category = "Niagara")
-	FString ModuleName;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Niagara")
-	FString ModuleType;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Niagara")
-	FString ScriptAssetPath;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Niagara")
-	int32 ModuleIndex = 0;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Niagara")
-	bool bIsEnabled = true;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Niagara")
-	TArray<FNiagaraModuleInputInfo> Inputs;
-};
-
-/**
- * Niagara Emitter Service - Python API for emitter color and parameter authoring.
+ * Niagara Emitter Service - color curve authoring for an emitter's ColorFromCurve module.
  *
- * Methods this service actually exposes (issue #462 — the docstring previously listed
- * renderer/module-input/script-discovery actions that are not bound):
+ * Trimmed on the 5-9 branch: UE 5.9's NiagaraToolsets (57 tools) covers emitter/module/renderer
+ * CRUD, stack input data (what VibeUE called rapid-iteration parameters), emitter properties such
+ * as sim target, stack issues and compile state. What remains here is the colour-curve editing
+ * Epic's stack-input API does not express directly.
  *
- * Color authoring:
- * - set_color_tint(system_path, emitter_name, color[, hue_shift]) — handles ColorFromCurve
- * - get_color_curve_keys(system_path, emitter_name)
- * - set_color_curve_keys(system_path, emitter_name, keys)
- * - shift_color_hue(system_path, emitter_name, degrees)
+ * - get_color_curve_keys(system_path, emitter_name[, module_name])
+ * - set_color_curve_keys(system_path, emitter_name, keys[, module_name])
+ * - shift_color_hue(system_path, emitter_name, degrees[, module_name])
  *
- * Parameters:
- * - get_rapid_iteration_parameters(system_path, emitter_name, stage)
- *
- * For emitter add/copy/duplicate/remove/move and renderer CRUD, use the engine
- * NiagaraToolsets via call_tool (see UNiagaraService notes). Scratch-pad / Custom-HLSL
- * graph authoring is on NiagaraScratchPadService.
+ * For emitter/module/renderer CRUD, stack inputs, sim target, solid colour tints and diagnostics,
+ * use the engine NiagaraToolsets via call_tool. Scratch-pad / Custom-HLSL graph authoring is on
+ * NiagaraScratchPadService.
  *
  * Python Usage:
  *   import unreal
  *
- *   # Inspect rapid-iteration parameters for an emitter stage
- *   params = unreal.NiagaraEmitterService.get_rapid_iteration_parameters(
- *       "/Game/VFX/NS_Fire", "Sparks", "Update")
- *
- *   # Set color tint (works even with ColorFromCurve)
- *   unreal.NiagaraEmitterService.set_color_tint("/Game/VFX/NS_Fire", "Flames", "(0.0, 3.0, 0.0)")
+ *   keys = unreal.NiagaraEmitterService.get_color_curve_keys("/Game/VFX/NS_Fire", "Flames")
+ *   unreal.NiagaraEmitterService.shift_color_hue("/Game/VFX/NS_Fire", "Flames", 120.0)
  */
 UCLASS(BlueprintType)
 class VIBEUE_API UNiagaraEmitterService : public UToolsetDefinition
@@ -127,54 +63,6 @@ class VIBEUE_API UNiagaraEmitterService : public UToolsetDefinition
 	GENERATED_BODY()
 
 public:
-	/**
-	 * Set a color tint on an emitter, handling ColorFromCurve modules automatically.
-	 *
-	 * This method adds a ScaleColor module (if needed) and sets its Scale RGB value.
-	 * Works even when ColorFromCurve is present - the tint multiplies with the curve output.
-	 *
-	 * @param SystemPath - Full path to the Niagara system
-	 * @param EmitterName - Name of the emitter
-	 * @param RGB - Color as "(R, G, B)" string. Values >1 make colors brighter.
-	 * @param Alpha - Optional alpha scale (default 1.0)
-	 * @return True if successful
-	 *
-	 * Example:
-	 *   # Make fire green (works even with ColorFromCurve)
-	 *   unreal.NiagaraEmitterService.set_color_tint("/Game/VFX/NS_Fire", "Flames", "(0.0, 3.0, 0.0)")
-	 *
-	 *   # Make smoke purple with 50% alpha
-	 *   unreal.NiagaraEmitterService.set_color_tint("/Game/VFX/NS_Fire", "Smoke", "(2.0, 0.0, 2.0)", 0.5)
-	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraEmitter", meta = (AICallable, DisplayName = "Set Color Tint"))
-	static bool SetColorTint(
-		const FString& SystemPath,
-		const FString& EmitterName,
-		const FString& RGB,
-		float Alpha = 1.0f);
-
-	/**
-	 * Set an emitter's simulation target (CPU vs GPU compute).
-	 *
-	 * GPU-only data interfaces (Grid2DCollection, Grid3DCollection, RenderTarget2D, ...)
-	 * make a CPU emitter's system invalid at compile time — switch the emitter to
-	 * "GPU" before wiring them. The system is recompiled after the change; on compile
-	 * errors check NiagaraScratchPadService.get_compile_messages.
-	 *
-	 * @param SystemPath - Full path to the Niagara system
-	 * @param EmitterName - Name of the emitter
-	 * @param SimTarget - "CPU"/"CPUSim" or "GPU"/"GPUComputeSim"
-	 * @return True if the target was set (or already matched) and the recompile ran
-	 *
-	 * Example:
-	 *   unreal.NiagaraEmitterService.set_sim_target("/Game/VFX/NS_TrackPainter", "Painter", "GPU")
-	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraEmitter", meta = (AICallable, DisplayName = "Set Sim Target"))
-	static bool SetSimTarget(
-		const FString& SystemPath,
-		const FString& EmitterName,
-		const FString& SimTarget);
-
 	/**
 	 * Get the color curve keyframes from a ColorFromCurve module.
 	 *
@@ -248,24 +136,6 @@ public:
 		float HueShiftDegrees,
 		const FString& ModuleName = TEXT("ColorFromCurve"));
 
-	/**
-	 * Get all rapid iteration parameters from an emitter's scripts.
-	 * Rapid iteration parameters are module input values that can be changed at runtime.
-	 *
-	 * @param SystemPath - Full path to the Niagara system
-	 * @param EmitterName - Name of the emitter
-	 * @param ScriptType - Optional: Filter by script type (EmitterSpawn, EmitterUpdate, ParticleSpawn, ParticleUpdate, or empty for all)
-	 * @return Array of parameter info structs with name, type, and value
-	 *
-	 * Example:
-	 *   params = unreal.NiagaraEmitterService.get_rapid_iteration_parameters("/Game/VFX/NS_Fire", "Sparks", "EmitterUpdate")
-	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraEmitter", meta = (AICallable, DisplayName = "Get Rapid Iteration Parameters"))
-	static TArray<FNiagaraModuleInputInfo> GetRapidIterationParameters(
-		const FString& SystemPath,
-		const FString& EmitterName,
-		const FString& ScriptType = TEXT(""));
-
 private:
 	// Helper methods
 	static class UNiagaraSystem* LoadNiagaraSystem(const FString& SystemPath);
@@ -274,16 +144,4 @@ private:
 		class UNiagaraSystem* System,
 		const FString& EmitterName,
 		const FString& ModuleName);
-
-	// Internal module helpers (not exposed - required by SetColorTint, which ensures a
-	// ScaleColor module exists before setting its rapid-iteration tint value).
-	static TArray<FNiagaraModuleInfo_Custom> ListModules(
-		const FString& SystemPath,
-		const FString& EmitterName,
-		const FString& ModuleType = TEXT(""));
-	static bool AddModule(
-		const FString& SystemPath,
-		const FString& EmitterName,
-		const FString& ModuleScriptPath,
-		const FString& ModuleType);
 };
