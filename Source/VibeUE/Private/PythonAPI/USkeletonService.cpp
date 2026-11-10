@@ -264,51 +264,7 @@ void USkeletonService::ClearSkeletonModifier(const FString& SkeletalMeshPath)
 // SKELETON DISCOVERY
 // ============================================================================
 
-TArray<FString> USkeletonService::ListSkeletons(const FString& SearchPath, bool bRecursive)
-{
-	TArray<FString> Results;
 
-	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
-	IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
-
-	FARFilter Filter;
-	Filter.ClassPaths.Add(USkeleton::StaticClass()->GetClassPathName());
-	Filter.PackagePaths.Add(*SearchPath);
-	Filter.bRecursivePaths = bRecursive;
-
-	TArray<FAssetData> AssetList;
-	AssetRegistry.GetAssets(Filter, AssetList);
-
-	for (const FAssetData& Asset : AssetList)
-	{
-		Results.Add(Asset.GetSoftObjectPath().ToString());
-	}
-
-	return Results;
-}
-
-TArray<FString> USkeletonService::ListSkeletalMeshes(const FString& SearchPath, bool bRecursive)
-{
-	TArray<FString> Results;
-
-	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
-	IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
-
-	FARFilter Filter;
-	Filter.ClassPaths.Add(USkeletalMesh::StaticClass()->GetClassPathName());
-	Filter.PackagePaths.Add(*SearchPath);
-	Filter.bRecursivePaths = bRecursive;
-
-	TArray<FAssetData> AssetList;
-	AssetRegistry.GetAssets(Filter, AssetList);
-
-	for (const FAssetData& Asset : AssetList)
-	{
-		Results.Add(Asset.GetSoftObjectPath().ToString());
-	}
-
-	return Results;
-}
 
 bool USkeletonService::GetSkeletonInfo(const FString& SkeletonPath, FSkeletonAssetInfo& OutInfo)
 {
@@ -344,63 +300,7 @@ bool USkeletonService::GetSkeletonInfo(const FString& SkeletonPath, FSkeletonAss
 	return true;
 }
 
-bool USkeletonService::GetSkeletalMeshInfo(const FString& SkeletalMeshPath, FSkeletalMeshData& OutInfo)
-{
-	USkeletalMesh* Mesh = LoadSkeletalMesh(SkeletalMeshPath);
-	if (!Mesh)
-	{
-		return false;
-	}
 
-	OutInfo.MeshPath = SkeletalMeshPath;
-	OutInfo.MeshName = Mesh->GetName();
-
-	if (USkeleton* Skeleton = Mesh->GetSkeleton())
-	{
-		OutInfo.SkeletonPath = Skeleton->GetPathName();
-	}
-
-	OutInfo.BoneCount = Mesh->GetRefSkeleton().GetNum();
-	OutInfo.LODCount = Mesh->GetLODNum();
-	OutInfo.SocketCount = Mesh->NumSockets();
-	OutInfo.MorphTargetCount = Mesh->GetMorphTargets().Num();
-	OutInfo.MaterialCount = Mesh->GetMaterials().Num();
-
-	if (UPhysicsAsset* PhysAsset = Mesh->GetPhysicsAsset())
-	{
-		OutInfo.PhysicsAssetPath = PhysAsset->GetPathName();
-	}
-
-	if (TSubclassOf<UAnimInstance> PostProcessBP = Mesh->GetPostProcessAnimBlueprint())
-	{
-		if (UBlueprint* BP = Cast<UBlueprint>(PostProcessBP->ClassGeneratedBy))
-		{
-			OutInfo.PostProcessAnimBPPath = BP->GetPathName();
-		}
-	}
-
-	FBoxSphereBounds Bounds = Mesh->GetBounds();
-	OutInfo.BoundsMin = Bounds.Origin - Bounds.BoxExtent;
-	OutInfo.BoundsMax = Bounds.Origin + Bounds.BoxExtent;
-
-	return true;
-}
-
-FString USkeletonService::GetSkeletonForMesh(const FString& SkeletalMeshPath)
-{
-	USkeletalMesh* Mesh = LoadSkeletalMesh(SkeletalMeshPath);
-	if (!Mesh)
-	{
-		return FString();
-	}
-
-	if (USkeleton* Skeleton = Mesh->GetSkeleton())
-	{
-		return Skeleton->GetPathName();
-	}
-
-	return FString();
-}
 
 // ============================================================================
 // BONE HIERARCHY
@@ -598,53 +498,6 @@ bool USkeletonService::ReparentBone(const FString& SkeletalMeshPath, const FStri
 	return true;
 }
 
-bool USkeletonService::DuplicateSkeleton(const FString& SkeletalMeshPath, const FString& NewSkeletonPath)
-{
-	USkeletalMesh* Mesh = LoadSkeletalMesh(SkeletalMeshPath);
-	if (!Mesh)
-	{
-		UE_LOG(LogTemp, Error, TEXT("USkeletonService::DuplicateSkeleton: Failed to load mesh: %s"), *SkeletalMeshPath);
-		return false;
-	}
-
-	USkeleton* OriginalSkeleton = Mesh->GetSkeleton();
-	if (!OriginalSkeleton)
-	{
-		UE_LOG(LogTemp, Error, TEXT("USkeletonService::DuplicateSkeleton: Mesh has no skeleton: %s"), *SkeletalMeshPath);
-		return false;
-	}
-
-	// Duplicate the skeleton to the new path
-	UObject* DuplicatedAsset = UEditorAssetLibrary::DuplicateAsset(
-		OriginalSkeleton->GetPathName(),
-		NewSkeletonPath
-	);
-	
-	if (!DuplicatedAsset)
-	{
-		UE_LOG(LogTemp, Error, TEXT("USkeletonService::DuplicateSkeleton: Failed to duplicate skeleton to: %s"), *NewSkeletonPath);
-		return false;
-	}
-
-	USkeleton* NewSkeleton = Cast<USkeleton>(DuplicatedAsset);
-	if (!NewSkeleton)
-	{
-		UE_LOG(LogTemp, Error, TEXT("USkeletonService::DuplicateSkeleton: Duplicated asset is not a skeleton: %s"), *NewSkeletonPath);
-		return false;
-	}
-
-	// Save the new skeleton
-	if (!UEditorAssetLibrary::SaveAsset(NewSkeletonPath, false))
-	{
-		UE_LOG(LogTemp, Warning, TEXT("USkeletonService::DuplicateSkeleton: Failed to save new skeleton: %s"), *NewSkeletonPath);
-	}
-
-	UE_LOG(LogTemp, Log, TEXT("USkeletonService::DuplicateSkeleton: Successfully duplicated skeleton from '%s' to '%s'"), 
-		*OriginalSkeleton->GetPathName(), *NewSkeletonPath);
-	UE_LOG(LogTemp, Log, TEXT("USkeletonService::DuplicateSkeleton: NOTE: The mesh still uses the original skeleton. "
-		"Use the Skeletal Mesh Editor to manually assign the new skeleton, or use SetSkeleton in Python."));
-	return true;
-}
 
 bool USkeletonService::SetBoneTransform(const FString& SkeletalMeshPath, const FString& BoneName, const FTransform& NewTransform, bool bMoveChildren)
 {
@@ -702,96 +555,13 @@ bool USkeletonService::CommitBoneChanges(const FString& SkeletalMeshPath, bool b
 	return bSuccess;
 }
 
-bool USkeletonService::IsSkeletonShared(const FString& SkeletalMeshPath)
-{
-	USkeletalMesh* Mesh = LoadSkeletalMesh(SkeletalMeshPath);
-	if (!Mesh)
-	{
-		return false;
-	}
-
-	USkeleton* Skeleton = Mesh->GetSkeleton();
-	if (!Skeleton)
-	{
-		return false;
-	}
-
-	// Get the asset registry to find references
-	IAssetRegistry& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
-
-	// Find all packages that reference this skeleton's package
-	TArray<FName> Referencers;
-	FName SkeletonPackageName = Skeleton->GetOutermost()->GetFName();
-	AssetRegistry.GetReferencers(SkeletonPackageName, Referencers);
-
-	// If there's more than one referencer (the skeletal mesh we're querying),
-	// the skeleton is shared
-	return Referencers.Num() > 1;
-}
 
 // ============================================================================
 // RETARGETING
 // ============================================================================
 
-TArray<FString> USkeletonService::GetCompatibleSkeletons(const FString& SkeletonPath)
-{
-	TArray<FString> Results;
 
-	USkeleton* Skeleton = LoadSkeleton(SkeletonPath);
-	if (!Skeleton)
-	{
-		return Results;
-	}
 
-	const TArray<TSoftObjectPtr<USkeleton>>& Compatible = Skeleton->GetCompatibleSkeletons();
-	for (const TSoftObjectPtr<USkeleton>& CompatSkel : Compatible)
-	{
-		if (!CompatSkel.IsNull())
-		{
-			Results.Add(CompatSkel.ToSoftObjectPath().ToString());
-		}
-	}
-
-	return Results;
-}
-
-bool USkeletonService::AddCompatibleSkeleton(const FString& SkeletonPath, const FString& CompatibleSkeletonPath)
-{
-	USkeleton* Skeleton = LoadSkeleton(SkeletonPath);
-	if (!Skeleton)
-	{
-		return false;
-	}
-
-	USkeleton* CompatibleSkeleton = LoadSkeleton(CompatibleSkeletonPath);
-	if (!CompatibleSkeleton)
-	{
-		return false;
-	}
-
-	Skeleton->AddCompatibleSkeleton(CompatibleSkeleton);
-	Skeleton->MarkPackageDirty();
-
-	return true;
-}
-
-FString USkeletonService::GetBoneRetargetingMode(const FString& SkeletonPath, const FString& BoneName)
-{
-	USkeleton* Skeleton = LoadSkeleton(SkeletonPath);
-	if (!Skeleton)
-	{
-		return TEXT("Unknown");
-	}
-
-	int32 BoneIndex = Skeleton->GetReferenceSkeleton().FindBoneIndex(FName(*BoneName));
-	if (BoneIndex == INDEX_NONE)
-	{
-		return TEXT("Unknown");
-	}
-
-	EBoneTranslationRetargetingMode::Type Mode = Skeleton->GetBoneTranslationRetargetingMode(BoneIndex);
-	return RetargetingModeToString(Mode);
-}
 
 bool USkeletonService::SetBoneRetargetingMode(const FString& SkeletonPath, const FString& BoneName, const FString& Mode)
 {
@@ -1048,83 +818,13 @@ bool USkeletonService::SetBlendProfileBone(const FString& SkeletonPath, const FS
 // SKELETAL MESH PROPERTIES
 // ============================================================================
 
-bool USkeletonService::SetPostProcessAnimBlueprint(const FString& SkeletalMeshPath, const FString& AnimBlueprintPath)
-{
-	USkeletalMesh* Mesh = LoadSkeletalMesh(SkeletalMeshPath);
-	if (!Mesh)
-	{
-		return false;
-	}
-
-	if (AnimBlueprintPath.IsEmpty())
-	{
-		Mesh->SetPostProcessAnimBlueprint(nullptr);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Log, TEXT("USkeletonService::GetSkeletalMeshInfo: Loading anim blueprint: %s"), *AnimBlueprintPath);
-		UObject* LoadedAsset = UEditorAssetLibrary::LoadAsset(AnimBlueprintPath);
-		UAnimBlueprint* AnimBP = Cast<UAnimBlueprint>(LoadedAsset);
-		if (!AnimBP)
-		{
-			UE_LOG(LogTemp, Error, TEXT("USkeletonService::SetPostProcessAnimBlueprint: Failed to load AnimBP: %s"), *AnimBlueprintPath);
-			return false;
-		}
-
-		if (AnimBP->GetBlueprintClass())
-		{
-			Mesh->SetPostProcessAnimBlueprint(AnimBP->GetBlueprintClass());
-		}
-		else
-		{
-			UE_LOG(LogTemp, Error, TEXT("USkeletonService::SetPostProcessAnimBlueprint: AnimBP has no generated class"));
-			return false;
-		}
-	}
-
-	Mesh->MarkPackageDirty();
-	return true;
-}
 
 // ============================================================================
 // EDITOR NAVIGATION
 // ============================================================================
 
-bool USkeletonService::OpenSkeletonEditor(const FString& SkeletonPath)
-{
-	USkeleton* Skeleton = LoadSkeleton(SkeletonPath);
-	if (!Skeleton)
-	{
-		return false;
-	}
 
-	GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(Skeleton);
-	return true;
-}
 
-bool USkeletonService::OpenSkeletalMeshEditor(const FString& SkeletalMeshPath)
-{
-	USkeletalMesh* Mesh = LoadSkeletalMesh(SkeletalMeshPath);
-	if (!Mesh)
-	{
-		return false;
-	}
-
-	GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(Mesh);
-	return true;
-}
-
-bool USkeletonService::SaveAsset(const FString& AssetPath)
-{
-	UE_LOG(LogTemp, Log, TEXT("USkeletonService::GetMeshSocketInfo: Loading asset: %s"), *AssetPath);
-	UObject* Asset = UEditorAssetLibrary::LoadAsset(AssetPath);
-	if (!Asset)
-	{
-		return false;
-	}
-
-	return UEditorAssetLibrary::SaveAsset(AssetPath);
-}
 
 // ============================================================================
 // SKELETON PROFILES & CONSTRAINTS

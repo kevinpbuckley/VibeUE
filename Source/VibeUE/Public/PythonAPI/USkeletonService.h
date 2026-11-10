@@ -429,37 +429,7 @@ public:
 	// SKELETON DISCOVERY
 	// ============================================================================
 
-	/**
-	 * List all Skeleton assets in a path.
-	 *
-	 * @param SearchPath - Path to search for skeletons (default: "/Game")
-	 * @param bRecursive - Whether to search subdirectories
-	 * @return Array of skeleton asset paths
-	 *
-	 * Example:
-	 *   skeletons = unreal.SkeletonService.list_skeletons("/Game/Characters")
-	 *   for path in skeletons:
-	 *       print(path)
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Discovery")
-	static TArray<FString> ListSkeletons(
-		const FString& SearchPath = TEXT("/Game"),
-		bool bRecursive = true);
 
-	/**
-	 * List all Skeletal Mesh assets in a path.
-	 *
-	 * @param SearchPath - Path to search for meshes (default: "/Game")
-	 * @param bRecursive - Whether to search subdirectories
-	 * @return Array of skeletal mesh asset paths
-	 *
-	 * Example:
-	 *   meshes = unreal.SkeletonService.list_skeletal_meshes("/Game/Characters")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Discovery")
-	static TArray<FString> ListSkeletalMeshes(
-		const FString& SearchPath = TEXT("/Game"),
-		bool bRecursive = true);
 
 	/**
 	 * Get detailed information about a Skeleton asset.
@@ -477,33 +447,7 @@ public:
 		const FString& SkeletonPath,
 		FSkeletonAssetInfo& OutInfo);
 
-	/**
-	 * Get detailed information about a Skeletal Mesh asset.
-	 *
-	 * @param SkeletalMeshPath - Full path to the Skeletal Mesh asset
-	 * @param OutInfo - Output mesh info
-	 * @return True if mesh was found
-	 *
-	 * Example:
-	 *   info = unreal.SkeletonService.get_skeletal_mesh_info("/Game/SKM_Character")
-	 *   print(f"LODs: {info.lod_count}, Sockets: {info.socket_count}")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Discovery")
-	static bool GetSkeletalMeshInfo(
-		const FString& SkeletalMeshPath,
-		FSkeletalMeshData& OutInfo);
 
-	/**
-	 * Get the Skeleton asset path used by a Skeletal Mesh.
-	 *
-	 * @param SkeletalMeshPath - Full path to the Skeletal Mesh
-	 * @return Skeleton asset path, or empty if not found
-	 *
-	 * Example:
-	 *   skeleton = unreal.SkeletonService.get_skeleton_for_mesh("/Game/SKM_Character")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Discovery")
-	static FString GetSkeletonForMesh(const FString& SkeletalMeshPath);
 
 	// ============================================================================
 	// BONE HIERARCHY
@@ -622,27 +566,6 @@ public:
 		const FString& BoneName,
 		const FString& NewParentName);
 
-	/**
-	 * Duplicate the skeleton of a skeletal mesh to a new path.
-	 * This creates a unique skeleton copy that can be modified independently.
-	 *
-	 * NOTE: This only duplicates the skeleton asset. To use the new skeleton with
-	 * the mesh, you must assign it manually in the Skeletal Mesh Editor or use
-	 * the mesh's set_skeleton() method in Python.
-	 *
-	 * @param SkeletalMeshPath - Path to the Skeletal Mesh (to get its skeleton)
-	 * @param NewSkeletonPath - Path where the new skeleton should be saved
-	 * @return True if skeleton was duplicated successfully
-	 *
-	 * Example:
-	 *   # Duplicate the skeleton
-	 *   unreal.SkeletonService.duplicate_skeleton("/Game/SKM_Mannequin", "/Game/SK_MyMannequin")
-	 *   # Then manually assign the new skeleton to your mesh in the editor
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Modification")
-	static bool DuplicateSkeleton(
-		const FString& SkeletalMeshPath,
-		const FString& NewSkeletonPath);
 
 	/**
 	 * Set the transform of a bone.
@@ -689,73 +612,13 @@ public:
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Modification")
 	static bool CommitBoneChanges(const FString& SkeletalMeshPath, bool bForce = false);
 
-	/**
-	 * Check if a skeleton is shared by multiple skeletal meshes or other assets.
-	 * 
-	 * This is useful to determine if a reparent_bone operation will trigger a 
-	 * confirmation dialog. Hierarchy-breaking changes (like reparent) on shared 
-	 * skeletons require user confirmation because they affect all assets using 
-	 * that skeleton.
-	 *
-	 * @param SkeletalMeshPath - Path to a Skeletal Mesh
-	 * @return True if the skeleton is used by other assets besides this mesh
-	 *
-	 * Example:
-	 *   is_shared = unreal.SkeletonService.is_skeleton_shared("/Game/SKM_Mannequin")
-	 *   if is_shared:
-	 *       print("Warning: Reparent operations will require user confirmation")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Modification")
-	static bool IsSkeletonShared(const FString& SkeletalMeshPath);
 
 	// ============================================================================
 	// RETARGETING
 	// ============================================================================
 
-	/**
-	 * Get the list of compatible skeletons for animation sharing.
-	 *
-	 * @param SkeletonPath - Path to the Skeleton asset
-	 * @return Array of compatible skeleton paths
-	 *
-	 * Example:
-	 *   compatible = unreal.SkeletonService.get_compatible_skeletons("/Game/SK_Mannequin")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Retargeting")
-	static TArray<FString> GetCompatibleSkeletons(const FString& SkeletonPath);
 
-	/**
-	 * Add a compatible skeleton for animation sharing.
-	 *
-	 * @param SkeletonPath - Path to the Skeleton asset
-	 * @param CompatibleSkeletonPath - Path to the skeleton to add as compatible
-	 * @return True if skeleton was added successfully
-	 *
-	 * Example:
-	 *   unreal.SkeletonService.add_compatible_skeleton(
-	 *       "/Game/SK_Mannequin",
-	 *       "/Game/MetaHumans/SK_MetaHuman"
-	 *   )
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Retargeting")
-	static bool AddCompatibleSkeleton(
-		const FString& SkeletonPath,
-		const FString& CompatibleSkeletonPath);
 
-	/**
-	 * Get the retargeting mode for a bone.
-	 *
-	 * @param SkeletonPath - Path to the Skeleton asset
-	 * @param BoneName - Name of the bone
-	 * @return Retargeting mode string: "Animation", "Skeleton", "AnimatedZeroLength", "OrientAndScale"
-	 *
-	 * Example:
-	 *   mode = unreal.SkeletonService.get_bone_retargeting_mode("/Game/SK_Mannequin", "pelvis")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Retargeting")
-	static FString GetBoneRetargetingMode(
-		const FString& SkeletonPath,
-		const FString& BoneName);
 
 	/**
 	 * Set the retargeting mode for a bone.
@@ -945,63 +808,13 @@ public:
 	// SKELETAL MESH PROPERTIES
 	// ============================================================================
 
-	/**
-	 * Set the Post Process Animation Blueprint for a Skeletal Mesh.
-	 *
-	 * @param SkeletalMeshPath - Path to the Skeletal Mesh
-	 * @param AnimBlueprintPath - Path to the AnimBP (empty to clear)
-	 * @return True if AnimBP was set successfully
-	 *
-	 * Example:
-	 *   unreal.SkeletonService.set_post_process_anim_blueprint(
-	 *       "/Game/SKM_Character",
-	 *       "/Game/ABP_PostProcess"
-	 *   )
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Properties")
-	static bool SetPostProcessAnimBlueprint(
-		const FString& SkeletalMeshPath,
-		const FString& AnimBlueprintPath);
 
 	// ============================================================================
 	// EDITOR NAVIGATION
 	// ============================================================================
 
-	/**
-	 * Open a Skeleton in the Skeleton Editor.
-	 *
-	 * @param SkeletonPath - Path to the Skeleton asset
-	 * @return True if editor was opened successfully
-	 *
-	 * Example:
-	 *   unreal.SkeletonService.open_skeleton_editor("/Game/SK_Mannequin")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Editor")
-	static bool OpenSkeletonEditor(const FString& SkeletonPath);
 
-	/**
-	 * Open a Skeletal Mesh in the Skeletal Mesh Editor.
-	 *
-	 * @param SkeletalMeshPath - Path to the Skeletal Mesh asset
-	 * @return True if editor was opened successfully
-	 *
-	 * Example:
-	 *   unreal.SkeletonService.open_skeletal_mesh_editor("/Game/SKM_Mannequin")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Editor")
-	static bool OpenSkeletalMeshEditor(const FString& SkeletalMeshPath);
 
-	/**
-	 * Save changes to a Skeleton or Skeletal Mesh.
-	 *
-	 * @param AssetPath - Path to the Skeleton or Skeletal Mesh
-	 * @return True if asset was saved successfully
-	 *
-	 * Example:
-	 *   unreal.SkeletonService.save_asset("/Game/SK_Mannequin")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Editor")
-	static bool SaveAsset(const FString& AssetPath);
 
 	// ============================================================================
 	// SKELETON PROFILES & CONSTRAINTS

@@ -5,6 +5,7 @@
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "Editor.h"
+#include "ScopedTransaction.h"
 
 AActor* UActorService::FindActorByIdentifier(const FString& NameOrLabel)
 {
@@ -67,5 +68,36 @@ bool UActorService::RerunConstructionScripts(const FString& ActorLabelOrPath)
 
 	Actor->RerunConstructionScripts();
 	UE_LOG(LogTemp, Log, TEXT("RerunConstructionScripts: re-ran construction scripts for '%s'"), *Actor->GetActorLabel());
+	return true;
+}
+
+bool UActorService::SetActorLockLocation(const FString& ActorNameOrLabel, bool bLocked)
+{
+	AActor* Actor = FindActorByIdentifier(ActorNameOrLabel);
+	if (!Actor) return false;
+
+	FBoolProperty* Prop = CastField<FBoolProperty>(AActor::StaticClass()->FindPropertyByName(TEXT("bLockLocation")));
+	if (!Prop) return false;
+
+	const FScopedTransaction Transaction(FText::FromString(TEXT("Set Actor Lock Location")));
+
+	Actor->Modify();
+	Prop->SetPropertyValue_InContainer(Actor, bLocked);
+	Actor->PostEditChange();
+
+
+	Actor->MarkPackageDirty();
+	return true;
+}
+
+bool UActorService::GetActorLockLocation(const FString& ActorNameOrLabel, bool& OutLocked)
+{
+	AActor* Actor = FindActorByIdentifier(ActorNameOrLabel);
+	if (!Actor) return false;
+
+	FBoolProperty* Prop = CastField<FBoolProperty>(AActor::StaticClass()->FindPropertyByName(TEXT("bLockLocation")));
+	if (!Prop) return false;
+
+	OutLocked = Prop->GetPropertyValue_InContainer(Actor);
 	return true;
 }

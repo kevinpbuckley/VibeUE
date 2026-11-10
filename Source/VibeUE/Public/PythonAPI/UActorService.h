@@ -30,6 +30,20 @@ class VIBEUE_API UActorService : public UToolsetDefinition
 
 public:
 	/**
+	 * Lock or read an actor's location lock (the padlock in the details panel).
+	 *
+	 * NOT reachable through EditorToolset.ObjectToolset: AActor::bLockLocation is a bare
+	 * UPROPERTY() with neither CPF_Edit nor CPF_BlueprintVisible, and ObjectToolset routes every
+	 * access through CanGetPropertyValue/CheckCanSetProperty, which refuse exactly that shape.
+	 * UE5 has no per-actor rotation or scale lock -- location only.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
+	static bool SetActorLockLocation(const FString& ActorNameOrLabel, bool bLocked);
+
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
+	static bool GetActorLockLocation(const FString& ActorNameOrLabel, bool& OutLocked);
+
+	/**
 	 * Re-run a placed Blueprint actor's construction script in the editor world. This is the
 	 * capability Python and the engine toolsets otherwise lack — after changing a component
 	 * template or an instance's exposed variable, the placed actor's construction script does not
