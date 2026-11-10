@@ -14,15 +14,14 @@ unreal_classes:
 # Level Actors Skill
 
 > 🔀 **Engine owns the basics now.** In the Unreal 5.8 consolidation, listing / finding / spawning /
-> moving / transforming / selecting actors moved to Unreal's native toolsets — `ActorTools`,
-> `SceneTools`, and `EditorAppToolset` (selection, camera, PIE, screenshots), reachable via
+> moving / transforming / selecting actors moved to Unreal's native toolsets — `ActorToolset`,
+> `LevelToolset`, and `EditorAppToolset` (selection, camera, PIE, screenshots), reachable via
 > `call_tool`. Equivalently you can drive `unreal.EditorActorSubsystem` /
 > `unreal.LevelEditorSubsystem` directly from `execute_python` (shown throughout below).
-> **VibeUE's `ActorService` was trimmed to only the delta the engine doesn't provide:** transform
-> lock (`set_actor_lock_location`), absolute-transform flags, preserve-scale-ratio, viewport camera
-> framing (`get_actor_view_camera` / `calculate_actor_view` / `set_viewport_camera`), and full
-> property dumps (`get_all_properties`). `ActorService.add_actor` / `set_property` / `get_property`
-> no longer exist — use the engine toolsets or `EditorActorSubsystem` for spawning and property edits.
+> **VibeUE's `ActorService` is now ONE tool:** `rerun_construction_scripts`, the only actor
+> capability neither the engine toolsets nor Python expose. Transform lock, absolute-transform
+> flags, preserve-scale-ratio, camera framing and property dumps were all cut on the 5-9 branch --
+> use `ActorToolset` / `LevelToolset` / `ObjectToolset` / `EditorAppToolset` as mapped below.
 
 ## Critical Rules
 
@@ -486,110 +485,41 @@ loc = dup.get_actor_location()
 dup.set_actor_location(unreal.Vector(loc.x + 200, loc.y, loc.z), False, False)
 ```
 
-### Camera View Methods (for screenshots and verification)
+### Camera framing for screenshots — use the engine
 
-Use `ActorService` to position the viewport camera to frame actors from specific directions. (For a
-plain "focus on these actors" with no specific direction, the engine **`EditorAppToolset`**
-`FocusOnActors` action via `call_tool` also works — `ActorService` adds the directional/padding
-framing the engine toolset lacks.)
+VibeUE's `get_actor_view_camera` / `calculate_actor_view` / `set_viewport_camera` are **gone**. The
+engine does this, and the safe-framing rule still holds:
 
-> ⚠️ **NEVER guess camera coordinates with `set_viewport_camera`.** Manual positions almost always point at sky or empty space. Always use `get_actor_view_camera` which auto-calculates position from the actor's bounding box.
+> ⚠️ **Never guess camera coordinates.** Manual positions almost always end up inside geometry or
+> pointing at sky. Frame from the actor's bounds instead.
 
-```python
-import unreal
+| Want | Engine tool |
+|---|---|
+| Frame the viewport on one or more actors (computes the position from bounds) | `EditorToolset.EditorAppToolset` → **`FocusOnActors`** |
+| Read / set the viewport camera explicitly | `EditorAppToolset` → **`GetCameraTransform`** / **`SetCameraTransform`** |
+| Pick the actors to frame first | `EditorToolset.LevelToolset` → **`FindActors`**, then `EditorAppToolset.SelectActors` |
+| View mode, show flags | `EditorAppToolset` → **`SetViewportViewMode`**, **`SetShowFlag`** / **`GetShowFlag`** / **`ListShowFlags`** |
+| Then capture it | `SceneCaptureToolset` → **`CaptureActiveEditorView`** (scene) or **`CaptureGameViewport`** (PIE, with UI) |
 
-actor_service = unreal.ActorService
+So: `FindActors` → `SelectActors` → `FocusOnActors` → capture. That replaces the whole
+compute-a-camera-from-bounds flow VibeUE used to own.
 
-# Move camera to view an actor from above (top-down)
-view = actor_service.get_actor_view_camera("MyLandscape", unreal.ViewDirection.TOP)
+### Transform locking, absolute flags, uniform scale — use `ObjectToolset`
 
-# Move camera to view from front with extra padding
-view = actor_service.get_actor_view_camera("MyBuilding", unreal.ViewDirection.FRONT, 1.5)
+All of these are plain properties, and `EditorToolset.ObjectToolset` edits any property. VibeUE's
+`set_actor_lock_location`, `get_actor_lock_location`, `set_absolute_transform`,
+`get_absolute_transform`, `set_preserve_scale_ratio` and `get_preserve_scale_ratio` are **gone**.
 
-# Calculate view without moving camera
-view = actor_service.calculate_actor_view("MyActor", unreal.ViewDirection.RIGHT, 1.2)
-# view.camera_location, view.camera_rotation, view.view_distance
-```
+| Want | Engine tool and property |
+|---|---|
+| Lock an actor's location | `ObjectToolset.SetProperties` on the actor → **`bLockLocation`** = true |
+| Component absolute location/rotation/scale (independent of parent) | `ObjectToolset.SetProperties` on the component → **`bAbsoluteLocation`** / **`bAbsoluteRotation`** / **`bAbsoluteScale`** |
+| Uniform-scale padlock (editor-wide, not per actor) | `ObjectToolset.SetProperties` on `LevelEditorViewportSettings`, or `ConfigSettingsToolset` |
+| Dump every property of an actor or component | `ObjectToolset` → **`ListProperties`** / **`GetProperties`** (replaces `get_all_properties`) |
+| Read or write a transform | `ActorToolset` → **`GetActorTransform`** / **`SetActorTransform`**, and `GetComponentTransform` / `SetComponentTransform` |
 
-**Directions**: TOP, BOTTOM, LEFT, RIGHT, FRONT, BACK
-**Padding**: 1.0=tight, 1.2=default, 2.0=far, 3.0=very far (use for large structures)
-
-#### Choosing the Right View
-
-| Goal | Use |
-|------|-----|
-| Overview of a large structure | `TOP` with padding 2.0–3.0 |
-| See the front face | `FRONT` with padding 1.5–2.5 |
-| Full castle/building view | `FRONT` padding 3.0, or `TOP` padding 2.5 |
-| Check layout from above | `TOP` padding 1.5 |
-| Profile view | `LEFT` or `RIGHT` |
-
-> ⚠️ **Do NOT switch to `set_viewport_camera` with manual coordinates to get a "better angle".** Manual positions almost always miss the subject and point at sky or empty space. If the view isn't wide enough, **increase the padding** or switch to `TOP`. There is no need for a diagonal camera — `TOP` and `FRONT` with adequate padding cover every screenshot use case.
-
----
-
-### Transform Locking & Constraints
-
-#### 🔒 Location Locking (Per-Actor, Native UE5)
-
-UE5 has a native `bLockLocation` property on all actors. When locked, the actor cannot be moved via viewport gizmos (but CAN still be moved via code).
-
-```python
-import unreal
-
-# Lock an actor's location
-unreal.ActorService.set_actor_lock_location("MyCube", True)
-
-# Check if locked
-locked = unreal.ActorService.get_actor_lock_location("MyCube")
-print(f"Locked: {locked}")
-
-# Unlock
-unreal.ActorService.set_actor_lock_location("MyCube", False)
-```
-
-#### 🔒 Scale Ratio Lock (Uniform Scaling Padlock — Global Editor Setting)
-
-The padlock icon next to Scale in the Details panel is the **Preserve Scale Ratio** setting. When enabled, scaling any axis scales ALL axes proportionally. This is a **global editor preference**, not per-actor.
-
-```python
-import unreal
-
-# Lock scale axes together (uniform scaling) — the padlock icon
-unreal.ActorService.set_preserve_scale_ratio(True)
-
-# Unlock for independent axis scaling
-unreal.ActorService.set_preserve_scale_ratio(False)
-
-# Check current state
-locked = unreal.ActorService.get_preserve_scale_ratio()
-print(f"Scale ratio locked: {locked}")
-```
-
-#### ⚠️ There is NO Per-Actor Rotation or Scale Lock
-
-**UE5 does NOT have a per-actor lock for rotation or scale.** There is no `bLockRotation` or `bLockScale` property on actors. Only location locking (`set_actor_lock_location`) is per-actor.
-
-If user asks to "lock rotation" or "lock scale on this actor specifically":
-1. Explain this limitation clearly
-2. For uniform scaling, use `set_preserve_scale_ratio(True)` (global, affects all actors)
-3. For location locking, use `set_actor_lock_location`
-4. For world-space independence, use **absolute transform flags**
-
-#### Absolute Transform Flags (Per-Component)
-
-Make location/rotation/scale world-space instead of relative to parent. Useful when attaching actors but needing independent positioning.
-
-```python
-import unreal
-
-# Make rotation absolute (independent of parent), keep location/scale relative
-unreal.ActorService.set_absolute_transform("MyCube", False, True, False)
-
-# Check flags
-loc, rot, scale = unreal.ActorService.get_absolute_transform("MyCube")
-print(f"Absolute: loc={loc}, rot={rot}, scale={scale}")
-```
+**UE5 still has no per-actor rotation or scale lock** — there is no `bLockRotation` or `bLockScale`.
+Only location locks. For uniform scaling use the editor-wide padlock setting above.
 
 ## Re-run a placed actor's construction script
 

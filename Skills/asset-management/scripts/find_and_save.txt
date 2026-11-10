@@ -5,7 +5,8 @@
 # Sample script for the asset-management skill. Run via execute_python.
 # NOTE: search/find/move/duplicate/save moved to the engine AssetTools toolset (call_tool) or
 # EditorAssetLibrary / the Asset Registry. VibeUE's AssetDiscoveryService keeps only crash-safe
-# import/export + Content Browser selection + is_asset_open.
+# import/export + reimport. Everything else is the engine: AssetToolset (find/load/save/move/delete),
+# TextureToolset.import_file, EditorAppToolset.GetSelectedAssets / GetOpenAssets, FileSystemToolset.
 import unreal
 
 ar = unreal.AssetRegistryHelpers.get_asset_registry()

@@ -5,7 +5,9 @@
 # Sample script for the level-actors skill. Run via execute_python.
 # NOTE: list/find/spawn/move/transform/select moved to the engine ActorTools/SceneTools/
 # EditorAppToolset (call_tool) or unreal.EditorActorSubsystem (used here). VibeUE's ActorService
-# keeps only transform-lock, absolute-transform, preserve-scale, camera framing, get_all_properties.
+# keeps only rerun_construction_scripts. Transforms/components/tags -> EditorToolset.ActorToolset;
+# find/spawn/destroy/select -> LevelToolset; any other property -> ObjectToolset; camera framing ->
+# EditorAppToolset.FocusOnActors / SetCameraTransform.
 import unreal
 
 actor_subsys = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)

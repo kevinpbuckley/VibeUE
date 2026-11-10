@@ -26,18 +26,30 @@ and remapping through the existing engine Python API; no native service rebuild.
 > The old **`manage_asset` MCP tool is GONE.** VibeUE's `AssetDiscoveryService` was trimmed to only
 > the crash-safe delta the engine doesn't provide:
 >
-> | Kept on `AssetDiscoveryService` | Purpose |
-> |---|---|
-> | `import_asset(src, dest_folder, name)` → `(path, err)` | Import an image, mesh or any importable file (folder + name) |
-> | `import_texture(src, dest_asset_path)` | Same importer, full asset path |
-> | `export_texture(asset_path, file_path)` | Export a texture to disk |
-> | `get_primary_content_browser_selection()` → `AssetData or None` | Primary Content Browser selection |
-> | `is_asset_open(asset_path)` → `bool` | Whether an asset is open in an editor |
+> **MCP tools still on `AssetDiscoveryService` (just two):**
 >
-> Everything else below (`search_assets`, `list_assets_in_path`, `move_asset`, `duplicate_asset`,
-> `delete_asset`, `save_asset`, `get_open_assets`, `get_asset_referencers`, `find_asset_by_path`,
-> `asset_exists`, …) was **removed** from `AssetDiscoveryService` — use the engine `AssetTools`
-> toolset or `EditorAssetLibrary` / the Asset Registry.
+> | Tool | Why it survives |
+> |---|---|
+> | `reimport_asset(asset_path, new_source_path)` | Nothing in Epic's toolset surface reimports an asset |
+> | `export_texture(asset_path, file_path)` | Epic imports and inspects textures but has no plain texture export |
+>
+> **Python-only helpers** (still callable as `unreal.AssetDiscoveryService.*` from `execute_python`,
+> but no longer MCP tools, so don't look for them in `list_toolsets`):
+> `import_asset(src, dest_folder, name)` → `(path, err)` and
+> `delete_asset_unattended(path, force)` → result struct.
+>
+> **Everything else now belongs to the engine. Use these:**
+>
+> | Want | Engine tool |
+> |---|---|
+> | Find / load / save / move / duplicate / delete assets, folders, redirectors | `EditorToolset.AssetToolset` → `FindAssets`, `LoadAsset`, `SaveAsset`, `Move`, `Duplicate`, `Delete`, `Exists`, `CreateFolder`, `ListFolders`, `FixUpRedirectors`, `ReloadAsset`, `IsDirty`, `ValidateAssets` |
+> | Referencers / dependencies / metadata / tags | `AssetToolset` → `GetReferencers`, `GetDependencies`, `GetMetadataTags`, `UpdateMetadataTags`, `GetAssetTags`, `AddUserAssetTags`, `GetAssetClass` |
+> | Import a texture from disk | `EditorToolset.TextureToolset` → `import_file` (also `create_render_target`, `get_texture_size`, `compress_texture`) |
+> | Import a mesh | `EditorToolset.StaticMeshToolset` / `SkeletalMeshToolset` → `import_file` |
+> | Import a data table / curve table / string table | the matching `EditorToolset.*Toolset` → `import_file` |
+> | Which assets are open in an editor | `EditorToolset.EditorAppToolset` → `GetOpenAssets` (replaces `is_asset_open`) |
+> | Content Browser selection and navigation | `EditorAppToolset` → `GetSelectedAssets` (replaces `get_primary_content_browser_selection`), `SetContentBrowserPath`, `GetContentBrowserPath` |
+> | Files on disk (read/write/list/delete, download) | `FileSystemToolset` → `ReadTextFile`, `WriteTextFile`, `ListDirectory`, `DeleteFile`, `CreateDirectory`, `DownloadUrl` |
 
 ## Data Assets & Data Tables — no dedicated VibeUE service (issues #451, #452)
 
@@ -154,36 +166,20 @@ relaunch (watch for a ZenServer stall on the way back up) — so it costs severa
 The same caution applies to any asset currently open in an editor tab or referenced by a loaded
 level. Non-Blueprint assets you never loaded (textures, meshes written by a factory) delete fine.
 
-### ⚠️ Out-Params Become Return Values in Python — Never Pass an `AssetData` Argument
-
-`get_primary_content_browser_selection` is shaped like `bool Func(FAssetData& Out)` in C++ and is
-exposed to Python as `() -> AssetData or None`. Passing an `AssetData` argument raises `TypeError`.
-
-```python
-# WRONG - TypeError: takes no arguments (1 given)
-asset = unreal.AssetData()
-unreal.AssetDiscoveryService.get_primary_content_browser_selection(asset)
-
-# CORRECT - call with no out-arg, check the return for None
-asset = unreal.AssetDiscoveryService.get_primary_content_browser_selection()
-if asset:
-    print(asset.asset_name)
-```
-
 ### 🔀 Where each operation lives now
 
 | Operation | Use |
 |-----------|-----|
-| Search / find / list assets | engine **`AssetTools`** toolset via `call_tool`, or `unreal.AssetRegistryHelpers.get_asset_registry()` |
-| Load / save / save-all | `unreal.EditorAssetLibrary.load_asset` / `save_asset` / `save_directory`, or `AssetTools` |
-| Move / rename / duplicate / delete | `unreal.EditorAssetLibrary.rename_asset` (move), `duplicate_asset`, `delete_asset` (unreferenced only — see the modal warning above), or `AssetTools`; `unreal.AssetDiscoveryService.delete_asset_unattended` for anything that may be referenced |
+| Search / find / list assets | engine **`AssetToolset`** via `call_tool`, or `unreal.AssetRegistryHelpers.get_asset_registry()` |
+| Load / save / save-all | `unreal.EditorAssetLibrary.load_asset` / `save_asset` / `save_directory`, or `AssetToolset` |
+| Move / rename / duplicate / delete | `unreal.EditorAssetLibrary.rename_asset` (move), `duplicate_asset`, `delete_asset` (unreferenced only — see the modal warning above), or `AssetToolset`; `unreal.AssetDiscoveryService.delete_asset_unattended` for anything that may be referenced |
 | Existence check | `unreal.EditorAssetLibrary.does_asset_exist(path)` |
 | Referencers / dependencies | `unreal.AssetRegistryHelpers.get_asset_registry().get_referencers(...)` |
 | Open an asset / list ALL open editors | Epic `EditorAppToolset` via `call_tool` (see below) |
-| Import a file from disk (image, mesh, …) | `unreal.AssetDiscoveryService.import_asset` / `import_texture` (**see below**) |
+| Import a file from disk (image, mesh, …) | `unreal.AssetDiscoveryService.import_asset` / `TextureToolset.import_file` (**see below**) |
 | Export a texture to disk | `unreal.AssetDiscoveryService.export_texture` |
-| Primary Content Browser selection | `unreal.AssetDiscoveryService.get_primary_content_browser_selection()` |
-| Is an asset open in an editor | `unreal.AssetDiscoveryService.is_asset_open(path)` |
+| Primary Content Browser selection | `EditorAppToolset.GetSelectedAssets` |
+| Is an asset open in an editor | `EditorAppToolset.GetOpenAssets` (check the path in the result) |
 
 ### 🔀 ALL open assets / ALL selections / open an asset — use Epic's `EditorAppToolset`
 
@@ -203,7 +199,7 @@ opens = call_tool("GetOpenAssets", "EditorToolset.EditorAppToolset")["returnValu
 bps = [p for p in opens if isinstance(unreal.load_asset(p), unreal.Blueprint)]
 
 # "Open the selected asset" = VibeUE primary-selection + Epic OpenEditorForAsset
-sel = unreal.AssetDiscoveryService.get_primary_content_browser_selection()
+sel = vibeue.exec_tool("EditorToolset.EditorAppToolset", "GetSelectedAssets")
 if sel:
     call_tool("OpenEditorForAsset", "EditorToolset.EditorAppToolset",
               {"assetPath": str(sel.package_name)})
@@ -235,7 +231,7 @@ via `unreal.AssetRegistryHelpers.get_asset_registry().get_assets(...)`.
 
 ### ⚠️ UE 5.8 `AssetData` Property Names
 
-`get_primary_content_browser_selection()` returns an `AssetData`. Read it with:
+`EditorAppToolset.GetSelectedAssets` returns asset data. Read each entry with:
 
 | WRONG (old) | CORRECT |
 |-------------|---------|
@@ -250,7 +246,7 @@ via `unreal.AssetRegistryHelpers.get_asset_registry().get_assets(...)`.
 ### ⚠️ Importing Files From Disk — Use `AssetDiscoveryService.import_asset`
 
 To bring a file from disk into the Content Browser, use **`AssetDiscoveryService.import_asset`**
-(or `import_texture`, which takes a full asset path and runs the same importer). It takes any
+(or `TextureToolset.import_file` (the engine's texture importer)). It takes any
 format the editor imports, and saves what it imports:
 
 - **Images** (png, jpg, jpeg, bmp, tga, dds, exr, hdr, tiff, tif, psd, pcx) go through the
@@ -452,8 +448,8 @@ path, err = unreal.AssetDiscoveryService.import_asset(
     "C:/Textures/logo.png", "/Game/Textures", "T_Logo")
 print(path or err)
 
-# import_texture(src, dest_asset_path) takes a full asset path and uses the same importer:
-unreal.AssetDiscoveryService.import_texture("C:/Textures/logo.png", "/Game/Textures/T_Logo")
+# Textures: the engine importer (args per its schema -- check with get_symbol on the toolset):
+vibeue.exec_tool("EditorToolset.TextureToolset", "import_file", {"file": "C:/Textures/logo.png", "destination": "/Game/Textures"})
 
 # Export (project → file system)
 unreal.AssetDiscoveryService.export_texture("/Game/Textures/T_Logo", "C:/Exports/logo.png")
@@ -465,11 +461,11 @@ unreal.AssetDiscoveryService.export_texture("/Game/Textures/T_Logo", "C:/Exports
 import unreal
 
 # Is a specific asset open in an editor?
-if unreal.AssetDiscoveryService.is_asset_open("/Game/BP_Player"):
+if vibeue.exec_tool("EditorToolset.EditorAppToolset", "GetOpenAssets")  # then check "/Game/BP_Player" in the result:
     print("BP_Player is open")
 
 # Primary Content Browser selection — NO out-arg, returns AssetData or None
-asset = unreal.AssetDiscoveryService.get_primary_content_browser_selection()
+asset = vibeue.exec_tool("EditorToolset.EditorAppToolset", "GetSelectedAssets")
 if asset:
     print(f"Selected: {asset.asset_name} at {asset.package_path}")
     # Open it via the AssetEditorSubsystem (engine), loading the object first:
@@ -489,7 +485,7 @@ else:
 ```python
 import unreal
 
-asset = unreal.AssetDiscoveryService.get_primary_content_browser_selection()
+asset = vibeue.exec_tool("EditorToolset.EditorAppToolset", "GetSelectedAssets")
 if asset and str(asset.asset_class_path.asset_name) == "Blueprint":
     print(f"{asset.asset_name} is a Blueprint")
 ```

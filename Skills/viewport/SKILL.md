@@ -374,7 +374,7 @@ unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).set_level_viewport_cam
 
 To frame specific actors instead of guessing coordinates, prefer the engine
 `EditorAppToolset.FocusOnActors` action (or load the `level-actors` skill for
-`ActorService.get_actor_view_camera`, which auto-computes a framing position from bounds).
+`EditorAppToolset.FocusOnActors`, which frames the selected actors from their bounds).
 
 ### Configure Clipping Planes
 

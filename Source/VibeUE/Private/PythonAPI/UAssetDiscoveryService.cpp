@@ -134,26 +134,6 @@ namespace
 
 // ========== Texture Operations ==========
 
-bool UAssetDiscoveryService::ImportTexture(const FString& SourceFilePath, const FString& DestinationPath)
-{
-	// Split the destination asset path into folder + name and delegate to the safe importer.
-	FString PackagePath, AssetName;
-	if (!DestinationPath.Split(TEXT("/"), &PackagePath, &AssetName, ESearchCase::IgnoreCase, ESearchDir::FromEnd) || PackagePath.IsEmpty())
-	{
-		PackagePath = TEXT("/Game");
-		AssetName = DestinationPath;
-	}
-
-	FString Error;
-	const FString Result = ImportAsset(SourceFilePath, PackagePath, AssetName, Error);
-	if (Result.IsEmpty())
-	{
-		UE_LOG(LogTemp, Warning, TEXT("UAssetDiscoveryService::ImportTexture: %s"), *Error);
-		return false;
-	}
-	return true;
-}
-
 FString UAssetDiscoveryService::ImportAsset(
 	const FString& SourceFilePath,
 	const FString& DestinationFolder,
@@ -429,72 +409,6 @@ bool UAssetDiscoveryService::ExportTexture(const FString& AssetPath, const FStri
 
 // ========== Open Assets & Content Browser ==========
 
-TArray<FAssetData> UAssetDiscoveryService::GetContentBrowserSelections()
-{
-	TArray<FAssetData> SelectedAssets;
-
-	// Get the content browser module
-	FContentBrowserModule& ContentBrowserModule = FModuleManager::LoadModuleChecked<FContentBrowserModule>("ContentBrowser");
-	IContentBrowserSingleton& ContentBrowser = ContentBrowserModule.Get();
-
-	// Get selected assets
-	ContentBrowser.GetSelectedAssets(SelectedAssets);
-
-	UE_LOG(LogTemp, Log, TEXT("UAssetDiscoveryService::GetContentBrowserSelections: Found %d selected assets"), SelectedAssets.Num());
-	return SelectedAssets;
-}
-
-bool UAssetDiscoveryService::GetPrimaryContentBrowserSelection(FAssetData& OutAsset)
-{
-	TArray<FAssetData> SelectedAssets = GetContentBrowserSelections();
-	
-	if (SelectedAssets.Num() > 0)
-	{
-		OutAsset = SelectedAssets[0];
-		UE_LOG(LogTemp, Log, TEXT("UAssetDiscoveryService::GetPrimaryContentBrowserSelection: %s"), *OutAsset.AssetName.ToString());
-		return true;
-	}
-
-	UE_LOG(LogTemp, Log, TEXT("UAssetDiscoveryService::GetPrimaryContentBrowserSelection: No assets selected"));
-	return false;
-}
-
-bool UAssetDiscoveryService::IsAssetOpen(const FString& AssetPath)
-{
-	if (AssetPath.IsEmpty())
-	{
-		UE_LOG(LogTemp, Warning, TEXT("UAssetDiscoveryService::IsAssetOpen: AssetPath is empty"));
-		return false;
-	}
-
-	if (!GEditor)
-	{
-		UE_LOG(LogTemp, Error, TEXT("UAssetDiscoveryService::IsAssetOpen: GEditor is null"));
-		return false;
-	}
-
-	UAssetEditorSubsystem* AssetEditorSubsystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
-	if (!AssetEditorSubsystem)
-	{
-		UE_LOG(LogTemp, Error, TEXT("UAssetDiscoveryService::IsAssetOpen: Failed to get AssetEditorSubsystem"));
-		return false;
-	}
-
-	// Load the asset to get its UObject
-	UObject* Asset = UEditorAssetLibrary::LoadAsset(AssetPath);
-	if (!Asset)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("UAssetDiscoveryService::IsAssetOpen: Asset not found: %s"), *AssetPath);
-		return false;
-	}
-
-	// Check if any editor is open for this asset
-	TArray<IAssetEditorInstance*> Editors = AssetEditorSubsystem->FindEditorsForAsset(Asset);
-	bool bIsOpen = Editors.Num() > 0;
-
-	UE_LOG(LogTemp, Log, TEXT("UAssetDiscoveryService::IsAssetOpen: %s is %s"), *AssetPath, bIsOpen ? TEXT("open") : TEXT("closed"));
-	return bIsOpen;
-}
 
 FUnattendedDeleteResult UAssetDiscoveryService::DeleteAssetUnattended(const FString& AssetPath, bool bForceEvenIfReferenced)
 {

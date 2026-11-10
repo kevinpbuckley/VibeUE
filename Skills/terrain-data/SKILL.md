@@ -360,7 +360,7 @@ The **saved JSON file** contains the full data with:
 | Timeout | Large map sizes at high zoom may hit Vercel's 10s limit — try smaller `map_size` |
 | No waterways returned | Area may have no mapped water features (desert, urban grid) — check satellite image |
 | Landscape too small | You used XY scale=100 (default) instead of the correct value from `suggestedXYScales`. Recreate with the correct scale |
-| Black screenshots after camera move | Camera inside terrain. Use `ActorService.get_actor_view_camera()` to frame from TOP view instead of guessing Z height |
+| Black screenshots after camera move | Camera inside terrain. Use `EditorAppToolset.FocusOnActors` (after `SelectActors`) to frame from above instead of guessing Z height |
 | Water features timeout | PBF tile fetch uses 45s timeout — large map_size at high zoom may still be slow |
 | Field name errors | Use `ue5_points` (not `points`), `ue5_rings` (not `polygon`), `class` (not `waterway_class`) |
 
