@@ -539,7 +539,6 @@ void FModule::OnPreExit()
 
 	// Release all C++ Python service instances
 	// This is safe because we're just clearing our own pointers
-	UPythonTools::Shutdown();
 	
 	// NOTE: We deliberately do NOT call into Python here.
 	// During OnPreExit, the Python interpreter may already be partially shut down

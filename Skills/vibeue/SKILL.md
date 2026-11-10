@@ -66,48 +66,39 @@ the process cannot tell whether this editor or another holds the port, so `mcpLi
 only that this process's module started a server, not that it won the port — and VibeUE never forces
 `mcpListening` true from a probe result, it only ever reflects the module's own claim.
 
-## Persisted Python results -- a timed-out call is not a failed call
+## A long-running script and the editor's safety rails
 
-The MCP client aborts an `execute_python` call after its own timeout (~30s for most clients,
-300s for some), but the script keeps running in the editor. **Read the persisted result before
-re-running** -- re-running double-executes a mutation. Every run's outcome is written to
-`Signals/python-<pid>-last.json` (always the latest) and appended to `Signals/python-<pid>-runs.jsonl`
-(last ~200 runs / ~2 MB):
+Python execution is engine-native on this branch: `EditorToolset.PythonScriptingTools.execute_python`
+(call `read_me` once per conversation first). VibeUE's own `execute_python_code` is gone, and with it
+its run-record persistence — so there is no `last_python_result()` recovery for a call you abandoned.
+Keep scripts short enough to answer inside your client's budget, and split long work with `await`
+(`await asyncio.sleep(0)` yields a frame; `await vibeue.exec_tool_await(...)` waits for an async
+engine tool).
 
-A run that COMPLETES but overruns the server-side timeout is no longer reported as an error: the
-reply comes back `success:true` with `timed_out:true`, its `run_id`, and `signal_file_path` (the
-`python-<pid>-last.json` path), so a client whose own budget is longer -- or a retry -- gets the real
-output instead of a bare `PYTHON_EXECUTION_TIMEOUT`. Only a call the client actually abandoned (it
-gave up while the script was still running) returns nothing to you; that is the case
-`last_python_result()` below is for. Error replies now also append `run_id=<N>` and the signal path
-to the message for the same recovery.
-
-```json
-{"runId":7,"pid":21044,"success":true,"label":"#7 execute_python","output":"...",
- "error":"","result":"","execution_time_ms":48210.5,"startedUtc":"...","finishedUtc":"..."}
-```
-
-The record deliberately does not store the submitted Python source: snippets commonly contain
-credentials passed to SDKs, and timeout recovery must not create a plaintext source-code secret log.
-
-Recovery after a timeout -- the aborted call kept running in THIS same editor process, so the next
-call just reads the file:
+What VibeUE still gives you are the editor's safety rails, which `execute_python` does not have:
 
 ```python
-import vibeue
-print(vibeue.last_python_result())      # dict of the most recent run, or None
-print(vibeue.python_run(7))             # a specific run by its runId, from the JSONL history
+import unreal, vibeue
+
+# A map left resident by an earlier script or tool will FATAL the editor on the next level load.
+resident = unreal.PythonTools.get_resident_maps()
+if resident:
+    print("resident maps - release these first:", resident)
+
+# So change level through the guard, which refuses instead of crashing:
+vibeue.safe_load_level("/Game/Maps/Target")
+
+# What did my script leave dirty?
+print(unreal.PythonTools.get_dirty_packages())
 ```
 
-`last_python_result()` sees the lost run because the read happens before this recovery call's own
-result is persisted. A SECOND read reflects the recovery read itself -- grab the `runId` from the
-first read and use `python_run(run_id)` for a stable handle. Successful MCP replies also carry
-`run_id` so you can correlate a reply that did return with its record.
+`execute_python` does not save before it runs, which VibeUE's tool used to do by default. Save
+explicitly before risky work:
+`unreal.EditorLoadingAndSavingUtils.save_dirty_packages(True, True)`.
 
-Skill packs (this file and its siblings) are loaded through the engine's `AgentSkillToolset`.
-Each skill carries exact API patterns and gotchas; **load the relevant skill before writing any
-code** in a domain, or you will guess wrong property names and spiral into discovery loops.
-
+Do not hold level objects in variables across an `await` or a level change — re-fetch them, or a
+level change can crash the editor. `vibeue.python_globals_holding(asset)` finds a global that is
+pinning an asset and `vibeue.release_globals(names)` drops it.
 ## Discover and load skills
 
 Skills are discovered and read through the engine `AgentSkillToolset`, invoked with `call_tool`:
@@ -378,7 +369,7 @@ with vibeue.gate_session(clients=3, net_mode="ListenServer"):   # throttling + P
 
 ## Additional gotchas
 
-- A Python traceback still proves the MCP link is up — only "Unable to connect" means it is down. A dropped server or a newly added tool needs a Claude Code restart. A stuck call is usually a modal dialog and the client timeout does not stop the script, so persisted results (`vibeue.last_python_result()`) let you read the outcome on the next call rather than re-running.
+- A Python traceback still proves the MCP link is up — only "Unable to connect" means it is down. A dropped server or a newly added tool needs a Claude Code restart. A stuck call is usually a modal dialog, and the client timeout does not stop the script; there is no run-record recovery on this branch, so dismiss the dialog and check the Output Log rather than re-running a mutation.
 - Don't run a headless `UnrealEditor-Cmd` while the GUI editor is starting — they fight over the MCP port and the loser runs with no MCP; the readiness signal's `mcpListening` flag tells you when the port is claimed. `-run=pythonscript` fully substitutes for pure-asset work when no editor runs, but not for World Partition world surgery.
 - Engine toolset quirks: `LogsToolset.GetLogEntries` requires a `pattern`; `StartPIE` via `execute_tool` needs the full options object; results can be double-encoded (`vibeue.exec_tool` decodes them). A genuinely async tool like `CaptureAssetImage` never completes inside one call — fire it with `vibeue.exec_tool_async` and read it with `vibeue.collect_tool_result` on the next call.
 - A hand-registered `register_slate_post_tick_callback` whose handle you lost keeps ticking until the editor restarts. A `vibeue.wait_for` wait unregisters its handle when it finishes, and the registry keeps every pending one, so `vibeue.cancel_all_waits()` can end a wait whose `Wait` object you no longer hold.

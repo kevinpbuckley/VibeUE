@@ -300,14 +300,45 @@ so updating it updates every generated file:
   full rewrite of the `pie-testing` capture section.
 - README's architecture section and agent-workflow bullets updated.
 
-**Dead code left behind, to remove in a follow-up.** Removing the `execute_python_code` registration
-orphaned the machinery under it: `UPythonTools::ExecutePythonCode`, `FPythonExecutionService`,
-`Content/Python/vibeue_await.py` (driven only by that service) and the run-record persistence that
-`vibeue.last_python_result()` reads. None of it is on the agent surface any more and it all still
-compiles; `vibeue.py` now marks those readers DEFUNCT rather than claiming they work. Their tests
-(`PythonAwaitTests`, `PythonExecutionServiceTests`, `PythonToolsTests`) are what make this a separate
-pass. `PythonDiscoveryService` and the four discovery entry points *were* fully removed, along with
-three orphaned JSON converters.
+**The orphaned code is gone too** (follow-up done in the same branch). Removing the
+`execute_python_code` registration left a whole execution layer with no caller, and it has now been
+deleted rather than left compiling:
+
+| Deleted | Why it was orphaned |
+|---|---|
+| `PythonExecutionService.{h,cpp}` | the executor itself; only `ExecutePythonCode` drove it |
+| `PythonSchemaService.{h,cpp}` | only `UPythonTools::GetSchemaService` used it |
+| `PythonTypes.h` | its structs (`FPythonExecutionResult`, module/class/function info) existed for the executor and the deleted discovery service |
+| `VibeUEPythonResultLog.{h,cpp}` | wrote the `python-<pid>-last.json` run records nothing reads now |
+| `Content/Python/vibeue_await.py` | driven only by `FPythonExecutionService`'s await stepping |
+| `CaptureTools.cpp` | the whole file was `capture_image`'s implementation plus two tests that assert it is registered |
+| `PythonAwaitTests.cpp`, `PythonExecutionServiceTests.cpp` | tests of the above |
+
+Also stripped: `UPythonTools::ExecutePythonCode`, `NeedsAwaitRun`, `StartAwaitRun`,
+`CancelAwaitRuns`, `AbandonAwaitRuns`, `GetAwaitRunCount`, `ConvertExecutionResultToJson`,
+`GetExecutionService`, `GetSchemaService`, `Shutdown` (and its `Module.cpp` call), the `GAwaitRuns`
+state and the auto-save/snapshot helpers — `PythonTools.cpp` goes from 887 lines to 169. The MCP
+bridge lost its Python special-casing (`PythonToolName`, the `NeedsAwaitRun`/`StartAwaitRun`
+dispatch, the script-cancel branch in `CancelAsync`, the `AbandonAwaitRuns` call on shutdown) while
+keeping the off-game-thread machinery `deep_research` and `terrain_data` still need. `vibeue.py` lost
+the defunct run-record readers (`last_python_result`, `python_run`, and their path helpers).
+
+**What survives in `UPythonTools`** is exactly the editor-safety surface the agent guide now tells
+agents to call explicitly: `GetResidentMaps`, `GetDirtyPackages` (both AICallable),
+`GetResidentMapWorlds` and `ComputeDirtyPackageDelta`.
+
+**Test coverage lost with it, and worth re-adding.** `PythonToolsTests.cpp` goes from 1004 lines to
+92. Four of its twelve tests were kept-or-dropped on whether they had a subject left: only
+`ResidentMapDetection` stood alone. Three others — `DirtiedPackagesReported`,
+`GetResidentMapsIsCallable` and `SafeLoadLevelRefuses` — ran their Python through a
+`RunPythonNoSave` helper on the removed executor and asserted on *its* reply fields, so their subject
+went with it. That means `ComputeDirtyPackageDelta` and `vibeue.safe_load_level` are now untested
+even though both are still shipped. Re-pointing those three at the engine's `execute_python` (and at
+`PythonTools` directly for the delta) is the follow-up, and it is test authoring rather than cleanup,
+which is why it was not folded in here.
+
+Net effect of the cleanup: 11 files deleted, ~4,600 lines removed, and
+`UnrealEditor-VibeUE.dll` down to 17.49 MB from 18.93 MB at the branch point.
 
 ### Not yet done
 

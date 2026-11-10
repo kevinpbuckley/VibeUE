@@ -1037,7 +1037,7 @@ FSceneCaptureResult UViewportService::CaptureWithView(
 	// The view is applied and restored inside RunWithTemporaryView; the body only draws and reads.
 	Result.bViewApplied = RunWithTemporaryView(Location, Rotation, FOV, bFixedExposure, EV100, [&]()
 	{
-		// The same draw-and-read path capture_image source='editor' uses (CaptureTools.cpp).
+		// The same draw-and-read path the engine SceneCaptureToolset editor-view captures use.
 		Viewport->Draw(/*bShouldPresent=*/false);
 		bReadOk = Viewport->ReadPixels(Pixels) && Pixels.Num() > 0;
 		SrcSize = Viewport->GetSizeXY();

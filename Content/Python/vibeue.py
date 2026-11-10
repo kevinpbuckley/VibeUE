@@ -238,65 +238,6 @@ def exec_tool(toolset_name, tool_name, args=None, unwrap=True):
     return out
 
 
-# DEFUNCT ON THE 5-9 BRANCH. These readers depend on run records that VibeUE's own
-# execute_python_code tool wrote (Saved/VibeUE/Signals/python-<pid>-last.json and -runs.jsonl).
-# That tool was removed in favour of the engine-native EditorToolset execute_python, which does
-# not persist runs, so nothing writes these files any more and the readers below return None.
-# They are kept only so an older editor process's records stay readable; treat them as dead
-# code pending removal, and do NOT rely on timed-out-call recovery.
-
-
-def _signals_dir():
-    saved = unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_saved_dir())
-    return os.path.join(saved, "VibeUE", "Signals")
-
-
-def _last_result_path(pid=None):
-    return os.path.join(_signals_dir(), "python-{}-last.json".format(pid or os.getpid()))
-
-
-def _runs_path(pid=None):
-    return os.path.join(_signals_dir(), "python-{}-runs.jsonl".format(pid or os.getpid()))
-
-
-def last_python_result(pid=None):
-    """The persisted result of the most recent execute_python run in THIS editor process, as a
-    dict (keys: runId, pid, success, label, output, error, result, execution_time_ms, startedUtc,
-    finishedUtc), or None if nothing has been recorded.
-
-    Use after a call timed out: `execute_python("import vibeue; print(vibeue.last_python_result())")`
-    returns the lost run because the read happens before this call's own result is persisted. Note
-    that a SECOND such read reflects the first read, not the original run — use its runId with
-    python_run() for a stable handle, or read it once and keep it.
-    """
-    try:
-        with open(_last_result_path(pid), "r", encoding="utf-8") as handle:
-            return json.load(handle)
-    except (OSError, ValueError):
-        return None
-
-
-def python_run(run_id, pid=None):
-    """The persisted record for a specific runId from python-<pid>-runs.jsonl (a dict), or None if it
-    is not present (it may have been trimmed — the history keeps the last ~200 runs / ~2 MB)."""
-    try:
-        with open(_runs_path(pid), "r", encoding="utf-8") as handle:
-            lines = handle.readlines()
-    except OSError:
-        return None
-    for line in reversed(lines):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            record = json.loads(line)
-        except ValueError:
-            continue
-        if record.get("runId") == run_id:
-            return record
-    return None
-
-
 # --- PIE worlds ------------------------------------------------------------------------------
 
 def role(actor):
