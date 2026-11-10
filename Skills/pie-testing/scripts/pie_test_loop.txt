@@ -2,7 +2,7 @@
 
 # pie_test_loop.txt — Clean PIE start/stop loop for runtime validation.
 #
-# Sample script for the pie-testing skill. Run via execute_python_code.
+# Sample script for the pie-testing skill. Run via execute_python.
 # start_pie() is ASYNCHRONOUS: the world isn't live in the same call. Run the start step,
 # then do your runtime checks / log inspection in a LATER call, then stop.
 import unreal

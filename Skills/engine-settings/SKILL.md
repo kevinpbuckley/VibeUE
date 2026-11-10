@@ -17,7 +17,7 @@ unreal_classes:
 > **`ConfigSettingsToolset`** — reach it with `call_tool` (run `describe_toolset` on
 > `ConfigSettingsToolset` for its actions/params). VibeUE's `EngineSettingsService` was trimmed to
 > the delta the engine doesn't cover: **console variables (cvars), scalability levels, raw engine
-> INI read/write, and config save**. Use those from `execute_python_code` as shown below.
+> INI read/write, and config save**. Use those from `execute_python` as shown below.
 
 ## Critical Rules
 
@@ -151,7 +151,7 @@ VibeUE `EngineSettingsService` covers:
 For browsing/editing *registered* settings by category (physics, audio, collision, AI, input
 classes, etc.), use the engine **`ConfigSettingsToolset`** via `call_tool`.
 
-## Sample scripts (run via `execute_python_code`)
+## Sample scripts (run via `execute_python`)
 
 - **`scripts/set_cvars.txt`** — read scalability and set a console variable.
 

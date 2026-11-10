@@ -2,7 +2,7 @@
 
 # setup_input.txt — Create an Input Action + Mapping Context and bind a key.
 #
-# Sample script for the enhanced-input skill. Run via execute_python_code.
+# Sample script for the enhanced-input skill. Run via execute_python.
 import unreal
 isvc = unreal.InputService
 

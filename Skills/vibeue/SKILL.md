@@ -68,7 +68,7 @@ only that this process's module started a server, not that it won the port — a
 
 ## Persisted Python results -- a timed-out call is not a failed call
 
-The MCP client aborts an `execute_python_code` call after its own timeout (~30s for most clients,
+The MCP client aborts an `execute_python` call after its own timeout (~30s for most clients,
 300s for some), but the script keeps running in the editor. **Read the persisted result before
 re-running** -- re-running double-executes a mutation. Every run's outcome is written to
 `Signals/python-<pid>-last.json` (always the latest) and appended to `Signals/python-<pid>-runs.jsonl`
@@ -83,7 +83,7 @@ gave up while the script was still running) returns nothing to you; that is the 
 to the message for the same recovery.
 
 ```json
-{"runId":7,"pid":21044,"success":true,"label":"#7 execute_python_code","output":"...",
+{"runId":7,"pid":21044,"success":true,"label":"#7 execute_python","output":"...",
  "error":"","result":"","execution_time_ms":48210.5,"startedUtc":"...","finishedUtc":"..."}
 ```
 
@@ -152,16 +152,16 @@ when two areas seem to fit, the one that *excludes* your task is telling you whe
 
 A loaded skill gives you:
 - workflows, gotchas, and property formats for the domain
-- `vibeue_classes` / `unreal_classes` â€” class names to feed into `discover_python_class` for live method signatures
+- `vibeue_classes` / `unreal_classes` â€” class names to feed into `get_symbol` for live method signatures
 - sub-doc references (`<skill>/<section>`) you can fetch via `GetSkills` for deeper detail
 
-Always call `discover_python_class` on the classes in `vibeue_classes` before writing code â€” never
+Always call `get_symbol` on the classes in `vibeue_classes` before writing code â€” never
 guess method names from the skill content alone. **Batch the discovery into ONE call** instead of
 one call per class:
 
 ```
 # ONE call covers all classes and all topics:
-discover_python_class(
+get_symbol(
     class_name="unreal.MaterialService, unreal.WidgetService, unreal.MaterialNodeService",
     method_filter="create|delete|compile|property|color")
 
@@ -171,10 +171,10 @@ discover_python_class(
 `class_name` accepts a comma-separated list (response gains a `classes` array, one entry per class);
 `method_filter` ORs keywords with `|`.
 
-## How work gets done â€” `execute_python_code` is the workhorse
+## How work gets done â€” `execute_python` is the workhorse
 
 VibeUE services are plain Python on the editor's `unreal` module. Run everything through
-`execute_python_code`:
+`execute_python`:
 
 ```python
 import unreal
@@ -194,11 +194,11 @@ code that runs it:
 ```python
 import unreal, runpy
 runpy.run_path(r"C:/scripts/build.py")        # the script gets its own globals
-# or, sharing the console globals every execute_python_code call sees:
+# or, sharing the console globals every execute_python call sees:
 exec(open(r"C:/scripts/build.py").read())
 ```
 
-**`auto_save` (default true).** Before running your script, `execute_python_code` saves every dirty
+**`auto_save` (default true).** Before running your script, `execute_python` saves every dirty
 content AND world package headlessly (issue #433: this avoids the modal save dialog that would hang
 the call). Every reply reports what actually happened: `auto_save` (true only when the sweep really
 ran), `auto_save_note` (empty when it ran, otherwise `opted_out`, `previous_run_crashed`,
@@ -236,7 +236,7 @@ The engine checks on every level load that no other map package is still alive. 
 calls `load_level` next, which may be minutes later and a different tool entirely, and the message
 names neither the script nor the map that caused it.
 
-`execute_python_code` reports this in every reply so the warning arrives with its cause:
+`execute_python` reports this in every reply so the warning arrives with its cause:
 
 ```json
 "resident_maps": ["/Game/Maps/Foo.Foo"]
@@ -270,11 +270,11 @@ The open level is never reported - only stragglers.
 
 | Tool | Use it for |
 |------|-----------|
-| `execute_python_code` | Run `unreal.*` Python in the editor â€” the workhorse for every VibeUE service |
+| `execute_python` | Run `unreal.*` Python in the editor â€” the workhorse for every VibeUE service |
 | `call_tool` | Invoke engine toolsets and skills (skills, PIE control, logs, assets, gameplay tags) |
 | `describe_toolset` / `list_toolsets` | Discover engine toolsets and their actions/args |
-| `discover_python_class` / `discover_python_function` / `discover_python_module` | Get live signatures before writing code |
-| `list_python_subsystems` | Enumerate editor subsystems for `unreal.get_editor_subsystem(...)` |
+| `get_symbol` / `get_symbol` / `search_symbols` | Get live signatures before writing code |
+| `search_symbols` | Enumerate editor subsystems for `unreal.get_editor_subsystem(...)` |
 | `terrain_data` | Real-world heightmaps + water splines (see `terrain-data` skill) |
 | `deep_research` | Web research / page fetch / geocoding. If Jina Reader refuses your network (HTTP 401), set a free Jina key in the `JINA_API_KEY` environment variable and restart the editor |
 

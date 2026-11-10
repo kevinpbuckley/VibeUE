@@ -2,7 +2,7 @@
 
 # scatter_foliage.txt — Create a foliage type from a mesh and scatter instances at points.
 #
-# Sample script for the foliage skill. Run via execute_python_code.
+# Sample script for the foliage skill. Run via execute_python.
 import unreal
 fs = unreal.FoliageService
 

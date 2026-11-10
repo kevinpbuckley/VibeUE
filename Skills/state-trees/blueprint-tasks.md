@@ -24,7 +24,7 @@ consolidation — Blueprint creation is engine-side now).
 
 ```python
 # Step 1: Discover available StateTree base classes
-result = discover_python_module("unreal", name_filter="StateTreeTask")
+result = search_symbols("unreal", name_filter="StateTreeTask")
 # Review returned names — look for the blueprint-safe base class
 # Typical result: "StateTreeTaskBlueprintBase" (short name used directly below)
 
@@ -47,7 +47,7 @@ if Python raises AttributeError, the plugin that defines the class is not loaded
 factory.set_editor_property("ParentClass", unreal.Actor)
 
 # CORRECT — discover the exact class first, then set it as ParentClass
-# discover_python_module("unreal", name_filter="StateTreeTask") → confirms "StateTreeTaskBlueprintBase"
+# search_symbols("unreal", name_filter="StateTreeTask") → confirms "StateTreeTaskBlueprintBase"
 factory.set_editor_property("ParentClass", unreal.StateTreeTaskBlueprintBase)
 ```
 

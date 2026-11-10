@@ -231,7 +231,7 @@ Each struct field is read-only data already populated; just read it.
 
 **`BranchingPointInfo`** (from `list_branching_points`): `index`, `notify_name`, `trigger_time`, `section_name`.
 
-> Tip: when unsure, call `discover_python_class('unreal.MontageInfo, unreal.AnimSegmentInfo, unreal.MontageSectionInfo')`
+> Tip: when unsure, call `get_symbol('unreal.MontageInfo, unreal.AnimSegmentInfo, unreal.MontageSectionInfo')`
 > — the `Editor Properties` block lists every valid field name. Cheaper than a crash-and-retry loop.
 
 ## Key Workflows
@@ -371,7 +371,7 @@ AnimMontageService.add_section(path, "Attack", 0.5)
 unreal.EditorAssetLibrary.save_asset(path)
 ```
 
-## Sample scripts (run via `execute_python_code`)
+## Sample scripts (run via `execute_python`)
 
 - **`scripts/create_montage.txt`** — create a montage from an animation and add named sections.
 

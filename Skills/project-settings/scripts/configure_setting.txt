@@ -2,7 +2,7 @@
 
 # configure_setting.txt — Discover settings classes and read/write a project setting.
 #
-# Sample script for the project-settings skill. Run via execute_python_code.
+# Sample script for the project-settings skill. Run via execute_python.
 # NOTE: registered-setting categories (list/get/set_setting, get/set_category_settings_as_json) moved
 # to the engine ConfigSettingsToolset (call_tool). VibeUE keeps discover_settings_classes + raw INI.
 import unreal

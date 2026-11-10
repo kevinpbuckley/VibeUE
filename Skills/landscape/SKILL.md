@@ -414,7 +414,7 @@ material skill through `GetSkills` (AgentSkillToolset):
 
 > **NOTE**: For landscape material, texture, and layer blending operations, use `LandscapeMaterialService` (load the `landscape-materials` or `landscape-auto-material` skill).
 
-## Sample scripts (run via `execute_python_code`)
+## Sample scripts (run via `execute_python`)
 
 - **`scripts/sculpt_terrain.txt`** — create a landscape and sculpt procedural mountain/valley features.
 

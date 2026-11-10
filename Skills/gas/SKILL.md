@@ -66,7 +66,7 @@ the routing map plus the live-verified gotchas.
 - ASC `BlueprintCallable`s that take a **class** work fine:
   `asc.try_activate_ability_by_class(unreal.MyGA_Class)` — this is the reliable Python path to
   drive abilities in PIE (it bypasses any component-level gates, which makes tests deterministic).
-- Multiple activations inside ONE `execute_python_code` call happen in the same frame — no
+- Multiple activations inside ONE `execute_python` call happen in the same frame — no
   timers tick and no GE durations expire between them. Exploit this to hit caps/lockouts
   deterministically instead of sleeping wall-clock time.
 

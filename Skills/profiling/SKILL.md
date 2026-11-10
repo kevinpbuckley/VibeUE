@@ -37,10 +37,10 @@ keywords:
 
 Unreal 5.8's native toolsets have **no** performance or tracing tools, so this is VibeUE's net-new
 capability: `unreal.PerformanceService` answers "are we CPU- or GPU-bound?" and drives Unreal
-Insights captures from Python with no C++ required. Run everything here through `execute_python_code`.
+Insights captures from Python with no C++ required. Run everything here through `execute_python`.
 
 The whole API is small — read the live signatures once with
-`discover_python_class(class_name="unreal.PerformanceService")`:
+`get_symbol(class_name="unreal.PerformanceService")`:
 
 | Method | Purpose |
 |--------|---------|

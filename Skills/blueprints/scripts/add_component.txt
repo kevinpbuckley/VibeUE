@@ -2,7 +2,7 @@
 
 # add_component.txt — Add components (with a child) and set their properties.
 #
-# Sample script for the blueprints skill. Run via execute_python_code.
+# Sample script for the blueprints skill. Run via execute_python.
 # Compile after adding components, before setting properties that depend on them.
 #
 # add_component / set_component_property are surviving VibeUE delta methods (kept as-is).

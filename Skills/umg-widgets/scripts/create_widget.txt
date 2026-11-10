@@ -2,7 +2,7 @@
 
 # create_widget.txt — Create a new UMG Widget Blueprint.
 #
-# Sample script for the umg-widgets skill. Run via execute_python_code.
+# Sample script for the umg-widgets skill. Run via execute_python.
 # Edit ASSET_NAME / PACKAGE_PATH, then execute. This is the ONLY supported way to
 # create a Widget Blueprint — WidgetService does not create the asset itself.
 import unreal

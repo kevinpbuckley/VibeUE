@@ -254,7 +254,7 @@ works and is interchangeable — use whichever fits the surrounding code.
 ### ⚠️ Discovering Node Types & Categories
 
 To answer "what nodes / categories are available", use the MaterialNodeService discovery
-calls — do **not** hunt through `discover_python_module` or a material-editor palette API
+calls — do **not** hunt through `search_symbols` or a material-editor palette API
 (there isn't a Python one):
 
 ```python
@@ -285,7 +285,7 @@ if add_node:
 
 ### ⚠️ Property Names
 
-Use `discover_python_class()` first (batch: `class_name='unreal.A, unreal.B'`):
+Use `get_symbol()` first (batch: `class_name='unreal.A, unreal.B'`):
 - `MaterialExpressionTypeInfo` uses `display_name`, NOT `name`
 - `MaterialOutputConnectionInfo` uses `connected_expression_id`, NOT `expression_id`
 

@@ -2,7 +2,7 @@
 
 # edit_slots.txt — Edit slot layout: canvas z-order, box alignment/padding/size, and reparent.
 #
-# Sample script for the umg-widgets skill. Run via execute_python_code.
+# Sample script for the umg-widgets skill. Run via execute_python.
 # All slot edits go through set_property with string values; reparent_widget moves a widget.
 import unreal
 ws = unreal.WidgetService

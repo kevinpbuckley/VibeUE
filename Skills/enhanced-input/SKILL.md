@@ -18,7 +18,7 @@ unreal_classes:
 
 The `InputService` class docstring lists MCP-style action ids (`action_create`,
 `mapping_list_contexts`, `action_configure`, ...). Those are **not** the Python method
-names — `discover_python_class(method_filter=...)` matches nothing for them. The complete
+names — `get_symbol(method_filter=...)` matches nothing for them. The complete
 real API is below; you rarely need a discovery call at all:
 
 | Area | Methods |
@@ -178,7 +178,7 @@ print(f"Triggers: {types.trigger_types}")
 keys = unreal.InputService.get_available_keys()
 ```
 
-## Sample scripts (run via `execute_python_code`)
+## Sample scripts (run via `execute_python`)
 
 - **`scripts/setup_input.txt`** — create an Input Action + Mapping Context and bind a key.
 

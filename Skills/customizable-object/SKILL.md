@@ -33,7 +33,7 @@ keywords:
 One service, reachable from Python (`unreal.CustomizableObjectService.*`) and as AICallable tools.
 It edits the Customizable Object's **editor graph** (the node graph you see in the CO editor) and
 compiles it. Discover exact signatures with
-`discover_python_class('unreal.CustomizableObjectService')`.
+`get_symbol('unreal.CustomizableObjectService')`.
 
 - **Is Mutable on?** `is_mutable_available()`. In UE 5.8 it normally is (the default-enabled
   MutableAssetUserData plugin loads it). If it returns False, every method explains that the

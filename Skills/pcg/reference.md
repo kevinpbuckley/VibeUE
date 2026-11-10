@@ -5,7 +5,7 @@ description: PCG reference — common settings property names, lowercase struct 
 
 ## Common Settings Property Names
 
-Some properties have non-obvious names — always use `discover_python_class` if unsure.
+Some properties have non-obvious names — always use `get_symbol` if unsure.
 Confirmed names for commonly used settings:
 
 | Settings Class | Property | Correct Name |

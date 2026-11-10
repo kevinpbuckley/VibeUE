@@ -508,7 +508,7 @@ Use `unreal.StateTreeService` for StateTree asset edits first. The service layer
 - Bind task properties (e.g. debug text bindable text, delay duration bindings)
 - Set the context actor class
 
-Reserve `execute_python_code` for Blueprint or level-instance operations outside the StateTree asset itself, such as:
+Reserve `execute_python` for Blueprint or level-instance operations outside the StateTree asset itself, such as:
 
 - Adding Blueprint variables or components
 - Making Blueprint properties instance-editable
@@ -517,4 +517,4 @@ Reserve `execute_python_code` for Blueprint or level-instance operations outside
 Recommended pattern:
 
 1. Use `unreal.StateTreeService` methods for structure, descriptions, colors, parameters, property edits, bindings, compile, and save.
-2. Use `execute_python_code` only for Blueprint or level-instance work that sits outside the StateTree asset.
+2. Use `execute_python` only for Blueprint or level-instance work that sits outside the StateTree asset.

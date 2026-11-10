@@ -2,7 +2,7 @@
 
 # add_interface.txt — Implement (and later remove) a Blueprint Interface on a Blueprint.
 #
-# Sample script for the blueprints skill. Run via execute_python_code.
+# Sample script for the blueprints skill. Run via execute_python.
 # Prefer the FULL interface asset path — short names only resolve if already loaded.
 # The interface must be a true Blueprint Interface (made with BlueprintInterfaceFactory).
 import unreal

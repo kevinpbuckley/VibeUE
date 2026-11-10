@@ -112,7 +112,7 @@ minimized — `set_editor_window_state("restore")` fixes the last one.
 ### A minimized editor window freezes PIE and blocks captures
 
 After a scripted relaunch the editor can come up minimized: PIE then ticks nothing (world time stays
-0) and `capture_image` refuses with "window is minimized". Check and fix it from Python:
+0) and captures refuse with "window is minimized". Check and fix it from Python:
 
 ```python
 import unreal, json
@@ -123,7 +123,7 @@ assert r["success"] and not r["is_minimized"], r
 
 `"front"` also asks the OS for the foreground; Windows may refuse that for a background process
 (`success: false`, `error_code: "STATE_NOT_REACHED"`), but a restored window is all PIE and
-`capture_image` need. Headless hosts reply `{"success": false, "error_code": "NO_WINDOW"}`.
+the engine capture tools need. Headless hosts reply `{"success": false, "error_code": "NO_WINDOW"}`.
 
 ### ⚠️ A black capture usually means no lighting, not a broken mesh
 
@@ -412,7 +412,7 @@ unreal.ViewportService.set_exposure_game_settings()
 unreal.ViewportService.restore_viewport_info(info)
 ```
 
-## Sample scripts (run via `execute_python_code`)
+## Sample scripts (run via `execute_python`)
 
 - **`scripts/set_camera.txt`** — position the editor camera and set the view mode.
 

@@ -67,7 +67,7 @@ render in a private preview scene, never the open level, and work during PIE. De
 `api-reference.md` → "Pose Authoring Methods".
 
 > **Loading skills:** skills load via the engine's `AgentSkillToolset` (`ListSkills` / `GetSkills`) —
-> there is no `vibeue-skills-manager` tool. Run the VibeUE services below with `execute_python_code`
+> there is no `vibeue-skills-manager` tool. Run the VibeUE services below with `execute_python`
 > (`unreal.AnimSequenceService.<method>()` / `unreal.SkeletonService.<method>()`).
 >
 > **Related Skills:**
@@ -333,7 +333,7 @@ Load these sibling docs for deeper coverage of specific topics:
 - **method-categories.md** - Categorised table of every AnimSequenceService method by domain (Discovery, Creation, Helpers, Properties, Bone Tracks, Poses, Curves, Notifies, Notify Tracks, Sync Markers, Root Motion, Additive, Compression, Export, Editor).
 - **bone-rotation.md** - Bone Rotation Axis Discovery: why bone local coordinate systems are non-intuitive and the required discovery workflow (reference pose values → analyze existing animations → incremental axis testing) before writing rotation animation code.
 
-## Sample scripts (run via `execute_python_code`)
+## Sample scripts (run via `execute_python`)
 
 - **`scripts/inspect_sequence.txt`** — safely inspect AnimSequences for a skeleton (metadata, no asset loading).
 

@@ -18,17 +18,17 @@ unreal_classes:
 > **`discover_settings_classes` + direct INI read/write (`get_ini_value` / `set_ini_value` /
 > `*_ini_array` / `list_ini_sections` / `list_ini_keys`) + config save**, plus
 > **`set_settings_property` / `get_settings_property`** for one property of a settings class by
-> name. Use those from `execute_python_code` as shown below.
+> name. Use those from `execute_python` as shown below.
 
 ## Critical Rules
 
 ### ⚠️ `EditorStyleSettings` is NOT a Python Class
 
-`EditorStyleSettings` is **not** discoverable via `discover_python_class('unreal.EditorStyleSettings')` — it returns `PYTHON_CLASS_NOT_FOUND`. Reach it through the engine **`ConfigSettingsToolset`** as a settings category (via `call_tool`), or write its values directly via raw INI:
+`EditorStyleSettings` is **not** discoverable via `get_symbol('unreal.EditorStyleSettings')` — it returns `PYTHON_CLASS_NOT_FOUND`. Reach it through the engine **`ConfigSettingsToolset`** as a settings category (via `call_tool`), or write its values directly via raw INI:
 
 ```python
 # ❌ WRONG — will fail
-discover_python_class('unreal.EditorStyleSettings')  # NOT FOUND
+get_symbol('unreal.EditorStyleSettings')  # NOT FOUND
 
 # ✅ CORRECT — engine ConfigSettingsToolset (registered settings) via call_tool, OR the class by name:
 result = unreal.ProjectSettingsService.set_settings_property(
@@ -259,7 +259,7 @@ result = unreal.ProjectSettingsService.set_ini_value(
 - `modified_settings`, `failed_settings`
 - `requires_restart`
 
-## Sample scripts (run via `execute_python_code`)
+## Sample scripts (run via `execute_python`)
 
 - **`scripts/configure_setting.txt`** — discover settings classes and read/write a project setting.
 

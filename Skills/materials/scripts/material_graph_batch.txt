@@ -2,7 +2,7 @@
 
 # material_graph_batch.txt — Build a small graph with batch create + connect (one transaction each).
 #
-# Sample script for the materials skill. Run via execute_python_code.
+# Sample script for the materials skill. Run via execute_python.
 # create_parameter, batch_connect_expressions, connect_expression_to_output and disconnect_output are
 # VibeUE MaterialNodeService calls — batch ops are much faster than per-node. Arrays must be equal length.
 #

@@ -2,7 +2,7 @@
 
 # create_landscape_material.txt — Create a landscape material with a layer blend, compile, assign.
 #
-# Sample script for the landscape-materials skill. Run via execute_python_code.
+# Sample script for the landscape-materials skill. Run via execute_python.
 # compile_material is slow — keep it in its own block. Always create LayerInfo objects for layers.
 import unreal
 lms = unreal.LandscapeMaterialService

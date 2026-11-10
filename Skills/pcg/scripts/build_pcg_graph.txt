@@ -2,7 +2,7 @@
 
 # build_pcg_graph.txt — Create a PCG graph and wire Surface Sampler -> Static Mesh Spawner.
 #
-# Sample script for the pcg skill. Run via execute_python_code.
+# Sample script for the pcg skill. Run via execute_python.
 # Uses the NATIVE PCG Python API (PCGPythonInterop) — no VibeUE service needed.
 import unreal
 

@@ -2,7 +2,7 @@
 
 # create_instance.txt — Create a material instance and override parameters.
 #
-# Sample script for the materials skill. Run via execute_python_code.
+# Sample script for the materials skill. Run via execute_python.
 #
 # Material instance BASICS (create the instance, set scalar/vector/texture overrides) are CUT
 # from MaterialService. The CANONICAL MCP path is the engine MaterialInstanceTools toolset

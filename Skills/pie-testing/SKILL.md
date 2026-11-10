@@ -174,7 +174,7 @@ assert unreal.EngineSettingsService.get_pie_settings().net_mode == "Client"
 ## Validating widgets in PIE — `WidgetService`
 
 VibeUE keeps a small set of widget-in-PIE helpers on `unreal.WidgetService` (run them via
-`execute_python_code`). These spawn and inspect live widget instances once PIE is running:
+`execute_python`). These spawn and inspect live widget instances once PIE is running:
 
 ```python
 import unreal
@@ -200,7 +200,7 @@ tool-level control prefer the engine `EditorAppToolset` actions above.
 world, and the engine `SceneTools` toolset refuses with "Cannot create actors while PIE is active".
 `PIEActorService` resolves the live PIE world by role and spawns a **transient** actor into it — a
 blocker, a test dummy, a trigger volume — with no Blueprint and no editor-world contamination. Run it
-via `execute_python_code`.
+via `execute_python`.
 
 **Selector grammar** (strict — anything else returns `INVALID_SELECTOR`):
 
@@ -386,28 +386,30 @@ fields report whether a Slate widget *consumed* the event, not whether the key r
 key the game polls with `WasInputKeyJustPressed` lands with `handled_down: false`. Verify from game
 state, not from those flags.
 
-## Seeing the game — `capture_image` (issues #544/#546)
+## Seeing the game — `CaptureGameViewport` (engine-native in 5.9)
 
-The `capture_image` MCP tool with `source="game"` screenshots the PIE viewport **including the
-Slate/UMG HUD** and returns a real image block you can look at (plus a PNG under
-`Saved/VibeUE/Captures`). This replaces the old `Shot showui` + read-the-file workaround — and
-`CaptureViewport` can never see PIE or UI at all.
+`SceneCaptureToolset.CaptureGameViewport` screenshots the Game/PIE viewport **as Slate draws it,
+with UMG and any other UI over the viewport**, and returns a real MCP image block you can look at.
+In PIE it redraws the window holding the viewport; if that fails you get the scene only, plus a
+warning. VibeUE's old `capture_image` is gone — 5.9 does this natively, so there is no VibeUE
+screenshot tool any more.
 
-**Multi-player PIE: pick the window with `pie_instance`.** Plain `source="game"` captures only the
-editor's current game viewport (one instance). Pass the PIE instance number to capture a specific
-one — no foreground-window juggling:
+**Multi-player PIE: pick the window with `World`.** Call `SceneCaptureToolset.ListWorlds` to see the
+PIE/Game worlds, then pass the one you want as `World`. Leaving `World` unset resolves it
+automatically (the editor's current game viewport).
 
 ```
-capture_image {"source": "game", "pie_instance": 0}   # first PIE window (the listen server)
-capture_image {"source": "game", "pie_instance": 2}   # client 2
+call_tool ListWorlds            → the PIE/Game worlds available
+call_tool CaptureGameViewport   {"World": {"refPath": "<world from ListWorlds>"}}
+call_tool CaptureGameViewport   {"MaxResolution": 1600}   # longest edge, aspect preserved
 ```
 
-The reply carries `pie_instance` (the instance captured). An unknown instance returns
-`error_code: "PIE_INSTANCE_NOT_FOUND"` with `available_pie_instances` (empty when PIE is not
-running); a dedicated-server instance has no viewport (`PIE_INSTANCE_NO_VIEWPORT`).
+`MaxResolution` is capped by the toolset's configured maximum (reported in `Warnings`). A
+dedicated-server instance has no viewport, and the call raises a script error if no readable
+Game/PIE framebuffer exists.
 
 **"window is minimized"?** A minimized editor also freezes PIE (world time stays 0). Restore it from
-`execute_python_code` with `unreal.ViewportService.set_editor_window_state("restore")`.
+`execute_python` with `unreal.ViewportService.set_editor_window_state("restore")`.
 
 ## Full-rate unfocused verification — `PerformanceService` (issue #549)
 
@@ -421,7 +423,7 @@ unreal.PerformanceService.set_background_throttling(True)    # after
 
 ## Gotchas
 
-- **Python blocks the game thread, so you cannot sample a value over time in one call.** A loop with `time.sleep()` between reads returns the *same* number every iteration — the world never ticks while your script holds the thread. This makes a working animation look frozen and a stuck one look identical to a healthy one. Take each sample in a **separate** `execute_python_code` call and compare across them:
+- **Python blocks the game thread, so you cannot sample a value over time in one call.** A loop with `time.sleep()` between reads returns the *same* number every iteration — the world never ticks while your script holds the thread. This makes a working animation look frozen and a stuck one look identical to a healthy one. Take each sample in a **separate** `execute_python` call and compare across them:
 
   ```python
   # WRONG - three identical readings, proves nothing
@@ -438,7 +440,7 @@ unreal.PerformanceService.set_background_throttling(True)    # after
 - **Save before starting.** Dirty asset changes are NOT picked up by PIE unless saved/compiled. Always `compile_blueprint(...)` before launching PIE to test Blueprint changes.
 - **Don't leave PIE running between tasks.** Subsequent edits (recompiles, asset moves, hot reload) can fail or behave oddly while a PIE world is alive. Call `StopPIE` before returning control to the user.
 - **Map-load delegates never fire on PIE start.** `FCoreUObjectDelegates::PreLoadMap` / `PostLoadMapWithWorld` (loading screens, post-load hooks, subsystem map handlers) are skipped because the PIE world is *duplicated* from the editor world, not loaded. To exercise them, trigger a real in-game transition once PIE is up: `unreal.GameplayStatics.open_level(pie_world, "MapName")`.
-- **Python globals holding PIE objects CRASH the editor on PIE end.** Module-level variables from `execute_python_code` persist between calls and are GC roots (`FPyReferenceCollector`). If any still reference a PIE object (pawn, subsystem instance, quest/objective, widget) when PIE tears down, the engine asserts in `PlayLevel.cpp` ("Object from PIE level still referenced") and the editor dies. Before stopping PIE — or as the last statement of any call that inspected PIE objects — release them: `del pawn, sub, quest` or set them to `None`. Also holds for a `world` pointer cached across an in-game `open <map>` travel: it goes stale and using it raises "WorldContext requested with invalid context object"; re-fetch `get_game_world()` in the same call that uses it.
+- **Python globals holding PIE objects CRASH the editor on PIE end.** Module-level variables from `execute_python` persist between calls and are GC roots (`FPyReferenceCollector`). If any still reference a PIE object (pawn, subsystem instance, quest/objective, widget) when PIE tears down, the engine asserts in `PlayLevel.cpp` ("Object from PIE level still referenced") and the editor dies. Before stopping PIE — or as the last statement of any call that inspected PIE objects — release them: `del pawn, sub, quest` or set them to `None`. Also holds for a `world` pointer cached across an in-game `open <map>` travel: it goes stale and using it raises "WorldContext requested with invalid context object"; re-fetch `get_game_world()` in the same call that uses it.
 
 ## When to use PIE
 
@@ -463,7 +465,7 @@ unreal.PerformanceService.set_background_throttling(True)    # after
 - `slomo 0.1` stretches a 2 s timer to 20 s of wall time so a transient state survives between calls; restore `slomo 1` after. PIE time restarts each run.
 - Never leave an automation test run queued before starting PIE — it wakes on PIE activity and tears the session down.
 - Don't hand-roll waits with `time.sleep()` or your own post-tick callback. `vibeue.wait_for(pred, timeout_s)` and `vibeue.wait_for_players(n)` poll between calls against a wall-clock deadline (PIE world time restarts each session), and `vibeue.cancel_all_waits()` purges their handles. `with vibeue.gate_session(clients=3, net_mode="ListenServer"):` turns background throttling off, sets the PIE settings and restores both afterwards. See the `vibeue` skill.
-- Globals in the `execute_python_code` script namespace persist across calls (it is a separate dict from `sys.modules["__main__"]`, so `import __main__` does not see them): use them to collect async tool results (`vibeue.exec_tool_async`/`collect_tool_result`), and release PIE object references (`vibeue.release_globals`) before `StopPIE`.
+- Globals in the `execute_python` script namespace persist across calls (it is a separate dict from `sys.modules["__main__"]`, so `import __main__` does not see them): use them to collect async tool results (`vibeue.exec_tool_async`/`collect_tool_result`), and release PIE object references (`vibeue.release_globals`) before `StopPIE`.
 
 ## Reference pages
 

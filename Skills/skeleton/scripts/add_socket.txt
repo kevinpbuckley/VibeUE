@@ -2,7 +2,7 @@
 
 # add_socket.txt — Add a socket to a skeletal mesh and verify (ENGINE SkeletalMeshTools).
 #
-# Sample script for the skeleton skill. Run via execute_python_code.
+# Sample script for the skeleton skill. Run via execute_python.
 #
 # ARCHITECTURE: socket CRUD and bone enumeration are owned by the ENGINE toolset
 # editor_toolset.toolsets.skeletal_mesh.SkeletalMeshTools — call with call_tool. VibeUE's

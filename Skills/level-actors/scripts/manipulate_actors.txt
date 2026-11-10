@@ -2,7 +2,7 @@
 
 # manipulate_actors.txt — List actors in the level and move/rotate one.
 #
-# Sample script for the level-actors skill. Run via execute_python_code.
+# Sample script for the level-actors skill. Run via execute_python.
 # NOTE: list/find/spawn/move/transform/select moved to the engine ActorTools/SceneTools/
 # EditorAppToolset (call_tool) or unreal.EditorActorSubsystem (used here). VibeUE's ActorService
 # keeps only transform-lock, absolute-transform, preserve-scale, camera framing, get_all_properties.

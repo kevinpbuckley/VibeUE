@@ -2,7 +2,7 @@
 
 # apply_font.txt — Apply a full font configuration to a text widget and verify it.
 #
-# Sample script for the umg-widgets skill. Run via execute_python_code.
+# Sample script for the umg-widgets skill. Run via execute_python.
 # Uses the dedicated set_font API (preferred over many set_property calls for full edits).
 import unreal
 

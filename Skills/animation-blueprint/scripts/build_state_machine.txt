@@ -2,7 +2,7 @@
 
 # build_state_machine.txt — Add a state machine with two states + a transition, set a state anim.
 #
-# Sample script for the animation-blueprint skill. Run via execute_python_code.
+# Sample script for the animation-blueprint skill. Run via execute_python.
 # Requires an Animation Blueprint asset (ABP_*). Returned ids are node GUID strings.
 import unreal
 ag = unreal.AnimGraphService

@@ -297,7 +297,7 @@ r.asset_path   # str
 r.message      # str — human-readable status or error
 ```
 
-## Sample scripts (run via `execute_python_code`)
+## Sample scripts (run via `execute_python`)
 
 - **`scripts/create_sound_cue.txt`** — create a SoundCue (optionally from a wave) and add nodes.
 

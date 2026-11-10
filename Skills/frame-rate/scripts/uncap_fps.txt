@@ -2,7 +2,7 @@
 
 # uncap_fps.txt — Read all five FPS caps, then uncap to a target (EngineSettingsService).
 #
-# Sample script for the frame-rate skill. Run via execute_python_code.
+# Sample script for the frame-rate skill. Run via execute_python.
 import unreal, json
 es = unreal.EngineSettingsService
 

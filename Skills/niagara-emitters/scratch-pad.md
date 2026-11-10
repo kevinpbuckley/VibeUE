@@ -199,5 +199,5 @@ Call it **once** at the end of a batch of graph edits — not after every node c
 import unreal
 methods = unreal.SystemLibrary.get_function_names(unreal.NiagaraScratchPadService.static_class())
 # or via VibeUE:
-print(unreal.discover_python_class("unreal.NiagaraScratchPadService"))
+print(unreal.get_symbol("unreal.NiagaraScratchPadService"))
 ```

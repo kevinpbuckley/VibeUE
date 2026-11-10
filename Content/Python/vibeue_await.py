@@ -1,10 +1,10 @@
 # Copyright Buckley Builds LLC 2026 All Rights Reserved.
-"""Runs execute_python_code scripts that use top-level await.
+"""Runs execute_python scripts that use top-level await.
 
 What such a script awaits usually needs the editor to tick, so it cannot run to completion inside
 one Python command. UPythonTools starts it with begin() and then calls step() from the core ticker,
 once per editor frame, until the script ends. Everything the script prints during a step lands in
-that step's command output, under the same crash guard as any other execute_python_code run.
+that step's command output, under the same crash guard as any other execute_python run.
 
 Each run has its own event loop, so a crash or an error is attributed to one script and a slow
 script never delays another. A loop only runs inside step(); between steps the editor has the game

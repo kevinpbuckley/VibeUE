@@ -2,7 +2,7 @@
 
 # recolor_emitter.txt — Recolour a Niagara emitter by rotating its ColorFromCurve hue.
 #
-# Sample script for the niagara-emitters skill. Run via execute_python_code.
+# Sample script for the niagara-emitters skill. Run via execute_python.
 # shift_color_hue rotates the colour wheel and PRESERVES the authored gradient, saturation and
 # alpha. A multiplicative tint does not: equal channels only brighten/dim, and a zero channel
 # kills it outright. For a value-driven emitter (no ColorFromCurve) set Scale Color through

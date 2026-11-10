@@ -2,7 +2,7 @@
 
 # preview_validate_bake.txt — Safe single-bone edit: profile -> preview -> validate -> bake.
 #
-# Sample script for the animation-editing skill. Run via execute_python_code.
+# Sample script for the animation-editing skill. Run via execute_python.
 # Always specify bone space ("local" for user intent). Cancel if validation fails.
 import unreal
 ass = unreal.AnimSequenceService

@@ -2,7 +2,7 @@
 
 # create_sound_cue.txt — Create a SoundCue (optionally from a wave) and add nodes.
 #
-# Sample script for the sound-cues skill. Run via execute_python_code.
+# Sample script for the sound-cues skill. Run via execute_python.
 import unreal
 scs = unreal.SoundCueService
 

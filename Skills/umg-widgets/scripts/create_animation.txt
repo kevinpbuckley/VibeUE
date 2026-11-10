@@ -2,7 +2,7 @@
 
 # create_animation.txt — Author a widget animation with a track and keyframes, then verify.
 #
-# Sample script for the umg-widgets skill. Run via execute_python_code.
+# Sample script for the umg-widgets skill. Run via execute_python.
 # Order matters: create animation -> add track on a REAL property -> add keyframes.
 import unreal
 

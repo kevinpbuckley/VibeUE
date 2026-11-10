@@ -2,7 +2,7 @@
 
 # inspect_uvs.txt — Inspect UV channels + health on a StaticMesh, and transform (tile) a channel.
 #
-# Sample script for the uv-mapping skill. Run via execute_python_code.
+# Sample script for the uv-mapping skill. Run via execute_python.
 import unreal
 uv = unreal.UVMappingService
 

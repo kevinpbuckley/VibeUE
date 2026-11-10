@@ -2,7 +2,7 @@
 
 # create_blueprint.txt — Create a Blueprint with variables, then compile + save.
 #
-# Sample script for the blueprints skill. Run via execute_python_code.
+# Sample script for the blueprints skill. Run via execute_python.
 #
 # CANONICAL PATH: Blueprint create / add_variable / compile_blueprint are engine BlueprintTools
 # toolset calls now (BlueprintService.create_blueprint / add_variable / compile_blueprint were cut):
@@ -16,7 +16,7 @@
 #             toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
 #             arguments={"blueprint": path})
 #
-# This script must stay pure-Python (it runs inside execute_python_code), so it uses the native
+# This script must stay pure-Python (it runs inside execute_python), so it uses the native
 # unreal.* equivalents below. The BlueprintTools toolset calls above are the canonical interface.
 import unreal
 

@@ -106,7 +106,7 @@ or `stat fps` in PIE) climbs past 60. If it's still pinned at 60, the most likel
 cause is `r.VSync`/`r.VSyncEditor` re-enabled by a quality preset, or the monitor itself —
 VSync can only go as high as the display refresh rate.
 
-## Sample scripts (run via `execute_python_code`)
+## Sample scripts (run via `execute_python`)
 
 - **`scripts/uncap_fps.txt`** — read all five caps, then uncap to a target FPS.
 

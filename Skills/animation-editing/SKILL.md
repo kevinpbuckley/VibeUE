@@ -46,7 +46,7 @@ bone-space handling and constraint validation.
 > **Load companion skills:** `animsequence` (basic keyframe creation), `skeleton` (structure,
 > retargeting), `animation-blueprint` (state machines / AnimGraph). Skills load via the engine's
 > `AgentSkillToolset` (`ListSkills` / `GetSkills`) — there is no `vibeue-skills-manager` tool. Run the
-> VibeUE services below with `execute_python_code` (`unreal.<Service>.<method>()`).
+> VibeUE services below with `execute_python` (`unreal.<Service>.<method>()`).
 
 > **🛡️ Safe discovery — never `unreal.load_asset()` in loops (memory crash 0xC0000005).**
 > Use `SkeletonService.list_skeletons(path)`, `AnimSequenceService.find_animations_for_skeleton(skeleton)`,

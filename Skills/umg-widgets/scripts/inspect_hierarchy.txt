@@ -2,7 +2,7 @@
 
 # inspect_hierarchy.txt — Print a Widget Blueprint's full hierarchy, slots, and properties.
 #
-# Sample script for the umg-widgets skill. Run via execute_python_code.
+# Sample script for the umg-widgets skill. Run via execute_python.
 # Uses get_widget_snapshot (one call: hierarchy + slot layout + all properties),
 # which is preferred over get_hierarchy + per-widget list_properties.
 import unreal

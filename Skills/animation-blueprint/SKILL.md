@@ -27,7 +27,7 @@ keywords:
 # Animation Blueprint Skill
 
 > **Loading skills:** skills load through the engine's `AgentSkillToolset` (`ListSkills`/`GetSkills`) —
-> there is no `vibeue-skills-manager` tool. Run VibeUE services with `execute_python_code`
+> there is no `vibeue-skills-manager` tool. Run VibeUE services with `execute_python`
 > (`unreal.AnimGraphService.<method>()`); reach engine toolsets with `call_tool`.
 
 > An AnimBP **is a Blueprint**. The state-machine/AnimGraph authoring here is VibeUE
@@ -37,7 +37,7 @@ keywords:
 > `call_tool`. `BlueprintService` still has `list_variables`, `get_variable_info`,
 > `set_variable_default_value`, `variable_exists`, components, and overridable functions. Bool fields
 > on info structs drop the C++ `b` prefix in Python — use `is_pure`, `is_output`, `already_overridden`
-> (NOT `b_is_pure`); call `discover_python_class` to confirm field names rather than guessing.
+> (NOT `b_is_pure`); call `get_symbol` to confirm field names rather than guessing.
 
 ## ⚠️ #1 GOTCHA — Transitions need a RULE or they NEVER fire
 
@@ -498,7 +498,7 @@ Float maths nodes are `FUNC KismetMathLibrary::Multiply_DoubleDouble` and `::Add
 `MakeRotator` is `FUNC KismetMathLibrary::MakeRotator` with pins `Roll`, `Pitch`, `Yaw`.
 
 Verify it is actually running rather than trusting the compile: in PIE read the variable off the live
-instance, twice, in **separate** `execute_python_code` calls (see the pie-testing skill — Python
+instance, twice, in **separate** `execute_python` calls (see the pie-testing skill — Python
 blocks the game thread, so a sampling loop inside one call returns the same value every time).
 
 ```python
@@ -533,7 +533,7 @@ for machine in machines:
         print(f"{machine.machine_name}/{state.state_name}")
 ```
 
-## Sample scripts (run via `execute_python_code`)
+## Sample scripts (run via `execute_python`)
 
 - **`scripts/build_state_machine.txt`** — add a state machine with two states, set state animations, add a transition, compile.
 

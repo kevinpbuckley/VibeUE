@@ -2,7 +2,7 @@
 
 # create_montage.txt — Create a montage from an animation and add a named section.
 #
-# Sample script for the animation-montage skill. Run via execute_python_code.
+# Sample script for the animation-montage skill. Run via execute_python.
 import unreal
 ms = unreal.AnimMontageService
 

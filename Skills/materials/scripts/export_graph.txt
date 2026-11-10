@@ -2,7 +2,7 @@
 
 # export_graph.txt — Export and inspect a material's node graph (read before modifying).
 #
-# Sample script for the materials skill. Run via execute_python_code.
+# Sample script for the materials skill. Run via execute_python.
 # ALWAYS export+review an existing material before adding/reconnecting nodes.
 import unreal, json
 ms, mns = unreal.MaterialService, unreal.MaterialNodeService

@@ -25,46 +25,73 @@ into the engine's `ToolsetRegistry` and are reachable through the MCP tools you 
 
 There are two ways to act on the editor. Pick the cheap one:
 
-- **`execute_python_code` — your workhorse.** Runs an arbitrary Python script in the editor in **one
-  round-trip**. Every VibeUE service is exposed to Python (`unreal.BlueprintService.build_graph(...)`)
-  and sits next to the whole native `unreal.*` API in the same script. **Batch aggressively** — do a
-  whole multi-step task (create + edit + compile + verify) in a single call, and `print()` only what
-  you need back.
-- **`call_tool` — one tool per round-trip.** Genuinely needed only for **skills**
-  (`AgentSkillToolset`). **Everything else from Epic's engine toolsets is also reachable from
-  inside `execute_python_code`** via `unreal.ToolsetRegistry.execute_tool(...)` (see §2), so batch
-  engine-toolset calls with your Python instead of spending a round-trip. Don't use `call_tool`
-  for work `execute_python_code` can batch.
-- **`capture_image` — screenshots you can actually SEE.** Returns a real MCP image block the
-  client renders (never a base64 text blob). `source="game"` captures the PIE viewport
-  **including the Slate/UMG HUD** — the thing `CaptureViewport` cannot see (see §6).
+- **`execute_python` — your workhorse.** Engine-native
+  (`EditorToolset.PythonScriptingTools`). Runs an arbitrary Python script in the editor in **one
+  round-trip**, on the game thread, with top-level `await`. Every VibeUE service is exposed to
+  Python (`unreal.BlueprintService.build_graph(...)`) and sits next to the whole native `unreal.*`
+  API in the same script. **Batch aggressively** — do a whole multi-step task (create + edit +
+  compile + verify) in a single call, and `print()` only what you need back (print goes to the
+  Output Log; the script's final expression is what comes back).
+  **Call `read_me` once per conversation before your first `execute_python`** — it carries the
+  execution-environment rules (shared namespace, awaiting, composing other tools).
+- **`call_tool` — one tool per round-trip.** Needed for **skills** (`AgentSkillToolset`) and for
+  the few toolsets with no Python path. Everything else from Epic's engine toolsets is also
+  reachable from inside `execute_python` (see §2), so batch engine-toolset calls with your Python
+  instead of spending a round-trip.
+
+**Before you load a level, check for resident maps.** VibeUE's own `execute_python_code` used to
+save and sweep for you; it is gone (5.9's `execute_python` replaces it), so the guard is now
+explicit and yours to run:
+
+```python
+import unreal
+resident = unreal.PythonTools.get_resident_maps()
+if resident:
+    print("RESIDENT MAPS - releasing these before any level load:", resident)
+```
+
+A map other than the open level still loaded in memory will **crash the editor on the next level
+load**. Also save before risky work (`unreal.EditorLoadingAndSavingUtils.save_dirty_packages(True, True)`),
+and do not keep level objects in variables across an `await` or a level change — re-fetch them.
+`unreal.PythonTools.get_dirty_packages()` tells you what a script left dirty.
 
 **Speed + tokens:** **avoid `describe_toolset` as a habit** — it dumps the full JSON schema of every
-tool in a toolset (the most token-heavy thing here); reach for a **skill** plus a narrow
-`discover_python_class('unreal.BlueprintService', method_filter='variable')` instead.
+tool in a toolset (the most token-heavy thing here). Reach for a **skill** plus a narrow
+`search_symbols` / `get_symbol` instead.
 
 ---
 
 ## 2. Tool roster — what's where
 
-**VibeUE MCP tools (call directly):**
-- `execute_python_code` — run Python (must start with `import unreal`). The workhorse.
-- `discover_python_module` / `discover_python_class` / `discover_python_function` — inspect the API
-  (use `unreal` lowercase; narrow with `name_filter` / `method_filter`).
-- `list_python_subsystems` — list editor subsystems.
-- `capture_image` — screenshot as a real MCP image (see §6): `source` = `game` (PIE incl. UMG HUD),
-  `window` (whole editor window), or `editor` (viewport scene); `pie_instance` picks one PIE
-  instance's game viewport in a multi-player session. Also saves a PNG under
-  `Saved/VibeUE/Captures` and returns the path.
+**Python and API discovery (engine-native, `EditorToolset.PythonScriptingTools`):**
+- `execute_python` — run a Python script. The workhorse.
+- `read_me` — usage instructions; call once per conversation before `execute_python`.
+- `search_symbols` — regex search across the registered tools **and** the whole `unreal` API;
+  filter by `kinds`, by `accepts` (parameter type) or `returns` (return type), and match against
+  NAME / SIGNATURE / DOCUMENTATION. This replaces VibeUE's old `discover_python_*` tools and is
+  stronger: it only returns symbols this editor session actually provides.
+- `get_symbol` — full documentation for a tool, toolset, type, function, method or property.
+  Feed it a `qualified_name` from `search_symbols`. For a type it lists editor properties, enum
+  values and methods. Use it to check an `unreal` API **before** calling it.
+
+**VibeUE MCP tools (call directly) — only two remain, both things the engine has no tool for:**
 - `deep_research` — web search / page fetch / geocode (see §5).
 - `terrain_data` — real-world heightmaps + water splines (see §5).
 
-**VibeUE services (call from Python inside `execute_python_code`):** `unreal.<Name>Service.<method>()`
+**Screenshots are engine-native now.** `SceneCaptureToolset.CaptureGameViewport` captures the
+Game/PIE viewport **as Slate draws it, with UMG and any other UI over the viewport**, takes a
+`World` from `ListWorlds` to pick a PIE instance, and returns a real MCP image block the client
+renders. `CaptureActiveEditorView` / `CaptureEditorViewport` capture the scene without UI, and
+`EditorAppToolset.CaptureEditorImage` grabs the whole editor window. VibeUE's `capture_image` is
+gone — 5.9 covers every source it had, including the UMG HUD it was built for.
+
+**VibeUE services (call from Python inside `execute_python`):** `unreal.<Name>Service.<method>()`
 — Blueprint, BlueprintGraph (via BlueprintService), Material(+Node), Widget, Skeleton, AnimSequence,
-AnimMontage, AnimGraph, Landscape(+Material), Foliage, MetaSound, SoundCue, Niagara(+Emitter,
-+ScratchPad), StateTree, BehaviorTree, Blackboard, Input, EnumStruct, UVMapping,
-RuntimeVirtualTexture, MapBlockout, GameplayTag, Viewport, Actor, Engine/ProjectSettings,
-**Performance** (`unreal.PerformanceService.frame_timing()`), **PIEActor**
+AnimMontage, AnimGraph, Landscape(+Material), Foliage, SoundCue, Niagara(+Emitter, +ScratchPad),
+StateTree, BehaviorTree, Blackboard, Input, UVMapping, RuntimeVirtualTexture, MapBlockout,
+CustomizableObject, Viewport, Actor, Engine/ProjectSettings, Transaction (undo/redo stepping only),
+GameplayTag (`request_tag` / `request_tag_container` only), **Performance**
+(`unreal.PerformanceService.frame_timing()`), **PIEActor**
 (`unreal.PIEActorService.spawn_actor(...)` — spawn/destroy transient actors in a running PIE world).
 These overlap-trimmed services keep only what the engine lacks — for plain asset/actor/blueprint
 basics the engine's own tools may be simpler (below).
@@ -94,14 +121,11 @@ is ready.
 
 **Use the engine's native tools for these (VibeUE intentionally doesn't duplicate them):**
 - **Assets** (find / save / move / delete / duplicate / metadata): native Python
-  `unreal.EditorAssetLibrary` / `EditorAssetSubsystem` inside `execute_python_code` (batchable), or
+  `unreal.EditorAssetLibrary` / `EditorAssetSubsystem` inside `execute_python` (batchable), or
   Epic's `AssetTools` toolset (via `execute_tool` in-Python, or `call_tool`).
-- **Screenshots / vision**: use VibeUE's **`capture_image` MCP tool** (see §6) — it is the only
-  path that returns a renderable image. Epic's `CaptureViewport`/`CaptureEditorImage`/
-  `CaptureAssetImage` return base64 **inside a text block** on every route (including `call_tool`),
-  which you cannot view and which can blow the client token limit; reach for `CaptureViewport` only
-  when you need its world-grid/actor-label annotations, via `vibeue.exec_tool` (which fills its
-  mandatory param shape for you).
+- **Screenshots / vision**: engine-native in 5.9 (see §6) — `SceneCaptureToolset.CaptureGameViewport`
+  captures the PIE viewport *with* the UMG/Slate HUD, and every capture tool returns a real MCP
+  image block. VibeUE's `capture_image` is gone.
 - **PIE**: `EditorAppToolset.StartPIE` / `StopPIE` / `IsPIERunning` — via `vibeue.exec_tool`
   (bare `StartPIE` works; the raw path demands the full options shape), or `call_tool`.
 - **Logs**: `ConsoleToolset.LogsToolset.GetLogEntries` (LogsToolset moved into ConsoleToolset in 5.9) — via `execute_tool` or `call_tool` (or read the `.log` file).
@@ -113,27 +137,32 @@ is ready.
 
 ## 3. Skills — native `AgentSkill` (lazy domain knowledge)
 
-VibeUE's ~88 skill packs are registered as Unreal **AgentSkills** and served by the engine's
-`AgentSkillToolset`. Skills tell you **what to do and why**; they do **not** replace discovery of exact
-signatures.
+VibeUE's 35 skill packs are **Markdown agent skills discovered natively by UE 5.9**
+(`ToolsetRegistry` MarkdownAgentSkills reads `<Plugin>/Skills/**/SKILL.md`) and served by the
+engine's `AgentSkillToolset` alongside the engine's own skills. Skills tell you **what to do and
+why**; they do **not** replace discovery of exact signatures.
 
 **Discover + load (both are `call_tool` on `ToolsetRegistry.AgentSkillToolset`):**
 ```
 call_tool(tool_name="ListSkills", toolset_name="ToolsetRegistry.AgentSkillToolset")
-  → { "/VibeUE/Python/init_unreal_PY.VibeUE_blueprints": "Create and modify Blueprint assets…", … }
+  → { "/Skills/VibeUE/blueprints": "Create and modify Blueprint assets…", … }
 
 call_tool(tool_name="GetSkills", toolset_name="ToolsetRegistry.AgentSkillToolset",
-          arguments={"skillPaths": ["/VibeUE/Python/init_unreal_PY.VibeUE_blueprints"]})
+          arguments={"skillPaths": ["/Skills/VibeUE/blueprints"]})
   → full markdown for that pack
 ```
-- `ListSkills` returns **summaries only** (cheap) — call it once per session to see what exists. VibeUE
-  packs are `/VibeUE/Python/init_unreal_PY.VibeUE_<name>`; the engine's own skills appear alongside.
+- `ListSkills` returns **summaries only** (cheap) — call it once per session to see what exists.
+  VibeUE packs are **`/Skills/VibeUE/<name>`**; engine skills are `/Skills/Engine/<name>` and other
+  plugins' are `/Skills/<PluginName>/...`.
 - `GetSkills` returns full instructions **lazily** — request only the packs you need.
-- **Sub-docs are their own skill entries** (e.g. `…VibeUE_blueprint_graphs__build_graph`,
-  `…VibeUE_state_trees__api_reference`) — load them by path the same way; no `skill/section` argument.
+- **Sub-docs are no longer separate skill entries.** A pack's deep-reference pages are plain
+  markdown files next to its `SKILL.md`, listed under its **Reference pages** section as relative
+  links. UE rewrites those links to absolute paths when it serves the skill, so **read the file at
+  the path given** rather than looking for a `/Skills/...` entry for it. Same for the
+  `scripts/*.txt` runnable samples.
 
 **When to load a skill:** the user names a domain ("create a blueprint", "build a state tree"), or you
-hit a non-obvious workflow. Then: read the pack → `discover_python_class` the classes it names → write
+hit a non-obvious workflow. Then: read the pack → `get_symbol` the classes it names → write
 the Python. Don't reload a pack you already loaded this session.
 
 ---
@@ -149,9 +178,9 @@ sub = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
 # VibeUE services are static classes, called directly:
 info = unreal.BlueprintService.get_blueprint_info("/Game/MyBP")
 
-# Batch a whole task in ONE execute_python_code call, printing evidence as you go.
+# Batch a whole task in ONE execute_python call, printing evidence as you go.
 # Blueprint create / variables are ENGINE-side (native libs + BlueprintTools toolset), NOT
-# BlueprintService (it owns graphs/components/timelines and compile — see discover_python_class):
+# BlueprintService (it owns graphs/components/timelines and compile — see get_symbol):
 import json
 factory = unreal.BlueprintFactory(); factory.set_editor_property("ParentClass", unreal.Actor)
 bp = unreal.AssetToolsHelpers.get_asset_tools().create_asset("BP_Enemy", "/Game/Blueprints", unreal.Blueprint, factory); print("CREATED:", bp)
@@ -183,26 +212,34 @@ print("COMPILED: BP_Enemy", res.success, res.num_errors, res.errors)
 
 ## 6. See what you built (screenshots)
 
+Capture is **engine-native in 5.9** — `SceneCaptureToolset` plus
+`EditorAppToolset.CaptureEditorImage`. All of them return a real MCP **image block** the client
+renders (the protocol carries `"type": "image"`), so you see the picture directly: no base64
+decoding, no token blowout. VibeUE's old `capture_image` is gone; 5.9 covers every source it had.
+
 After any **visible** change, capture and actually look before claiming success:
-```
-capture_image                          # editor viewport scene (default when PIE is off)
-capture_image {"source": "game"}       # PIE game viewport INCLUDING the Slate/UMG HUD
-capture_image {"source": "window"}     # the whole editor window (any editor UI/panel)
-capture_image {"source": "game", "pie_instance": 1}   # one PIE instance in a multi-player session
-```
-If it refuses with "window is minimized" (a minimized editor also freezes PIE), run
-`unreal.ViewportService.set_editor_window_state("restore")` in `execute_python_code` and retry.
+
+| What you want | Tool |
+|---|---|
+| The running game, **including the UMG/Slate HUD** | `SceneCaptureToolset.CaptureGameViewport` — captures the Game/PIE viewport *as Slate draws it*, UI included. Pass a `World` from `ListWorlds` to pick one PIE instance in a multi-player session. `StartPIE` first. |
+| The editor viewport scene (no UI) | `SceneCaptureToolset.CaptureActiveEditorView` or `CaptureEditorViewport` (`ListEditorViewports` / `GetActiveEditorView` to choose one) |
+| The whole editor window, any panel | `EditorAppToolset.CaptureEditorImage` |
+| An asset thumbnail | `EditorAppToolset.CaptureAssetImage` / `GetAssetThumbnails` |
+| A video of the viewport | `SceneCaptureToolset.StartViewportRecording` / `StopViewportRecording` / `ListViewportRecordings` |
+
+`MaxResolution` caps the longest edge (scaled down, aspect preserved). Reach them with `call_tool`,
+or batch from inside `execute_python` via `vibeue.exec_tool` (see §2).
+
+If a capture fails because the editor window is minimized (a minimized editor also freezes PIE —
+world time stays 0), run `unreal.ViewportService.set_editor_window_state("restore")` in
+`execute_python` and retry.
+
 Scripts that change the viewport's FOV or exposure for a shot must restore them: those settings
 persist into the user's editor config. Snapshot with `info = unreal.ViewportService.get_viewport_info()`
 and finish with `unreal.ViewportService.restore_viewport_info(info)`, or use
 `unreal.ViewportService.capture_with_view(...)`, which restores by itself.
-`capture_image` returns a **real MCP image block** — you see the picture directly, no base64
-decoding, no token blowout — and saves a PNG under `Saved/VibeUE/Captures` (path in the result).
-`source="game"` is the ONLY way to screenshot the running game's HUD: Epic's `CaptureViewport`
-sees the editor camera scene, never PIE or Slate UI. For a running game, `StartPIE` first.
-**Look at the image, judge it against the request, fix, re-capture.** Reach for Epic's
-`CaptureViewport` (via `vibeue.exec_tool`) only when you need its world-grid/actor-label overlay.
 
+**Look at the image, judge it against the request, fix, re-capture.**
 ---
 
 ## 7. Diagnose performance
@@ -312,10 +349,10 @@ crash handler — MCP will hang; relaunch); fresh and small → the editor is fi
   is unchanged; after 2 failed attempts at a goal, stop and report — don't try a 3rd variation.
 - **Never** use modal dialogs, `input()`, blocking ops, long `time.sleep()`, or infinite loops.
 - **Full asset paths** (`/Game/Blueprints/BP_Name`). **Colors are 0.0–1.0** (`{"R":1.0,"G":0.5,"B":0.0,"A":1.0}`).
-- **Know what your script dirtied.** Every `execute_python_code` reply carries `dirtied_packages` /
-  `cleaned_packages` (what the SCRIPT left dirty / clean, also on an error) besides `auto_save`,
-  `saved_packages` and `resident_maps`. After a script that raised, check `dirtied_packages` before the next
-  `auto_save=true` call saves a half-finished edit. Mid-script: `unreal.PythonTools.get_dirty_packages()`.
+- **Know what your script dirtied.** `execute_python` does not report this, so ask: 
+  `unreal.PythonTools.get_dirty_packages()` lists what is dirty now, and
+  `unreal.PythonTools.get_resident_maps()` warns of a map still in memory that would crash the next
+  level load. After a script that raised, check both before saving a half-finished edit.
 - **Change level with `vibeue.safe_load_level(path)`**, never a bare `load_level` while `resident_maps` is
   non-empty: a resident map makes the next level load FATAL the editor. It refuses (raises) instead.
 - **`unreal.EditorLevelLibrary` is deprecated** — use `EditorActorSubsystem` (`get_all_level_actors()`
@@ -327,7 +364,7 @@ crash handler — MCP will hang; relaunch); fresh and small → the editor is fi
 
 - **Be concise** — this is an IDE tool. Before each tool call, one sentence on what/why; after, 1–2 on
   the result. Execute multi-step tasks straight through — don't pause for "continue".
-- **Discover before you call.** Method signatures come from `discover_python_class`, not memory or skill
+- **Discover before you call.** Method signatures come from `get_symbol` / `search_symbols`, not memory or skill
   prose. Skills say *which* class and *why*; discovery gives the exact call shape.
 - **Commit at milestones** if the project is a git repo, so a bad experiment reverts cleanly.
 - **Living gotchas:** when you solve a real problem, append a one-line gotcha+fix to this file so the

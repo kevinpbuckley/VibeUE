@@ -2,7 +2,7 @@
 
 # sculpt_terrain.txt — Create a landscape and sculpt procedural features (mountain, valley).
 #
-# Sample script for the landscape skill. Run via execute_python_code.
+# Sample script for the landscape skill. Run via execute_python.
 import unreal
 ls = unreal.LandscapeService
 

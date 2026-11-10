@@ -234,10 +234,10 @@ Rejects moving a panel into itself/a descendant; the root cannot be reparented.
 
 ## Task Index
 
-Pick the task, load its workflow section, and/or run its sample script via `execute_python_code`.
+Pick the task, load its workflow section, and/or run its sample script via `execute_python`.
 Sample scripts under `scripts/` are **runnable examples** — edit the variables at the top, then execute.
 
-| Task | Workflow | Sample script (run via `execute_python_code`) |
+| Task | Workflow | Sample script (run via `execute_python`) |
 |------|----------|-----------------------------------------------|
 | Create a Widget Blueprint | `workflows.md` → Create Widget Blueprint | `scripts/create_widget.txt` |
 | Build a menu (root + panel + buttons) | `workflows.md` → Build a Menu | `scripts/build_menu.txt` |

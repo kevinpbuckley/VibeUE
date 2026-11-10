@@ -2,7 +2,7 @@
 
 # pie_inspect.txt — Spawn a Widget Blueprint in PIE and read a live property, then clean up.
 #
-# Sample script for the umg-widgets skill. Run via execute_python_code.
+# Sample script for the umg-widgets skill. Run via execute_python.
 #
 # IMPORTANT: start_pie() is asynchronous — PIE is not ready in the same execution call.
 # Run start_pie() FIRST (one call), then run this spawn/read/cleanup block in a SECOND call,

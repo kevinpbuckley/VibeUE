@@ -30,7 +30,7 @@ keywords:
 
 ### Mesh Path Required
 
-All placement methods require a valid `UStaticMesh` or `UFoliageType` asset path. Use `discover_python_class('unreal.FoliageService')` to see available methods.
+All placement methods require a valid `UStaticMesh` or `UFoliageType` asset path. Use `get_symbol('unreal.FoliageService')` to see available methods.
 
 ### Surface Trace
 
@@ -320,7 +320,7 @@ if unreal.FoliageService.has_foliage_instances("/Game/Meshes/SM_Tree_01"):
     print("Instances exist in level")
 ```
 
-## Sample scripts (run via `execute_python_code`)
+## Sample scripts (run via `execute_python`)
 
 - **`scripts/scatter_foliage.txt`** — create a foliage type from a mesh and scatter instances onto the surface.
 

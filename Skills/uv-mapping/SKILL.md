@@ -415,7 +415,7 @@ assert health.lightmap_coordinate_index == 1
 
 For unwrap operations, export the layout PNG and visually inspect it (read the PNG back, or surface it through the engine's screenshot/image toolset) — the cheapest way to confirm the unwrap looks reasonable.
 
-## Sample scripts (run via `execute_python_code`)
+## Sample scripts (run via `execute_python`)
 
 - **`scripts/inspect_uvs.txt`** — inspect UV channels/health and export a UV layout image.
 

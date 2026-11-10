@@ -160,7 +160,7 @@ Response:
 attach_image(file_path="E:/Project/Saved/Terrain/map_satellite_v9_35.3606_138.7274.png")
 ```
 
-`attach_image` is a **tool call** (like `terrain_data`), NOT a Python function. Do NOT put it inside `execute_python_code`. Call it directly as a tool. If no `attach_image` tool is available in your session, skip this step and proceed using the saved file path returned by `get_map_image`.
+`attach_image` is a **tool call** (like `terrain_data`), NOT a Python function. Do NOT put it inside `execute_python`. Call it directly as a tool. If no `attach_image` tool is available in your session, skip this step and proceed using the saved file path returned by `get_map_image`.
 
 After attaching, you will see the satellite image in your next response. Use it to:
 - Identify terrain features (rock, grassland, water, sand, forest, urban)

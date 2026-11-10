@@ -45,7 +45,7 @@ the `PCGPythonInterop` plugin. No VibeUE service wrapper is needed — the Pytho
 
 These are the mistakes that cause infinite retry loops. Check each one before executing:
 
-**Do not call `discover_python_class` or `discover_python_function` on any PCG class — this skill contains everything you need. Calling discover bloats context and causes content filter failures.**
+**Do not call `get_symbol` or `get_symbol` on any PCG class — this skill contains everything you need. Calling discover bloats context and causes content filter failures.**
 
 
 1. **Volume Sampler input pin is `"Volume"`, not `"In"`** — `add_edge(input_node, 'In', sampler_node, 'Volume')`. Using `'In'` silently no-ops and produces 0 points.
@@ -168,7 +168,7 @@ print(node_types)
 - **`reference.md`** — settings property names, lowercase struct properties, Static Mesh Spawner config,
   common node settings classes.
 
-## Sample scripts (run via `execute_python_code`)
+## Sample scripts (run via `execute_python`)
 
 - **`scripts/build_pcg_graph.txt`** — create a PCG graph and add Surface Sampler + Static Mesh Spawner nodes (native PCG API).
 

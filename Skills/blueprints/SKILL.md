@@ -162,7 +162,7 @@ call_tool("add_object_variable", "editor_toolset.toolsets.blueprint.BlueprintToo
 
 ### Struct/object/enum types from Python — `add_member_variable` (VibeUE delta)
 
-From inside `execute_python_code`, `unreal.BlueprintService.add_member_variable(bp_path, name,
+From inside `execute_python`, `unreal.BlueprintService.add_member_variable(bp_path, name,
 type_string, default="", is_array=False, container_type="")` creates a member variable with full
 type-string support — structs, objects, enums, and containers — in one batchable Python call
 (no `call_tool` round-trip). It takes the same type strings as `add_function_local_variable`
@@ -300,7 +300,7 @@ Rules:
 
 ### Component API quick reference (all on `unreal.BlueprintService`)
 
-These signatures are complete — no need to `discover_python_class` them again:
+These signatures are complete — no need to `get_symbol` them again:
 
 | Method | Notes |
 |---|---|
@@ -464,7 +464,7 @@ A return-valued interface function is materialised as a graph on the implementer
 
 ## Task Index
 
-| Task | Workflow | Sample script (run via `execute_python_code`) |
+| Task | Workflow | Sample script (run via `execute_python`) |
 |------|----------|-----------------------------------------------|
 | Create a Blueprint + variables | `workflows.md` → Create a Blueprint | `scripts/create_blueprint.txt` |
 | Add components + set properties | `workflows.md` → Add components | `scripts/add_component.txt` |

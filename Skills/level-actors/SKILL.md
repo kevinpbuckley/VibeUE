@@ -17,7 +17,7 @@ unreal_classes:
 > moving / transforming / selecting actors moved to Unreal's native toolsets — `ActorTools`,
 > `SceneTools`, and `EditorAppToolset` (selection, camera, PIE, screenshots), reachable via
 > `call_tool`. Equivalently you can drive `unreal.EditorActorSubsystem` /
-> `unreal.LevelEditorSubsystem` directly from `execute_python_code` (shown throughout below).
+> `unreal.LevelEditorSubsystem` directly from `execute_python` (shown throughout below).
 > **VibeUE's `ActorService` was trimmed to only the delta the engine doesn't provide:** transform
 > lock (`set_actor_lock_location`), absolute-transform flags, preserve-scale-ratio, viewport camera
 > framing (`get_actor_view_camera` / `calculate_actor_view` / `set_viewport_camera`), and full
@@ -111,7 +111,7 @@ lights = [a for a in actor_subsys.get_all_level_actors() if isinstance(a, unreal
 | `comp.set_editor_property("cast_shadow", …)` | property is plural | `comp.set_editor_property("cast_shadows", False)` |
 | `unreal.HorizontalTextAligment` | UE misspells it | `unreal.HorizTextAligment` / `unreal.VerticalTextAligment` (for `TextRenderActor`) |
 
-When unsure of a property/method name, call `discover_python_class(class_name="unreal.X")` ONCE up front
+When unsure of a property/method name, call `get_symbol(class_name="unreal.X")` ONCE up front
 rather than guessing repeatedly — its `doc_string` lists the real editor-property names.
 
 **Migration guide:**
@@ -608,7 +608,7 @@ To refresh the SCS viewport of an OPEN Blueprint editor (so it re-runs the const
 redraws), use `unreal.BlueprintService.refresh_blueprint_editor("/Game/Props/BP_Refrigerator")` —
 it returns False when no editor is open for that Blueprint.
 
-## Sample scripts (run via `execute_python_code`)
+## Sample scripts (run via `execute_python`)
 
 - **`scripts/manipulate_actors.txt`** — list level actors, find by class, move/rotate by name.
 

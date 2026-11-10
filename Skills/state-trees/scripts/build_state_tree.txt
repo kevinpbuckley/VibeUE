@@ -2,7 +2,7 @@
 
 # build_state_tree.txt — Create a StateTree, add states + a task + a transition, compile.
 #
-# Sample script for the state-trees skill. Run via execute_python_code.
+# Sample script for the state-trees skill. Run via execute_python.
 # State paths are "/"-separated from the subtree name. Create Root with an EMPTY parent_path.
 # add_transition(asset, state_path, trigger, transition_type, target_path).
 #

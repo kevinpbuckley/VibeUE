@@ -2,7 +2,7 @@
 
 # find_and_save.txt — Find an asset, then duplicate + save it.
 #
-# Sample script for the asset-management skill. Run via execute_python_code.
+# Sample script for the asset-management skill. Run via execute_python.
 # NOTE: search/find/move/duplicate/save moved to the engine AssetTools toolset (call_tool) or
 # EditorAssetLibrary / the Asset Registry. VibeUE's AssetDiscoveryService keeps only crash-safe
 # import/export + Content Browser selection + is_asset_open.

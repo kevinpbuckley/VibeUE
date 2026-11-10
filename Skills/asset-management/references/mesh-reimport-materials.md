@@ -7,7 +7,7 @@ pointing at a removed slot. A one-slot mesh with section indices of 1 can show
 gray/default shading even though slot 0 has the intended material.
 
 Use the adjacent `scripts/mesh_material_slots.py` helpers through
-`execute_python_code` (resolve this skill's installed directory first):
+`execute_python` (resolve this skill's installed directory first):
 
 ```python
 import unreal

@@ -23,7 +23,6 @@
 // Include service headers after PythonTypes
 #include "Tools/PythonExecutionService.h"
 #include "Settings/VibeUEEditorSettings.h"
-#include "Tools/PythonDiscoveryService.h"
 #include "Tools/PythonSchemaService.h"
 #include "WorldPartition/WorldPartition.h"
 
@@ -256,7 +255,6 @@ static bool CanRunWorldMutatingPython(FString& OutReason)
 
 // Static service instances
 static TSharedPtr<FPythonExecutionService> ExecutionServiceInstance;
-static TSharedPtr<FPythonDiscoveryService> DiscoveryServiceInstance;
 static TSharedPtr<FPythonSchemaService> SchemaServiceInstance;
 static TSharedPtr<FServiceContext> ServiceContextInstance;
 
@@ -342,21 +340,6 @@ TSharedPtr<FPythonExecutionService> UPythonTools::GetExecutionService()
 	return GetOrCreateExecutionService();
 }
 
-TSharedPtr<FPythonDiscoveryService> UPythonTools::GetDiscoveryService()
-{
-	if (!DiscoveryServiceInstance.IsValid())
-	{
-		// Ensure service context exists
-		if (!ServiceContextInstance.IsValid())
-		{
-			ServiceContextInstance = MakeShared<FServiceContext>();
-		}
-		DiscoveryServiceInstance = MakeShared<FPythonDiscoveryService>(ServiceContextInstance, GetExecutionService());
-		DiscoveryServiceInstance->Initialize();
-	}
-	return DiscoveryServiceInstance;
-}
-
 TSharedPtr<FPythonSchemaService> UPythonTools::GetSchemaService()
 {
 	if (!SchemaServiceInstance.IsValid())
@@ -377,9 +360,8 @@ void UPythonTools::Shutdown()
 	UE_LOG(LogPythonTools, Log, TEXT("UPythonTools::Shutdown - Releasing Python service instances"));
 	
 	// Release all Python service instances BEFORE Python shuts down
-	// Order matters - discovery depends on execution
+	// Order matters - the schema service depends on execution
 	SchemaServiceInstance.Reset();
-	DiscoveryServiceInstance.Reset();
 	ExecutionServiceInstance.Reset();
 	ServiceContextInstance.Reset();
 	
@@ -848,154 +830,6 @@ int32 UPythonTools::GetAwaitRunCount()
 	return GAwaitRuns.Num();
 }
 
-FString UPythonTools::DiscoverPythonModule(const FString& ModuleName)
-{
-	auto Service = GetDiscoveryService();
-	if (!Service.IsValid())
-	{
-		TSharedPtr<FJsonObject> ErrorObj = MakeShared<FJsonObject>();
-		ErrorObj->SetBoolField(TEXT("success"), false);
-		ErrorObj->SetStringField(TEXT("error_code"), TEXT("PYTHON_SERVICE_UNAVAILABLE"));
-		ErrorObj->SetStringField(TEXT("error_message"), TEXT("Python discovery service is not available"));
-		FString JsonString;
-		TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
-		FJsonSerializer::Serialize(ErrorObj.ToSharedRef(), Writer);
-		return JsonString;
-	}
-
-	// Use max_depth=1 and empty filter as defaults
-	auto Result = Service->DiscoverUnrealModule(1, TEXT(""));
-
-	if (Result.IsError())
-	{
-		// Return error as JSON
-		TSharedPtr<FJsonObject> ErrorObj = MakeShared<FJsonObject>();
-		ErrorObj->SetBoolField(TEXT("success"), false);
-		ErrorObj->SetStringField(TEXT("error_code"), Result.GetErrorCode());
-		ErrorObj->SetStringField(TEXT("error_message"), Result.GetErrorMessage());
-
-		FString JsonString;
-		TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
-		FJsonSerializer::Serialize(ErrorObj.ToSharedRef(), Writer);
-		return JsonString;
-	}
-
-	return ConvertModuleInfoToJson(Result.GetValue());
-}
-
-FString UPythonTools::DiscoverPythonClass(const FString& ClassName)
-{
-	auto Service = GetDiscoveryService();
-	if (!Service.IsValid())
-	{
-		TSharedPtr<FJsonObject> ErrorObj = MakeShared<FJsonObject>();
-		ErrorObj->SetBoolField(TEXT("success"), false);
-		ErrorObj->SetStringField(TEXT("error_code"), TEXT("PYTHON_SERVICE_UNAVAILABLE"));
-		ErrorObj->SetStringField(TEXT("error_message"), TEXT("Python discovery service is not available"));
-		FString JsonString;
-		TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
-		FJsonSerializer::Serialize(ErrorObj.ToSharedRef(), Writer);
-		return JsonString;
-	}
-	
-	auto Result = Service->DiscoverClass(ClassName);
-
-	if (Result.IsError())
-	{
-		TSharedPtr<FJsonObject> ErrorObj = MakeShared<FJsonObject>();
-		ErrorObj->SetBoolField(TEXT("success"), false);
-		ErrorObj->SetStringField(TEXT("error_code"), Result.GetErrorCode());
-		ErrorObj->SetStringField(TEXT("error_message"), Result.GetErrorMessage());
-
-		FString JsonString;
-		TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
-		FJsonSerializer::Serialize(ErrorObj.ToSharedRef(), Writer);
-		return JsonString;
-	}
-
-	return ConvertClassInfoToJson(Result.GetValue());
-}
-
-FString UPythonTools::DiscoverPythonFunction(const FString& FunctionName)
-{
-	auto Service = GetDiscoveryService();
-	if (!Service.IsValid())
-	{
-		TSharedPtr<FJsonObject> ErrorObj = MakeShared<FJsonObject>();
-		ErrorObj->SetBoolField(TEXT("success"), false);
-		ErrorObj->SetStringField(TEXT("error_code"), TEXT("PYTHON_SERVICE_UNAVAILABLE"));
-		ErrorObj->SetStringField(TEXT("error_message"), TEXT("Python discovery service is not available"));
-		FString JsonString;
-		TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
-		FJsonSerializer::Serialize(ErrorObj.ToSharedRef(), Writer);
-		return JsonString;
-	}
-	
-	auto Result = Service->DiscoverFunction(FunctionName);
-
-	if (Result.IsError())
-	{
-		TSharedPtr<FJsonObject> ErrorObj = MakeShared<FJsonObject>();
-		ErrorObj->SetBoolField(TEXT("success"), false);
-		ErrorObj->SetStringField(TEXT("error_code"), Result.GetErrorCode());
-		ErrorObj->SetStringField(TEXT("error_message"), Result.GetErrorMessage());
-
-		FString JsonString;
-		TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
-		FJsonSerializer::Serialize(ErrorObj.ToSharedRef(), Writer);
-		return JsonString;
-	}
-
-	return ConvertFunctionInfoToJson(Result.GetValue());
-}
-
-FString UPythonTools::ListPythonSubsystems()
-{
-	auto Service = GetDiscoveryService();
-	if (!Service.IsValid())
-	{
-		TSharedPtr<FJsonObject> ErrorObj = MakeShared<FJsonObject>();
-		ErrorObj->SetBoolField(TEXT("success"), false);
-		ErrorObj->SetStringField(TEXT("error_code"), TEXT("PYTHON_SERVICE_UNAVAILABLE"));
-		ErrorObj->SetStringField(TEXT("error_message"), TEXT("Python discovery service is not available"));
-		FString JsonString;
-		TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
-		FJsonSerializer::Serialize(ErrorObj.ToSharedRef(), Writer);
-		return JsonString;
-	}
-	
-	auto Result = Service->ListEditorSubsystems();
-
-	if (Result.IsError())
-	{
-		TSharedPtr<FJsonObject> ErrorObj = MakeShared<FJsonObject>();
-		ErrorObj->SetBoolField(TEXT("success"), false);
-		ErrorObj->SetStringField(TEXT("error_code"), Result.GetErrorCode());
-		ErrorObj->SetStringField(TEXT("error_message"), Result.GetErrorMessage());
-
-		FString JsonString;
-		TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
-		FJsonSerializer::Serialize(ErrorObj.ToSharedRef(), Writer);
-		return JsonString;
-	}
-
-	// Convert subsystems array to JSON
-	TSharedPtr<FJsonObject> ResponseObj = MakeShared<FJsonObject>();
-	ResponseObj->SetBoolField(TEXT("success"), true);
-
-	TArray<TSharedPtr<FJsonValue>> SubsystemsArray;
-	for (const FString& Subsystem : Result.GetValue())
-	{
-		SubsystemsArray.Add(MakeShared<FJsonValueString>(Subsystem));
-	}
-	ResponseObj->SetArrayField(TEXT("subsystems"), SubsystemsArray);
-
-	FString JsonString;
-	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
-	FJsonSerializer::Serialize(ResponseObj.ToSharedRef(), Writer);
-	return JsonString;
-}
-
 FString UPythonTools::ConvertExecutionResultToJson(const VibeUE::FPythonExecutionResult& Result)
 {
 	TSharedPtr<FJsonObject> JsonObj = MakeShared<FJsonObject>();
@@ -1045,106 +879,6 @@ FString UPythonTools::ConvertExecutionResultToJson(const VibeUE::FPythonExecutio
 	// What the script itself dirtied and cleaned (snapshots taken after the auto-save sweep).
 	SetStringArrayField(JsonObj, TEXT("dirtied_packages"), Result.DirtiedPackages);
 	SetStringArrayField(JsonObj, TEXT("cleaned_packages"), Result.CleanedPackages);
-
-	FString JsonString;
-	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
-	FJsonSerializer::Serialize(JsonObj.ToSharedRef(), Writer);
-	return JsonString;
-}
-
-FString UPythonTools::ConvertModuleInfoToJson(const VibeUE::FPythonModuleInfo& Info)
-{
-	TSharedPtr<FJsonObject> JsonObj = MakeShared<FJsonObject>();
-	JsonObj->SetBoolField(TEXT("success"), true);
-	JsonObj->SetStringField(TEXT("module_name"), Info.ModuleName);
-
-	// Convert classes array
-	TArray<TSharedPtr<FJsonValue>> ClassesArray;
-	for (const FString& ClassName : Info.Classes)
-	{
-		ClassesArray.Add(MakeShared<FJsonValueString>(ClassName));
-	}
-	JsonObj->SetArrayField(TEXT("classes"), ClassesArray);
-
-	// Convert functions array
-	TArray<TSharedPtr<FJsonValue>> FunctionsArray;
-	for (const FString& FunctionName : Info.Functions)
-	{
-		FunctionsArray.Add(MakeShared<FJsonValueString>(FunctionName));
-	}
-	JsonObj->SetArrayField(TEXT("functions"), FunctionsArray);
-
-	// Convert constants array
-	TArray<TSharedPtr<FJsonValue>> ConstantsArray;
-	for (const FString& ConstantName : Info.Constants)
-	{
-		ConstantsArray.Add(MakeShared<FJsonValueString>(ConstantName));
-	}
-	JsonObj->SetArrayField(TEXT("constants"), ConstantsArray);
-
-	FString JsonString;
-	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
-	FJsonSerializer::Serialize(JsonObj.ToSharedRef(), Writer);
-	return JsonString;
-}
-
-FString UPythonTools::ConvertClassInfoToJson(const VibeUE::FPythonClassInfo& Info)
-{
-	TSharedPtr<FJsonObject> JsonObj = MakeShared<FJsonObject>();
-	JsonObj->SetBoolField(TEXT("success"), true);
-	JsonObj->SetStringField(TEXT("class_name"), Info.Name);
-	JsonObj->SetStringField(TEXT("full_path"), Info.FullPath);
-	JsonObj->SetStringField(TEXT("doc_string"), Info.Docstring);
-
-	// Convert base classes
-	TArray<TSharedPtr<FJsonValue>> BasesArray;
-	for (const FString& BaseName : Info.BaseClasses)
-	{
-		BasesArray.Add(MakeShared<FJsonValueString>(BaseName));
-	}
-	JsonObj->SetArrayField(TEXT("base_classes"), BasesArray);
-
-	// Convert methods - need to serialize FPythonFunctionInfo structs
-	TArray<TSharedPtr<FJsonValue>> MethodsArray;
-	for (const VibeUE::FPythonFunctionInfo& Method : Info.Methods)
-	{
-		TSharedPtr<FJsonObject> MethodObj = MakeShared<FJsonObject>();
-		MethodObj->SetStringField(TEXT("name"), Method.Name);
-		MethodObj->SetStringField(TEXT("signature"), Method.Signature);
-		MethodObj->SetStringField(TEXT("docstring"), Method.Docstring);
-		MethodsArray.Add(MakeShared<FJsonValueObject>(MethodObj));
-	}
-	JsonObj->SetArrayField(TEXT("methods"), MethodsArray);
-
-	// Convert properties
-	TArray<TSharedPtr<FJsonValue>> PropertiesArray;
-	for (const FString& PropName : Info.Properties)
-	{
-		PropertiesArray.Add(MakeShared<FJsonValueString>(PropName));
-	}
-	JsonObj->SetArrayField(TEXT("properties"), PropertiesArray);
-
-	FString JsonString;
-	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
-	FJsonSerializer::Serialize(JsonObj.ToSharedRef(), Writer);
-	return JsonString;
-}
-
-FString UPythonTools::ConvertFunctionInfoToJson(const VibeUE::FPythonFunctionInfo& Info)
-{
-	TSharedPtr<FJsonObject> JsonObj = MakeShared<FJsonObject>();
-	JsonObj->SetBoolField(TEXT("success"), true);
-	JsonObj->SetStringField(TEXT("function_name"), Info.Name);
-	JsonObj->SetStringField(TEXT("signature"), Info.Signature);
-	JsonObj->SetStringField(TEXT("doc_string"), Info.Docstring);
-
-	// Convert parameters
-	TArray<TSharedPtr<FJsonValue>> ParamsArray;
-	for (const FString& ParamName : Info.Parameters)
-	{
-		ParamsArray.Add(MakeShared<FJsonValueString>(ParamName));
-	}
-	JsonObj->SetArrayField(TEXT("parameters"), ParamsArray);
 
 	FString JsonString;
 	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);

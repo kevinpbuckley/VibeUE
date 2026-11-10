@@ -48,7 +48,7 @@ BlackboardService     → UBlackboardData assets: create, key CRUD, metadata, re
 BehaviorTreeService   → UBehaviorTree assets: structure, sub-nodes, properties, build, validate
 ```
 
-Discover exact signatures with `discover_python_class('unreal.BehaviorTreeService')` — this skill
+Discover exact signatures with `get_symbol('unreal.BehaviorTreeService')` — this skill
 teaches the concepts and the gotchas, not the call shapes.
 
 ## The golden workflow

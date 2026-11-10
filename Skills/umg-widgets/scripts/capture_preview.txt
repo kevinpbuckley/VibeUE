@@ -2,7 +2,7 @@
 
 # capture_preview.txt — Render an editor-side PNG preview of a Widget Blueprint (no PIE).
 #
-# Sample script for the umg-widgets skill. Run via execute_python_code.
+# Sample script for the umg-widgets skill. Run via execute_python.
 # capture_preview(widget_path, width=1920, height=1080) takes NO output path — it writes
 # to <project>/Saved/WidgetPreviews/<WidgetName>.png and returns the path in result.output_path.
 # Use this for appearance checks; use pie_inspect.txt only when you need runtime state.

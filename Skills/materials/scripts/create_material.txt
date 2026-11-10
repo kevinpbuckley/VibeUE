@@ -2,7 +2,7 @@
 
 # create_material.txt — Create a material with BaseColor + Roughness params, compile, verify.
 #
-# Sample script for the materials skill. Run via execute_python_code.
+# Sample script for the materials skill. Run via execute_python.
 #
 # Material BASICS (create the asset, add expressions, wire outputs) are CUT from
 # MaterialService / MaterialNodeService. The CANONICAL MCP path is the engine MaterialTools

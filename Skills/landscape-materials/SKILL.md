@@ -134,7 +134,7 @@ Split into separate steps:
 `compile_material` (slow — keep it in its own code block) then save. Inspect the graph with
 `MaterialNodeService.export_material_graph` before modifying an existing landscape material.
 
-## Sample scripts (run via `execute_python_code`)
+## Sample scripts (run via `execute_python`)
 
 - **`scripts/create_landscape_material.txt`** — create a landscape material with a layer blend, compile, assign.
 

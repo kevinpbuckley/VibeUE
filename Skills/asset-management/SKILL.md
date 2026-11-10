@@ -22,7 +22,7 @@ and remapping through the existing engine Python API; no native service rebuild.
 > 🔀 **Engine owns general asset ops now.** In the Unreal 5.8 consolidation, searching, loading,
 > saving, moving, renaming, duplicating, and deleting assets moved to Unreal's native **`AssetTools`**
 > toolset (reach it via `call_tool`; run `describe_toolset` for its actions) — or you can drive
-> `unreal.EditorAssetLibrary` / `unreal.AssetRegistryHelpers` directly from `execute_python_code`.
+> `unreal.EditorAssetLibrary` / `unreal.AssetRegistryHelpers` directly from `execute_python`.
 > The old **`manage_asset` MCP tool is GONE.** VibeUE's `AssetDiscoveryService` was trimmed to only
 > the crash-safe delta the engine doesn't provide:
 >
@@ -286,7 +286,7 @@ What to expect:
   import waits by pumping the game thread's task queue. If the caller is itself running *inside* a
   game-thread task (the queue is already being processed), TaskGraph's `RecursionGuard` asserts and
   the editor goes down. `import_asset` checks for exactly that and returns an error naming
-  `RecursionGuard` instead. `execute_python_code` and MCP tool calls do not run inside such a task,
+  `RecursionGuard` instead. `execute_python` and MCP tool calls do not run inside such a task,
   so imports from them go ahead. Calling `unreal.AssetToolsHelpers.get_asset_tools().import_asset_tasks(...)`
   yourself skips that check (and the save, and the main-asset pick) — prefer `import_asset`.
 
@@ -439,7 +439,7 @@ else:
 
 > ℹ️ **`CaptureAssetImage` cannot render Blueprints or Niagara systems** ("Asset type does not
 > support image capture"). To preview those, spawn them in the level on a clear spot, aim the
-> viewport camera, and use the `capture_image` MCP tool; delete the preview actors after.
+> viewport camera, and use `SceneCaptureToolset.CaptureActiveEditorView`; delete the preview actors after.
 
 ### Import / Export Textures (VibeUE)
 
@@ -511,7 +511,7 @@ lgt = asset_tools.create_asset("LGT_MyGrass", "/Game/Landscape", unreal.Landscap
 unreal.EditorAssetLibrary.save_asset("/Game/Landscape/LGT_MyGrass")
 ```
 
-> **Tip:** Use `discover_python_module("unreal", name_filter="Factory")` to find available factories.
+> **Tip:** Use `search_symbols("unreal", name_filter="Factory")` to find available factories.
 
 ### Common Asset Class Names for Filtering
 
@@ -525,7 +525,7 @@ Class names must match UE class names exactly (e.g., `LandscapeGrassType`, not `
 typed Asset Registry query unexpectedly returns 0, retry without the class filter and inspect each
 result's `asset_class_path.asset_name` to learn the real class name.
 
-## Sample scripts (run via `execute_python_code`)
+## Sample scripts (run via `execute_python`)
 
 - **`scripts/find_and_save.txt`** — find an asset (Asset Registry / `EditorAssetLibrary`) and duplicate + save it.
 

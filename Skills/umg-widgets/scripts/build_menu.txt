@@ -2,7 +2,7 @@
 
 # build_menu.txt — Build a vertical-menu hierarchy inside an existing Widget Blueprint.
 #
-# Sample script for the umg-widgets skill. Run via execute_python_code.
+# Sample script for the umg-widgets skill. Run via execute_python.
 # Assumes WIDGET_PATH already exists (see create_widget.txt). Sets root canvas,
 # a VerticalBox, and one Button + child TextBlock per entry, then saves.
 import unreal

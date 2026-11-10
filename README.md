@@ -97,13 +97,15 @@ VibeUE plugs into three native UE 5.9+ systems:
 1. **Toolsets** (`ToolsetRegistry`) — VibeUE's services register as `UToolsetDefinition`s, so their
    methods become AICallable tools on the MCP endpoint. They're also `BlueprintCallable`, so the same
    methods are callable from Python as `unreal.<Name>Service.<method>()`.
-2. **MCP server** (`ModelContextProtocol`) — a small set of VibeUE utility tools are registered
-   directly on the endpoint: `execute_python_code`, `discover_python_module`/`_class`/`_function`,
-   `list_python_subsystems`, `deep_research`, `terrain_data`.
-3. **Skills** (`AgentSkillToolset`) — ~36 markdown skill packs register as native `UAgentSkill`s,
-   discoverable via `ListSkills` and loaded lazily via `GetSkills`, alongside the engine's own skills.
+2. **MCP server** (`ModelContextProtocol`) — only two VibeUE utility tools are registered directly on
+   the endpoint, both things the engine has no tool for: `deep_research` and `terrain_data`. Python
+   execution and API discovery are engine-native in 5.9 (`EditorToolset.PythonScriptingTools`:
+   `execute_python`, `read_me`, `search_symbols`, `get_symbol`), so VibeUE no longer ships its own.
+3. **Skills** (`AgentSkillToolset`) — 35 markdown skill packs under `Skills/`, discovered natively by
+   5.9 (`<Plugin>/Skills/**/SKILL.md`), listed by `ListSkills` and loaded lazily via `GetSkills`,
+   alongside the engine's own skills.
 
-**Efficient usage (for agents):** `execute_python_code` is the workhorse — it batches a whole
+**Efficient usage (for agents):** the engine's `execute_python` is the workhorse — it batches a whole
 multi-step task into one round-trip and reaches every VibeUE service plus the full `unreal.*` API. Use
 `call_tool` only for skills and the few engine toolsets with no Python path (screenshots, etc.). See
 [`Content/samples/AGENTS.md.sample`](Content/samples/AGENTS.md.sample) for the full agent guide.
@@ -171,7 +173,7 @@ don't resolve imports, so they always get a copy).
 
 > The MCP server is loopback-only with no authentication — same-machine use only (per Epic's docs).
 
-The guide teaches: discover before you call (`discover_python_class`), batch with `execute_python_code`,
+The guide teaches: discover before you call (`get_symbol` / `search_symbols`), batch with `execute_python`,
 load skills via `ListSkills`/`GetSkills`, and when to reach for `deep_research` / `terrain_data`.
 
 ---
@@ -191,7 +193,7 @@ call_tool(tool_name="GetSkills", toolset_name="ToolsetRegistry.AgentSkillToolset
 ```
 
 `ListSkills` is the **live source of truth** for what's available (it reads each pack's `SKILL.md`).
-Skills tell you *what* to do and *why*; use `discover_python_class('unreal.<Name>Service', method_filter='…')`
+Skills tell you *what* to do and *why*; use `get_symbol('unreal.<Name>Service')`
 for exact signatures before writing code.
 
 ---
@@ -230,7 +232,7 @@ relaunches:
 VibeUE intentionally keeps **no static method catalog** in this README — the surface evolves with the
 engine. The authoritative, always-current references are:
 - **`ListSkills`** → which domains exist and when to use them.
-- **`discover_python_class('unreal.<Name>Service')`** → exact method signatures.
+- **`get_symbol('unreal.<Name>Service')`** → exact method signatures (engine-native).
 - **`describe_toolset('VibeUE.<Name>Service')`** → the toolset's tools + JSON schemas (token-heavy;
   prefer skills + discovery).
 

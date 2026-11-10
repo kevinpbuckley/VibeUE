@@ -254,6 +254,61 @@ is not scriptable, so an agent has no other way to press Ctrl+Z. The two orphane
 (`FTransactionState`, `FTransactionHistoryEntry`) and the dead `GActiveTransactionIndex` went with
 the cut half. No skill referenced any of the removed tools.
 
+### Stage C — the duplicate MCP tools, and the agent guides (done)
+
+**The MCP bridge goes from 8 tools to 2.** 5.9 ships `EditorToolset.PythonScriptingTools`, which
+replaced the 5.8-era `ProgrammaticToolset` (gone from this engine):
+
+| Removed from VibeUE | 5.9 replacement |
+|---|---|
+| `execute_python_code` | `execute_python(script: CodeBlock)` — EXECUTE mode, unsandboxed, game thread, top-level `await`, composes other tools via `call_tool`; `read_me` carries the usage rules |
+| `discover_python_module` / `_class` / `_function`, `list_python_subsystems` | `search_symbols` + `get_symbol` — regex over the registered tools **and** the whole `unreal` API, filtered by kind, by parameter type (`accepts`) or return type (`returns`), matched against name/signature/documentation, ranked, and limited to symbols this session actually provides |
+| `capture_image` | `SceneCaptureToolset.CaptureGameViewport` — captures the Game/PIE viewport *as Slate draws it, with UMG and any other UI over the viewport*, takes a `World` from `ListWorlds` to pick a PIE instance, and `MaxResolution` to clamp. `CaptureActiveEditorView`/`CaptureEditorViewport` cover the no-UI sources and `EditorAppToolset.CaptureEditorImage` the whole window |
+
+Surviving bridge tools: **`deep_research`** and **`terrain_data`** — web research and real-world
+terrain, neither of which the engine has any tool for.
+
+Two 5.8-era claims in VibeUE's own guide turned out to be what justified keeping these, and 5.9
+falsified both. "Epic's capture returns base64 **inside a text block** on every route" is no longer
+true: `ModelContextProtocolToolResults.cpp` emits real `"type": "image"` content blocks, and
+`FToolsetImage` is the standard return. And `capture_image`'s headline feature — seeing the Slate/UMG
+HUD, "the thing CaptureViewport cannot see" — is exactly what `CaptureGameViewport` is documented to
+do. Re-read the engine before trusting a delta recorded against an older version.
+
+**The one real loss, and how it is covered.** VibeUE's `execute_python_code` had three
+crash-prevention features Epic's `execute_python` does not: `auto_save` (default on), a
+`fresh_namespace` option, and replies carrying `resident_maps` / `dirtied_packages` (a non-empty
+`resident_maps` means the next level load *will* fatal the editor). The guard is now explicit rather
+than a hidden default, and nothing became unreachable: `unreal.PythonTools.get_resident_maps()` and
+`get_dirty_packages()` are still tools, and `vibeue.safe_load_level(path)` still refuses a level
+change while a map is resident. The agent guide leads with that check.
+
+**Guides and skills rewritten to match.** `Content/samples/AGENTS.md.sample` is the single source for
+CLAUDE.md / GEMINI.md / AGENTS.md / copilot-instructions.md (`VibeUE.GenerateAgentConfig` copies it),
+so updating it updates every generated file:
+- §1 now leads with `read_me` then `execute_python`, and carries the resident-map guard.
+- §2's roster is rebuilt: engine-native Python/discovery, the two surviving VibeUE tools, and a note
+  that screenshots are engine-native.
+- §3 is rewritten for native markdown skills: keys are **`/Skills/VibeUE/<name>`** (not the Python
+  shim's `/VibeUE/Python/init_unreal_PY.VibeUE_<name>`), and **sub-docs are no longer separate skill
+  entries** — they are relative links under each pack's Reference pages section, which UE rewrites to
+  absolute paths, so an agent reads the file at the given path.
+- §6 is rebuilt around the engine capture tools, including viewport video recording.
+- Across the 35 skill packs: **128 references** to the removed tools substituted
+  (`execute_python_code` -> `execute_python` x100, `discover_python_*`/`list_python_subsystems` ->
+  `get_symbol`/`search_symbols` x28), and the 7 `capture_image` references rewritten, including a
+  full rewrite of the `pie-testing` capture section.
+- README's architecture section and agent-workflow bullets updated.
+
+**Dead code left behind, to remove in a follow-up.** Removing the `execute_python_code` registration
+orphaned the machinery under it: `UPythonTools::ExecutePythonCode`, `FPythonExecutionService`,
+`Content/Python/vibeue_await.py` (driven only by that service) and the run-record persistence that
+`vibeue.last_python_result()` reads. None of it is on the agent surface any more and it all still
+compiles; `vibeue.py` now marks those readers DEFUNCT rather than claiming they work. Their tests
+(`PythonAwaitTests`, `PythonExecutionServiceTests`, `PythonToolsTests`) are what make this a separate
+pass. `PythonDiscoveryService` and the four discovery entry points *were* fully removed, along with
+three orphaned JSON converters.
+
 ### Not yet done
 
 **`InputService` injection — verdict verified, edit deliberately deferred.** 5.9's `InputToolset`

@@ -2,7 +2,7 @@
 
 # event_dispatcher.txt — Add a Blueprint Event Dispatcher (multicast delegate) with a parameter.
 #
-# Sample script for the blueprints skill. Run via execute_python_code.
+# Sample script for the blueprints skill. Run via execute_python.
 # Use the dedicated dispatcher API — NOT add_variable(..., "EventDispatcher") (not a real type).
 #
 # add_event_dispatcher / add_event_dispatcher_parameter / add_call_delegate_node are surviving

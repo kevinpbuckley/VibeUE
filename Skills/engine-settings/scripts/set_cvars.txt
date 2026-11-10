@@ -2,7 +2,7 @@
 
 # set_cvars.txt — Read scalability and set a console variable (EngineSettingsService).
 #
-# Sample script for the engine-settings skill. Run via execute_python_code.
+# Sample script for the engine-settings skill. Run via execute_python.
 # NOTE: registered-setting categories (list/get/set_setting, get_category_settings_as_json) moved to
 # the engine ConfigSettingsToolset (call_tool). VibeUE keeps cvars / scalability / raw engine INI.
 import unreal

@@ -23,7 +23,7 @@ toolsets via `call_tool(...)` — `editor_toolset.toolsets.material.MaterialTool
 materials/functions, `editor_toolset.toolsets.material_instance.MaterialInstanceTools` for
 instances. The **graph/parameter authoring DELTA** (`create_parameter`, `create_function_call`,
 `create_custom_expression`, `batch_*`, diagnostics, export) stays on
-`unreal.MaterialNodeService` via `execute_python_code`.
+`unreal.MaterialNodeService` via `execute_python`.
 
 Surviving create calls return result objects — read `.id` (MaterialExpressionInfo from
 `create_parameter`/`create_function_call`), never the raw object. Compile after graph changes.

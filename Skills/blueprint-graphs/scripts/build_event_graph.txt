@@ -2,7 +2,7 @@
 
 # build_event_graph.txt — Wire Event BeginPlay -> Print String, then verify + compile.
 #
-# Sample script for the blueprint-graphs skill. Run via execute_python_code.
+# Sample script for the blueprint-graphs skill. Run via execute_python.
 # Demonstrates: build the whole graph in one build_graph batch (the VibeUE delta), then verify.
 # The standalone add_function_call_node / add_event_node / compile_blueprint methods are gone —
 # build_graph creates the event + function_call nodes, wires them, and compiles in a single call.

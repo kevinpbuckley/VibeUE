@@ -2,7 +2,7 @@
 
 # mvvm_hud.txt — Full MVVM HUD: create WBP, build hierarchy, add ViewModel, bind, save.
 #
-# Sample script for the umg-widgets skill. Run via execute_python_code.
+# Sample script for the umg-widgets skill. Run via execute_python.
 # Requires a ViewModel class inheriting UMVVMViewModelBase. Set VIEW_MODEL_CLASS to a
 # real class in the project; the property names below must exist on that ViewModel.
 import unreal

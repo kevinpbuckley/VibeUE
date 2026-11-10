@@ -2,7 +2,7 @@
 
 # multi_bone_edit.txt — Atomic multi-bone edit (arm chain): preview_pose_delta -> validate -> bake.
 #
-# Sample script for the animation-editing skill. Run via execute_python_code.
+# Sample script for the animation-editing skill. Run via execute_python.
 # preview_pose_delta is all-or-nothing: if any bone fails, none are applied.
 import unreal
 ass = unreal.AnimSequenceService

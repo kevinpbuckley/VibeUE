@@ -2,7 +2,7 @@
 
 # timer_with_custom_event.txt — Non-blocking timer: Set Timer by Event + a Custom Event callback.
 #
-# Sample script for the blueprint-graphs skill. Run via execute_python_code.
+# Sample script for the blueprint-graphs skill. Run via execute_python.
 # Use this pattern (NOT Delay) when the Blueprint must keep ticking during the wait.
 # Create + verify one node at a time for fragile graphs; re-find custom events by returned GUID.
 #

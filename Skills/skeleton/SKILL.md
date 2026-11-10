@@ -34,7 +34,7 @@ keywords:
 > retargeting config, curve metadata, blend profiles, bone constraints, and learn-from-animations**.
 >
 > **Loading skills:** skills load through the engine's `AgentSkillToolset` (`ListSkills`/`GetSkills`) —
-> there is no `vibeue-skills-manager` tool. Run VibeUE services with `execute_python_code`
+> there is no `vibeue-skills-manager` tool. Run VibeUE services with `execute_python`
 > (`unreal.SkeletonService.<method>()`); reach engine tools with `call_tool` (discover with
 > `list_toolsets` / `describe_toolset`).
 >

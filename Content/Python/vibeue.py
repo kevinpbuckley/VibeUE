@@ -1,7 +1,7 @@
 # Copyright Buckley Builds LLC 2026 All Rights Reserved.
 """Agent-ergonomics helpers for Unreal's ToolsetRegistry (issues #545, #547, #548).
 
-Usage from execute_python_code:
+Usage from execute_python:
 
     import unreal, vibeue
 
@@ -26,7 +26,7 @@ Also provides (agent helpers for PIE, async tools, and asset GC):
   does not tick mid-script, so it never completes in one call), collect its decoded value next call.
   exec_tool_collect() fires and collects in ONE call: the value if the tool completed synchronously,
   else the pending key to collect_tool_result() later.
-- python_globals_holding() / release_globals() — find and drop the execute_python_code script
+- python_globals_holding() / release_globals() — find and drop the execute_python script
   globals that root an asset (a GCObjectReferencer root), so delete_asset_unattended can proceed.
 - safe_load_level(level_path, *, allow_resident_target=False) — LevelEditorSubsystem.load_level
   behind a resident-map check: a map loaded as an ASSET (Save-As, a Level Instance, load_asset on a
@@ -238,12 +238,12 @@ def exec_tool(toolset_name, tool_name, args=None, unwrap=True):
     return out
 
 
-# --- Persisted Python results (B2) -------------------------------------------------
-# execute_python_code persists every run to Saved/VibeUE/Signals/python-<pid>-last.json (latest)
-# and python-<pid>-runs.jsonl (history). A client whose call timed out (~30s / 300s) while the
-# script kept running in the editor reads these on its NEXT call instead of re-running the script
-# and double-executing a mutation. The recovery call runs in the SAME editor process, so os.getpid()
-# resolves the same files the C++ wrote.
+# DEFUNCT ON THE 5-9 BRANCH. These readers depend on run records that VibeUE's own
+# execute_python_code tool wrote (Saved/VibeUE/Signals/python-<pid>-last.json and -runs.jsonl).
+# That tool was removed in favour of the engine-native EditorToolset execute_python, which does
+# not persist runs, so nothing writes these files any more and the readers below return None.
+# They are kept only so an older editor process's records stay readable; treat them as dead
+# code pending removal, and do NOT rely on timed-out-call recovery.
 
 
 def _signals_dir():
@@ -260,11 +260,11 @@ def _runs_path(pid=None):
 
 
 def last_python_result(pid=None):
-    """The persisted result of the most recent execute_python_code run in THIS editor process, as a
+    """The persisted result of the most recent execute_python run in THIS editor process, as a
     dict (keys: runId, pid, success, label, output, error, result, execution_time_ms, startedUtc,
     finishedUtc), or None if nothing has been recorded.
 
-    Use after a call timed out: `execute_python_code("import vibeue; print(vibeue.last_python_result())")`
+    Use after a call timed out: `execute_python("import vibeue; print(vibeue.last_python_result())")`
     returns the lost run because the read happens before this call's own result is persisted. Note
     that a SECOND such read reflects the first read, not the original run — use its runId with
     python_run() for a stable handle, or read it once and keep it.
@@ -369,7 +369,7 @@ async def exec_tool_await(toolset_name, tool_name, args=None, unwrap=True):
     """Call a ToolsetRegistry tool from a script that uses top-level await, and wait for its result.
 
     The editor ticks while this waits, so a genuinely-async tool (e.g.
-    EditorAppToolset.CaptureAssetImage) finishes here, in one execute_python_code call:
+    EditorAppToolset.CaptureAssetImage) finishes here, in one execute_python call:
 
         import vibeue
         image = await vibeue.exec_tool_await("EditorToolset.EditorAppToolset", "CaptureAssetImage", {...})
@@ -454,12 +454,12 @@ def exec_tool_collect(toolset_name, tool_name, args=None, key=None):
 
 # --- Asset GC roots held by Python globals ---------------------------------------------------
 #
-# Namespace note: inside execute_python_code, __name__ == "__main__" but globals() is NOT
+# Namespace note: inside execute_python, __name__ == "__main__" but globals() is NOT
 # sys.modules["__main__"].__dict__ — the script runs in a SEPARATE dict that persists across calls
 # (which is exactly why a global there keeps rooting an asset). So `import __main__` never sees it.
 # These helpers resolve the CALLER's globals via the call stack AND scan __main__ as a fallback.
 #
-# Self-test (run the two lines below in ONE execute_python_code call, then a THIRD call):
+# Self-test (run the two lines below in ONE execute_python call, then a THIRD call):
 #   import unreal, vibeue
 #   held = unreal.load_asset("/Game/UI/W_Prompt")            # a script global now roots the asset
 #   print(vibeue.python_globals_holding("/Game/UI/W_Prompt"))  # -> ['held']
@@ -467,10 +467,10 @@ def exec_tool_collect(toolset_name, tool_name, args=None, key=None):
 #   print(vibeue.release_globals(vibeue.python_globals_holding("/Game/UI/W_Prompt")))  # -> ['held']
 
 def _script_namespaces():
-    """The namespace dicts an execute_python_code global might live in, most-relevant first.
+    """The namespace dicts an execute_python global might live in, most-relevant first.
 
     Returns the CALLER's globals (found by walking the stack back past vibeue's own frames — the
-    execute_python_code script namespace, a persistent dict that is not sys.modules['__main__'])
+    execute_python script namespace, a persistent dict that is not sys.modules['__main__'])
     followed by sys.modules['__main__'].__dict__ as a fallback, deduplicated by dict identity.
     """
     module_ns = globals()
@@ -501,7 +501,7 @@ def _script_namespaces():
 
 
 def python_globals_holding(asset_or_path):
-    """Names of execute_python_code script globals that reference the given asset (a GC root).
+    """Names of execute_python script globals that reference the given asset (a GC root).
 
     Accepts a loaded unreal.Object or an asset path (either the package form '/Game/Path/Name' or
     the object form '/Game/Path/Name.Name'). Scans the caller's script namespace and __main__ (see
@@ -547,7 +547,7 @@ def release_globals(names, namespace=None):
     """del the named script globals and collect_garbage(), freeing the GC roots they held.
 
     Pass the names python_globals_holding() returned. Deletes each name from every namespace that
-    holds it (the caller's execute_python_code script namespace and __main__; see
+    holds it (the caller's execute_python script namespace and __main__; see
     _script_namespaces), so a name defined in both is fully released. Pass an explicit `namespace`
     dict to delete from only that dict instead. Returns the names actually deleted (a name present
     in none is skipped). Run before retrying delete_asset_unattended on an asset it refused as
@@ -646,7 +646,7 @@ def safe_load_level(level_path, *, allow_resident_target=False):
 
 # --- Non-blocking waits (gate harnesses) -----------------------------------------------------
 #
-# execute_python_code runs on the GAME THREAD. time.sleep() there freezes the editor, the PIE
+# execute_python runs on the GAME THREAD. time.sleep() there freezes the editor, the PIE
 # server and every PIE client together (a 20 s sleep logged "Very long time between ticks" on all
 # three net drivers and corrupted the replication it was waiting for). And the editor does not tick
 # while a script runs, so nothing a script waits on can change during that call anyway.
@@ -706,7 +706,7 @@ def _slate_running() -> bool:
 
 
 class Wait(object):
-    """A pending wait_for() — poll it in a LATER execute_python_code call, or chain .then().
+    """A pending wait_for() — poll it in a LATER execute_python call, or chain .then().
 
     Attributes:
         id          -- registry id (int)
@@ -837,7 +837,7 @@ def wait_for(predicate: Callable[[], Any], timeout_s: float = 10.0, poll_s: floa
     a Wait at once; it unregisters its own handle when it finishes, and cancel_all_waits() ends any
     pending wait whose Wait object you no longer hold. timeout_s must be finite.
 
-    The editor does not tick while execute_python_code runs, so a wait CANNOT finish inside the call
+    The editor does not tick while execute_python runs, so a wait CANNOT finish inside the call
     that starts it (the first evaluation happens on the next tick). Two usage patterns:
 
         # 1) start in one call ...
@@ -1219,7 +1219,7 @@ class GateSession(object):
     """Editor settings for a gate run, applied by enter() and put back by exit().
 
     Made by gate_session(); see there. A plain object, not a generator, so a session entered in
-    one execute_python_code call and exited in a later one cannot run its restore early when an
+    one execute_python call and exited in a later one cannot run its restore early when an
     intermediate reference is garbage-collected. exit() is idempotent.
 
     enter() is transactional: it reads and validates every setting first, then applies the changes
@@ -1373,7 +1373,7 @@ def gate_session(*, clients: Optional[int] = None, net_mode: Optional[str] = Non
     "throttle_applied", "pie_before", "pie_applied", "notes"}.
 
     Start PIE inside the block, in a later call than the one that entered it if you need the new
-    net mode to apply (StartPIE is async). A `with` block must stay inside ONE execute_python_code
+    net mode to apply (StartPIE is async). A `with` block must stay inside ONE execute_python
     call; for a gate spanning calls, keep the session in a script global and call enter()/exit():
 
         gs = vibeue.gate_session(clients=3, net_mode="ListenServer")
