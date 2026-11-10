@@ -249,13 +249,4 @@ public:
 	 */
 	static void ShutdownEndPIEHook();
 
-private:
-	// Test-only surface (no UFUNCTION): let the automation tests exercise the pure validators and
-	// read the session serial without a running PIE session. Reached through the friend struct.
-	static FString ValidateSelectorCode(const FString& WorldSelector);
-	static FString ValidateCollisionCode(const FString& CollisionHandling);
-	static FString ValidateClassCode(const FString& ClassPath);
-	static int32 GetSessionSerialForTest();
-
-	friend struct FPIEActorServiceTestAccess;
 };

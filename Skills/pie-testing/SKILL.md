@@ -360,11 +360,13 @@ import unreal
 print(unreal.InputService.inject_action("/Game/Input/IA_Fire_Secondary"))
 
 # Hold it for 1.5 s of real time, then release (returns at once; stop_injection releases early).
-print(unreal.InputService.inject_action_for("/Game/Input/IA_Fire_Secondary", 1.5))
+# inject_action_for is gone: use Epic InputToolset.ApplyInput (entries + DurationSeconds)
+# call_tool ApplyInput {"Entries": [{"Action": <IA path>, "Value": [1,0,0]}], "DurationSeconds": 1.0}
 
 # Or send a raw key to the game viewport through Slate ("tap" = down+up; also "down"/"up",
-# and "hold" with a duration: inject_key("RightMouseButton", "hold", 1.5)).
-print(unreal.InputService.inject_key("SpaceBar"))
+# and "hold" with a duration: ApplyInput with DurationSeconds > 0
+# inject_key is no longer a tool: Epic InputToolset.ApplyInput takes a legacy Key entry
+# call_tool ApplyInput {"Entries": [{"Key": "SpaceBar", "Value": [1,0,0]}], "DurationSeconds": 0}
 ```
 
 A Python call blocks the game thread, so PIE does not tick while it runs: inject in one call and
@@ -379,7 +381,7 @@ ended session is released into the editor or reported active in the next one.
 
 All return JSON with `success` and an `error_code` naming the problem (PIE not running,
 `NO_LOCAL_PLAYER` / `NO_PLAYER_CONTROLLER` while PIE or a client's join is still starting — retry on
-a later call —, unknown key, ...). `inject_key` additionally rejects a **Simulate In Editor** session
+a later call —, unknown key, ...). Epic `ApplyInput` additionally rejects a **Simulate In Editor** session
 with `SIMULATE_NOT_PLAY`: Simulate has no player game viewport, so the Slate key events would be
 dropped. Use `StartPIE` (Play), not Simulate, when driving keys. Its `handled_down` / `handled_up`
 fields report whether a Slate widget *consumed* the event, not whether the key reached the player — a

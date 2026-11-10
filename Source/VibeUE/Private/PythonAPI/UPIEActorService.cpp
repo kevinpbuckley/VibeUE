@@ -1598,31 +1598,3 @@ void UPIEActorService::ShutdownEndPIEHook()
 	GSpawnRegistry.Empty();
 }
 
-// =============================================================================
-// Test-only surface (no UFUNCTION) — reached through FPIEActorServiceTestAccess
-// =============================================================================
-
-FString UPIEActorService::ValidateSelectorCode(const FString& WorldSelector)
-{
-	FSelectorRequest Req;
-	return ParseSelector(WorldSelector, Req);
-}
-
-FString UPIEActorService::ValidateCollisionCode(const FString& CollisionHandling)
-{
-	ESpawnActorCollisionHandlingMethod Method = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	return ValidateCollision(CollisionHandling, Method);
-}
-
-FString UPIEActorService::ValidateClassCode(const FString& ClassPath)
-{
-	FString ResolvedPath;
-	FString Error;
-	ResolveActorClass(ClassPath, ResolvedPath, Error);
-	return Error;
-}
-
-int32 UPIEActorService::GetSessionSerialForTest()
-{
-	return GSessionSerial;
-}

@@ -644,25 +644,6 @@ public:
 	static FString InjectAction(const FString& ActionPath, float X = 1.0f, float Y = 0.0f, float Z = 0.0f, int32 PieInstance = -1);
 
 	/**
-	 * Hold an Enhanced Input action value for Seconds of real time, then release it. Returns at once;
-	 * the injection runs on the following ticks. While any injection or held key is active the editor
-	 * does not drop to its background frame rate, so the hold is not starved when the editor is unfocused.
-	 * A second call for the same action and PIE world (any spelling of the path) restarts the hold.
-	 * Ending PIE drops every hold.
-	 *
-	 * @param ActionPath - Input Action asset path
-	 * @param Seconds - How long to hold, 0.05 to 60
-	 * @param PieInstance - Which PIE world, as for inject_action; -1 = the first PIE world with a local player
-	 * @return JSON: {success, action, seconds, pie_instance (the instance used)} or
-	 *         {success:false, error_code, error_message} with inject_action's error codes, plus BAD_DURATION
-	 *
-	 * Example:
-	 *   unreal.InputService.inject_action_for("/Game/Input/IA_Block", 1.5)   # hold the guard 1.5 s
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Input|PIE")
-	static FString InjectActionFor(const FString& ActionPath, float Seconds = 1.0f, float X = 1.0f, float Y = 0.0f, float Z = 0.0f, int32 PieInstance = -1);
-
-	/**
 	 * Release an action that inject_action_for is holding, before its time is up. The hold is found by
 	 * the action it names and the PIE world, so /Game/Input/IA_X and /Game/Input/IA_X.IA_X are the same hold.
 	 *
@@ -674,33 +655,10 @@ public:
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Input|PIE")
 	static FString StopInjection(const FString& ActionPath, int32 PieInstance = -1);
 
-	/**
-	 * Send a key event to the running PIE game viewport through Slate (no OS focus, no SendKeys).
-	 * Slate focus is moved to the game viewport first, so this works with the editor unfocused.
-	 *
-	 * Requires Play In Editor, not Simulate In Editor: a Simulate session has no player game viewport,
-	 * so the synthesized events would be dropped — it is rejected with SIMULATE_NOT_PLAY instead.
-	 *
-	 * handled_down / handled_up report whether a Slate widget CONSUMED the event, not whether the key
-	 * reached the player. A key the game reads by polling (WasInputKeyJustPressed) registers with
-	 * handled_down=false because nothing on the input stack consumes it; confirm delivery from game
-	 * state, not from these flags.
-	 *
-	 * @param KeyName - FKey name, e.g. "SpaceBar", "W", "LeftMouseButton" (see get_available_keys)
-	 * @param EventType - "tap" (down then up in the same frame, default), "down", "up", or "hold"
-	 *        (down now, up after HoldSeconds of real time; the call returns at once). A "hold" of a key that is
-	 *        already held extends it (no second key-down, reply extended: true, released HoldSeconds from now);
-	 *        an "up" or "tap" ends a pending hold. Ending PIE cancels a pending hold without sending its key-up.
-	 * @param HoldSeconds - For "hold": how long, 0.05 to 60
-	 * @return JSON: {success, key, event, handled_down, handled_up, [extended, hold_seconds]} or
-	 *         {success:false, error_code, error_message}
-	 *         error_code: PIE_NOT_RUNNING, SIMULATE_NOT_PLAY, NO_SLATE, UNKNOWN_KEY, BAD_EVENT, BAD_DURATION
-	 *
-	 * Example:
-	 *   unreal.InputService.inject_key("SpaceBar")                          # tap space in PIE
-	 *   unreal.InputService.inject_key("RightMouseButton", "hold", 1.5)     # hold it 1.5 s
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Input|PIE")
+	// Not an AI tool: 5.9's InputToolset.ApplyInput covers a keyed tap/hold (it takes legacy FKey
+	// entries and a duration), so this is off the tool surface. It stays because WorkflowService's
+	// PIE scenario runner drives keys through it.
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Input|PIE")
 	static FString InjectKey(const FString& KeyName, const FString& EventType = TEXT("tap"), float HoldSeconds = 0.0f);
 
 	/**
@@ -716,14 +674,6 @@ public:
 	static void ShutdownInjectionHooks();
 
 private:
-	// Test-only surface (no UFUNCTION): file and release a key hold's bookkeeping without PIE (no key event
-	// is sent), and read the hook state. Reached through the friend struct in InputInjectionTests.cpp.
-	static void TrackKeyHoldForTest(const FName KeyName, float HoldSeconds);
-	static bool ReleaseKeyHoldForTest(const FName KeyName);
-	static void GetInjectionStateForTest(bool& bOutEndPieHooked, bool& bOutThrottleHooked, int32& OutHolds, bool& bOutReleaseGrace);
-
-	friend struct FInputServiceTestAccess;
-
 	/** Helper to load an Input Action */
 	static class UInputAction* LoadInputAction(const FString& ActionPath);
 	

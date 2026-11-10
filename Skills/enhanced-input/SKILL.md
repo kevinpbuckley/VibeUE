@@ -195,12 +195,14 @@ import unreal
 print(unreal.InputService.inject_action("/Game/Input/IA_Fire", 1.0))
 
 # Hold an action for 1.5 s of real time (a guard, a charge, a Hold trigger); returns at once.
-print(unreal.InputService.inject_action_for("/Game/Input/IA_Block", 1.5))
+# inject_action_for is gone: use Epic InputToolset.ApplyInput (entries + DurationSeconds)
+# call_tool ApplyInput {"Entries": [{"Action": <IA path>, "Value": [1,0,0]}], "DurationSeconds": 1.0}
 print(unreal.InputService.stop_injection("/Game/Input/IA_Block"))   # release early
 
 # Raw key through Slate to the game viewport: "tap" (default), "down", "up", or "hold".
-print(unreal.InputService.inject_key("SpaceBar"))
-print(unreal.InputService.inject_key("RightMouseButton", "hold", 1.5))
+# inject_key is no longer a tool: Epic InputToolset.ApplyInput takes a legacy Key entry
+# call_tool ApplyInput {"Entries": [{"Key": "SpaceBar", "Value": [1,0,0]}], "DurationSeconds": 0}
+# hold: ApplyInput with DurationSeconds > 0 -- {"Key": "RightMouseButton"}, duration 1.5))
 ```
 
 All return JSON with `success`/`error_code` (PIE not running, `NO_LOCAL_PLAYER` /

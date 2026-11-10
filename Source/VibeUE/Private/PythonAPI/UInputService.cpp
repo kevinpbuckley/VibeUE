@@ -1475,29 +1475,6 @@ void UInputService::ShutdownInjectionHooks()
 	}
 }
 
-// =============================================================================
-// Test-only surface (no UFUNCTION) — reached through FInputServiceTestAccess
-// =============================================================================
-
-void UInputService::TrackKeyHoldForTest(const FName KeyName, float HoldSeconds)
-{
-	// The hold's bookkeeping only, with no key event: no PIE viewport is needed to exercise the hooks.
-	VibeUEInputInjection::TrackKeyHold(FKey(KeyName), HoldSeconds);
-}
-
-bool UInputService::ReleaseKeyHoldForTest(const FName KeyName)
-{
-	return VibeUEInputInjection::ReleaseHeldKey(FKey(KeyName), /*bSendKeyUp=*/false);
-}
-
-void UInputService::GetInjectionStateForTest(bool& bOutEndPieHooked, bool& bOutThrottleHooked, int32& OutHolds, bool& bOutReleaseGrace)
-{
-	using namespace VibeUEInputInjection;
-	bOutEndPieHooked = GEndPieHandle.IsValid();
-	bOutThrottleHooked = GThrottleHandle.IsValid();
-	OutHolds = GHeldInjections.Num() + GHeldKeys.Num();
-	bOutReleaseGrace = GReleaseGraceActive || GReleaseGraceTicker.IsValid();
-}
 
 FString UInputService::InjectAction(const FString& ActionPath, float X, float Y, float Z, int32 PieInstance)
 {
@@ -1528,49 +1505,6 @@ FString UInputService::InjectAction(const FString& ActionPath, float X, float Y,
 	R->SetArrayField(TEXT("injected"), Injected);
 	R->SetNumberField(TEXT("pie_instance"), UsedInstance);
 	R->SetStringField(TEXT("note"), TEXT("Queued for the next input tick and released on the tick after; nothing runs while this call blocks the game thread. Read the result in a later call, two or more frames on. To hold an action use inject_action_for."));
-	return InjectionOkJson(R);
-}
-
-FString UInputService::InjectActionFor(const FString& ActionPath, float Seconds, float X, float Y, float Z, int32 PieInstance)
-{
-	// Holds the value with Enhanced Input's continuous injection, then releases it.
-	if (!(Seconds >= 0.05f && Seconds <= 60.0f))
-	{
-		return InjectionErrorJson(TEXT("BAD_DURATION"), TEXT("seconds must be between 0.05 and 60."));
-	}
-	FString Code, Message;
-	int32 UsedInstance = PieInstance;
-	UEnhancedInputLocalPlayerSubsystem* Subsystem = VibeUEInputInjection::ResolvePieSubsystem(PieInstance, UsedInstance, Code, Message);
-	if (!Subsystem)
-	{
-		return InjectionErrorJson(Code, Message);
-	}
-	const UInputAction* Action = VibeUEInputInjection::LoadActionForPie(ActionPath);
-	if (!Action)
-	{
-		return InjectionErrorJson(TEXT("ACTION_NOT_FOUND"), FString::Printf(TEXT("Input Action not found: %s"), *ActionPath));
-	}
-
-	const FString Id = VibeUEInputInjection::HoldId(Action, UsedInstance);
-	VibeUEInputInjection::ReleaseHeld(Id); // a second call restarts the hold
-
-	Subsystem->StartContinuousInputInjectionForAction(Action, VibeUEInputInjection::MakeValue(Action, X, Y, Z), TArray<UInputModifier*>(), TArray<UInputTrigger*>());
-
-	VibeUEInputInjection::FHeldInjection Held;
-	Held.Subsystem = Subsystem;
-	Held.Action = Action;
-	Held.Release = VibeUEInputInjection::AddWallClockRelease(Seconds, [Id]()
-	{
-		VibeUEInputInjection::ReleaseHeld(Id, /*bFromTicker=*/true);
-	});
-	VibeUEInputInjection::GHeldInjections.Add(Id, Held);
-	VibeUEInputInjection::UpdateThrottleScope();
-
-	TSharedRef<FJsonObject> R = MakeShared<FJsonObject>();
-	R->SetStringField(TEXT("action"), Action->GetName());
-	R->SetNumberField(TEXT("seconds"), Seconds);
-	R->SetNumberField(TEXT("pie_instance"), UsedInstance);
-	R->SetStringField(TEXT("note"), TEXT("Held from the next input tick for the given real time, then released. Read game state in later calls; stop early with stop_injection. Ending PIE drops the hold."));
 	return InjectionOkJson(R);
 }
 
