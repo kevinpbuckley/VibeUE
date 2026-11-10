@@ -6,41 +6,6 @@
 #include "ToolsetRegistry/ToolsetDefinition.h"
 #include "UBlackboardService.generated.h"
 
-/** One blackboard key as reported by GetBlackboardKeys. */
-USTRUCT(BlueprintType)
-struct FBBKeyInfo
-{
-	GENERATED_BODY()
-
-	/** Key name as referenced by BT node key selectors. */
-	UPROPERTY(BlueprintReadOnly, Category = "Blackboard")
-	FString Name;
-
-	/** Bool, Int, Float, String, Name, Vector, Rotator, Object, Class, Enum, NativeEnum. */
-	UPROPERTY(BlueprintReadOnly, Category = "Blackboard")
-	FString Type;
-
-	/** Whether the key is synchronised across instances of this blackboard. */
-	UPROPERTY(BlueprintReadOnly, Category = "Blackboard")
-	bool bInstanceSynced = false;
-
-	/** True if the key comes from the parent blackboard rather than this asset. */
-	UPROPERTY(BlueprintReadOnly, Category = "Blackboard")
-	bool bInherited = false;
-
-	/** Base class for Object/Class keys, or the enum path for Enum keys. Empty otherwise. */
-	UPROPERTY(BlueprintReadOnly, Category = "Blackboard")
-	FString ObjectClassPath;
-
-	/** The details-panel category the key is grouped under. Empty when uncategorised. */
-	UPROPERTY(BlueprintReadOnly, Category = "Blackboard")
-	FString Category;
-
-	/** The key's free-text description. Empty when none was written. */
-	UPROPERTY(BlueprintReadOnly, Category = "Blackboard")
-	FString Description;
-};
-
 /**
  * Read and author Blackboard (UBlackboardData) assets.
  *
@@ -61,24 +26,6 @@ class VIBEUE_API UBlackboardService : public UToolsetDefinition
 	GENERATED_BODY()
 
 public:
-	// ---- Internal fixtures: NOT AI tools. Blackboard CRUD belongs to the engine
-	// (AIModuleToolset.BehaviorTreeToolset -> CreateBlackboardData, AddBlackboardKey,
-	// RemoveBlackboardKey, GetBlackboardKeyNames, GetAllowedBlackboardKeys, SetBlackboard).
-	// These stay BlueprintCallable-only so the rename/reference tests can build a board.
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blackboard")
-	static bool CreateBlackboard(const FString& AssetPath, const FString& ParentBlackboardPath = TEXT(""));
-
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blackboard")
-	static TArray<FBBKeyInfo> GetBlackboardKeys(const FString& AssetPath);
-
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blackboard")
-	static FString AddBlackboardKey(const FString& AssetPath, const FString& KeyName,
-		const FString& KeyType, bool bInstanceSynced = false);
-
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blackboard")
-	static FString SetBlackboardKeyObjectClass(const FString& AssetPath, const FString& KeyName,
-		const FString& ClassOrEnumPath);
-
 	/**
 	 * Every BT node key selector bound to KeyName, across every Behavior Tree whose blackboard is
 	 * this asset or inherits from it, formatted "<btPath>:<node>.<property>". Read-only: the

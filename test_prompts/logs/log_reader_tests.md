@@ -7,7 +7,7 @@
 >    entries. **You MUST pass `category=""` and `pattern=""`** for "all"; the defaults are a bogus
 >    `"LogsToolset"` category that matches nothing. Discover the exact action/params with
 >    `describe_toolset("EditorToolset.LogsToolset")` (or whatever `list_toolsets` shows).
-> 2. **Raw file I/O** from `execute_python_code` — the editor log lives under
+> 2. **Raw file I/O** from `execute_python` — the editor log lives under
 >    `<ProjectDir>/Saved/Logs/`. Read/tail/grep it with plain Python (`open().read().splitlines()`).
 >
 > These prompts validate both paths. Run sequentially.
@@ -21,7 +21,7 @@ Use `list_toolsets` / `describe_toolset` to find the engine Logs toolset, then c
 
 ---
 
-Separately, use `execute_python_code` to locate the active editor `.log` file under
+Separately, use `execute_python` to locate the active editor `.log` file under
 `unreal.Paths.project_saved_dir() + "Logs/"` and print its full path, size in KB, and total line count.
 
 ---

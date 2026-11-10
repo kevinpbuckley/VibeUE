@@ -125,7 +125,7 @@ public class VibeUE : ModuleRules
 				"SkeletalMeshEditor",     // For SkeletalMeshEditorSubsystem
 				"InputBlueprintNodes",    // For UK2Node_EnhancedInputAction (Enhanced Input event nodes)
 				"Landscape",              // For ALandscape, ULandscapeInfo, ULandscapeComponent
-				"PhysicsCore",            // For physical-material validation in Landscape tests
+				"PhysicsCore",            // UPhysicalMaterial / EPhysicalSurface in LandscapeService + FoliageService
 				"LandscapeEditor",        // For landscape editor factories and utilities
 				"Foliage",                // Required by LandscapeEdit.h (InstancedFoliageActor)
 				"ModelViewViewModel",     // For MVVM ViewModel base classes (UMVVMViewModelBase)
