@@ -141,10 +141,10 @@ call_tool(toolset="EditorToolset.EditorAppToolset", tool="StartPIE")
 call_tool(toolset="EditorToolset.EditorAppToolset", tool="StopPIE")
 ```
 
-## Net mode from Python — `EngineSettingsService`
+## Net mode from Python — the surviving PIE-settings helpers
 
 `StartPIE` uses the editor's saved PIE settings, so set the net mode BEFORE starting the session.
-`EngineSettingsService` reads and writes `ULevelEditorPlaySettings` directly and persists the
+`EngineSettingsService.get_pie_settings` / `set_pie_settings` survive as Python-only helpers (not MCP tools) and read/write `ULevelEditorPlaySettings` directly and persists the
 change, so a dedicated-server PIE gate no longer means quitting the editor to hand-edit
 `EditorPerProjectUserSettings.ini` and relaunching:
 

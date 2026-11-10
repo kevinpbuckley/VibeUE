@@ -1,162 +1,142 @@
 ---
 name: engine-settings
-display_name: Engine Settings System
-description: Configure Unreal Engine core settings — rendering, physics, audio, garbage collection, console variables (cvars), and scalability levels (EngineSettingsService). Use when the user asks to change engine/rendering settings, set a console variable (r.*, etc.), adjust scalability/quality levels, or read engine config categories.
-vibeue_classes:
-  - EngineSettingsService
+display_name: Engine Settings, CVars & Scalability
+description: Read and write console variables, scalability levels, engine/project INI values and UDeveloperSettings sections using Unreal 5.9's own ConsoleToolset, ConfigSettingsToolset and FileSystemToolset. Use when the user asks to set a cvar, change quality/scalability, edit DefaultEngine.ini or a Project Settings value, uncap the frame rate, or inspect an engine setting.
 unreal_classes:
-  - RendererSettings
-  - PhysicsSettings
-  - AudioSettings
+  - UDeveloperSettings
+  - UGameUserSettings
+keywords:
+  - cvar
+  - console variable
+  - scalability
+  - quality settings
+  - DefaultEngine.ini
+  - project settings
+  - engine settings
+  - uncap fps
 ---
 
-# Engine Settings Skill
+# Engine settings, CVars and scalability
 
-> 🔀 **Registered settings moved to the engine.** Category-based registered-setting access
-> (`list_categories` / `list_settings` / `get_setting` / `set_setting`) is now Unreal 5.8's native
-> **`ConfigSettingsToolset`** — reach it with `call_tool` (run `describe_toolset` on
-> `ConfigSettingsToolset` for its actions/params). VibeUE's `EngineSettingsService` was trimmed to
-> the delta the engine doesn't cover: **console variables (cvars), scalability levels, raw engine
-> INI read/write, and config save**. Use those from `execute_python` as shown below.
+**This is engine-native work in 5.9.** VibeUE's `EngineSettingsService` and
+`ProjectSettingsService` were removed on the 5-9 branch — Epic's own toolsets cover all of it, and
+cover it better (see "Why the old service is gone" at the end).
 
-## Critical Rules
+> ⚠️ **These toolsets are `call_tool` only.** Unlike VibeUE's services, Epic's `ConsoleToolset`,
+> `ConfigSettingsToolset`, `FileSystemToolset` and `ObjectToolset` UFUNCTIONs carry **no
+> `PythonCallable`** — `unreal.ConsoleToolset.get_cvar_value(...)` does **not** exist. Reach them
+> with `call_tool`, not from inside `execute_python`. (`ConsoleToolset.LogsToolset` is the one
+> exception; it is Python-callable.)
+>
+> Enable **ConsoleToolset**, **ConfigSettingsToolset** and **FileSystemToolset** in the project if
+> `list_toolsets` does not show them.
 
-### ⚠️ CVars (VibeUE) vs Registered Settings (engine toolset)
+## Console variables
 
-- **CVars** (console variables) → `unreal.EngineSettingsService.get_console_variable` /
-  `set_console_variable` (kept in VibeUE).
-- **Registered settings** (category + key, e.g. RendererSettings) → engine
-  **`ConfigSettingsToolset`** via `call_tool`. `EngineSettingsService.get_setting` /
-  `set_setting` / `list_categories` / `list_settings` were removed in the 5.8 consolidation.
+| Want | Tool |
+|---|---|
+| Read a cvar | `ConsoleToolset.GetCVarValue` |
+| Write a cvar | `ConsoleToolset.SetCVarValue` — type-checks the input and **refuses read-only cvars** with "Console variable is read-only: X" |
+| Find cvars by substring | `ConsoleToolset.SearchCVars` — returns help text plus current value |
+| Run any console command | `ConsoleToolset.RunConsoleCommand` |
+| Read command output | `ConsoleToolset.LogsToolset.GetLogEntries` (console output goes to the log, not the tool result) |
 
-```python
-# CVars (names like r.ReflectionMethod) — VibeUE
-value = unreal.EngineSettingsService.get_console_variable("r.ReflectionMethod")
-unreal.EngineSettingsService.set_console_variable("r.ReflectionMethod", "1")
-
-# Registered settings (category-based) — use the engine ConfigSettingsToolset via call_tool.
-# Raw INI is also still available in VibeUE when you know the section/key:
-value = unreal.EngineSettingsService.get_engine_ini_value(
-    "/Script/Engine.RendererSettings", "bEnableRayTracing", "Engine.ini")
+```
+call_tool SetCVarValue   {"Name": "r.ReflectionMethod", "Value": "1"}
+call_tool GetCVarValue   {"Name": "r.ReflectionMethod"}
+call_tool SearchCVars    {"Search": "r.Lumen"}
 ```
 
-### ⚠️ Check Read-Only Before Setting CVars
+A cvar is **not** config: there is nothing to "save" afterwards. The old
+`save_all_engine_config()` step after a cvar batch was always a no-op.
 
-```python
-info = unreal.ConsoleVariableInfo()
-if unreal.EngineSettingsService.get_console_variable_info("r.MaxQualityMode", info):
-    if not info.is_read_only:
-        unreal.EngineSettingsService.set_console_variable(info.name, "1")
+Batching several cvars is just several `SetCVarValue` calls, or one
+`RunConsoleCommand` with a semicolon-separated command string.
+
+**Accepted loss:** nothing in Epic's surface reports a cvar's *default* value or its `ECVF_*` flag
+string. `RunConsoleCommand("<name> ?")` prints `HELP for 'x'(ReadOnly)` and `LastSetBy:` to the log,
+which is the closest substitute.
+
+## Scalability / quality
+
+| Want | Tool |
+|---|---|
+| All group levels | `ConsoleToolset.RunConsoleCommand("Scalability")` → reads back from the log; or `SearchCVars {"Search": "sg."}` |
+| One group | `SetCVarValue {"Name": "sg.ShadowQuality", "Value": "2"}` |
+| Overall preset | `RunConsoleCommand("Scalability 3")` (or `"Scalability cine"`) |
+
+Prefer the `Scalability` command for the overall preset: it persists to the **correct** ini
+(`GEditorSettingsIni` in-editor), which VibeUE's old `set_overall_scalability_level` did not — it
+always wrote `GGameUserSettingsIni`, which the editor does not read back.
+
+## Project / engine settings (the Project Settings UI)
+
+Anything that appears in **Project Settings** or **Editor Preferences** is a registered settings
+section, and `ConfigSettingsToolset` owns it end to end — live value, correct ini, source control
+checkout and undo.
+
+| Want | Tool |
+|---|---|
+| Browse what exists | `ConfigSettingsToolset.ListContainers` / `ListCategories` / `ListSections` |
+| Find a setting by name, tooltip or bound cvar | `ConfigSettingsToolset.SearchSettings` |
+| Read values | `ConfigSettingsToolset.GetSectionPropertyValues` |
+| Write values | `ConfigSettingsToolset.SetSectionProperties` |
+| Force a save | `ConfigSettingsToolset.SaveSection` (usually unnecessary — the setters save) |
+
+```
+call_tool SearchSettings          {"Search": "Smooth Frame Rate"}
+call_tool GetSectionPropertyValues {"Container": "Project", "Category": "Engine", "Section": "General", "Properties": ["bSmoothFrameRate"]}
+call_tool SetSectionProperties     {"Container": "Project", "Category": "Engine", "Section": "General", "Values": "{\"bSmoothFrameRate\": false}"}
 ```
 
-### ⚠️ Some Settings Require Restart
+Useful section coordinates: `UEngine` → `Project / Engine / General`; `ULevelEditorPlaySettings` →
+`Editor / LevelEditor / PlayIn`; `UEditorPerformanceSettings` → `Editor / General / Performance`.
 
-`set_console_variable` / `set_engine_ini_value` return an `FEngineSettingResult` whose
-`requires_restart` flag tells you whether the change takes effect immediately. (Registered-setting
-results come from the engine `ConfigSettingsToolset` instead.)
+> **Do not use `ObjectToolset` for settings.** `ObjectToolset.SetProperties` calls
+> `RequireBlueprintOwnedTemplate`, which refuses class-default data of a non-Blueprint class — and a
+> `UDeveloperSettings` object *is* a native CDO. It raises
+> "...is class default data for 'X', which is not a Blueprint class". Its own source comment says
+> config-backed settings "go through ConfigSettingsToolset".
 
----
+## Raw INI files
 
-## Browsing registered settings
+For an ini key with **no** registered settings section, edit the file:
 
-Listing categories and the settings inside them is now an engine **`ConfigSettingsToolset`** job —
-call it via `call_tool` and run `describe_toolset` for the available actions. These engine
-categories cover rendering, physics, audio, GC, networking, collision, AI, input, and the rest.
+| Want | Tool |
+|---|---|
+| Read a config file | `FileSystemToolset.ReadTextFile` |
+| Surgical edit, comments preserved | `FileSystemToolset.EditTextByAnchor` / `EditTextByLineRange` |
+| Whole-file write | `FileSystemToolset.WriteTextFile` |
+| List a config directory | `FileSystemToolset.ListDirectory` |
 
-For everything VibeUE still owns, see the cvar / INI / scalability workflows below.
+`/Saved` and `/Config` resolve inside the project; absolute native paths are allowed.
 
----
+> ⚠️ **A text edit does not reach the running editor.** `GConfig` already holds the old branch in
+> memory, so a file edit applies on the next launch. If the value must take effect now, find a
+> registered section and use `ConfigSettingsToolset` instead.
 
-## Workflows
+## PIE settings — the one VibeUE helper left
 
-### Enable Ray Tracing
+`ULevelEditorPlaySettings` is reachable through `ConfigSettingsToolset`
+(`Editor / LevelEditor / PlayIn`), and that is what an agent should use.
+
+Two VibeUE functions survive as **Python-only helpers** (no longer MCP tools, so don't look for them
+in `list_toolsets`), because `vibeue.py`'s `GateSession` needs them from inside `execute_python`
+where Epic's toolsets are unreachable:
 
 ```python
 import unreal
-import json
-
-rt_settings = {
-    "r.RayTracing": "1",
-    "r.RayTracing.Shadows": "1",
-    "r.RayTracing.Reflections": "1",
-    "r.ReflectionMethod": "1"
-}
-result = unreal.EngineSettingsService.set_console_variables_from_json(json.dumps(rt_settings))
-unreal.EngineSettingsService.save_all_engine_config()
+s = unreal.EngineSettingsService.get_pie_settings()
+unreal.EngineSettingsService.set_pie_settings(num_players=2, net_mode="PlayAsListenServer")
 ```
 
-### Optimize for Performance
+They exist for that gate. For ordinary PIE configuration, use `ConfigSettingsToolset`.
 
-```python
-import unreal
-import json
+## Why the old service is gone
 
-# Set overall scalability to Low (0)
-unreal.EngineSettingsService.set_overall_scalability_level(0)
-
-# Disable expensive features
-perf_settings = {
-    "r.RayTracing": "0",
-    "r.VolumetricFog": "0",
-    "r.MotionBlurQuality": "0",
-    "r.Shadow.MaxResolution": "512"
-}
-unreal.EngineSettingsService.set_console_variables_from_json(json.dumps(perf_settings))
-```
-
-### Search CVars
-
-```python
-import unreal
-
-shadows = unreal.EngineSettingsService.search_console_variables("shadow", 100)
-for cvar in shadows:
-    print(f"{cvar.name}: {cvar.value} ({cvar.type})")
-```
-
-### Set Engine INI Values
-
-```python
-import unreal
-
-result = unreal.EngineSettingsService.set_engine_ini_value(
-    "/Script/EngineSettings.GameMapsSettings",
-    "GameDefaultMap",
-    "/Game/Maps/Lvl_Main.Lvl_Main",
-    "DefaultEngine.ini"
-)
-```
-
----
-
-## Data Structures
-
-> **Python Naming Convention**: C++ types like `FEngineSettingResult` are exposed as `EngineSettingResult` in Python (no `F` prefix).
-
-### EngineSettingResult (returned by set_* and INI write methods)
-- `success`, `error_message`
-- `modified_settings`, `failed_settings`
-- `requires_restart`
-
-### ConsoleVariableInfo
-- `name`, `value`, `default_value`, `description`
-- `type`, `flags`, `is_read_only`
-
-VibeUE `EngineSettingsService` covers:
-- **Rendering optimization**: Adjust r.* cvars, ray tracing, shadows
-- **Performance profiling**: GC cvars (gc.*), streaming, scalability
-- **Quality presets**: Apply overall or per-group scalability levels
-- **Raw engine INI**: read/write sections directly when you know the key
-
-For browsing/editing *registered* settings by category (physics, audio, collision, AI, input
-classes, etc.), use the engine **`ConfigSettingsToolset`** via `call_tool`.
-
-## Sample scripts (run via `execute_python`)
-
-- **`scripts/set_cvars.txt`** — read scalability and set a console variable.
-
-## Reference pages
-
-Open these with the paths below; UE rewrites them to absolute paths when it serves this skill.
-
-- [scripts/set_cvars.txt](scripts/set_cvars.txt) - runnable sample
+The 5.8-era justification was that Epic covered **none** of cvars, scalability, raw INI or
+`UDeveloperSettings` discovery. In 5.9 all four are covered, and two of VibeUE's writers were
+actually broken: `set_engine_ini_value` / `set_ini_value` called `GConfig->SetString` + `Flush` on a
+NoSave path and returned `bSuccess=true` without reaching disk, and
+`set_overall_scalability_level` wrote the wrong ini. Epic's equivalents persist correctly, check
+types, refuse read-only cvars, honour source control and support undo.

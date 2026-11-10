@@ -3,7 +3,7 @@ name: frame-rate
 display_name: Frame Rate / FPS Caps
 description: Diagnose and remove FPS caps so the editor and game run uncapped (or at a target FPS). Use when the user says the editor/game is "locked", "capped", or "stuck" at a frame rate (commonly 60 FPS), asks to "unlock"/"uncap"/"raise" FPS, or wants to set a max FPS. Covers t.MaxFPS, VSync, fixed/smoothed frame rate, and background CPU throttling (EngineSettingsService).
 vibeue_classes:
-  - EngineSettingsService
+  - PerformanceService
 unreal_classes:
   - RendererSettings
 keywords:
@@ -34,7 +34,7 @@ range). Read every source below before changing anything.
 > at a round number, it's not a cap — it's a workload. Run `unreal.PerformanceService.frame_timing()`
 > first (NEW service that replaced the removed `editor_control` tool) for a CPU-vs-GPU-bound verdict
 > before touching any cap below. The caps here only matter when something is artificially holding FPS
-> down. (Cvar/INI reads/writes in this skill stay on `EngineSettingsService`.)
+> down. (Cvar/INI work is now Epic's ConsoleToolset / ConfigSettingsToolset via call_tool -- see the engine-settings skill. Formerly `EngineSettingsService`.)
 
 | # | Setting | Where | "Uncapped" value |
 |---|---------|-------|------------------|
@@ -52,7 +52,9 @@ range). Read every source below before changing anything.
 
 ```python
 import unreal
-es = unreal.EngineSettingsService
+# NOTE: EngineSettingsService is gone. Use call_tool on ConsoleToolset.SetCVarValue /
+# ConfigSettingsToolset.SetSectionProperties -- see the engine-settings skill and
+# scripts/uncap_fps.txt for the exact calls.
 
 for cvar in ["t.MaxFPS", "r.VSync", "r.VSyncEditor"]:
     print(f"{cvar} = {es.get_console_variable(cvar)}")
@@ -74,7 +76,9 @@ require an editor restart.
 
 ```python
 import unreal, json
-es = unreal.EngineSettingsService
+# NOTE: EngineSettingsService is gone. Use call_tool on ConsoleToolset.SetCVarValue /
+# ConfigSettingsToolset.SetSectionProperties -- see the engine-settings skill and
+# scripts/uncap_fps.txt for the exact calls.
 
 TARGET_MAX_FPS = "240"   # "0" = fully uncapped
 

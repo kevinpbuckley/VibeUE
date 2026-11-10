@@ -1,28 +1,30 @@
 # Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
-# uncap_fps.txt — Read all five FPS caps, then uncap to a target (EngineSettingsService).
+# uncap_fps.txt — remove every frame-rate cap, using UE 5.9's own toolsets.
 #
-# Sample script for the frame-rate skill. Run via execute_python.
-import unreal, json
-es = unreal.EngineSettingsService
-
-TARGET_MAX_FPS = "240"   # "0" = fully uncapped
-
-# --- Read current state ---
-for cvar in ["t.MaxFPS", "r.VSync", "r.VSyncEditor"]:
-    print(f"{cvar} = {es.get_console_variable(cvar)}")
-eng = "/Script/Engine.Engine"
-for key in ["bUseFixedFrameRate", "FixedFrameRate", "bSmoothFrameRate", "SmoothedFrameRateRange"]:
-    print(f"{key} = {es.get_engine_ini_value(eng, key, 'DefaultEngine.ini')!r}")
-
-# --- Clear the caps ---
-es.set_console_variables_from_json(json.dumps({
-    "t.MaxFPS": TARGET_MAX_FPS, "r.VSync": "0", "r.VSyncEditor": "0",
-}))
-es.set_engine_ini_value(eng, "bUseFixedFrameRate", "False", "DefaultEngine.ini")
-es.set_engine_ini_value(eng, "bSmoothFrameRate",   "False", "DefaultEngine.ini")
-es.set_engine_ini_value("/Script/UnrealEd.EditorPerformanceSettings",
-                        "bThrottleCPUWhenNotForeground", "False",
-                        "EditorPerProjectUserSettings.ini")
-es.save_all_engine_config()
-print("Done. t.MaxFPS now:", es.get_console_variable("t.MaxFPS"))
+# These are call_tool steps, NOT execute_python: Epic's ConsoleToolset and
+# ConfigSettingsToolset carry no PythonCallable, so unreal.ConsoleToolset does not exist.
+#
+# 1) The cvar caps (take effect immediately, nothing to save):
+call_tool SetCVarValue {"Name": "t.MaxFPS", "Value": "0"}
+call_tool SetCVarValue {"Name": "r.VSync", "Value": "0"}
+call_tool SetCVarValue {"Name": "r.DynamicRes.OperationMode", "Value": "0"}
+#
+# 2) The project caps (registered settings sections — these persist correctly):
+#    UEngine lives at Project / Engine / General.
+call_tool SetSectionProperties {"Container": "Project", "Category": "Engine", "Section": "General",
+                                "Values": "{\"bSmoothFrameRate\": false, \"bUseFixedFrameRate\": false}"}
+#
+# 3) The editor cap (Editor Preferences -> Performance):
+call_tool SetSectionProperties {"Container": "Editor", "Category": "General", "Section": "Performance",
+                                "Values": "{\"bThrottleCPUWhenNotForeground\": false}"}
+#
+# NOTE: a minimized or background editor still throttles even with that flag false, because
+# UEditorEngine::ShouldThrottleCPUUsage falls through to AreAllWindowsHidden(). For a real
+# unthrottled background session use VibeUE's PerformanceService.set_background_throttling(False),
+# which registers the ShouldDisableCPUThrottlingDelegates override nothing in Epic's surface does.
+#
+# 4) Verify:
+call_tool GetCVarValue {"Name": "t.MaxFPS"}
+call_tool GetSectionPropertyValues {"Container": "Project", "Category": "Engine", "Section": "General",
+                                    "Properties": ["bSmoothFrameRate", "bUseFixedFrameRate"]}

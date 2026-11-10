@@ -380,7 +380,7 @@ invalidated one already-committed cut (see §5's ActorService correction).
 | `StateTreeService` | ~61 | ~37 | **held**, see below |
 | `MaterialService` + `MaterialNodeService` | 50 | 1 (+1 open) | pending |
 | `WidgetService` | 34 | 9 | pending |
-| `EngineSettings` + `ProjectSettings` | 27 + 2 demoted | 0 | pending |
+| `EngineSettings` + `ProjectSettings` | 27 + 2 demoted | 0 | **done** |
 | `ViewportService` | 4 | 18 | pending |
 | `PerformanceService` | 10 + 2 demoted | 7 | pending |
 | `WorkflowService` | 11 | 1 | pending |

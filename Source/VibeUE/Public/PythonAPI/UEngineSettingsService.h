@@ -165,160 +165,31 @@ public:
 	// Console Variables (CVars)
 	// =================================================================
 
-	/**
-	 * Get a console variable value.
-	 *
-	 * @param Name - Console variable name (e.g., "r.ReflectionMethod", "gc.TimeBetweenPurgingPendingKillObjects")
-	 * @return Current value as string (empty if not found)
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EngineSettings")
-	static FString GetConsoleVariable(const FString& Name);
 
-	/**
-	 * Set a console variable value.
-	 * Note: Some cvars require restart to take effect.
-	 *
-	 * @param Name - Console variable name
-	 * @param Value - New value as string
-	 * @return Operation result
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EngineSettings")
-	static FEngineSettingResult SetConsoleVariable(const FString& Name, const FString& Value);
 
-	/**
-	 * Get detailed information about a console variable.
-	 *
-	 * @param Name - Console variable name
-	 * @param OutInfo - Output structure with cvar details
-	 * @return True if cvar was found
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EngineSettings")
-	static bool GetConsoleVariableInfo(const FString& Name, FConsoleVariableInfo& OutInfo);
 
-	/**
-	 * Search for console variables by name or description.
-	 *
-	 * @param SearchTerm - Search string (matches against name and description)
-	 * @param MaxResults - Maximum number of results to return (0 = unlimited)
-	 * @return Array of matching console variables
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EngineSettings")
-	static TArray<FConsoleVariableInfo> SearchConsoleVariables(const FString& SearchTerm, int32 MaxResults = 50);
 
-	/**
-	 * List all console variables with a specific prefix.
-	 *
-	 * @param Prefix - CVar prefix (e.g., "r.", "gc.", "p.")
-	 * @param MaxResults - Maximum number of results (0 = unlimited)
-	 * @return Array of matching console variables
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EngineSettings")
-	static TArray<FConsoleVariableInfo> ListConsoleVariablesWithPrefix(const FString& Prefix, int32 MaxResults = 100);
 
 	// =================================================================
 	// Batch Operations
 	// =================================================================
 
-	/**
-	 * Set multiple console variables from a JSON object.
-	 *
-	 * @param SettingsJson - JSON object with cvar name->value pairs
-	 * @return Operation result
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EngineSettings")
-	static FEngineSettingResult SetConsoleVariablesFromJson(const FString& SettingsJson);
 
 	// =================================================================
 	// Direct Engine INI Access
 	// =================================================================
 
-	/**
-	 * List all sections in an engine config file.
-	 *
-	 * @param ConfigFile - Config file name (e.g., "Engine.ini", "Input.ini", "Game.ini")
-	 * @param bIncludeBase - Include base engine configs (not just project overrides)
-	 * @return Array of section names
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EngineSettings")
-	static TArray<FString> ListEngineSections(const FString& ConfigFile, bool bIncludeBase = false);
 
-	/**
-	 * Get a value from an engine config file.
-	 *
-	 * @param Section - INI section (e.g., "/Script/Engine.RendererSettings")
-	 * @param Key - Key name within the section
-	 * @param ConfigFile - Config file name (e.g., "Engine.ini")
-	 * @return Value as string (empty if not found)
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EngineSettings")
-	static FString GetEngineIniValue(const FString& Section, const FString& Key, const FString& ConfigFile);
 
-	/**
-	 * Set a value in an engine config file (project override).
-	 *
-	 * @param Section - INI section
-	 * @param Key - Key name within the section
-	 * @param Value - Value to set
-	 * @param ConfigFile - Config file name
-	 * @return Operation result
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EngineSettings")
-	static FEngineSettingResult SetEngineIniValue(const FString& Section, const FString& Key, const FString& Value, const FString& ConfigFile);
 
-	/**
-	 * Get an array of values from an engine config file.
-	 *
-	 * @param Section - INI section
-	 * @param Key - Key name within the section
-	 * @param ConfigFile - Config file name
-	 * @return Array of values
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EngineSettings")
-	static TArray<FString> GetEngineIniArray(const FString& Section, const FString& Key, const FString& ConfigFile);
 
-	/**
-	 * Set an array of values in an engine config file.
-	 *
-	 * @param Section - INI section
-	 * @param Key - Key name within the section
-	 * @param Values - Array of values to set
-	 * @param ConfigFile - Config file name
-	 * @return Operation result
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EngineSettings")
-	static FEngineSettingResult SetEngineIniArray(const FString& Section, const FString& Key, const TArray<FString>& Values, const FString& ConfigFile);
 
 	// =================================================================
 	// Scalability Settings
 	// =================================================================
 
-	/**
-	 * Get current scalability settings as a JSON object.
-	 * Returns quality levels for all scalability groups.
-	 *
-	 * @return JSON object with scalability levels
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EngineSettings")
-	static FString GetScalabilitySettings();
 
-	/**
-	 * Set scalability quality level for a group.
-	 *
-	 * @param GroupName - Scalability group (e.g., "ViewDistance", "AntiAliasing", "Shadow", "PostProcess", "Texture", "Effects", "Foliage", "Shading")
-	 * @param QualityLevel - Quality level (0=Low, 1=Medium, 2=High, 3=Epic, 4=Cinematic)
-	 * @return Operation result
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EngineSettings")
-	static FEngineSettingResult SetScalabilityLevel(const FString& GroupName, int32 QualityLevel);
 
-	/**
-	 * Apply overall quality level to all scalability groups.
-	 *
-	 * @param QualityLevel - Quality level (0=Low, 1=Medium, 2=High, 3=Epic, 4=Cinematic)
-	 * @return Operation result
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EngineSettings")
-	static FEngineSettingResult SetOverallScalabilityLevel(int32 QualityLevel);
 
 	// =================================================================
 	// Play-In-Editor (PIE) net-mode settings
@@ -334,7 +205,7 @@ public:
 	 * @return Snapshot with net_mode, num_clients, run_under_one_process, launch_separate_server,
 	 *         last_play_mode. success=false with error_message if the settings object is unavailable.
 	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EngineSettings")
+	UFUNCTION(BlueprintCallable, Category ="VibeUE|EngineSettings")
 	static FPIESettingsInfo GetPIESettings();
 
 	/**
@@ -349,29 +220,14 @@ public:
 	 * @return True only if every written value reads back as requested; false (with a Warning) on a
 	 *         mismatch or an invalid argument. Verify with get_pie_settings.
 	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EngineSettings")
+	UFUNCTION(BlueprintCallable, Category ="VibeUE|EngineSettings")
 	static bool SetPIESettings(const FString& NetMode, int32 NumClients, bool bRunUnderOneProcess);
 
 	// =================================================================
 	// Persistence
 	// =================================================================
 
-	/**
-	 * Force save all pending engine config changes to disk.
-	 *
-	 * @return True if successful
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EngineSettings")
-	static bool SaveAllEngineConfig();
 
-	/**
-	 * Save a specific engine config file.
-	 *
-	 * @param ConfigFile - Config file name (e.g., "Engine.ini")
-	 * @return True if successful
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EngineSettings")
-	static bool SaveEngineConfig(const FString& ConfigFile);
 
 private:
 
