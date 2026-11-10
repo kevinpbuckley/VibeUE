@@ -238,17 +238,52 @@ and the `vibeue` index; corrected `AGENTS.md.sample` for enums/structs and for `
 moved into `ConsoleToolset`. The rewritten niagara pages use **relative markdown links**, which is
 what 5.9's native skill discovery rewrites (see §4).
 
+### Stage B — TransactionService split (done)
+
+**996 -> 989 tools.** The 5.8 doc called this a clean CUT; verification says it is a 7/7 split.
+
+| Cut (5.9 covers it) | Replacement |
+|---|---|
+| `BeginTransaction`, `EndTransaction`, `CancelTransaction` | `unreal.ScopedEditorTransaction("...")` — `FPyScopedEditorTransaction` in PythonScriptPlugin |
+| `GetHistory`, `GetState` | `EditorToolset.UndoHistoryToolset.GetRecentTransactions` |
+| `GetUndoDescription`, `GetRedoDescription` | `GetTransactionDetails` + `GetTransactionRecencyIndex` |
+
+**Kept, because stepping the buffer is exposed nowhere:** `Undo`, `Redo`, `UndoMultiple`,
+`RedoMultiple`, `CanUndo`, `CanRedo`, `ResetBuffer`. `PyEditor.cpp` binds no undo/redo and `GEditor`
+is not scriptable, so an agent has no other way to press Ctrl+Z. The two orphaned USTRUCTs
+(`FTransactionState`, `FTransactionHistoryEntry`) and the dead `GActiveTransactionIndex` went with
+the cut half. No skill referenced any of the removed tools.
+
 ### Not yet done
 
-- `TransactionService` (14): verified split rather than the 5.8 doc's clean cut. `BeginTransaction` /
-  `EndTransaction` / `CancelTransaction` are native (`unreal.ScopedEditorTransaction`), and
-  `GetHistory` / `GetUndoDescription` / `GetRedoDescription` / `GetState` are `UUndoHistoryToolset`.
-  But **Python exposes no undo/redo stepping** (`PyEditor.cpp` has none, and `GEditor` is not
-  scriptable), so `Undo`/`Redo`/`UndoMultiple`/`RedoMultiple`/`CanUndo`/`CanRedo`/`ResetBuffer`
-  have no engine equivalent and must stay. 7 cut, 7 kept.
-- The §3 trims: Blueprint (110), StateTree (99), Widget (43), Skeleton (39), EnvQuery (24),
-  BehaviorTree+Blackboard (34), Material pair (52), EngineSettings/ProjectSettings (29),
-  Performance (17), Actor (11), Viewport (22), AssetDiscovery (7), and cutting VibeUE's own input
-  injection while keeping `InputService`'s asset authoring.
+**`InputService` injection — verdict verified, edit deliberately deferred.** 5.9's `InputToolset`
+(`ApplyInput(entries, durationSeconds)` / `IsInputApplied(entries)`) is runtime injection on a local
+player, and it covers **`InjectActionFor`** (same duration-hold semantics) and **`InjectKey`** (it
+takes legacy `FKey` entries, with zero duration meaning a one-tick tap) — and does both for several
+inputs at once, which VibeUE cannot. It does **not** cover `InjectAction` + `StopInjection`: it
+always self-releases after the duration, so an indefinite hold released by a later call has no
+equivalent. So: cut 2, keep 2.
+
+This was implemented and then reverted on purpose. `InputInjectionTests.cpp` exercises the cut and
+kept tools in the same three automation-test bodies (interleaved assertions, not separable blocks),
+so removing the two tools means roughly ten surgical edits inside tests that also cover the survivors.
+That deserves a focused pass rather than a hurried one; the headers and implementations are unchanged,
+and the verdict above is what to execute.
+
+**The §3 trims** are still open, and they are where most of the remaining tool count sits:
+Blueprint (110 vs `UBlueprintToolset` 74 + `UBlueprintDslToolset` 7 + EditorToolset's graph DSL),
+StateTree (99 vs `StateTreeToolset` 49/32-write + the engine binding API), Widget (43 vs
+WidgetAnimation 10 + CommonUI 15 + MVVM 31 + WidgetStaticAnalysis 5), Skeleton (39 vs
+`USkeletalMeshToolset` 22), EnvQuery (24 vs 14), BehaviorTree + Blackboard (34 vs
+`UBehaviorTreeToolset` 25), the Material pair (52 vs Material 25 + MaterialInstance 14 + CurveAtlas
+13), EngineSettings + ProjectSettings (29 vs ConfigSettings 12 + Console 5 + Logs 4), Performance
+(17 vs PerfToolset 10 + RewindDebugger 10), Viewport (22 vs `UEditorAppToolset` 42 + SceneCapture 14),
+Actor (11 vs `UActorToolset` 21 + `ULevelToolset` 36) and AssetDiscovery (7 vs `UAssetToolset` 24 +
+FileSystem 9).
+
+Each needs the same treatment the finished ones got: diff at tool level, check the skills for a
+documented capability the tool names do not reveal (the `GameplayTagService` lesson), cut, sweep the
+skills, build. Do not cut on name overlap alone.
+
 - Converting the remaining backticked sub-doc *prose* mentions into inline links (optional; the
   Reference pages section already makes every page reachable).
