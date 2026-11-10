@@ -20,32 +20,6 @@ public class VibeUE : ModuleRules
 		// See issues #491 and #569.
 		bWarningsAsErrors = false;
 
-		// FabService (issue #517) talks to fab.com via the signed-in Epic account's EOS auth token,
-		// reusing the login the editor/launcher already holds. EOSSDK provides the SDK headers and the
-		// WITH_EOS_SDK=1 define; EOSShared provides IEOSSDKManager. bRequiresPlatformSDK mirrors the
-		// engine Fab plugin's own Build.cs so the platform SDK is available.
-		//
-		// Some engine installs ship without the Fab plugin entirely (issue #525), so all of this is
-		// conditional on it existing: without it, WITH_VIBEUE_FAB=0 compiles FabService down to stubs
-		// that report the feature as unavailable, and the rest of VibeUE builds normally.
-		bool bFabPluginPresent = File.Exists(
-			Path.Combine(EngineDirectory, "Plugins", "Fab", "Fab.uplugin"));
-		PrivateDefinitions.Add("WITH_VIBEUE_FAB=" + (bFabPluginPresent ? "1" : "0"));
-		if (bFabPluginPresent)
-		{
-			bRequiresPlatformSDK = true;
-			PrivateDependencyModuleNames.AddRange(
-				new string[]
-				{
-					"EOSSDK",                 // FabService (#517): Epic Online Services SDK — headers + WITH_EOS_SDK=1 for Fab auth token
-					"EOSShared",              // FabService (#517): IEOSSDKManager (create/enumerate + auto-tick EOS platforms)
-					"Fab",                    // FabService (#517): reuse the engine Fab plugin's FAB_API downloader (FFabDownloadRequest / queue)
-					"BuildPatchServices",
-                "FileUtilities",          // FabService: safely extract public free-asset ZIP downloads
-				}
-			);
-		}
-
 		// EnvironmentQueryEditor is a PLUGIN (Engine/Plugins/AI/EnvironmentQueryEditor), not an
 		// engine module like BehaviorTreeEditor. It is EnabledByDefault, but a project may disable
 		// it, so the EQS service compiles to stubs rather than breaking the whole plugin's build.

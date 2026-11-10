@@ -70,16 +70,6 @@
 			"Enabled": true
 		},
 		{
-			"Name": "Fab",
-			"Enabled": true,
-			"Optional": true
-		},
-		{
-			"Name": "EOSShared",
-			"Enabled": true,
-			"Optional": true
-		},
-		{
 			"Name": "EnvironmentQueryEditor",
 			"Enabled": true,
 			"Optional": true

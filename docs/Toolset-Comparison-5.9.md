@@ -340,6 +340,107 @@ which is why it was not folded in here.
 Net effect of the cleanup: 11 files deleted, ~4,600 lines removed, and
 `UnrealEditor-VibeUE.dll` down to 17.49 MB from 18.93 MB at the branch point.
 
+## 6. The full-surface audit (8 parallel audits, all 12 remaining services)
+
+### The scoping rule, as decided by the owner
+
+**Only a DIRECT Epic AI-editor-toolset duplicate is cut.** A capability reachable only through a
+native engine Python API (`execute_python` + `unreal.*`) is **NOT** a duplicate and stays. Taken the
+other way the rule would end the plugin, since nearly everything VibeUE does is "reachable from
+Python" eventually. Two consequences settled at the same time: `PerformanceService.Analyse` stays
+(nothing in Epic's surface parses a `.utrace`), and where a cut would strand a caller the tool is
+**demoted** (strip `AICallable`, keep the function) rather than deleted — the test is that an agent
+can still complete the task.
+
+### The engine fact that governs most verdicts
+
+`EditorToolset.ObjectToolset` is **not** an unrestricted property backdoor, and three of the eight
+audits disagreed about this until it was settled in source:
+
+- `ObjectToolset.cpp:96` — `SetProperties` calls `RequireBlueprintOwnedTemplate`, which **refuses
+  class-default data of a non-Blueprint class**. Native `UDeveloperSettings` CDOs are therefore
+  unreachable; settings work belongs to `ConfigSettingsToolset`, never `ObjectToolset`. Ordinary
+  asset objects (a `UStateTreeState`, a `UMaterialExpression`) have no `UClass` in their outer chain
+  and pass.
+- `ToolsetLibrary.cpp:332` — every key then passes `CheckKeyAccess` →
+  `UE::PropertyEditor::CheckCanSetProperty`, refused on denial. So a `VisibleAnywhere`
+  (`CPF_EditConst`) property, a bare `UPROPERTY()`, or an `Instanced` property without
+  `CPF_Edit`/`CPF_BlueprintVisible` **cannot be written, and often cannot even be read.**
+
+This is what makes several keeps engine-blocked rather than merely convenient, and it is what
+invalidated one already-committed cut (see §5's ActorService correction).
+
+### Verdicts
+
+| Service | Cut | Keep | State |
+|---|---|---|---|
+| `BlueprintService` | 89 + 2 demoted | 19 | **done** |
+| `SkeletonService` | 13 | 26 | **done** |
+| `FabService` | 7 | 0 | **done** — service deleted |
+| `StateTreeService` | ~61 | ~37 | **held**, see below |
+| `MaterialService` + `MaterialNodeService` | 50 | 1 (+1 open) | pending |
+| `WidgetService` | 34 | 9 | pending |
+| `EngineSettings` + `ProjectSettings` | 27 + 2 demoted | 0 | pending |
+| `ViewportService` | 4 | 18 | pending |
+| `PerformanceService` | 10 + 2 demoted | 7 | pending |
+| `WorkflowService` | 11 | 1 | pending |
+| `PIEActorService` | 0 | 7 | nothing to do |
+| `PythonTools` | 0 | 2 | nothing to do |
+
+### Why StateTree is held rather than cut
+
+Its audit cut 85 of 98 on the premise that `ObjectToolset` "reaches every `UPROPERTY`, skipping only
+`CPF_Deprecated`". That premise is false (above), and it is load-bearing for specific cuts —
+`SetStateExpanded` was justified verbatim as "non-Edit `UPROPERTY`, still reflected". Separately, the
+owner's scoping rule returns the **24-tool `Bind*`/`Unbind*` family** to KEEP: its replacement was
+`UStateTreeEditorData::SetBinding`/`ClearBinding`, which are `PythonCallable` native APIs, not
+toolset tools. What remains genuinely cuttable is the `StateTreeToolset`-backed CRUD
+(`add_child_state`, `add_task`, `remove_*`, `move_*`, `compile`, `request_ui_refresh`),
+`AssetToolset`-backed list/save, and the property setters that survive a per-property
+`CPF_Edit` check against `StateTreeState.h`. **That per-property pass is the prerequisite for
+executing it.**
+
+The 13 originally-argued keeps stand and are well evidenced: `CreateStateTree` (Epic has no StateTree
+factory tool and the skill records `unreal.StateTreeFactory` failing from Python), the four
+`GetAvailable*Types` (Epic's adders take a `UScriptStruct` but nothing in the catalog enumerates
+`UScriptStruct` node types — `SearchSubclasses` is `UClass`-only), the three theme-colour tools
+(`FStateTreeEditorColor::ExportTextItem` returns false unless `PPF_Copy|PPF_Duplicate`, so Epic reads
+empty strings), the three root-parameter tools (`FInstancedPropertyBag`'s schema can only be mutated
+from C++; JSON import requires an already-initialised bag), `SetComponentParameterOverride` (needs
+property-bag descriptor GUIDs no Epic tool exposes) and `SelectState` (`SelectAssetEditorObjects`
+raises for non-Blueprint/Widget editors).
+
+### Noted inconsistency, deliberately not churned
+
+`StateTreeService.GetBindings` was removed earlier on the now-rejected "engine `PythonCallable`
+exists" basis. It is left removed on outcome grounds: reading bindings is still available to an agent
+as `unreal.StateTreeEditorData.get_editor_data(st).get_bindings(state)`, which the `state-trees`
+skill documents. Restoring it would add a tool without adding a capability.
+
+### Method flaw found and fixed
+
+The shared Epic tool index used by the audits covered only
+`Engine/Plugins/Experimental/Toolsets`, so it missed `Engine/Plugins/Fab/Source/FabToolset`
+(`UFabToolset`, 5 AICallable tools, in an `EnabledByDefault` plugin) and would have preserved all 7
+`FabService` tools. Any future "Epic has none" claim must be tested against a scan of **all** of
+`Engine/Plugins` and `Engine/Source`, not that subtree.
+
+### Known-stale items the pending cuts must fix
+
+- `set_engine_ini_value` / `set_ini_value` **never reach disk today**: they call `GConfig->SetString`
+  + `Flush` on a NoSave path and return `bSuccess=true` regardless. `Skills/frame-rate`'s
+  workflow depends on them, so its caps 3-5 need repointing at
+  `ConfigSettingsToolset.SetSectionProperties`.
+- `Skills/materials/workflows.md` still claims "there is no layout_expressions API"; 5.9 ships
+  `MaterialToolset.LayoutExpressions`.
+- Epic's `ConsoleToolset` / `ConfigSettingsToolset` / `ObjectToolset` / `FileSystemToolset`
+  UFUNCTIONs carry **no** `PythonCallable`, so skills that reach settings from `execute_python` must
+  be rewritten to `call_tool`. This is also why `GetPIESettings`/`SetPIESettings` demote rather than
+  delete: `vibeue.py`'s `GateSession` calls them from Python.
+- `ReparentBone` survives the Epic rule but `Skills/skeleton/SKILL.md` records it as live-broken in
+  UE 5.7 ("fails with a hierarchy-mismatch validation error and can leave the commit stalled"). It
+  should go on broken-functionality grounds, which is a separate decision from duplication.
+
 ### Not yet done
 
 **`InputService` injection — verdict verified, edit deliberately deferred.** 5.9's `InputToolset`
