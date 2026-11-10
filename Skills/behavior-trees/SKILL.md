@@ -1,10 +1,11 @@
 ---
 name: behavior-trees
-display_name: Behavior Trees & Blackboards
-description: Create, inspect, and edit Behavior Tree and Blackboard assets — composites, tasks, decorators, services, node properties, blackboard key bindings, key CRUD and metadata, tree round-trips and validation (BehaviorTreeService + BlackboardService). Use when the user asks to build a Behavior Tree, add BT nodes or decorators, bind blackboard keys, author a blackboard, or validate/repair a BT asset.
+display_name: Behavior Trees, Blackboards & EQS
+description: Author Behavior Trees, Blackboards and Environment Queries with Unreal 5.9's own AIModuleToolset (composites, tasks, decorators, services, blackboard keys, EQS options and tests), plus the five capabilities the engine lacks that VibeUE still provides (BT graph repair, blackboard key rename and reference sweep, EQS run and EQS graph repair). Use when the user asks to build a Behavior Tree, add BT nodes or decorators, bind blackboard keys, author a blackboard, rename a blackboard key, or repair a BT whose graph shows up empty.
 vibeue_classes:
   - BehaviorTreeService
   - BlackboardService
+  - EnvQueryService
 unreal_classes:
   - UBehaviorTree
   - UBlackboardData
@@ -12,137 +13,168 @@ unreal_classes:
   - UBTCompositeNode
   - UBTTaskNode
   - UBTDecorator
-  - UBTService
 keywords:
   - behavior tree
-  - behaviour tree
   - blackboard
-  - bt
-  - btt
-  - btd
-  - bts
-  - composite
-  - selector
-  - sequence
-  - simple parallel
-  - decorator
-  - service
-  - task
+  - BT task
+  - BT decorator
+  - BT service
   - blackboard key
-  - key selector
-  - ai
+  - AI behavior
+  - repair behavior tree
+  - environment query
+  - EQS
 ---
 
-> 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this
-> session, call it with `{action: "load", skill: "ai-and-navigation"}` for UE domain knowledge on
-> Behavior Trees — architecture, node semantics, best practices. If no such tool is available, skip
-> this line entirely and proceed with this skill alone — do NOT attempt the call.
+# Behavior Trees & Blackboards
 
-# Behavior Trees Skill
+**The engine owns this domain.** UE 5.9 ships `AIModuleToolset.BehaviorTreeToolset` (25 tools) for
+Behavior Tree and Blackboard authoring. Use it via `call_tool`. VibeUE keeps only three things it
+cannot do.
 
-Two services, reachable from Python (`unreal.BehaviorTreeService.*`, `unreal.BlackboardService.*`)
-and as AICallable tools:
+Enable the **AIModuleToolset** plugin if `list_toolsets` does not show it.
 
-```
-BlackboardService     → UBlackboardData assets: create, key CRUD, metadata, re-parenting
-BehaviorTreeService   → UBehaviorTree assets: structure, sub-nodes, properties, build, validate
-```
+## Use the engine for all authoring
 
-Discover exact signatures with `get_symbol('unreal.BehaviorTreeService')` — this skill
-teaches the concepts and the gotchas, not the call shapes.
+| Want | `AIModuleToolset.BehaviorTreeToolset` tool |
+|---|---|
+| Create the BT asset | `CreateBehaviorTree` |
+| Create a Blackboard asset | `CreateBlackboardData` |
+| Root composite / root decorator | `AddRootComposite`, `AddRootDecorator` |
+| Add a composite (Selector, Sequence, Simple Parallel) | `AddComposite` |
+| Add a task | `AddTask` |
+| Add a decorator to a node | `AddDecorator` |
+| Add a service to a composite | `AddService` |
+| Read the tree | `GetRootGraphNode`, `GetChildGraphNodes`, `GetSubtree` |
+| Read a node's decorators / services | `GetDecoratorGraphNodes`, `GetServiceGraphNodes` |
+| Get the runtime object behind a graph node | `GetNodeInstance` |
+| Reorder / move nodes and subnodes | `MoveGraphNode`, `MoveSubnode` |
+| Remove nodes and subnodes | `RemoveGraphNode`, `RemoveSubnode` |
+| Assign / read the tree's blackboard | `SetBlackboard`, `GetBlackboard` |
+| Blackboard key CRUD | `AddBlackboardKey`, `RemoveBlackboardKey` |
+| List keys / keys a node may use | `GetBlackboardKeyNames`, `GetAllowedBlackboardKeys` |
+| Point a node's key selector at a key | `SetNodeBlackboardKey` |
 
-## The golden workflow
+| Want | Other engine toolset |
+|---|---|
+| Any node property — name, comment, wait time, any field | `EditorToolset.ObjectToolset` → `GetProperties` / `SetProperties` / `ListProperties` on the object from `GetNodeInstance` |
+| Which task/decorator/service classes exist | `ObjectToolset.SearchSubclasses`, or `search_symbols` / `get_symbol` |
+| Find BT or Blackboard assets | `EditorToolset.AssetToolset` → `FindAssets` |
+| **Save** (this is also what compiles the tree) | `AssetToolset.SaveAsset` |
+| Validate an asset | `AssetToolset.ValidateAssets` |
+| Blackboard key *type*, parent board, instance-synced flag, metadata | `ObjectToolset.SetProperties` on the board / its `FBlackboardEntry` |
+
+> **Saving is the compile step.** Epic's BT tools only mark the package dirty. Nothing in the engine
+> surface explicitly compiles a Behavior Tree, so finish an authoring session with
+> `AssetToolset.SaveAsset` — that is what turns the editor graph into the runtime tree. VibeUE's old
+> `compile_and_save` was a convenience over exactly this and is gone.
+
+## What VibeUE still provides (three tools)
+
+Everything else on `BehaviorTreeService` and `BlackboardService` was cut on the 5-9 branch because
+the engine covers it.
+
+### `BehaviorTreeService.repair_graph_from_runtime_tree(asset_path)`
+
+For a BT whose **editor graph is empty or holds only its root while the runtime tree is intact**.
+Such an asset opens blank in the Behavior Tree editor, and an ordinary write to it is refused —
+committing that graph would overwrite the runtime tree with an empty one. Epic's tools edit the graph
+they find, so they cannot recover this; they would persist the damage.
 
 ```python
 import unreal
-BT = unreal.BehaviorTreeService
-BB = unreal.BlackboardService
-
-# 1. Blackboard first — key bindings resolve against the TREE'S board, so assign it at creation.
-BB.create_blackboard("/Game/AI/BB_Guard")
-BB.add_blackboard_key("/Game/AI/BB_Guard", "TargetActor", "Object")
-BB.set_blackboard_key_object_class("/Game/AI/BB_Guard", "TargetActor", "/Script/Engine.Actor")
-
-# 2. Tree on that board.
-BT.create_behavior_tree("/Game/AI/BT_Guard", "/Game/AI/BB_Guard")
-
-# 3. Structure. Every mutator returns the new node's PATH (or "ERROR: ...").
-sel = BT.add_node("/Game/AI/BT_Guard", "Root", "BTComposite_Selector")          # Root/Selector[0]
-seq = BT.add_node("/Game/AI/BT_Guard", sel, "BTComposite_Sequence")
-wait = BT.add_node("/Game/AI/BT_Guard", seq, "BTTask_Wait")
-
-# 4. Properties and bindings.
-BT.set_node_property_value("/Game/AI/BT_Guard", wait, "WaitTime", '(DefaultValue=3.5,Key="")')
-dec = BT.add_decorator("/Game/AI/BT_Guard", seq, "BTDecorator_Blackboard")
-BT.set_node_blackboard_key("/Game/AI/BT_Guard", dec, "BlackboardKey", "TargetActor")
-
-# 5. Verify.
-print(BT.validate_tree("/Game/AI/BT_Guard"))   # [] == clean
-print(BT.get_tree("/Game/AI/BT_Guard"))        # whole tree as JSON
+err = unreal.BehaviorTreeService.repair_graph_from_runtime_tree("/Game/AI/BT_Zombie")
+print(err or "repaired and saved")
 ```
 
-Every mutator saves the asset itself — there is no separate "commit" step to forget.
-`compile_and_save` exists for re-running layout + save on a tree edited some other way.
+It is **explicit and never implicit** — nothing else calls it, because rebuilding a production
+asset's graph as a side effect of an unrelated edit is the kind of unrequested write this exists to
+prevent. It refuses when there is nothing to repair (no runtime tree, or a graph that already has
+nodes under its root) and logs the before/after node counts.
 
-## Node paths — the addressing scheme
+### `BlackboardService.rename_blackboard_key(asset_path, old, new)`
 
-- `Root/Selector[0]/Sequence[1]/Wait[0]` — segments are node TITLES with an index among
-  same-named siblings. `Root` is a keyword (the graph root), not a title.
-- Sub-nodes: `<owner path>/@decorator[n]` / `<owner path>/@service[n]` — by slot, in order.
-- **Paths are positional, not identities.** Inserting/removing a sibling renumbers later ones;
-  renaming a node changes its segment. Hold the node's `guid` (from GetTree/GetNodeInfo) across
-  edits, and re-read GetTree after a rename. `set_node_name` refuses names the grammar cannot
-  express (`/`, leading `@`, trailing `[n]`) — on both the direct route and via the `NodeName`
-  property.
+Epic has eight rename tools but none for a blackboard key, and a rename has to fix up every BT node
+selector bound to the old name. Returns a plain empty array on an unreferenced success; a refusal is
+a **single entry prefixed `"ERROR: "`** — a shape a real reference can never take, since a real one
+is always `"<btPath>:<node>.<property>"`. It refuses an inherited key, a missing key, and a
+collision with an existing name.
 
-## Things that are not obvious and will bite you
+### `BlackboardService.find_blackboard_key_references(asset_path, key_name)`
 
-- **WaitTime and friends are structs.** In UE 5.8 many numeric BT properties are
-  `FValueOrBBKey_*`: pass `'(DefaultValue=3.5,Key="")'`, not `'3.5'`. Read the current value
-  first (`get_node_property_value`) and mirror its shape.
-- **Blackboard key selectors are not values.** Always `set_node_blackboard_key`, never
-  `set_node_property_value`, for anything `get_node_property_names` flags
-  `bIsBlackboardKeySelector`. The service validates the key's TYPE against the selector's filter
-  up front — a mistyped binding would otherwise resolve, read back fine, and be silently cleared
-  by the engine on the next save.
-- **SimpleParallel has two fixed slots**, not a child list: slot 0 = main task (tasks only),
-  slot 1 = background branch. The engine refills an empty background slot with a Wait task on
-  every save, so the background branch can only ever be REPLACED (`add_node(parallel, cls, 1)`),
-  never removed or moved away.
-- **Root-level decorators go on the top composite** (the node under Root), not on `Root` itself —
-  `add_decorator(asset, "Root/Selector", ...)` is the correct call and the refusal message on
-  `Root` says so.
-- **`set_node_property_value` verifies after the save.** `ValueAfterWrite` is re-read from the
-  asset, not echoed; if the engine rewrote the value at save time the call reports failure and
-  tells you what is actually on disk. Trust it.
-- **Injected nodes (from RunBehavior subtrees) are read-only everywhere.** Edit the subtree asset.
-- **Comments**: `set_node_comment` writes the graph comment bubble — annotation only, survives
-  GetTree→BuildTree round-trips. Use it to record WHY a subtree exists.
+Read-only: every BT node key selector bound to that key, across every Behavior Tree whose blackboard
+is this asset *or inherits from it*, formatted `"<btPath>:<node>.<property>"`. This is the question
+to ask **before** deciding to rename or remove a key. Same `"ERROR: "` convention on failure.
 
-## Round-trips, repair, safety
+```python
+import unreal
+refs = unreal.BlackboardService.find_blackboard_key_references("/Game/AI/BB_Zombie", "TargetActor")
+for r in refs:
+    print(r)   # /Game/AI/BT_Zombie:Chase.BlackboardKey
+```
 
-- `get_tree` → edit the JSON → `build_tree(target, json, bReplaceExisting)` replays it through
-  the ordinary mutators. One save per node/property — fine for tens of nodes, not a bulk-import
-  path for thousands. With `bReplaceExisting=true` the result's `PreReplaceSnapshot` holds the
-  target's previous tree; if the build fails midway, feed that snapshot back to `build_tree` to
-  restore.
-- Composite (logic-operator) decorators cannot be recreated by BuildTree (editor-only sub-graphs;
-  reported per-node) — author those in the BT editor.
-- Writes are refused while PIE runs, while an editor is open on the asset, and when the commit
-  would destroy or crash on the runtime tree (sparse graph / instance-less root). Refusals name
-  the mechanism and the fix; read them.
-- `repair_graph_from_runtime_tree` rebuilds a sparse editor graph from the runtime tree —
-  explicit, never implicit. `validate_tree` is the read-only diagnostic sweep (orphans, broken
-  key bindings at any nesting depth, empty composites, misplaced sub-nodes).
+## Typical flow
 
-## Blackboards beyond key CRUD
+1. `CreateBehaviorTree` + `CreateBlackboardData`, then `SetBlackboard` (engine).
+2. `AddBlackboardKey` for each key (engine).
+3. `AddRootComposite`, then `AddComposite` / `AddTask` / `AddDecorator` / `AddService` (engine).
+4. `GetNodeInstance` → `ObjectToolset.SetProperties` for node fields; `SetNodeBlackboardKey` for
+   key selectors (engine).
+5. `AssetToolset.SaveAsset` — this compiles the tree (engine).
+6. If the asset ever opens blank, `repair_graph_from_runtime_tree` (VibeUE).
+7. Before renaming or deleting a key, `find_blackboard_key_references`, then
+   `rename_blackboard_key` (VibeUE).
 
-- `set_blackboard_key_instance_synced`, `set_blackboard_key_metadata` (category + description),
-  `set_blackboard_parent` (cycle- and shadowing-checked) — all post-creation editable.
-- `find_blackboard_key_references(board, key)` lists every BT selector bound to a key, formatted
-  `<btPath>:<node>.<property>` — run it BEFORE `remove_blackboard_key` or
-  `rename_blackboard_key`; rename returns the same list after the fact (those bindings broke).
-- `SelfActor` on a parent-less board is engine-persistent and cannot be removed.
-- Blueprint node classes (`BTT_*`, `BTD_*`, `BTS_*`) are created with the **blueprints** skill
-  (parent class `BTTask_BlueprintBase` etc.); `get_available_node_types` lists them once they
-  exist, and `add_node` resolves them by short name, `_C` name, or full object path.
+
+## Environment Queries (EQS) — same split
+
+UE 5.9's `AIModuleToolset.EnvironmentQueryToolset` (14 tools) owns EQS authoring:
+
+| Want | Tool |
+|---|---|
+| Create the query asset | `CreateEnvironmentQuery` |
+| Add an option (**takes the generator class**, so there is no separate set-generator step) | `AddOption` |
+| Add / remove / move tests | `AddTest`, `RemoveTest`, `MoveTest` |
+| Remove / reorder options | `RemoveOption`, `MoveOption` |
+| Enable or disable a test | `SetTestEnabled` |
+| Read the graph | `GetRootGraphNode`, `GetOptionGraphNodes`, `GetTestGraphNodes` |
+| Get the objects behind nodes | `GetOptionInstance`, `GetTestInstance`, `GetGenerator` |
+| Any generator/test property (scoring, distance, filters) | `EditorToolset.ObjectToolset` → `SetProperties` on the instance |
+| Available generator / test / context classes | `ObjectToolset.SearchSubclasses` or `search_symbols` |
+| Find, save, validate | `EditorToolset.AssetToolset` |
+
+VibeUE keeps the two things that surface has no tool for:
+
+### `EnvQueryService.run_query(asset_path, querier_actor, run_mode)`
+
+Epic's EQS toolset is authoring and inspection only — **nothing in the engine runs a query**. This
+executes one against a querier actor and returns the ranked items with their scores.
+
+```python
+import unreal
+res = unreal.EnvQueryService.run_query("/Game/AI/EQS_Cover", "BP_Enemy_1", "AllMatching")
+if res.b_success:
+    for item in res.items:
+        print(item.description, item.score)
+else:
+    print(res.error)
+```
+
+Run modes are `SingleBestItem`, `SingleRandomItemFromBestFive`, `AllMatching` — an unrecognised mode
+is **refused and names the valid set**, never defaulted. It requires a **running PIE session** (it
+needs an AI system and a real querier); headless it refuses saying so.
+
+### `EnvQueryService.repair_graph_from_options(asset_path)`
+
+The EQS counterpart of the BT graph repair: rebuilds option and test nodes from `UEnvQuery::Options`
+for a sparse graph, lays out, commits and saves. Empty string on success, else the reason.
+
+## Gotchas
+
+- A BT edited only through tool calls is not compiled until it is **saved**. Save before testing.
+- `rename_blackboard_key` and `find_blackboard_key_references` return `["ERROR: ..."]` rather than
+  raising. Check the first entry before treating the array as references.
+- A key that lives on a **parent** blackboard cannot be renamed through the child — the rename is
+  refused. Edit the parent asset.
+- Running a Behavior Tree is gameplay: start PIE with `EditorAppToolset.StartPIE` and inspect the
+  live actor from `execute_python`.

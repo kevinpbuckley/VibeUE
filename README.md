@@ -17,7 +17,7 @@ https://www.vibeue.com/
 **VibeUE is the MCP Expansion + AI Editor Toolset for Unreal Engine 5.9+.** Unreal 5.8 added a
 built-in MCP server and AI toolsets; VibeUE is an **MCP Expansion** that plugs straight into them and
 adds a deep **AI Editor Toolset** — a library of editor capabilities — Blueprints, materials, landscape, foliage, animation, Niagara, UMG, audio, StateTree,
-Behavior Trees & Blackboards, gameplay tags, input, UVs, **performance/profiling**, and more — registered into the engine's own
+StateTrees, input, UVs, **performance/profiling**, and more — registered into the engine's own
 `ToolsetRegistry` and `ModelContextProtocol` server, plus rich domain **skills** served through
 Unreal's native `AgentSkill` system. Any MCP-capable agent (Claude Code, Cursor, Copilot, …) drives
 your editor through Unreal's standard MCP endpoint.
@@ -45,11 +45,13 @@ VibeUE **complements** them — it focuses on the domains and depth the engine d
 - **UI** — UMG widgets with MVVM bindings, animation authoring, and preview/PIE validation.
 - **Higher-order Blueprint authoring** — timelines, event dispatchers, delegates, custom-event pins,
   comment boxes, and a batch `build_graph` builder.
-- **AI behavior authoring** — Behavior Tree node/decorator/service editing by structural path with
-  blackboard key binding, JSON tree round-trips, and validate/repair; full Blackboard asset + key
-  CRUD. Writes go through the editor EdGraph with PIE- and open-editor-aware refusal guards.
-- **Editor safety** — `TransactionService` wraps the editor's transaction buffer (undo / redo /
-  checkpoints) so an agent can group and roll back its own edits — the engine's toolsets expose none.
+- **AI behavior repair** -- Behavior Tree and EQS authoring is Epic's `AIModuleToolset`; VibeUE adds
+  only what it lacks: rebuilding a BT or EQS graph that has gone sparse while the runtime data is
+  intact, renaming a blackboard key with BT selector fix-ups, sweeping a key's references, and
+  **running** an EQS query (Epic's EQS tools author and inspect, but never run).
+- **Editor safety** -- `TransactionService` exposes the undo/redo *stepping* (undo / redo /
+  multiple / can-undo / reset) that neither Python nor the engine toolsets expose; history reading is
+  Epic's `UndoHistoryToolset` and scoping is `unreal.ScopedEditorTransaction`.
 - **Verified workflows** — `WorkflowService` adds an authoritative engine/build manifest, durable
   task journals with affected-asset provenance, asynchronous PIE scenarios (compile → input →
   assertion → capture → guaranteed teardown), and dry-run-first resumable bulk maintenance.

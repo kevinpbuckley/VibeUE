@@ -132,10 +132,10 @@ namespace
 	}
 }
 
-TArray<FString> UBehaviorTreeService::ListBehaviorTrees(const FString& DirectoryPath)
-{
-	return VibeBT::ListAssetsOfClass(UBehaviorTree::StaticClass(), DirectoryPath);
-}
+
+// ---- Internal fixtures: NOT AI tools. BT authoring belongs to
+// AIModuleToolset.BehaviorTreeToolset; these remain only so the graph-repair tests can build an
+// asset to repair.
 
 FString UBehaviorTreeService::CreateBehaviorTree(const FString& AssetPath, const FString& BlackboardAssetPath)
 {

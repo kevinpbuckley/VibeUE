@@ -88,12 +88,25 @@ gone — 5.9 covers every source it had, including the UMG HUD it was built for.
 **VibeUE services (call from Python inside `execute_python`):** `unreal.<Name>Service.<method>()`
 — Blueprint, BlueprintGraph (via BlueprintService), Material(+Node), Widget, Skeleton, AnimSequence,
 AnimMontage, AnimGraph, Landscape(+Material), Foliage, SoundCue, Niagara(+Emitter, +ScratchPad),
-StateTree, BehaviorTree, Blackboard, Input, UVMapping, RuntimeVirtualTexture, MapBlockout,
-CustomizableObject, Viewport, Actor, Engine/ProjectSettings, Transaction (undo/redo stepping only),
-GameplayTag (`request_tag` / `request_tag_container` only), **Performance**
-(`unreal.PerformanceService.frame_timing()`), **PIEActor**
-(`unreal.PIEActorService.spawn_actor(...)` — spawn/destroy transient actors in a running PIE world).
-These overlap-trimmed services keep only what the engine lacks — for plain asset/actor/blueprint
+StateTree, Input, UVMapping, RuntimeVirtualTexture, MapBlockout, CustomizableObject,
+Engine/ProjectSettings, **Performance** (`unreal.PerformanceService.frame_timing()`), **PIEActor**
+(`unreal.PIEActorService.spawn_actor(...)` -- spawn/destroy transient actors in a running PIE world).
+
+Several services are now **one or two tools each**, because 5.9 absorbed the rest. Reach for the
+engine toolset first and use these only for the named delta:
+
+| Service | All that is left | Everything else lives in |
+|---|---|---|
+| `BehaviorTreeService` | `repair_graph_from_runtime_tree` | `AIModuleToolset.BehaviorTreeToolset` (25 tools) |
+| `BlackboardService` | `rename_blackboard_key`, `find_blackboard_key_references` | `BehaviorTreeToolset` blackboard tools + `ObjectToolset` |
+| `EnvQueryService` | `run_query`, `repair_graph_from_options` | `AIModuleToolset.EnvironmentQueryToolset` (14 tools) |
+| `ActorService` | `rerun_construction_scripts` | `ActorToolset` / `LevelToolset` / `ObjectToolset` / `EditorAppToolset` |
+| `AssetDiscoveryService` | `reimport_asset`, `export_texture` | `AssetToolset` / `TextureToolset` / `FileSystemToolset` |
+| `TransactionService` | undo/redo stepping only | `UndoHistoryToolset` + `unreal.ScopedEditorTransaction` |
+| `GameplayTagService` | `request_tag`, `request_tag_container` | `GameplayTagsToolset` |
+| `NiagaraEmitterService` | the three colour-curve tools | `NiagaraToolsets` (57 tools) |
+
+These trimmed services keep only what the engine lacks -- for plain asset/actor/blueprint
 basics the engine's own tools may be simpler (below).
 
 **Calling Epic's engine toolsets from Python (`execute_tool`).** Epic's engine toolset *classes*

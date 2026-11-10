@@ -61,82 +61,23 @@ class VIBEUE_API UBlackboardService : public UToolsetDefinition
 	GENERATED_BODY()
 
 public:
-	/** All Blackboard assets under DirectoryPath, as package paths. */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blackboard")
-	static TArray<FString> ListBlackboards(const FString& DirectoryPath = TEXT("/Game"));
+	// ---- Internal fixtures: NOT AI tools. Blackboard CRUD belongs to the engine
+	// (AIModuleToolset.BehaviorTreeToolset -> CreateBlackboardData, AddBlackboardKey,
+	// RemoveBlackboardKey, GetBlackboardKeyNames, GetAllowedBlackboardKeys, SetBlackboard).
+	// These stay BlueprintCallable-only so the rename/reference tests can build a board.
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blackboard")
+	static bool CreateBlackboard(const FString& AssetPath, const FString& ParentBlackboardPath = TEXT(""));
 
-	/**
-	 * Create a Blackboard asset. ParentBlackboardPath may be empty.
-	 *
-	 * Refuses — returning false, with the reason in the log — when AssetPath is not a writable
-	 * asset path or when anything already exists there, on disk or in memory: creating over an
-	 * existing asset would silently replace someone's keys (or fatally collide with a loaded
-	 * object of another class), which is not something a create should ever do by implication.
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blackboard")
-	static bool CreateBlackboard(const FString& AssetPath,
-		const FString& ParentBlackboardPath = TEXT(""));
-
-	/** Every key on the asset, including keys inherited from its parent. */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blackboard")
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blackboard")
 	static TArray<FBBKeyInfo> GetBlackboardKeys(const FString& AssetPath);
 
-	/**
-	 * Add a key. KeyType is one of Bool, Int, Float, String, Name, Vector, Rotator,
-	 * Object, Class, Enum, NativeEnum. Returns an empty string on success, otherwise the error.
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blackboard")
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blackboard")
 	static FString AddBlackboardKey(const FString& AssetPath, const FString& KeyName,
 		const FString& KeyType, bool bInstanceSynced = false);
 
-	/** Set the base class of an Object/Class key, or the enum of an Enum key. */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blackboard")
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blackboard")
 	static FString SetBlackboardKeyObjectClass(const FString& AssetPath, const FString& KeyName,
 		const FString& ClassOrEnumPath);
-
-	/**
-	 * Change whether an existing key is synchronised across instances of this blackboard —
-	 * editable after creation, exactly as the Blackboard editor's details panel allows.
-	 * Refuses inherited keys (change it on the asset that owns the key).
-	 * Returns an empty string on success, otherwise the error.
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blackboard")
-	static FString SetBlackboardKeyInstanceSynced(const FString& AssetPath, const FString& KeyName,
-		bool bInstanceSynced);
-
-	/**
-	 * Set a key's details-panel category and free-text description — the documentation channel a
-	 * hand-authored blackboard uses to say what a key is for. Either may be empty to clear it.
-	 * Refuses inherited keys. Returns an empty string on success, otherwise the error.
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blackboard")
-	static FString SetBlackboardKeyMetadata(const FString& AssetPath, const FString& KeyName,
-		const FString& Category, const FString& Description);
-
-	/**
-	 * Re-point the asset's parent blackboard, or detach it (empty ParentBlackboardPath).
-	 *
-	 * Refuses a parent whose chain already contains this asset (the cycle the Blackboard editor
-	 * silently clears; here it is an error instead), and a parent that would shadow keys this
-	 * asset owns — same-named keys resolve to the child's, which silently changes what every
-	 * selector bound to the parent's key reads. Runs the engine's own parent fix-ups
-	 * (UpdateParentKeys + synchronized-key refresh) and saves.
-	 * Returns an empty string on success, otherwise the error.
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blackboard")
-	static FString SetBlackboardParent(const FString& AssetPath,
-		const FString& ParentBlackboardPath);
-
-	/**
-	 * Remove a key. Returns an empty string on success, otherwise the error.
-	 *
-	 * Refuses the engine-persistent SelfActor key (UBlackboardData re-injects it on load, so the
-	 * removal would read back undone), and refuses inherited keys. BT selectors that referenced
-	 * the removed key break by name; call FindBlackboardKeyReferences first to see the blast
-	 * radius — the removal also logs any references it just broke.
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blackboard")
-	static FString RemoveBlackboardKey(const FString& AssetPath, const FString& KeyName);
 
 	/**
 	 * Every BT node key selector bound to KeyName, across every Behavior Tree whose blackboard is
