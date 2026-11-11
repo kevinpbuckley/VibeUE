@@ -2334,47 +2334,6 @@ namespace
 
 
 
-namespace
-{
-	// Helper: convert a UEdGraphNode into the FBlueprintNodeInfo struct used by
-	// GetNodesInGraph / GetSelectedNodes. Mirrors the body of the GetNodesInGraph
-	// loop so both APIs produce identical shapes.
-	static FBlueprintNodeInfo MakeBlueprintNodeInfoFromNode(UEdGraphNode* Node)
-	{
-		FBlueprintNodeInfo NodeInfo;
-		if (!Node)
-		{
-			return NodeInfo;
-		}
-
-		NodeInfo.NodeId = Node->NodeGuid.ToString();
-		NodeInfo.NodeType = Node->GetClass()->GetName();
-		NodeInfo.NodeTitle = Node->GetNodeTitle(ENodeTitleType::FullTitle).ToString();
-		NodeInfo.PosX = Node->NodePosX;
-		NodeInfo.PosY = Node->NodePosY;
-
-		for (UEdGraphPin* Pin : Node->Pins)
-		{
-			if (!Pin)
-			{
-				continue;
-			}
-
-			NodeInfo.PinNames.Add(Pin->PinName.ToString());
-
-			FBlueprintPinInfo PinInfo;
-			PinInfo.PinName = Pin->PinName.ToString();
-			PinInfo.PinType = Pin->PinType.PinCategory.ToString();
-			PinInfo.bIsInput = (Pin->Direction == EGPD_Input);
-			PinInfo.bIsConnected = Pin->LinkedTo.Num() > 0;
-			PinInfo.DefaultValue = Pin->GetDefaultAsString();
-			PinInfo.DefaultObject = GetPinDefaultObjectPath(Pin);
-			NodeInfo.Pins.Add(PinInfo);
-		}
-
-		return NodeInfo;
-	}
-}
 
 
 

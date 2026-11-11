@@ -73,6 +73,97 @@
 			"Name": "EnvironmentQueryEditor",
 			"Enabled": true,
 			"Optional": true
+		},
+
+		{
+			"Name": "EditorToolset",
+			"Enabled": true,
+			"Optional": true
+		},
+		{
+			"Name": "BlueprintToolsets",
+			"Enabled": true,
+			"Optional": true
+		},
+		{
+			"Name": "ConsoleToolset",
+			"Enabled": true,
+			"Optional": true
+		},
+		{
+			"Name": "ConfigSettingsToolset",
+			"Enabled": true,
+			"Optional": true
+		},
+		{
+			"Name": "FileSystemToolset",
+			"Enabled": true,
+			"Optional": true
+		},
+		{
+			"Name": "StateTreeToolset",
+			"Enabled": true,
+			"Optional": true
+		},
+		{
+			"Name": "AIModuleToolset",
+			"Enabled": true,
+			"Optional": true
+		},
+		{
+			"Name": "NiagaraToolsets",
+			"Enabled": true,
+			"Optional": true
+		},
+		{
+			"Name": "MVVMToolset",
+			"Enabled": true,
+			"Optional": true
+		},
+		{
+			"Name": "WidgetStaticAnalysisToolset",
+			"Enabled": true,
+			"Optional": true
+		},
+		{
+			"Name": "WidgetAnimationToolset",
+			"Enabled": true,
+			"Optional": true
+		},
+		{
+			"Name": "SlateInspectorToolset",
+			"Enabled": true,
+			"Optional": true
+		},
+		{
+			"Name": "SceneCaptureToolset",
+			"Enabled": true,
+			"Optional": true
+		},
+		{
+			"Name": "PerfToolset",
+			"Enabled": true,
+			"Optional": true
+		},
+		{
+			"Name": "InputToolset",
+			"Enabled": true,
+			"Optional": true
+		},
+		{
+			"Name": "GameplayTagsToolset",
+			"Enabled": true,
+			"Optional": true
+		},
+		{
+			"Name": "AutomationTestToolset",
+			"Enabled": true,
+			"Optional": true
+		},
+		{
+			"Name": "GASToolsets",
+			"Enabled": true,
+			"Optional": true
 		}
 	]
 }
