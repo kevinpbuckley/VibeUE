@@ -4,7 +4,6 @@
 
 #include "CoreMinimal.h"
 #include "ToolsetRegistry/ToolsetDefinition.h"
-#include "UMaterialService.h"
 #include "UMaterialNodeService.generated.h"
 
 class UMaterial;
@@ -434,44 +433,13 @@ class VIBEUE_API UMaterialNodeService : public UToolsetDefinition
 	GENERATED_BODY()
 
 public:
-	/**
-	 * Comprehensive material diagnostic — compile status, errors, and the textures the
-	 * shader actually references. Reliable replacement for `get_used_textures`.
-	 *
-	 * Use this after building a material graph to verify it compiles cleanly and samples
-	 * the expected textures. Particularly useful for materials with `MaterialFunctionCall`
-	 * nodes (triplanar / world-aligned), where `MaterialEditingLibrary.get_used_textures`
-	 * silently returns 0.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (AICallable, DisplayName = "Get Material Diagnostics"))
-	static FMaterialDiagnostics GetMaterialDiagnostics(const FString& MaterialPath);
 
 
 	// =================================================================
 	// Discovery Actions
 	// =================================================================
 
-	/**
-	 * Discover available material expression types.
-	 * Maps to action="discover_types"
-	 * @param Category Optional category filter
-	 * @param SearchTerm Optional search term (e.g., "Constant", "Parameter", "Texture")
-	 * @param MaxResults Maximum results to return
-	 * @return Array of expression type information
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static TArray<FMaterialExpressionTypeInfo> DiscoverTypes(
-		const FString& Category = TEXT(""),
-		const FString& SearchTerm = TEXT(""),
-		int32 MaxResults = 100);
 
-	/**
-	 * Get all material expression categories.
-	 * Maps to action="get_categories"
-	 * @return Array of category names
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static TArray<FString> GetCategories();
 
 	// =================================================================
 	// Specialized Creation Actions
@@ -500,31 +468,6 @@ public:
 		int32 PosX = 0,
 		int32 PosY = 0);
 
-	/**
-	 * Create a Custom HLSL expression node with code, output type, and optional inputs.
-	 * Maps to action="create_custom_expression"
-	 *
-	 * @param MaterialPath Full path to the material
-	 * @param Code HLSL code string (e.g., "return Input0 * 2.0;")
-	 * @param OutputType Output type: "CMOT_Float1", "CMOT_Float2", "CMOT_Float3", "CMOT_Float4", "CMOT_MaterialAttributes"
-	 * @param Description Display name for the node
-	 * @param InputNames Comma-separated custom input names (e.g., "Albedo,Mask,UV") or empty for no custom inputs
-	 * @param PosX X position in graph
-	 * @param PosY Y position in graph
-	 * @return Created expression info
-	 *
-	 * Example:
-	 *   node = unreal.MaterialNodeService.create_custom_expression("/Game/M_Test", "return Input0 * 2;", "CMOT_Float3", "DoubleIt", "Color", -500, 0)
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static FMaterialExpressionInfo CreateCustomExpression(
-		const FString& MaterialPath,
-		const FString& Code,
-		const FString& OutputType = TEXT("CMOT_Float3"),
-		const FString& Description = TEXT("Custom"),
-		const FString& InputNames = TEXT(""),
-		int32 PosX = 0,
-		int32 PosY = 0);
 
 	/**
 	 * Create a CollectionParameter expression referencing a MaterialParameterCollection.
@@ -552,613 +495,63 @@ public:
 	// Information Actions
 	// =================================================================
 
-	/**
-	 * List all expressions in a material.
-	 * Maps to action="list"
-	 * @param MaterialPath Full path to the material
-	 * @return Array of expression info
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static TArray<FMaterialExpressionInfo> ListExpressions(const FString& MaterialPath);
 
-	/**
-	 * Get detailed information about an expression.
-	 * Maps to action="get_details"
-	 * @param MaterialPath Full path to the material
-	 * @param ExpressionId ID of expression
-	 * @param OutInfo Output expression info
-	 * @return True if found
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static bool GetExpressionDetails(
-		const FString& MaterialPath,
-		const FString& ExpressionId,
-		FMaterialExpressionInfo& OutInfo);
 
-	/**
-	 * Get all pins (inputs and outputs) for an expression.
-	 * Maps to action="get_pins"
-	 * @param MaterialPath Full path to the material
-	 * @param ExpressionId ID of expression
-	 * @return Array of pin info
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static TArray<FMaterialNodePinInfo> GetExpressionPins(
-		const FString& MaterialPath,
-		const FString& ExpressionId);
 
 	// =================================================================
 	// Connection Actions
 	// =================================================================
 
-	/**
-	 * List all connections in a material.
-	 * Maps to action="list_connections"
-	 * @param MaterialPath Full path to the material
-	 * @return Array of connection info
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static TArray<FMaterialNodeConnectionInfo> ListConnections(const FString& MaterialPath);
 
 	// =================================================================
 	// Property Actions
 	// =================================================================
 
-	/**
-	 * Get a property value from an expression.
-	 * Maps to action="get_property"
-	 * @param MaterialPath Full path to the material
-	 * @param ExpressionId ID of expression
-	 * @param PropertyName Property name
-	 * @return Property value as string
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static FString GetExpressionProperty(
-		const FString& MaterialPath,
-		const FString& ExpressionId,
-		const FString& PropertyName);
 
-	/**
-	 * Set a property value on an expression.
-	 * Maps to action="set_property"
-	 * @param MaterialPath Full path to the material
-	 * @param ExpressionId ID of expression
-	 * @param PropertyName Property name
-	 * @param PropertyValue Value as string
-	 * @return True if successful
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static bool SetExpressionProperty(
-		const FString& MaterialPath,
-		const FString& ExpressionId,
-		const FString& PropertyName,
-		const FString& PropertyValue);
 
-	/**
-	 * List all editable properties on an expression.
-	 * Maps to action="list_properties"
-	 * @param MaterialPath Full path to the material
-	 * @param ExpressionId ID of expression
-	 * @return Array of property info
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static TArray<FMaterialNodePropertyInfo> ListExpressionProperties(
-		const FString& MaterialPath,
-		const FString& ExpressionId);
 
 	// =================================================================
 	// Parameter Actions
 	// =================================================================
 
-	/**
-	 * Create a parameter expression directly.
-	 * Maps to action="create_parameter"
-	 * @param MaterialPath Full path to the material
-	 * @param ParameterType Type: "Scalar", "Vector", "Texture", "TextureObject", "StaticBool", "StaticSwitch"
-	 * @param ParameterName Name for the parameter
-	 * @param GroupName Optional parameter group
-	 * @param DefaultValue Default value as string. For Scalar: "0.5". For Vector/Color:
-	 *        "(R=1.0,G=0.0,B=0.0,A=1.0)" or "1.0,0.0,0.0,1.0" or "1.0,0.0,0.0" (alpha defaults to 1.0)
-	 *        or "1.0/0.0/0.0". For StaticBool/StaticSwitch: "true"/"false".
-	 *        For Texture/TextureObject: asset path "/Game/Textures/T_Tex"
-	 * @param PosX X position in graph
-	 * @param PosY Y position in graph
-	 * @return Created parameter info
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static FMaterialExpressionInfo CreateParameter(
-		const FString& MaterialPath,
-		const FString& ParameterType,
-		const FString& ParameterName,
-		const FString& GroupName = TEXT(""),
-		const FString& DefaultValue = TEXT(""),
-		int32 PosX = 0,
-		int32 PosY = 0);
 
-	/**
-	 * Promote a constant expression to a parameter.
-	 * Maps to action="promote_to_parameter"
-	 * @param MaterialPath Full path to the material
-	 * @param ExpressionId Expression to promote (must be Constant, Constant3Vector, etc.)
-	 * @param ParameterName Name for the new parameter
-	 * @param GroupName Optional parameter group
-	 * @return New parameter expression info
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static FMaterialExpressionInfo PromoteToParameter(
-		const FString& MaterialPath,
-		const FString& ExpressionId,
-		const FString& ParameterName,
-		const FString& GroupName = TEXT(""));
 
-	/**
-	 * Set parameter metadata (group, sort priority).
-	 * Maps to action="set_parameter_metadata"
-	 * @param MaterialPath Full path to the material
-	 * @param ExpressionId Parameter expression ID
-	 * @param GroupName New group name
-	 * @param SortPriority Sort priority within group
-	 * @return True if successful
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static bool SetParameterMetadata(
-		const FString& MaterialPath,
-		const FString& ExpressionId,
-		const FString& GroupName,
-		int32 SortPriority = 0);
 
 	// =================================================================
 	// Material Output Actions
 	// =================================================================
 
-	/**
-	 * Get available material output properties.
-	 * Maps to action="get_output_properties"
-	 * @param MaterialPath Full path to the material
-	 * @return Array of property names (BaseColor, Metallic, Roughness, etc.)
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static TArray<FString> GetOutputProperties(const FString& MaterialPath);
 
-	/**
-	 * Get current connections to material outputs.
-	 * Maps to action="get_output_connections"
-	 * @param MaterialPath Full path to the material
-	 * @return Array of output connection info
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static TArray<FMaterialOutputConnectionInfo> GetOutputConnections(const FString& MaterialPath);
 
-	/**
-	 * Connect an expression's output to one of the material's output properties
-	 * (BaseColor, Normal, Roughness, ...) — the final step of "create nodes -> connect
-	 * nodes -> connect to material output -> compile/save".
-	 * Maps to action="connect_expression_to_output"
-	 *
-	 * This is the writer that closes the gap left by the expression-to-expression
-	 * BatchConnectExpressions: previously a material output could only be wired with
-	 * unreal.MaterialEditingLibrary.
-	 *
-	 * @param MaterialPath Full path to the material
-	 * @param ExpressionId Source expression id (session id from create/list) OR its object_path
-	 * @param OutputName Source output pin name; "" selects output 0. Unknown names are rejected.
-	 * @param PropertyName Material output property. Accepts friendly ("BaseColor") and enum
-	 *        ("MP_BaseColor") spellings, case-insensitive. Unknown names are rejected.
-	 * @return True only after the connection is verified via a read-back. False (with a logged
-	 *         reason and NO graph mutation) when the material, expression, output or property is invalid.
-	 *
-	 * Example:
-	 *   nodes = unreal.MaterialNodeService.batch_create_expressions("/Game/M_Test", ["Constant3Vector"], [0], [0])
-	 *   unreal.MaterialNodeService.connect_expression_to_output("/Game/M_Test", nodes[0].id, "", "BaseColor")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static bool ConnectExpressionToOutput(
-		const FString& MaterialPath,
-		const FString& ExpressionId,
-		const FString& OutputName,
-		const FString& PropertyName);
 
-	/**
-	 * Clear the expression wired to a material output property.
-	 * Maps to action="disconnect_output"
-	 *
-	 * Idempotent: returns true if the property was already empty. Returns false (with a logged
-	 * reason and no graph mutation) only when the property name is unknown.
-	 *
-	 * @param MaterialPath Full path to the material
-	 * @param PropertyName Material output property. Accepts "BaseColor" and "MP_BaseColor" spellings.
-	 * @return True if the property's input is empty afterward.
-	 *
-	 * Example:
-	 *   unreal.MaterialNodeService.disconnect_output("/Game/M_Test", "BaseColor")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static bool DisconnectOutput(
-		const FString& MaterialPath,
-		const FString& PropertyName);
 
 	// =================================================================
 	// Batch Operations
 	// =================================================================
 
-	/**
-	 * Batch-create multiple expressions in one call for performance.
-	 * Maps to action="batch_create"
-	 *
-	 * All nodes are created in a single transaction with one graph refresh,
-	 * yielding 10-100x speedup over individual create calls for large materials.
-	 *
-	 * @param MaterialPath Full path to the material
-	 * @param ExpressionClasses Array of class names (e.g., ["Add", "Multiply", "Constant"])
-	 * @param PosXArray Array of X positions (same length as ExpressionClasses)
-	 * @param PosYArray Array of Y positions (same length as ExpressionClasses)
-	 * @return Array of created expression info in same order
-	 *
-	 * Example:
-	 *   nodes = unreal.MaterialNodeService.batch_create_expressions("/Game/M_Test",
-	 *       ["Add","Multiply","Constant"], [-300,-200,-100], [0,200,400])
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static TArray<FMaterialExpressionInfo> BatchCreateExpressions(
-		const FString& MaterialPath,
-		const TArray<FString>& ExpressionClasses,
-		const TArray<int32>& PosXArray,
-		const TArray<int32>& PosYArray);
 
-	/**
-	 * Batch-connect multiple expression pairs in one call.
-	 * Maps to action="batch_connect"
-	 *
-	 * All connections are made in a single transaction with one graph refresh.
-	 *
-	 * @param MaterialPath Full path to the material
-	 * @param SourceIds Array of source expression IDs
-	 * @param SourceOutputs Array of source output names (empty string for first output)
-	 * @param TargetIds Array of target expression IDs
-	 * @param TargetInputs Array of target input names
-	 * @return Number of successful connections
-	 *
-	 * Example:
-	 *   count = unreal.MaterialNodeService.batch_connect_expressions("/Game/M_Test",
-	 *       [n1.id, n2.id], ["", ""], [n3.id, n3.id], ["A", "B"])
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static int32 BatchConnectExpressions(
-		const FString& MaterialPath,
-		const TArray<FString>& SourceIds,
-		const TArray<FString>& SourceOutputs,
-		const TArray<FString>& TargetIds,
-		const TArray<FString>& TargetInputs);
 
-	/**
-	 * Batch-set properties on multiple expressions in one call.
-	 * Maps to action="batch_set_properties"
-	 *
-	 * All property changes are made in a single transaction with one graph refresh.
-	 * The arrays must all be the same length (each index is one set operation).
-	 *
-	 * @param MaterialPath Full path to the material
-	 * @param ExpressionIds Array of expression IDs
-	 * @param PropertyNames Array of property names
-	 * @param PropertyValues Array of property values as strings
-	 * @return Number of successful property sets
-	 *
-	 * Example:
-	 *   count = unreal.MaterialNodeService.batch_set_properties("/Game/M_Test",
-	 *       [n1.id, n1.id, n2.id], ["R", "G", "Bias"], ["True", "False", "0.5"])
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static int32 BatchSetProperties(
-		const FString& MaterialPath,
-		const TArray<FString>& ExpressionIds,
-		const TArray<FString>& PropertyNames,
-		const TArray<FString>& PropertyValues);
 
-	/**
-	 * Batch-create expressions of all types (including specialized) in one transaction.
-	 * Maps to action="batch_create_specialized"
-	 *
-	 * Supports generic expressions, MaterialFunctionCall (with function path),
-	 * Custom HLSL (with code, output type, inputs), and CollectionParameter
-	 * (with collection path and parameter name). All created in a single transaction
-	 * with one graph refresh for 10-100x speedup.
-	 *
-	 * For generic expressions, only ClassName/PosX/PosY are needed.
-	 * For MaterialFunctionCall, also set FunctionPath.
-	 * For Custom, also set HLSLCode, HLSLOutputType, HLSLDescription, HLSLInputNames.
-	 * For CollectionParameter, also set CollectionPath, CollectionParamName.
-	 *
-	 * @param MaterialPath Full path to the material
-	 * @param Descriptors Array of creation descriptors
-	 * @return Array of created expression info in same order (empty entries on failure)
-	 *
-	 * Example:
-	 *   descs = [FBatchCreateDescriptor(ClassName="Multiply", PosX=-400, PosY=0),
-	 *            FBatchCreateDescriptor(ClassName="MaterialFunctionCall", PosX=-600, PosY=0, FunctionPath="/Game/MF_Test")]
-	 *   nodes = unreal.MaterialNodeService.batch_create_specialized("/Game/M_Test", descs)
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static TArray<FMaterialExpressionInfo> BatchCreateSpecialized(
-		const FString& MaterialPath,
-		const TArray<FBatchCreateDescriptor>& Descriptors);
 
 	// =================================================================
 	// Export Actions
 	// =================================================================
 
-	/**
-	 * Export the complete material graph as a JSON string for analysis or recreation.
-	 * Maps to action="export_graph"
-	 *
-	 * Returns material settings, all expressions (type, position, properties),
-	 * all connections, and material output connections — everything needed to
-	 * recreate the material from scratch.
-	 *
-	 * @param MaterialPath Full path to the material
-	 * @return JSON string of complete graph, or empty string on failure
-	 *
-	 * Example:
-	 *   json_str = unreal.MaterialNodeService.export_material_graph("/Game/M_Landscape")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static FString ExportMaterialGraph(const FString& MaterialPath);
 
-	/**
-	 * Export a lightweight summary of a material graph (counts, types, parameters).
-	 * Maps to action="export_material_graph_summary"
-	 *
-	 * Returns a JSON object with:
-	 * - expression_count: total expressions
-	 * - class_counts: {class_name: count} frequency map
-	 * - connection_count: total connections
-	 * - material_output_count: connected material outputs
-	 * - parameter_count: number of scalar/vector/texture/static parameters
-	 * - parameters: [{name, type}] list
-	 *
-	 * Much lighter than ExportMaterialGraph — useful for verification and comparison.
-	 *
-	 * @param MaterialPath Full path to the material
-	 * @return JSON string summary, or empty string on failure
-	 *
-	 * Example:
-	 *   summary = unreal.MaterialNodeService.export_material_graph_summary("/Game/M_Mat")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static FString ExportMaterialGraphSummary(const FString& MaterialPath);
 
-	/**
-	 * Compare two material graphs and return a JSON diff report.
-	 * Maps to action="compare_material_graphs"
-	 *
-	 * Compares expression counts by class, connection counts, parameter lists,
-	 * and material output assignments. Returns JSON with:
-	 * - match: true/false overall
-	 * - expression_count_match, connection_count_match, parameter_match, output_match
-	 * - expression_count_a, expression_count_b
-	 * - class_diff: [{class_name, count_a, count_b}] for mismatches
-	 * - missing_parameters_in_b, extra_parameters_in_b: [{name, type}]
-	 *
-	 * @param MaterialPathA Full path to first material (reference)
-	 * @param MaterialPathB Full path to second material (recreation)
-	 * @return JSON diff string, or empty string on failure
-	 *
-	 * Example:
-	 *   diff = unreal.MaterialNodeService.compare_material_graphs("/Game/M_Original", "/Game/M_Copy")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static FString CompareMaterialGraphs(
-		const FString& MaterialPathA,
-		const FString& MaterialPathB);
 
 	// =================================================================
 	// Material Function Actions
 	// =================================================================
 
-	/**
-	 * Export a Material Function's node graph as JSON.
-	 * Maps to action="export_function_graph"
-	 *
-	 * Works like export_graph but for UMaterialFunction assets.
-	 * Returns all expressions, connections, function inputs/outputs,
-	 * and properties — everything needed to recreate the function.
-	 *
-	 * @param FunctionPath Full asset path to the UMaterialFunction
-	 * @return JSON string of the complete function graph, or empty string on failure
-	 *
-	 * Example:
-	 *   json_str = unreal.MaterialNodeService.export_function_graph("/Game/Real_Landscape/Core/Materials/Functions/MF_AutoLayer_01")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static FString ExportFunctionGraph(const FString& FunctionPath);
 
-	/**
-	 * Get information about a Material Function's interface (inputs/outputs).
-	 * Maps to action="get_function_info"
-	 *
-	 * Inspects a UMaterialFunction asset and returns its description,
-	 * input pins, output pins, expression count, and library exposure settings.
-	 *
-	 * @param FunctionPath Full asset path to the UMaterialFunction
-	 * @return Function info struct (empty with error if not found)
-	 *
-	 * Example:
-	 *   info = unreal.MaterialNodeService.get_function_info("/Game/Real_Landscape/Core/Materials/Functions/MF_Slope_Blend_01")
-	 *   for inp in info.inputs:
-	 *       print(f"Input: {inp.name} ({inp.input_type_name})")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static FVibeUEMaterialFunctionInfo GetFunctionInfo(const FString& FunctionPath);
 
-	/**
-	 * Create a new Material Function asset.
-	 * Maps to action="create_material_function"
-	 *
-	 * Creates an empty UMaterialFunction that can be populated with
-	 * expressions, inputs, and outputs. Use add_function_input/output
-	 * to define the function's interface.
-	 *
-	 * @param FunctionName Name for the new function asset
-	 * @param DirectoryPath Content directory to create it in
-	 * @param Description Optional description text
-	 * @param bExposeToLibrary If true, function appears in the material function library
-	 * @param LibraryCategories Optional category strings for library organization
-	 * @return Create result with asset path
-	 *
-	 * Example:
-	 *   result = unreal.MaterialNodeService.create_material_function("MF_MyLayer", "/Game/Materials/Functions", "Custom layer blending function", True)
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static FMaterialCreateResult CreateMaterialFunction(
-		const FString& FunctionName,
-		const FString& DirectoryPath,
-		const FString& Description = TEXT(""),
-		bool bExposeToLibrary = false);
 
-	/**
-	 * Add an input to a Material Function.
-	 * Maps to action="add_function_input"
-	 *
-	 * Creates a UMaterialExpressionFunctionInput inside the function.
-	 * The input will appear as a pin when the function is used in a material.
-	 *
-	 * @param FunctionPath Full asset path to the UMaterialFunction
-	 * @param InputName Display name for the input
-	 * @param InputType Type of the input: "Scalar", "Vector2", "Vector3", "Vector4",
-	 *        "Texture2D", "TextureCube", "VolumeTexture", "StaticBool", "MaterialAttributes"
-	 * @param SortPriority Sort order (lower = higher in list)
-	 * @param Description Optional tooltip description
-	 * @param PosX X position in graph
-	 * @param PosY Y position in graph
-	 * @return Expression ID of the created FunctionInput node
-	 *
-	 * Example:
-	 *   inp_id = unreal.MaterialNodeService.add_function_input("/Game/MF_MyLayer", "BaseColor", "Vector3", 0, "Albedo texture input")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static FString AddFunctionInput(
-		const FString& FunctionPath,
-		const FString& InputName,
-		const FString& InputType = TEXT("Vector3"),
-		int32 SortPriority = 0,
-		const FString& Description = TEXT(""),
-		int32 PosX = -600,
-		int32 PosY = 0);
 
-	/**
-	 * Add an output to a Material Function.
-	 * Maps to action="add_function_output"
-	 *
-	 * Creates a UMaterialExpressionFunctionOutput inside the function.
-	 * The output will appear as a pin when the function is used in a material.
-	 *
-	 * @param FunctionPath Full asset path to the UMaterialFunction
-	 * @param OutputName Display name for the output
-	 * @param SortPriority Sort order (lower = higher in list)
-	 * @param Description Optional tooltip description
-	 * @param PosX X position in graph
-	 * @param PosY Y position in graph
-	 * @return Expression ID of the created FunctionOutput node
-	 *
-	 * Example:
-	 *   out_id = unreal.MaterialNodeService.add_function_output("/Game/MF_MyLayer", "BlendedColor", 0, "Final blended output")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static FString AddFunctionOutput(
-		const FString& FunctionPath,
-		const FString& OutputName,
-		int32 SortPriority = 0,
-		const FString& Description = TEXT(""),
-		int32 PosX = 200,
-		int32 PosY = 0);
 
-	/**
-	 * Create a material expression inside a Material Function's graph.
-	 * Maps to action="create_function_expression"
-	 *
-	 * Like CreateExpression but operates on a UMaterialFunction instead of UMaterial.
-	 *
-	 * @param FunctionPath Full asset path to the UMaterialFunction
-	 * @param ExpressionClass Class name (e.g., "Add", "Multiply", "TextureSample")
-	 * @param PosX X position in graph
-	 * @param PosY Y position in graph
-	 * @return Created expression info
-	 *
-	 * Example:
-	 *   node = unreal.MaterialNodeService.create_function_expression("/Game/MF_MyLayer", "Multiply", -200, 0)
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static FMaterialExpressionInfo CreateFunctionExpression(
-		const FString& FunctionPath,
-		const FString& ExpressionClass,
-		int32 PosX = 0,
-		int32 PosY = 0);
 
-	/**
-	 * Connect two expressions inside a Material Function's graph.
-	 * Maps to action="connect_function_expressions"
-	 *
-	 * Like ConnectExpressions but operates on a UMaterialFunction.
-	 *
-	 * @param FunctionPath Full asset path to the UMaterialFunction
-	 * @param SourceExpressionId Source expression ID
-	 * @param SourceOutput Output name (empty for first output)
-	 * @param TargetExpressionId Target expression ID
-	 * @param TargetInput Input name on target
-	 * @return True if successful
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static bool ConnectFunctionExpressions(
-		const FString& FunctionPath,
-		const FString& SourceExpressionId,
-		const FString& SourceOutput,
-		const FString& TargetExpressionId,
-		const FString& TargetInput);
 
-	/**
-	 * Set a property on an expression inside a Material Function's graph.
-	 * Maps to action="set_function_expression_property"
-	 *
-	 * Like SetExpressionProperty but operates on a UMaterialFunction.
-	 *
-	 * @param FunctionPath Full asset path to the UMaterialFunction
-	 * @param ExpressionId Expression ID
-	 * @param PropertyName Property name
-	 * @param PropertyValue Value as string
-	 * @return True if successful
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static bool SetFunctionExpressionProperty(
-		const FString& FunctionPath,
-		const FString& ExpressionId,
-		const FString& PropertyName,
-		const FString& PropertyValue);
 
-	/**
-	 * Remove every expression not reachable from the asset's outputs — the scriptable
-	 * equivalent of the Material Editor's "Clean Graph -> Clean Up".
-	 * Maps to action="cleanup_unused_expressions"
-	 *
-	 * Fills the gap Epic leaves: its native MaterialTools.delete_unused_expressions only
-	 * accepts a UMaterial, so this is the only way to clean unused nodes out of a
-	 * UMaterialFunction. (Single-node deletion is left to Epic's delete_expression, which
-	 * already handles both Material and MaterialFunction graphs.)
-	 *
-	 * Works on both UMaterial and UMaterialFunction assets. Roots match the engine's own
-	 * UMaterialGraph::GetUnusedExpressions: for a function, every FunctionOutput; for a
-	 * material, every expression wired to a material property input plus all CustomOutput
-	 * nodes. A depth-first walk back through every connected input marks the reachable set
-	 * (following NamedRerouteUsage declarations, which have no input pins), and everything
-	 * else is removed. Unreachable nodes only reference each other, so no reachable node is
-	 * ever orphaned.
-	 *
-	 * @param AssetPath Full asset path to a UMaterial or UMaterialFunction
-	 * @return Number of expressions removed
-	 *
-	 * Example:
-	 *   removed = unreal.MaterialNodeService.cleanup_unused_expressions("/Game/MF_MyLayer")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static int32 CleanupUnusedExpressions(const FString& AssetPath);
 
 	/**
 	 * The single source of truth for the material outputs this service understands, as ordered

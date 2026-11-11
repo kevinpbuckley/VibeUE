@@ -24,21 +24,6 @@ class VIBEUE_API UPerformanceService : public UToolsetDefinition
 	GENERATED_BODY()
 
 public:
-	/**
-	 * Report Game/Render/GPU/RHI thread ms + a CPU-vs-GPU bound verdict and hint for the most recently
-	 * rendered frame (the same data as the on-screen "stat unit"). RUN THIS FIRST in any frame-rate
-	 * investigation — optimising the GPU does nothing if the frame is game- or render-thread bound.
-	 *
-	 * The verdict is robust: when the top two threads are within a small margin it reports the frame as
-	 * "contested" with a confidence level rather than declaring a false winner, and it flags when GPU
-	 * timing is unavailable (gpu_ms == 0) so you don't trust a CPU verdict that GPU could overturn.
-	 *
-	 * Also reports a per-thread budget breakdown against a target frame rate: each thread's headroom
-	 * against the per-frame budget and a pass/fail gate, so the same call that triages can also guard.
-	 * @param TargetFPS Frame-rate budget to gate against (e.g. 60, 120). Defaults to 60.
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Performance")
-	static FString FrameTiming(float TargetFPS = 60.0f);
 
 	/**
 	 * TEST/VALIDATION HELPER — deliberately induce a frame hitch on a chosen thread to verify that
@@ -65,49 +50,12 @@ public:
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Performance")
 	static FString ForceHitch(const FString& Thread = TEXT("game"), float Milliseconds = 250.0f, int32 Frames = 1);
 
-	/**
-	 * Render a self-contained HTML performance report from the current verdict and the most recent capture,
-	 * and write it to <Project>/Saved/VibeUE/Performance/report_<timestamp>.html — a shareable "printout" you
-	 * can open in any browser, screenshot, or hand to the team. Pulls the live FrameTiming verdict + budget and
-	 * (when a trace/log is available) the Analyse frame stats, worst frames and PSO hitches, then builds a
-	 * data-driven "fix in this order" list — each fix carries the concrete stat/console commands to run and
-	 * a link to the matching Unreal Engine docs. No external assets (CSS is inlined), so the file is portable.
-	 *
-	 * @param Title  Heading for the report. Defaults to "VibeUE Performance Report".
-	 * @param Source "trace", "logs", or "both" (default) — which capture to summarise, same as Analyse.
-	 * @param File   Optional trace/log override; empty uses the last trace started/stopped.
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Performance")
-	static FString Report(const FString& Title = TEXT("VibeUE Performance Report"),
-	                      const FString& Source = TEXT("both"), const FString& File = TEXT(""));
 
-	/**
-	 * Start an Unreal Insights trace to file.
-	 * @param Name Trace file name (without extension).
-	 * @param Channels Comma-separated trace channels; empty uses the default set (frame,cpu,gpu,log,...).
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Performance")
-	static FString StartTrace(const FString& Name = TEXT("mcp_capture"), const FString& Channels = TEXT(""));
 
-	/** Stop the active trace. Returns the trace file path and size. */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Performance")
-	static FString StopTrace();
 
-	/** Report whether a trace is active and which channels are enabled. */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Performance")
-	static FString GetTraceStatus();
 
-	/** Drop a named bookmark in the active trace. */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Performance")
-	static FString Bookmark(const FString& Name);
 
-	/** Begin a named region in the active trace. */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Performance")
-	static FString RegionStart(const FString& Name);
 
-	/** End a named region in the active trace. */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Performance")
-	static FString RegionEnd(const FString& Name);
 
 	/**
 	 * Read back a trace and/or the log and return a perf summary (frame stats, worst frames, notable
@@ -135,24 +83,7 @@ public:
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Performance")
 	static FString GetStandaloneStatus();
 
-	/**
-	 * Start Play-In-Editor IN-PROCESS (inside the editor's own process) so FrameTiming and ForceHitch
-	 * read the live PIE game world. This is what makes the in-process CPU-hitch validation land:
-	 * ForceHitch's game/render stalls only take effect when a game world is actually ticking.
-	 *
-	 * PREFER StartStandalone for real stall identification. PIE is NOT representative — it shares the
-	 * editor's already-warm shader/PSO caches and on-demand cooked data, so it hides costs a standalone
-	 * or shipping build actually pays. Use PIE for quick in-process checks and for validating the
-	 * verdict/hitch logic against a live world; use Standalone when the numbers have to be trusted.
-	 *
-	 * PIE starts on the next editor tick, so read FrameTiming on a FOLLOWING frame (pie_running flips true).
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Performance")
-	static FString StartPIE();
 
-	/** Stop the in-process Play-In-Editor session started with StartPIE. Tears down on the next tick. */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Performance")
-	static FString StopPIE();
 
 	/**
 	 * Enable/disable editor background CPU throttling for this session (issue #549).

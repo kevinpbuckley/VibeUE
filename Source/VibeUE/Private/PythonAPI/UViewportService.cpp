@@ -380,49 +380,11 @@ bool UViewportService::SetViewportType(const FString& ViewType)
 	return true;
 }
 
-FString UViewportService::GetViewportType()
-{
-	FLevelEditorViewportClient* Client = GetActiveViewportClient();
-	if (!Client) { return TEXT("unknown"); }
-	return ViewportTypeToString(static_cast<int32>(Client->GetViewportType()));
-}
 
 // =================================================================
 // View Mode
 // =================================================================
 
-bool UViewportService::SetViewMode(const FString& ViewMode)
-{
-	FLevelEditorViewportClient* Client = GetActiveViewportClient();
-	if (!Client)
-	{
-		UE_LOG(LogViewportService, Warning, TEXT("SetViewMode: No active viewport client"));
-		return false;
-	}
-
-	FString Lower = ViewMode.ToLower().TrimStartAndEnd();
-	EViewModeIndex NewMode;
-
-	if (Lower == TEXT("lit"))                       NewMode = VMI_Lit;
-	else if (Lower == TEXT("unlit"))                NewMode = VMI_Unlit;
-	else if (Lower == TEXT("wireframe"))            NewMode = VMI_Wireframe;
-	else if (Lower == TEXT("detaillighting"))       NewMode = VMI_Lit_DetailLighting;
-	else if (Lower == TEXT("lightingonly"))          NewMode = VMI_LightingOnly;
-	else if (Lower == TEXT("lightcomplexity"))      NewMode = VMI_LightComplexity;
-	else if (Lower == TEXT("shadercomplexity"))     NewMode = VMI_ShaderComplexity;
-	else if (Lower == TEXT("pathtracing"))          NewMode = VMI_PathTracing;
-	else if (Lower == TEXT("clay"))                 NewMode = VMI_Clay;
-	else
-	{
-		UE_LOG(LogViewportService, Warning, TEXT("SetViewMode: Unknown mode '%s'. Use: lit, unlit, wireframe, detaillighting, lightingonly, lightcomplexity, shadercomplexity, pathtracing, clay"), *ViewMode);
-		return false;
-	}
-
-	Client->SetViewMode(NewMode);
-	ForceViewportRedraw();
-	UE_LOG(LogViewportService, Log, TEXT("SetViewMode: Changed to '%s'"), *ViewMode);
-	return true;
-}
 
 FString UViewportService::GetViewMode()
 {
@@ -465,12 +427,6 @@ bool UViewportService::SetFOV(float FOVDegrees)
 	return true;
 }
 
-float UViewportService::GetFOV()
-{
-	FLevelEditorViewportClient* Client = GetActiveViewportClient();
-	if (!Client) { return 90.0f; }
-	return Client->ViewFOV;
-}
 
 // =================================================================
 // Clipping Planes
@@ -527,10 +483,6 @@ bool UViewportService::SetExposure(bool bFixed, float EV100)
 	return true;
 }
 
-bool UViewportService::SetExposureGameSettings()
-{
-	return SetExposure(false, 1.0f);
-}
 
 // =================================================================
 // Game View & Cinematic

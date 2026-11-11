@@ -655,11 +655,6 @@ public:
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Input|PIE")
 	static FString StopInjection(const FString& ActionPath, int32 PieInstance = -1);
 
-	// Not an AI tool: 5.9's InputToolset.ApplyInput covers a keyed tap/hold (it takes legacy FKey
-	// entries and a duration), so this is off the tool surface. It stays because WorkflowService's
-	// PIE scenario runner drives keys through it.
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Input|PIE")
-	static FString InjectKey(const FString& KeyName, const FString& EventType = TEXT("tap"), float HoldSeconds = 0.0f);
 
 	/**
 	 * End every hold inject_action_for / inject_key started (injections stopped, pending releases and the

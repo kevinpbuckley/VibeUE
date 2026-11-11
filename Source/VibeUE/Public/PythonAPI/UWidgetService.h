@@ -511,64 +511,11 @@ public:
 	// Discovery Methods (list_components, search_types, get_component_properties)
 	// =================================================================
 
-	/**
-	 * List all Widget Blueprint assets.
-	 *
-	 * @param PathFilter - Optional path filter
-	 * @return Array of Widget Blueprint paths
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets")
-	static TArray<FString> ListWidgetBlueprints(const FString& PathFilter = TEXT("/Game"));
 
-	/**
-	 * Get widget hierarchy for a Widget Blueprint.
-	 *
-	 * @param WidgetPath - Full path to the Widget Blueprint
-	 * @return Array of widget information in hierarchy order
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets")
-	static TArray<FWidgetInfo> GetHierarchy(const FString& WidgetPath);
 
-	/**
-	 * Get the root widget of a Widget Blueprint.
-	 *
-	 * @param WidgetPath - Full path to the Widget Blueprint
-	 * @return Name of the root widget, or empty if not found
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets")
-	static FString GetRootWidget(const FString& WidgetPath);
 
-	/**
-	 * List all widget components in a Widget Blueprint.
-	 * Maps to action="list_components"
-	 *
-	 * @param WidgetPath - Full path to the Widget Blueprint
-	 * @return Array of widget component information
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets")
-	static TArray<FWidgetInfo> ListComponents(const FString& WidgetPath);
 
-	/**
-	 * Get available widget types that can be created.
-	 * Maps to action="search_types"
-	 * Returns built-in native types plus discovered Widget Blueprints (prefixed with [WBP]).
-	 *
-	 * @param FilterText - Optional filter to narrow results
-	 * @return Array of widget type names (Button, TextBlock, etc.) and discovered WBPs
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets")
-	static TArray<FString> SearchTypes(const FString& FilterText = TEXT(""));
 
-	/**
-	 * Get detailed properties for a specific widget component.
-	 * Maps to action="get_component_properties"
-	 *
-	 * @param WidgetPath - Full path to the Widget Blueprint
-	 * @param ComponentName - Name of the component to inspect
-	 * @return Array of property information
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets")
-	static TArray<FWidgetPropertyInfo> GetComponentProperties(const FString& WidgetPath, const FString& ComponentName);
 
 	// =================================================================
 	// Component Management (add_component, remove_component)
@@ -664,226 +611,42 @@ public:
 	// Validation (validate)
 	// =================================================================
 
-	/**
-	 * Validate widget hierarchy for errors.
-	 * Maps to action="validate"
-	 *
-	 * @param WidgetPath - Full path to the Widget Blueprint
-	 * @return Validation result with any errors found
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets")
-	static FWidgetValidationResult Validate(const FString& WidgetPath);
 
 	// =================================================================
 	// Property Access (get_property, set_property, list_properties)
 	// =================================================================
 
-	/**
-	 * Get a specific property value from a widget component.
-	 * Maps to action="get_property"
-	 *
-	 * @param WidgetPath - Full path to the Widget Blueprint
-	 * @param ComponentName - Name of the component
-	 * @param PropertyName - Name of the property to get
-	 * @return Property value as string (empty if not found)
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets")
-	static FString GetProperty(
-		const FString& WidgetPath,
-		const FString& ComponentName,
-		const FString& PropertyName);
 
-	/**
-	 * Set a property value on a widget component.
-	 * Maps to action="set_property"
-	 *
-	 * @param WidgetPath - Full path to the Widget Blueprint
-	 * @param ComponentName - Name of the component
-	 * @param PropertyName - Name of the property to set
-	 * @param PropertyValue - Value to set (as string)
-	 * @return True if successful
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets")
-	static bool SetProperty(
-		const FString& WidgetPath,
-		const FString& ComponentName,
-		const FString& PropertyName,
-		const FString& PropertyValue);
 
-	/**
-	 * List all editable properties of a widget component.
-	 * Maps to action="list_properties"
-	 *
-	 * @param WidgetPath - Full path to the Widget Blueprint
-	 * @param ComponentName - Name of the component
-	 * @param bEditableOnly - Whether to only return editable properties
-	 * @return Array of property information
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets")
-	static TArray<FWidgetPropertyInfo> ListProperties(
-		const FString& WidgetPath,
-		const FString& ComponentName,
-		bool bEditableOnly = true);
 
 	// =================================================================
 	// Font and Brush Access
 	// =================================================================
 
-	/**
-	 * Set a full font configuration on a widget text property.
-	 * Maps to action="set_font"
-	 *
-	 * @param WidgetPath - Full path to the Widget Blueprint
-	 * @param ComponentName - Name of the component
-	 * @param FontInfo - Font configuration to apply
-	 * @param PropertyName - Font property path (defaults to "Font")
-	 * @return True if successful
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets|Font")
-	static bool SetFont(
-		const FString& WidgetPath,
-		const FString& ComponentName,
-		const FWidgetFontInfo& FontInfo,
-		const FString& PropertyName = TEXT("Font"));
 
-	/**
-	 * Read a full font configuration from a widget text property.
-	 * Maps to action="get_font"
-	 *
-	 * @param WidgetPath - Full path to the Widget Blueprint
-	 * @param ComponentName - Name of the component
-	 * @param PropertyName - Font property path (defaults to "Font")
-	 * @return Font configuration (default/empty on failure)
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets|Font")
-	static FWidgetFontInfo GetFont(
-		const FString& WidgetPath,
-		const FString& ComponentName,
-		const FString& PropertyName = TEXT("Font"));
 
-	/**
-	 * Set a brush slot on a widget component.
-	 * Maps to action="set_brush"
-	 *
-	 * @param WidgetPath - Full path to the Widget Blueprint
-	 * @param ComponentName - Name of the component
-	 * @param SlotName - Brush slot name
-	 * @param BrushInfo - Brush configuration to apply
-	 * @return True if successful
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets|Brush")
-	static bool SetBrush(
-		const FString& WidgetPath,
-		const FString& ComponentName,
-		const FString& SlotName,
-		const FWidgetBrushInfo& BrushInfo);
 
-	/**
-	 * Read a brush slot from a widget component.
-	 * Maps to action="get_brush"
-	 *
-	 * @param WidgetPath - Full path to the Widget Blueprint
-	 * @param ComponentName - Name of the component
-	 * @param SlotName - Brush slot name
-	 * @return Brush configuration (default/empty on failure)
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets|Brush")
-	static FWidgetBrushInfo GetBrush(
-		const FString& WidgetPath,
-		const FString& ComponentName,
-		const FString& SlotName);
 
 	// =================================================================
 	// Animation Authoring
 	// =================================================================
 
-	/**
-	 * List all widget animations on a Widget Blueprint.
-	 * Maps to action="list_animations"
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets|Animation")
-	static TArray<FWidgetAnimInfo> ListAnimations(const FString& WidgetPath);
 
-	/**
-	 * Create a new widget animation.
-	 * Maps to action="create_animation"
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets|Animation")
-	static bool CreateAnimation(
-		const FString& WidgetPath,
-		const FString& AnimationName,
-		float Duration = 1.0f);
 
-	/**
-	 * Remove an existing widget animation.
-	 * Maps to action="remove_animation"
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets|Animation")
-	static bool RemoveAnimation(
-		const FString& WidgetPath,
-		const FString& AnimationName);
 
-	/**
-	 * Add a property track to a widget animation.
-	 * Maps to action="add_animation_track"
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets|Animation")
-	static bool AddAnimationTrack(
-		const FString& WidgetPath,
-		const FString& AnimationName,
-		const FString& ComponentName,
-		const FString& PropertyName);
 
-	/**
-	 * Add a keyframe to a widget animation track.
-	 * Maps to action="add_keyframe"
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets|Animation")
-	static bool AddKeyframe(
-		const FString& WidgetPath,
-		const FString& AnimationName,
-		const FString& ComponentName,
-		const FString& PropertyName,
-		const FWidgetAnimKeyframe& Keyframe);
 
 	// =================================================================
 	// Preview Capture
 	// =================================================================
 
-	/**
-	 * Capture an off-screen preview of a Widget Blueprint.
-	 * Maps to action="capture_preview"
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets|Preview")
-	static FWidgetPreviewResult CapturePreview(
-		const FString& WidgetPath,
-		int32 Width = 1920,
-		int32 Height = 1080);
 
 	// =================================================================
 	// PIE Widget Lifecycle
 	// =================================================================
 
-	/**
-	 * Start Play-In-Editor if it is not already running.
-	 * Maps to action="start_pie"
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets|PIE")
-	static bool StartPIE();
 
-	/**
-	 * Stop Play-In-Editor if it is running.
-	 * Maps to action="stop_pie"
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets|PIE")
-	static bool StopPIE();
 
-	/**
-	 * Check if Play-In-Editor is currently running.
-	 * Maps to action="is_pie_running"
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets|PIE")
-	static bool IsPIERunning();
 
 	/**
 	 * Spawn a widget into the PIE viewport.
@@ -894,15 +657,6 @@ public:
 		const FString& WidgetPath,
 		int32 ZOrder = 0);
 
-	/**
-	 * Read a property from a live PIE widget instance.
-	 * Maps to action="get_live_property"
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets|PIE")
-	static FString GetLiveProperty(
-		const FPIEWidgetHandle& Handle,
-		const FString& ComponentName,
-		const FString& PropertyName);
 
 	/**
 	 * Remove a widget from the PIE viewport.
@@ -915,20 +669,6 @@ public:
 	// Event Handling (get_available_events, bind_events)
 	// =================================================================
 
-	/**
-	 * Get available events for a widget type or component.
-	 * Maps to action="get_available_events"
-	 *
-	 * @param WidgetPath - Full path to the Widget Blueprint
-	 * @param ComponentName - Name of the component (optional)
-	 * @param WidgetType - Type of widget to query events for (optional)
-	 * @return Array of available events
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets")
-	static TArray<FWidgetEventInfo> GetAvailableEvents(
-		const FString& WidgetPath,
-		const FString& ComponentName = TEXT(""),
-		const FString& WidgetType = TEXT(""));
 
 	/**
 	 * Bind an event to a function in the Widget Blueprint.
@@ -951,34 +691,7 @@ public:
 	// ViewModel Management (MVVM)
 	// =================================================================
 
-	/**
-	 * List all ViewModels registered on a Widget Blueprint.
-	 * Maps to action="list_view_models"
-	 *
-	 * @param WidgetPath - Full path to the Widget Blueprint
-	 * @return Array of ViewModel information
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets|ViewModel")
-	static TArray<FWidgetViewModelInfo> ListViewModels(const FString& WidgetPath);
 
-	/**
-	 * Add a ViewModel to a Widget Blueprint.
-	 * Maps to action="add_view_model"
-	 * The ViewModel class must implement INotifyFieldValueChanged (typically inherits from UMVVMViewModelBase).
-	 * Classes are resolved by name from C++ or Blueprint ViewModel assets.
-	 *
-	 * @param WidgetPath - Full path to the Widget Blueprint
-	 * @param ViewModelClassName - Name of the ViewModel class (e.g. "MyHealthViewModel" or full path)
-	 * @param ViewModelName - Property name/alias for this ViewModel instance (e.g. "HealthVM")
-	 * @param CreationType - How the ViewModel is created: "CreateInstance" (default), "Manual", "GlobalViewModelCollection", "PropertyPath", "Resolver"
-	 * @return True if the ViewModel was added successfully
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets|ViewModel")
-	static bool AddViewModel(
-		const FString& WidgetPath,
-		const FString& ViewModelClassName,
-		const FString& ViewModelName,
-		const FString& CreationType = TEXT("CreateInstance"));
 
 	/**
 	 * Remove a ViewModel from a Widget Blueprint.
@@ -993,107 +706,20 @@ public:
 		const FString& WidgetPath,
 		const FString& ViewModelName);
 
-	/**
-	 * List all MVVM bindings on a Widget Blueprint.
-	 * Maps to action="list_view_model_bindings"
-	 *
-	 * @param WidgetPath - Full path to the Widget Blueprint
-	 * @return Array of binding information
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets|ViewModel")
-	static TArray<FWidgetViewModelBindingInfo> ListViewModelBindings(const FString& WidgetPath);
 
-	/**
-	 * Add an MVVM binding between a ViewModel property and a widget property.
-	 * Maps to action="add_view_model_binding"
-	 *
-	 * @param WidgetPath - Full path to the Widget Blueprint
-	 * @param ViewModelName - Name of the ViewModel (as registered via add_view_model)
-	 * @param ViewModelProperty - Property name on the ViewModel (e.g. "CurrentHealth")
-	 * @param WidgetName - Name of the target widget component (e.g. "HealthBar")
-	 * @param WidgetProperty - Property name on the widget (e.g. "Percent")
-	 * @param BindingMode - Binding direction: "OneWayToDestination" (default), "TwoWay", "OneTimeToDestination", "OneWayToSource", "OneTimeToSource"
-	 * @return True if binding was created successfully
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets|ViewModel")
-	static bool AddViewModelBinding(
-		const FString& WidgetPath,
-		const FString& ViewModelName,
-		const FString& ViewModelProperty,
-		const FString& WidgetName,
-		const FString& WidgetProperty,
-		const FString& BindingMode = TEXT("OneWayToDestination"));
 
-	/**
-	 * Remove an MVVM binding from a Widget Blueprint by index.
-	 * Maps to action="remove_view_model_binding"
-	 * Use list_view_model_bindings to get valid indices.
-	 *
-	 * @param WidgetPath - Full path to the Widget Blueprint
-	 * @param BindingIndex - Index of the binding to remove (from list_view_model_bindings)
-	 * @return True if the binding was removed successfully
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets|ViewModel")
-	static bool RemoveViewModelBinding(
-		const FString& WidgetPath,
-		int32 BindingIndex);
 
 	// =================================================================
 	// Snapshot API (get_widget_snapshot, get_component_snapshot)
 	// =================================================================
 
-	/**
-	 * Get a full snapshot of all widget components in a Widget Blueprint.
-	 * Single-call replacement for get_hierarchy + list_properties per component.
-	 * Returns hierarchy order with slot layout and all properties for each widget.
-	 *
-	 * @param WidgetPath - Full path to the Widget Blueprint
-	 * @return Array of component snapshots in hierarchy order
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets")
-	static TArray<FWidgetComponentSnapshot> GetWidgetSnapshot(const FString& WidgetPath);
 
-	/**
-	 * Get a snapshot of a single widget component by name.
-	 * Returns hierarchy info, slot layout, and all properties for one widget.
-	 *
-	 * @param WidgetPath - Full path to the Widget Blueprint
-	 * @param ComponentName - Name of the component
-	 * @return Component snapshot (default/empty if not found)
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets")
-	static FWidgetComponentSnapshot GetComponentSnapshot(const FString& WidgetPath, const FString& ComponentName);
 
 	// =================================================================
 	// Existence Checks
 	// =================================================================
 
-	/**
-	 * Check if a Widget Blueprint exists at the given path.
-	 *
-	 * @param WidgetPath - Full path to the Widget Blueprint
-	 * @return True if Widget Blueprint exists
-	 *
-	 * Example:
-	 *   if not unreal.WidgetService.widget_blueprint_exists("/Game/UI/WBP_MainMenu"):
-	 *       # Create the widget blueprint
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets|Exists")
-	static bool WidgetBlueprintExists(const FString& WidgetPath);
 
-	/**
-	 * Check if a widget component exists in a Widget Blueprint.
-	 *
-	 * @param WidgetPath - Full path to the Widget Blueprint
-	 * @param ComponentName - Name of the widget component
-	 * @return True if component exists
-	 *
-	 * Example:
-	 *   if not unreal.WidgetService.widget_exists("/Game/UI/WBP_MainMenu", "StartButton"):
-	 *       unreal.WidgetService.add_component("/Game/UI/WBP_MainMenu", "Button", "StartButton", "CanvasPanel_0")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets|Exists")
-	static bool WidgetExists(const FString& WidgetPath, const FString& ComponentName);
 
 private:
 	/** Build slot info by casting Widget->Slot to the concrete slot type */

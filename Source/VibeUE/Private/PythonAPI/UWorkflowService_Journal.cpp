@@ -220,155 +220,12 @@ FString UWorkflowService::GetEnvironment()
 	return FVibeUEEnvironment::BuildJson();
 }
 
-FString UWorkflowService::StartRun(const FString& Name, const FString& MetadataJson)
-{
-	TSharedPtr<FJsonObject> Metadata;
-	if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(MetadataJson.IsEmpty() ? TEXT("{}") : MetadataJson), Metadata) || !Metadata.IsValid())
-	{
-		return WorkflowError(TEXT("metadata_json must be a JSON object"));
-	}
-	const TSharedPtr<FJsonValue> MetadataValue = RedactedWorkflowValue(MakeShared<FJsonValueObject>(Metadata.ToSharedRef()));
-	const FString Id = FDateTime::UtcNow().ToString(TEXT("%Y%m%dT%H%M%SZ")) + TEXT("-") +
-		FGuid::NewGuid().ToString(EGuidFormats::Digits).Left(8);
-	TSharedRef<FJsonObject> Run = MakeShared<FJsonObject>();
-	Run->SetStringField(TEXT("schema"), TEXT("vibeue.run.v1"));
-	Run->SetStringField(TEXT("id"), Id);
-	Run->SetStringField(TEXT("name"), Name.IsEmpty() ? Id : Name);
-	Run->SetStringField(TEXT("status"), TEXT("running"));
-	Run->SetStringField(TEXT("startedAtIso"), FDateTime::UtcNow().ToIso8601());
-	Run->SetObjectField(TEXT("metadata"), MetadataValue->AsObject().ToSharedRef());
-	Run->SetArrayField(TEXT("events"), {});
-	Run->SetArrayField(TEXT("affectedAssets"), {});
-	Run->SetArrayField(TEXT("artifacts"), {});
-	Run->SetStringField(TEXT("coverage"), TEXT("UObject package changes plus explicit workflow notes/artifacts; external calls are not intercepted"));
-	AppendWorkflowEvent(Run, TEXT("run_started"), TEXT("Run journal opened"));
-	TSharedRef<FJsonObject> GameIQ = MakeShared<FJsonObject>();
-	const bool bGameIQAvailable = FindObject<UClass>(nullptr, TEXT("/Script/GameIQ.GameIQService")) != nullptr;
-	GameIQ->SetBoolField(TEXT("available"), bGameIQAvailable);
-	GameIQ->SetStringField(TEXT("freshnessBoundary"), TEXT("GameIQ save-hook/index freshness; unsaved or unsupported changes may be incomplete"));
-	if (bGameIQAvailable)
-	{
-		const FString SnapshotJson = InvokeOptionalGameIQ(TEXT("CreateSnapshot"), {
-			{TEXT("Name"), TEXT("VibeUE before ") + Id},
-			{TEXT("MetadataJson"), FString::Printf(TEXT("{\"vibeueRunId\":\"%s\"}"), *Id)}
-		});
-		if (const TSharedPtr<FJsonObject> Snapshot = ParseWorkflowObject(SnapshotJson))
-		{
-			if (Snapshot->HasTypedField<EJson::Object>(TEXT("result")))
-			{
-				const TSharedPtr<FJsonObject> Result = Snapshot->GetObjectField(TEXT("result"));
-				GameIQ->SetStringField(TEXT("preSnapshotId"), Result->GetStringField(TEXT("id")));
-				GameIQ->SetObjectField(TEXT("preSnapshot"), Result.ToSharedRef());
-			}
-			else
-			{
-				FString Error; Snapshot->TryGetStringField(TEXT("error"), Error);
-				GameIQ->SetStringField(TEXT("warning"), Error.IsEmpty() ? TEXT("GameIQ snapshot returned no result") : Error);
-			}
-		}
-		else { GameIQ->SetStringField(TEXT("warning"), TEXT("GameIQ snapshot call returned invalid JSON")); }
-	}
-	else { GameIQ->SetStringField(TEXT("warning"), TEXT("GameIQ is unavailable; semantic pre/post evidence is omitted")); }
-	Run->SetObjectField(TEXT("gameIQ"), GameIQ);
-	if (!SaveWorkflowRun(Run)) { return WorkflowError(TEXT("failed to write run journal")); }
-	GActiveWorkflowRun = Id;
-	TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
-	Result->SetBoolField(TEXT("success"), true); Result->SetStringField(TEXT("runId"), Id);
-	Result->SetStringField(TEXT("jsonPath"), WorkflowRunPath(Id)); Result->SetStringField(TEXT("markdownPath"), WorkflowRunMarkdownPath(Id));
-	return SerializeWorkflow(Result);
-}
 
-FString UWorkflowService::AddRunNote(const FString& RunId, const FString& Text)
-{
-	const TSharedPtr<FJsonObject> Run = LoadWorkflowRun(RunId);
-	if (!Run.IsValid()) { return WorkflowError(TEXT("run not found")); }
-	AppendWorkflowEvent(Run.ToSharedRef(), TEXT("note"), Text);
-	if (!SaveWorkflowRun(Run.ToSharedRef())) { return WorkflowError(TEXT("failed to update run")); }
-	return SerializeWorkflow(Run.ToSharedRef());
-}
 
-FString UWorkflowService::AttachRunArtifact(const FString& RunId, const FString& PathOrId, const FString& Kind)
-{
-	const TSharedPtr<FJsonObject> Run = LoadWorkflowRun(RunId);
-	if (!Run.IsValid()) { return WorkflowError(TEXT("run not found")); }
-	TArray<TSharedPtr<FJsonValue>> Artifacts = Run->GetArrayField(TEXT("artifacts"));
-	TSharedRef<FJsonObject> Artifact = MakeShared<FJsonObject>();
-	Artifact->SetStringField(TEXT("kind"), Kind); Artifact->SetStringField(TEXT("pathOrId"), PathOrId);
-	Artifact->SetStringField(TEXT("attachedAtIso"), FDateTime::UtcNow().ToIso8601());
-	Artifacts.Add(MakeShared<FJsonValueObject>(Artifact)); Run->SetArrayField(TEXT("artifacts"), Artifacts);
-	AppendWorkflowEvent(Run.ToSharedRef(), TEXT("artifact_attached"), PathOrId);
-	if (!SaveWorkflowRun(Run.ToSharedRef())) { return WorkflowError(TEXT("failed to update run")); }
-	return SerializeWorkflow(Run.ToSharedRef());
-}
 
-FString UWorkflowService::FinishRun(const FString& RunId, const FString& Outcome, const FString& Summary)
-{
-	const TSharedPtr<FJsonObject> Run = LoadWorkflowRun(RunId);
-	if (!Run.IsValid()) { return WorkflowError(TEXT("run not found")); }
-	if (Run->HasTypedField<EJson::Object>(TEXT("gameIQ")))
-	{
-		const TSharedPtr<FJsonObject> GameIQ = Run->GetObjectField(TEXT("gameIQ"));
-		FString PreSnapshotId;
-		if (GameIQ->TryGetStringField(TEXT("preSnapshotId"), PreSnapshotId) && !PreSnapshotId.IsEmpty())
-		{
-			const FString ChangesJson = InvokeOptionalGameIQ(TEXT("Changes"), {
-				{TEXT("SinceSnapshot"), PreSnapshotId}, {TEXT("UntilSnapshot"), TEXT("current")},
-				{TEXT("Kind"), TEXT("")}, {TEXT("PathPrefix"), TEXT("")}
-			}, {{TEXT("Limit"), 500}, {TEXT("Offset"), 0}});
-			if (const TSharedPtr<FJsonObject> Changes = ParseWorkflowObject(ChangesJson))
-			{
-				if (Changes->HasTypedField<EJson::Object>(TEXT("result")))
-				{
-					GameIQ->SetObjectField(TEXT("changes"), Changes->GetObjectField(TEXT("result")).ToSharedRef());
-				}
-				else
-				{
-					FString Error; Changes->TryGetStringField(TEXT("error"), Error);
-					GameIQ->SetStringField(TEXT("finishWarning"), Error.IsEmpty() ? TEXT("GameIQ changes returned no result") : Error);
-				}
-			}
-			else { GameIQ->SetStringField(TEXT("finishWarning"), TEXT("GameIQ changes call returned invalid JSON")); }
-		}
-	}
-	Run->SetStringField(TEXT("status"), Outcome.IsEmpty() ? TEXT("completed") : Outcome.ToLower());
-	Run->SetStringField(TEXT("summary"), Summary);
-	Run->SetStringField(TEXT("finishedAtIso"), FDateTime::UtcNow().ToIso8601());
-	AppendWorkflowEvent(Run.ToSharedRef(), TEXT("run_finished"), Outcome);
-	if (!SaveWorkflowRun(Run.ToSharedRef())) { return WorkflowError(TEXT("failed to finish run")); }
-	if (GActiveWorkflowRun == RunId) { GActiveWorkflowRun.Reset(); }
-	return SerializeWorkflow(Run.ToSharedRef());
-}
 
-FString UWorkflowService::GetRun(const FString& RunId)
-{
-	const TSharedPtr<FJsonObject> Run = LoadWorkflowRun(RunId);
-	return Run.IsValid() ? SerializeWorkflow(Run.ToSharedRef()) : WorkflowError(TEXT("run not found"));
-}
 
-FString UWorkflowService::ListRuns(int32 Limit)
-{
-	TArray<FString> Files; IFileManager::Get().FindFiles(Files, *FPaths::Combine(RunsDir(), TEXT("*.json")), true, false);
-	Files.Sort([](const FString& A, const FString& B) { return A > B; });
-	TArray<TSharedPtr<FJsonValue>> Runs;
-	for (int32 Index = 0; Index < Files.Num() && Runs.Num() < FMath::Clamp(Limit, 1, 500); ++Index)
-	{
-		const TSharedPtr<FJsonObject> Run = LoadWorkflowRun(FPaths::GetBaseFilename(Files[Index]));
-		if (Run.IsValid()) { Runs.Add(MakeShared<FJsonValueObject>(Run.ToSharedRef())); }
-	}
-	TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>(); Root->SetBoolField(TEXT("success"), true);
-	Root->SetArrayField(TEXT("runs"), Runs); Root->SetNumberField(TEXT("total"), Files.Num());
-	return SerializeWorkflow(Root);
-}
 
-FString UWorkflowService::DeleteRun(const FString& RunId)
-{
-	if (!SafeWorkflowId(RunId)) { return WorkflowError(TEXT("invalid run id")); }
-	if (GActiveWorkflowRun == RunId) { return WorkflowError(TEXT("cannot delete the active run; finish it first")); }
-	const bool bJson = IFileManager::Get().Delete(*WorkflowRunPath(RunId), true, true, true);
-	const bool bMarkdown = IFileManager::Get().Delete(*WorkflowRunMarkdownPath(RunId), false, true, true);
-	TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>(); Root->SetBoolField(TEXT("success"), bJson && bMarkdown);
-	Root->SetStringField(TEXT("runId"), RunId); return SerializeWorkflow(Root);
-}
 
 void UWorkflowService::InitializeJournal()
 {
@@ -410,20 +267,5 @@ void UWorkflowService::ShutdownJournal()
 	}
 }
 
-FString UWorkflowService::GetActiveRunId()
-{
-	return GActiveWorkflowRun;
-}
 
-void UWorkflowService::AttachActiveRunArtifact(const FString& PathOrId, const FString& Kind)
-{
-	if (!GActiveWorkflowRun.IsEmpty()) { AttachRunArtifact(GActiveWorkflowRun, PathOrId, Kind); }
-}
 
-FString UWorkflowService::GetOptionalGameIQImpact(const FString& TopicOrId)
-{
-	return InvokeOptionalGameIQ(TEXT("ExportGraph"), {
-		{TEXT("TopicOrId"), TopicOrId}, {TEXT("Format"), TEXT("json")},
-		{TEXT("Direction"), TEXT("both")}, {TEXT("EdgeTypes"), TEXT("")}, {TEXT("Kinds"), TEXT("")}
-	}, {{TEXT("Depth"), 1}, {TEXT("MaxNodes"), 50}});
-}

@@ -258,28 +258,11 @@ public:
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
 	static bool SetViewportType(const FString& ViewType);
 
-	/**
-	 * Get the current viewport view type as a string.
-	 *
-	 * @return One of: "perspective", "top", "bottom", "left", "right", "front", "back", "ortho_freelook"
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
-	static FString GetViewportType();
 
 	// =================================================================
 	// View Mode (Lit, Wireframe, Unlit, etc.)
 	// =================================================================
 
-	/**
-	 * Set the viewport rendering mode (Lit, Wireframe, Unlit, etc.).
-	 * Corresponds to the "Lit" dropdown in the viewport toolbar.
-	 *
-	 * @param ViewMode - One of: "lit", "unlit", "wireframe", "detaillighting", "lightingonly",
-	 *                   "lightcomplexity", "shadercomplexity", "pathtracing", "clay"
-	 * @return True if the view mode was changed successfully
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
-	static bool SetViewMode(const FString& ViewMode);
 
 	/**
 	 * Get the current viewport rendering mode.
@@ -302,13 +285,6 @@ public:
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
 	static bool SetFOV(float FOVDegrees);
 
-	/**
-	 * Get the current viewport horizontal field of view.
-	 *
-	 * @return FOV in degrees
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
-	static float GetFOV();
 
 	// =================================================================
 	// Clipping Planes
@@ -346,14 +322,6 @@ public:
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
 	static bool SetExposure(bool bFixed, float EV100 = 1.0f);
 
-	/**
-	 * Set exposure to use game settings (auto eye adaptation).
-	 * This is the "Game Settings" checkbox in the viewport menu.
-	 *
-	 * @return True if set successfully
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
-	static bool SetExposureGameSettings();
 
 	// =================================================================
 	// Game View & Cinematic
