@@ -1,11 +1,13 @@
 ---
 name: blueprint-graphs
 display_name: Blueprint Graph Editing
-description: Add, connect, and configure nodes in Blueprint event graphs and function graphs — function-call/event/branch/timer/custom-event/delegate nodes, Standard Macro nodes (ForEachLoop/ForLoop/WhileLoop/DoOnce/Gate/IsValid/FlipFlop via add_macro_instance_node), macro-graph creation, pin wiring, node layout, arrays, comment boxes, and the batch build_graph API. Use when the user asks to wire up Blueprint logic, add or connect nodes, add a loop/macro node, build an event graph, set up a timer/delay, broadcast a delegate, or lay out an existing graph.
+description: Blueprint graph and node authoring is Epic's in UE 5.9 — `BlueprintToolsets.BlueprintDslToolset` is a whole-graph DSL (Docs/Schema, then Read → edit the text → Write or Edit against a revision token) and `BlueprintToolsets.BlueprintToolset` holds the ~77 per-node, pin, variable, function, event and layout tools. VibeUE keeps only Timelines, macro-graph creation (CreateMacroGraph) and read-only layout measurement (AnalyzeGraphLayout) plus RefreshBlueprintEditor. Use when the user asks to wire up Blueprint logic, add or connect nodes, add a loop/macro node, build an event graph, set up a timer/delay, broadcast a delegate, add or key a Timeline, or lay out and audit an existing graph.
 vibeue_classes:
   - BlueprintService
 unreal_classes:
   - EditorAssetLibrary
+  - BlueprintDslToolset
+  - BlueprintToolset
 keywords:
   - node
   - graph
@@ -30,806 +32,557 @@ related_skills:
 
 # Blueprint Graph Editing Skill
 
-> **Also load `blueprints` skill** when creating new blueprints, adding variables/components, or overriding functions.
-> This skill covers **node-level graph editing** — adding nodes, wiring pins, setting values, and layout.
+> **Also load `blueprints`** when creating a Blueprint asset, adding variables/components, or taking
+> an override. This skill covers **graph bodies** — statements, wires, pin values, layout and
+> Timelines.
+
+## Who owns what in 5.9
+
+Graph authoring moved out of VibeUE wholesale. `BlueprintService` went from 96 AI tools to **19**.
+
+| Job | Tool |
+|---|---|
+| Author/rewrite a graph body as text | `BlueprintToolsets.BlueprintDslToolset` — `Docs`, `Schema`, `Read`, `Write`, `Edit`, `Diff`, `FindNodeReferences` |
+| One node, one pin, one variable, one event — surgical | `BlueprintToolsets.BlueprintToolset` (~77 tools) |
+| Arrange a graph | `BlueprintToolset.ArrangeGraphLayered` / `ArrangeNodes` |
+| **Measure** a layout you just wrote | `unreal.BlueprintService.analyze_graph_layout` (VibeUE — nothing in Epic reads a layout back) |
+| **Timelines** (node + `UTimelineTemplate` + tracks + keys) | `unreal.BlueprintService.*timeline*` (VibeUE — no engine tool touches a `UTimelineTemplate`) |
+| **Create a macro graph** on a Macro Library | `unreal.BlueprintService.create_macro_graph` (VibeUE — the DSL refuses macro libraries) |
+| Force an open Blueprint editor to redraw | `unreal.BlueprintService.refresh_blueprint_editor` (VibeUE) |
+| What the user has selected / is looking at | `EditorToolset.EditorAppToolset.GetAssetEditorSelection`, `GetOpenAssets`, `OpenEditorForAsset` |
 
 ## Critical Rules
 
-### ⚠️ Nothing works during Play-In-Editor — and it fails SILENTLY
+### ⚠️ The toolset name `editor_toolset.toolsets.blueprint.BlueprintTools` does not exist
 
-Every `BlueprintService` method resolves its target through `LoadBlueprint()`, which fails while PIE
-is running. You get no error. You get an **empty array**, **`False`**, or an **empty-string node id**
-— which reads exactly like "that node type doesn't exist" or "that spawner key is wrong". It is very
-easy to spend a long time debugging a correct call that was only ever blocked by PIE.
+Older revisions of this pack used that string. There is no such toolset. The real names are
+**`BlueprintToolsets.BlueprintToolset`** and **`BlueprintToolsets.BlueprintDslToolset`**, and their
+tool names are **PascalCase** (`CreateNode`, `ConnectPins`, `CompileBlueprint`, `Read`, `Write`) —
+these are C++ toolsets, not Python ones. There is no lowercase `create` / `compile_blueprint` /
+`add_variable` tool.
+
+### ⚠️ Call styles — do not mix these up
+
+**1. VibeUE's 19 survivors are Python**, inside `execute_python`:
+
+```python
+import unreal
+unreal.BlueprintService.add_timeline("/Game/BP/BP_Door", "EventGraph", "SwingTimeline", 1.0)
+```
+
+**2. Epic's toolsets are `call_tool`** — one tool per MCP round-trip:
+
+```
+call_tool(tool_name="Read",
+          toolset_name="BlueprintToolsets.BlueprintDslToolset",
+          arguments={"assetPath": "/Game/BP/BP_Door.BP_Door", "scope": "EventGraph"})
+```
+
+**3. Inside `execute_python`, reach them with `vibeue.exec_tool`** — the same dispatch, in-process,
+so a whole task is one round-trip. It fills missing optional args from the tool schema, unwraps
+`returnValue` and raises `RuntimeError` on a tool error:
+
+```python
+import vibeue
+DSL = "BlueprintToolsets.BlueprintDslToolset"
+r = vibeue.exec_tool(DSL, "Read", {"assetPath": "/Game/BP/BP_Door.BP_Door", "scope": "EventGraph"})
+```
+
+`BlueprintDslToolset` is `AICallable` only — **`unreal.BlueprintDslToolset.read(...)` does not
+exist.** Reach the DSL through `call_tool` / `vibeue.exec_tool`, never as a `unreal.*` API.
+
+**Object arguments** are `{"refPath": "<full object path>"}` handles (or the bare object path
+string): `/Game/Dir/BP_X.BP_X` for the asset, with the asset name repeated after the dot. A bare
+package path (`/Game/Dir/BP_X`) is rejected. `AssetPath` on the DSL tools is a plain string.
+`BlueprintToolset` takes live objects — a `UEdGraph` for `CreateNode`, a `UEdGraphNode` for
+`DeleteNode` — so chain the handle a previous tool returned rather than rebuilding it:
+
+```python
+import vibeue
+BT = "BlueprintToolsets.BlueprintToolset"
+
+def ref(p):
+    tail = p.rsplit("/", 1)[-1]
+    return {"refPath": p if "." in tail else "{}.{}".format(p, tail)}
+
+bp = ref("/Game/BP/BP_Door")
+graph = vibeue.exec_tool(BT, "GetGraph", {"blueprint": bp, "graphName": "EventGraph"})
+node  = vibeue.exec_tool(BT, "CreateNode",
+                         {"graph": graph, "typeId": "Development|PrintString", "pos": [400, 0]})
+```
+
+### ⚠️ Nothing works during Play-In-Editor
+
+Every `BlueprintService` entry point **refuses** while a PIE session is running and logs it with a
+`PIE_ACTIVE:` prefix; the return is a `False` / empty string / empty array. Asset writes during PIE
+are unsafe anyway. Check this first when a call returns nothing unexpectedly:
 
 ```python
 les = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
 if les.is_in_play_in_editor():
-    raise RuntimeError("Stop PIE first - BlueprintService returns empty results during play")
+    raise RuntimeError("Stop PIE first - Blueprint authoring refuses while PIE runs")
 ```
 
-**Check this FIRST when any call returns nothing unexpectedly**, before doubting a spawner key, a
-search term, or a graph name. The tell: `unreal.EditorAssetLibrary.does_asset_exist(bp_path)` also
-returns `False` for an asset you know exists. Asset writes during PIE are unsafe anyway — stop PIE,
-then re-run.
+`EditorAppToolset.IsPIERunning` / `StopPIE` are the engine-side equivalents. Editor-world edits
+issued immediately after stopping PIE can silently no-op — let the editor settle (poll) before
+editing.
 
-### ⚠️ Method Name Gotchas
+### ⚠️ Level Blueprints: pass the MAP path
 
-| WRONG | CORRECT |
-|-------|---------|
-| `list_nodes()` | `get_nodes_in_graph()` |
-| `add_node()` / `add_function_call_node()` / `add_event_node()` | **batch:** VibeUE `build_graph()`; **single node:** engine `BlueprintTools.create_node` via `call_tool`; **editor-style spawner:** `create_node_by_key()` |
-| `disconnect_nodes()` | `disconnect_pin()` |
-| `get_node_connections()` | `get_connections()` |
-| `get_graphs()` | `list_graphs()` |
-| `get_functions()` | `list_functions()` |
-| `get_connected_nodes()` | `get_node_details()` (pins include connections) or `get_node_pins()` + `pin.is_connected` |
-| `unreal.find_class()` | `unreal.load_class(None, "/Script/Module.ClassName")` |
+Every `BlueprintService` `BlueprintPath` parameter also accepts a **map/world path**
+(`/Game/Maps/MainMenu`) and resolves it to that level's Level Blueprint. Explicit subobject paths
+(`/Game/Maps/MyMap.MyMap:PersistentLevel.MyMap`) work too. The **MAP** asset is what you save
+afterwards.
 
-> ⚠️ **Engine `BlueprintTools` `call_tool` args are `{refPath}` objects, not strings.** Every
-> `arguments={"blueprint": path, ...}` / `{"blueprint": bp_path}` below is shorthand — the engine
-> toolset needs `{"refPath": "/Game/Dir/BP.BP"}` (full object path, `.AssetName` suffix required) and
-> returns `{"returnValue": null}` on success. See the **blueprints** skill for the `bp_ref_of()` helper.
-> VibeUE's own `unreal.BlueprintService.*` methods are unaffected — they take plain string paths.
+---
 
-> **Node creation moved to the engine toolset.** The old per-node convenience creators
-> (`add_function_call_node`, `add_event_node`, `add_get_variable_node`, `add_set_variable_node`,
-> `add_member_get_node`, `add_validated_get_node`) and the basics (`create_blueprint`,
-> `compile_blueprint`, `add_variable`, `create_function`) are **gone** from `unreal.BlueprintService`.
-> Create nodes one of three ways:
->
-> 1. **Batch (preferred for 2+ nodes):** `unreal.BlueprintService.build_graph(...)` — the VibeUE
->    delta. Node `type` values (`function_call`, `event`, `variable_get`, `variable_set`, `branch`,
->    `print_string`, `member_get`, `validated_get`, …) live inside `build_graph`. See `build-graph.md`.
-> 2. **Single node:** the engine `BlueprintTools.create_node` tool via `call_tool` (args `graph`,
->    `type_id`, `pos`):
->    ```python
->    call_tool(
->        tool_name="create_node",
->        toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
->        arguments={"blueprint": bp_path, "graph": "EventGraph",
->                   "type_id": "Development|PrintString", "pos": [400, 0]})
->    ```
->    `type_id` examples: `'Development|PrintString'`, `'AddEvent|EventBeginPlay'`,
->    `'AddEvent|Custom|MyEvent'`, a function `'Utilities|...'`, a macro
->    `'Utilities|FlowControl|ForLoop'`, a dispatcher handler `'Default|EventDispatcherOnDamaged'`.
-> 3. **Editor-style spawner key:** `create_node_by_key()` still works for deterministic creation
->    after `discover_nodes()`.
->
-> The surviving wiring/inspection methods (`connect_nodes`, `disconnect_pin`, `get_connections`,
-> `get_node_pins`, `set_node_pin_value`, `add_custom_event_node`, `add_macro_instance_node`,
-> the timeline + custom-event-input CRUD, `build_graph`, `auto_layout_*`, etc.) are the VibeUE
-> focus and remain unchanged. Engine basics — `BlueprintTools.create`, `.compile_blueprint`,
-> `.add_variable`, `.add_function_graph` — also go through `call_tool` against that same toolset.
+## The DSL workflow — this is the main event
 
-### ⚠️ `disconnect_pin()` Signature — 4 Args Only
+`BlueprintDslToolset` is **not** a like-for-like replacement for the old per-node creators. A graph
+is a canonical text document. You read it, edit the text, and write it back against a revision
+token. Follow this order:
 
-`disconnect_pin` breaks **all** connections from a single named pin. Do **not** call it like `connect_nodes` (which takes 6 args):
+1. **`Docs()` once per session, before your first `Write` or `Edit`.** It returns the common grammar
+   plus the Blueprint dialect: entry forms, statements, expressions, struct values, metadata,
+   scopes. You cannot reliably author the DSL without it, and it is one cheap call.
+2. **`Schema(AssetPath, NodeType)` for any node type you are not sure of**, before writing it. It
+   returns that one type's input pins, output pins, writable properties and the properties that
+   change the pin set, as a DSL form. Use `FindNodeReferences(AssetPath, Query)` first when you only
+   know the palette name — the **reference** it returns (not the palette name) is what goes in a call
+   head.
+3. **`Read` the scope you intend to change, and keep the `Revision`.** `Read` returns the canonical
+   DSL text plus a `Revision` token. Pass `bIncludePositions=true` only when you actually need node
+   positions.
+4. **`Write` for a complete document or a large structural change; `Edit` for targeted exact-string
+   replacements against the text you just read.** Both are transactional — a failure leaves the
+   asset unchanged — and both return the canonical DSL plus a **new** `Revision`.
+5. **Re-`Read` when a revision goes stale.** `Edit`'s `Revision` must come from the latest
+   `Read`/`Write`/`Edit` for the *same asset and scope*. Anything else fails; call `Read` again
+   rather than guessing.
 
-```python
-# CORRECT — 4 args: path, graph, node_id, pin_name
-unreal.BlueprintService.disconnect_pin(bp_path, "EventGraph", custom_event_id, "then")
+### Scope syntax
 
-# WRONG — 6 args crashes with "takes at most 4 arguments (6 given)"
-# unreal.BlueprintService.disconnect_pin(bp_path, graph, src_id, src_pin, tgt_id, tgt_pin)
-```
-
-To remove a specific edge, disconnect the output pin on the source node (e.g. `"then"`). Because the other end is the only connection on that exec pin, the single-pin disconnect is equivalent to removing the edge.
-
-### ⚠️ Property Name Gotchas
-
-| WRONG | CORRECT |
-|-------|---------|
-| `node.node_name` | `node.node_title` |
-| `node.node_position_x` | `node.pos_x` |
-| `node.node_position_y` | `node.pos_y` |
-| `pin.direction` / `pin.is_output` | `pin.is_input` (bool) — the only direction field on `BlueprintPinInfo`; for outputs use `not pin.is_input` |
-| `pin.is_linked` | `pin.is_connected` |
-| `pin.current_value` | `pin.default_value` |
-| `pin.sub_pins` | *(does not exist)* |
-
-### ⚠️ Read graphs cheaply: `get_graph_summary()` first, filtered `get_nodes_in_graph()` second
-
-A full `get_nodes_in_graph()` dump of a big graph is the most token-expensive read in this toolset
-(every node ships its full pin list twice). Default reading order:
-
-```python
-# 1. Fixed-size overview — payload independent of graph size
-s = unreal.BlueprintService.get_graph_summary(bp_path, "EventGraph")  # None if bp/graph not found
-print(s.node_count, s.connection_count, s.compile_status)
-print(s.entry_points)      # ["Event BeginPlay|<node_id>", ...]
-print(s.node_type_counts)  # ["K2Node_CallFunction x12", ...]
-
-# 2. Drill in with filters: max nodes, name/type/id substring, and pins off
-nodes = unreal.BlueprintService.get_nodes_in_graph(bp_path, "EventGraph", 25, "SpawnActor", False)
-# args 3-5 are optional: max_nodes=0 (all), name_filter="" (all), include_pins=True
-```
-
-Only fall back to the unfiltered full dump when you genuinely need every pin of every node.
-
-### ⚠️ Component/widget bound events: use `create_component_bound_event()`, never `create_node_by_key`
-
-A `K2Node_ComponentBoundEvent` (e.g. *On Clicked (MyButton)*) built via `create_node_by_key` +
-`configure_node` **compiles clean but never fires at runtime** — the delegate binding params
-(including the generated handler function name) can only be initialized atomically:
-
-```python
-node_id = unreal.BlueprintService.create_component_bound_event(
-    bp_path, "EventGraph", "MyButton", "OnClicked", 100, 100)
-```
-
-Idempotent: if the bound event already exists, the existing node's id is returned. Works for any
-component delegate (`OnComponentBeginOverlap`, widget `OnClicked`/`OnValueChanged`, ...).
-
-### ⚠️ Override events are idempotent
-
-`create_node_by_key("EVENT Actor::ReceiveBeginPlay")` (and `EVENT CUSTOM::Name`) returns the
-**existing** node's id when the blueprint already has that event — a blueprint can hold each
-override event only once, and a duplicate would break compilation. Don't treat "node id I didn't
-just place" as an error; wire into it.
-
-### ⚠️ `discover_nodes()` vs `get_nodes_in_graph()` — Different Object Types
-
-`get_nodes_in_graph()` returns **`FBlueprintNodeInfo`** objects — these have `node_title`, `node_id`, `pos_x`, `pos_y`, `node_type`.
-
-`discover_nodes()` returns **`FBlueprintNodeTypeInfo`** objects — these have **`display_name`** (NOT `node_title`), `spawner_key`, `category`, `tooltip`, `is_pure`, `is_latent`, `keywords`.
-
-```python
-# get_nodes_in_graph — use node_title
-nodes = unreal.BlueprintService.get_nodes_in_graph(bp_path, graph)
-for n in nodes:
-    print(n.node_title, n.node_id)  # node_title is correct here
-
-# discover_nodes — use display_name (NOT node_title)
-matches = unreal.BlueprintService.discover_nodes(bp_path, "Broadcast")
-for m in matches:
-    print(m.display_name, m.spawner_key)  # display_name, NOT node_title
-```
-
-Also: search `discover_nodes` by **function name**, not variable type. To find the Broadcast Delegate node for a `StateTreeDelegate` variable, search `"Broadcast"` — NOT `"Dispatcher"` or `"StateTreeDelegate"`.
-
-### 👀 Reading the User's Live Graph Selection — `get_selected_nodes()`
-
-`get_nodes_in_graph()` returns **every** node in a graph. To act on just the nodes the user has highlighted in the open Blueprint editor, use `get_selected_nodes()` instead. Returned objects are the same `FBlueprintNodeInfo` shape as `get_nodes_in_graph()` — same `node_id`, `node_title`, `node_type`, `pos_x`, `pos_y`, `pin_names`, and `pins` fields — so you can pass `node.node_id` straight into `get_node_pins()`, `set_node_position()`, `delete_node()`, etc.
-
-**The Blueprint MUST already be open in the editor.** Selection state lives on the Slate panel, not on the asset; closing the editor discards it. Calling `get_selected_nodes()` for a closed asset returns an empty array (and logs a warning).
-
-```python
-# Caller knows the asset
-selected = unreal.BlueprintService.get_selected_nodes("/Game/BP_Player")
-
-# Caller does NOT know which asset the user is looking at — empty path
-# returns the selection from the first open Blueprint editor that has one.
-selected = unreal.BlueprintService.get_selected_nodes("")
-
-for n in selected:
-    print(f"selected: {n.node_title} ({n.node_type}) @ ({n.pos_x}, {n.pos_y})")
-    pins = unreal.BlueprintService.get_node_pins("/Game/BP_Player", "EventGraph", n.node_id)
-```
-
-Use this when the user says "this node", "the selected node(s)", "what I have highlighted", or "the one I'm looking at". An empty result means *nothing is selected in any open Blueprint editor* — ask the user to click a node in the graph rather than guessing.
-
-### 🧭 "What am I looking at?" — `get_focused_graph_context()`
-
-When the user says "this Blueprint", "the graph I have open", "the current material", or "what I'm looking at" **without naming the asset**, call `get_focused_graph_context()` first instead of guessing a path or chaining `list_graphs` → `get_selected_nodes`. It returns the asset **and** the focused graph in one shot — VibeUE's analogue of Epic's `GetDockedContext()`. It anchors on the globally-active editor tab (falling back to the first open supported editor).
-
-It covers both **Blueprint-family editors** and the **Material editor**. Fields:
-
-| Field | Notes |
+| `Scope` | Selects |
 |---|---|
-| `found` | bool — `False` if no supported editor is open. **Note the stripped `b`** (UE Python: `bFound` → `found`). |
-| `asset_path` | full object path — feed straight into `BlueprintPath` params |
-| `asset_name` | short name, e.g. `"BP_Player"` |
-| `editor_type` | `"BlueprintEditor"` / `"WidgetBlueprintEditor"` / `"AnimationBlueprintEditor"` / `"MaterialEditor"` |
-| `graph_name` | focused graph tab, e.g. `"EventGraph"` — feed into `GraphName` params (Blueprints) |
-| `graph_kind` | `"Ubergraph"` / `"Function"` / `"Macro"` / `"DelegateSignature"` / `"Material"` / `"Other"` |
-| `graph_node_count` | node count of the focused graph |
-| `selected_nodes` | same `FBlueprintNodeInfo` shape as `get_selected_nodes()` |
+| `""` | the whole asset — every event and function graph |
+| `GraphName` | one graph |
+| `GraphName/EntryName` | one event or function entry |
+
+Backtick-quote a segment containing spaces, syntax characters or `/`: `` `A/B` `` is **one**
+segment. The `Scope` you pass to `Edit` must be the one the operation that returned your `Revision`
+used.
+
+### ⚠️ `Write` is upsert, and deletion needs a tombstone
+
+> "Top-level entries use upsert semantics: omitted entries remain and produce a warning. Delete an
+> entry with a tombstone such as ``(event `Foo` :!delete)``."
+
+So a `Write` that omits an entry does **not** remove it — it leaves it and warns. To remove one,
+write the tombstone. Deleting a missing entry only warns; deleting a *referenced* entry fails.
+Writes create missing custom events, but a `(fn ...)` body still needs an existing function graph
+(`BlueprintToolset.AddFunctionGraph`), and a macro library is refused outright.
+
+`Write` and `Edit` carry `NonTransactableToolCall` — they manage their own transaction, so do not
+wrap them in one of your own.
+
+### Worked example — read, then write one entry
 
 ```python
-ctx = unreal.BlueprintService.get_focused_graph_context()
-if ctx.found and ctx.graph_kind != "Material":
-    # asset_path + graph_name drop straight into the other Blueprint tools
-    nodes = unreal.BlueprintService.get_nodes_in_graph(ctx.asset_path, ctx.graph_name)
-    sel = [n.node_id for n in ctx.selected_nodes]
+import vibeue
+DSL = "BlueprintToolsets.BlueprintDslToolset"
+BP  = "/Game/BP/BP_Door.BP_Door"
+
+# 0. Grammar, once.
+print(vibeue.exec_tool(DSL, "Docs", {}))
+
+# 1. What is there now, and the revision that proves we are current.
+cur = vibeue.exec_tool(DSL, "Read", {"assetPath": BP, "scope": "EventGraph"})
+print(cur["dsl"], cur["revision"])
+
+# 2. Confirm the pins of anything unfamiliar before writing it.
+print(vibeue.exec_tool(DSL, "Schema", {"assetPath": BP, "nodeType": "KismetSystemLibrary.PrintString"}))
+
+# 3. Whole entry -> Write. Other entries are untouched (upsert), which is what we want here.
+doc = """
+(event `self.ReceiveBeginPlay`
+  (bind loc (`Actor.K2_GetActorLocation`))
+  (if (> (.z loc) 0.0)
+    (`KismetSystemLibrary.PrintString` "above ground")
+    (else (`KismetSystemLibrary.PrintString` "below ground"))))
+"""
+res = vibeue.exec_tool(DSL, "Write", {"assetPath": BP, "dsl": doc, "scope": "EventGraph"})
+rev = res["revision"]          # keep it: the next Edit needs THIS token
 ```
 
-> **Materials:** when `graph_kind == "Material"`, the Blueprint graph tools (`get_nodes_in_graph`, `build_graph`) do **not** apply — use `MaterialNodeService` keyed by `ctx.asset_path`. `selected_nodes` is still populated (material expression nodes), but `graph_name` is the internal material-graph name, not a Blueprint graph tab.
+Things the example shows that the grammar enforces:
 
-`found == False` means no Blueprint/Material editor is open — ask the user to open the asset rather than guessing a path.
+- An engine override is `` (event `self.ReceiveBeginPlay` ...) `` — the implemented **member
+  reference**, not a palette title.
+- Members are spelled by their **authored** name as `Read` returns them: `K2_GetActorLocation`, not
+  `SetActorLocation`/`GetActorLocation`.
+- Control flow is a statement form (`if` / `for` / `while` / `switch` / `select`), not a Branch node
+  you wire by hand. `elif` or `else` must end its enclosing branch.
+- Numeric literals carry pin type: a real pin reads `0.0`, an integer pin `0`.
+- A statement's data outputs come back through `(bind name (...))`; inside a continuation body they
+  are implicit locals (`Return Value` → `_return_value`).
 
-### 💬 Comment Boxes — `add_comment_node()` / `add_comment_around_nodes()`
-
-Comment boxes are the coloured bubbles that visually group nodes (the editor shortcut is `C` after selecting nodes). Two APIs:
-
-- **`add_comment_node(blueprint_path, graph_name, comment_text, pos_x, pos_y, width, height, r, g, b, a)`** — explicit position and size. Use when you already know exactly where you want the box.
-- **`add_comment_around_nodes(blueprint_path, graph_name, comment_text, node_ids, padding, r, g, b, a)`** — computes the bounding box of the supplied nodes (plus `padding`, default 40 px) and pads room for the title bar. This is the programmatic equivalent of select-then-press-`C`.
-
-#### ✍️ Write *informative* comment text — this is the whole point
-
-Comment boxes are documentation that lives next to the code. A future reader (human or LLM) should be able to glance at the comment and understand **what this group of nodes accomplishes and why**, without re‑reading every pin. Treat the comment text the same way you'd treat a function header comment.
-
-**Good comments** explain intent and behaviour:
-
-- `"Pick a random patrol point and cache its world location for the Move To task"`
-- `"On Damage > 0: play hit reaction, flash material, decrement Health"`
-- `"Debounce input — ignore re‑presses within 0.25s of the last fire"`
-- `"Early‑out when the owning controller is not locally controlled (server‑auth path)"`
-
-**Bad comments** restate node titles or are filler:
-
-- `"Print String"` ❌ (just the node name)
-- `"Logic"` / `"Stuff"` / `"TODO"` ❌ (says nothing)
-- `"Branch + Set Variable"` ❌ (mechanical, not intent)
-- The user's verbatim request like `"add a comment around the nodes"` ❌ — that's the *task*, not the *meaning*
-
-**Workflow**: before calling `add_comment_around_nodes`, inspect the selected nodes (titles, pin connections, variables they read/write) and synthesise a one‑line description of what the group does. If the user gave you a hint ("this is the patrol picker"), build on it; if they didn't, derive it from the nodes themselves. Use multiple lines (`\n`) when the group has a non‑trivial flow worth narrating.
+### Targeted change — `Edit`
 
 ```python
-sel = unreal.BlueprintService.get_selected_nodes("/Game/BP_Player")
-ids = [n.node_id for n in sel]
-
-# Derive intent from the selected nodes (event, variables read/written, called
-# functions) and write a comment that documents WHY this group exists.
-comment = (
-    "Pick a random patrol point on EnterState\n"
-    "Caches the chosen point's world location into PatrolPointLocation\n"
-    "so the subsequent Move To task has a stable target."
-)
-
-unreal.BlueprintService.add_comment_around_nodes(
-    "/Game/BP_Player", "EventGraph", comment, ids)
+e = vibeue.exec_tool(DSL, "Edit", {
+        "assetPath": BP,
+        "edits": [{"oldString": '"above ground"', "newString": '"clear"'}],
+        "revision": rev,
+        "scope": "EventGraph"})
+rev = e["revision"]
 ```
 
-Both functions return the new comment node's `node_id` (a GUID string), or `""` on failure. Colour parameters are RGBA in 0–1 range; the default is the standard pale yellow. Unknown `node_ids` passed to `add_comment_around_nodes()` are skipped with a warning — if *all* IDs are invalid, the call returns `""`.
+`Edit` fails — leaving the asset unchanged — when there is no matching session, when the `Revision`
+is stale, when an `oldString` is absent or non-unique (unless `bReplaceAll`), or when the result does
+not parse. On a stale-revision failure, `Read` again and rebuild the edit against the fresh text;
+do not retry the same token.
 
-Standard editor behaviour applies: any K2 nodes whose bounds fall inside the comment box get picked up and dragged with it (GroupMovement mode).
-
-### ⚠️ Branch Node Pin Names
-
-Use **`then`** and **`else`**, NOT `true`/`false`:
+### Delete an entry
 
 ```python
-# WRONG
-connect_nodes(path, func, branch_id, "true", target_id, "execute")
-
-# CORRECT
-connect_nodes(path, func, branch_id, "then", target_id, "execute")
-connect_nodes(path, func, branch_id, "else", target_id, "execute")
+vibeue.exec_tool(DSL, "Write",
+                 {"assetPath": BP, "dsl": "(event `OldHandler` :!delete)", "scope": "EventGraph"})
 ```
 
-### ⚠️ UE5.7 Uses Doubles for Math
+### Comparing two Blueprints
 
-| WRONG | CORRECT |
-|-------|---------|
+`Diff(OldAssetPath, NewAssetPath)` returns a line diff of two Blueprints' graphs as DSL plus their
+class defaults, empty when they match. That is the cheap way to answer "what changed between these
+two Blueprints" without reading both documents.
+
+---
+
+## When to reach for `BlueprintToolset` instead
+
+The DSL rewrites whole entries. Use `BlueprintToolsets.BlueprintToolset` when the change is smaller
+than an entry, or when it is not representable as graph text at all:
+
+| Situation | Tool |
+|---|---|
+| Nudge one node, or fix a layout the DSL does not own | `SetNodePosition`, `ArrangeNodes`, `ArrangeGraphLayered` |
+| One pin's literal value | `SetPinValue` / `GetPinValue` |
+| One wire | `ConnectPins` / `DisconnectPins` |
+| Inspect without a full document read | `ListGraphs`, `GetGraph`, `FindNodes`, `GetNodeInfos`, `GetConnectedSubgraph`, `GetNodeTypePins` |
+| Discover what can be placed | `FindNodeTypes`, `FindNodeCategories` (palette **type ids**, `Category\|Name`) |
+| Comment boxes | `AddCommentBox`, `ListCommentBoxes`, `Get`/`SetCommentBoxText`, `GetNodesInCommentBox`, `RemoveCommentBox` |
+| Node note bubbles | `GetNodeNote`, `SetNodeNote`, `IsNodeNotePinned`, `SetNodeNotePinned` |
+| Variables, their flags, categories, tooltips | `AddVariable` / `AddObjectVariable` / `AddStructVariable`, `ListVariables`, `Set*` |
+| Function graphs and their params | `AddFunctionGraph`, `AddFunctionParam`, `Get`/`SetFunctionFlags` |
+| Events, dispatchers, component-bound events, delegates | `AddEvent`, `ListEvents`, `AddEventDispatcher`, `AddComponentBoundEvent`, `AddMatchingDelegateEvent`/`Function`, `ListCompatibleEventFunctions` |
+| Retype a node's class in place | `RetargetNodeClass` |
+| Add/remove a dynamic pin (Switch, Sequence, Make Array, commutative Add) | `AddNodePin`, `RemoveNodePin` |
+| Compile | `CompileBlueprint` (`bWarningsAsErrors` optional) |
+| Collapsed graphs you do not want flattened | `BlueprintToolset` — a DSL `Write` that changes a collapsed graph's entry **permanently replaces the collapsed node with flat nodes** |
+
+Two different naming systems, do not swap them:
+
+- `BlueprintToolset` **type ids** are palette paths: `Development|PrintString`,
+  `Utilities|Operators|Add`, `Utilities|FlowControl|ForLoop`, `AddEvent|EventBeginPlay`,
+  `AddEvent|Custom|MyEvent`, `Default|EventDispatcherOnDamaged`, `|CallParentFunction`. Get them
+  from `FindNodeTypes`.
+- DSL **references** are `Owner.Member` (`KismetSystemLibrary.PrintString`, `self.UpdateScore`,
+  `parent.ReceiveBeginPlay`) plus a few `|` built-ins (`|MakeArray`, `|FormatText`,
+  `|CreateDelegate`, `Timeline|Name`, `AddComponent|Name`, `Key|F5`). Get them from
+  `FindNodeReferences`. **Palette type ids are not DSL call heads.**
+
+### Pin-name rules (still true, and they apply to `ConnectPins` / `SetPinValue`)
+
+| Node | Pins |
+|---|---|
+| Branch | exec out is **`then`** and **`else`** — never `true`/`false`; condition pin is `Condition` |
+| Any exec node | exec in is `execute`, exec out is `then` |
+| Function Result | `execute` plus one pin per output |
+| Validated Get | `execute`, `then` (valid), `else` (invalid), data pin named after the variable |
+| Custom Event | `OutputDelegate`, `then`, plus one output per parameter |
+| `K2Node_AddDelegate` (bind) | `execute`, `then`, `self` (target), `Delegate` (input) |
+| Timeline node | exec in `Play`, `PlayFromStart`, `Stop`, `Reverse`, `ReverseFromEnd`, `SetNewTime` (+ `NewTime`); exec out `Update`, `Finished` + one per event track; data out `Direction` + one per float/vector/color track |
+| Set Timer by Event (`KismetSystemLibrary.K2_SetTimerDelegate`) | `execute`, `Delegate`, `Time`, `bLooping`, `bMaxOncePerFrame` |
+
+**Epic's toolset identifies a node by its object handle, not by a GUID string.** `FindNodes` returns
+`UEdGraphNode` handles and `GetNodeInfos` returns `FBlueprintNodeInfo` — `TypeId` (`Category|Title`),
+`Node` (the handle), `Position`, `InputPins`, `OutputPins`. There is no `node_id` field: chain the
+handle a previous call returned into the next call. A node **GUID** string only turns up in VibeUE's
+`analyze_graph_layout` report (`nodes[].id`); to act on one of those, find the node by title with
+`FindNodes(graph, title)` and use the handle. Read the real pin list (`GetNodeTypePins`, or `Schema`
+on the DSL side) rather than guessing pin names.
+
+### ⚠️ The Result node's `execute` pin must be wired
+
+Compile warning **`ReturnNode Exec pin has no connections`** means execution never reaches the Return
+node, so the function's **output parameters are never set** — callers always get defaults. The
+function is broken even though the compile "succeeded". In the DSL this is a `(return value ...)`
+statement on the live exec path; with `BlueprintToolset` it is an `Entry.then → … → Result.execute`
+chain. For a compute-only function, wire the entry **directly** to the result; connecting only the
+data pin is not enough. Never report success with a `ReturnNode` warning outstanding. (If the
+function has no side effects, making it pure is the cleaner fix.)
+
+### ⚠️ Compile after a structural change, before reading the new shape
+
+A variable must exist on the compiled **skeleton** class before a getter/setter can resolve it, and
+an added function/dispatcher/interface is only fully real after a compile. Order is:
+add structure → `BlueprintToolset.CompileBlueprint` → author the graph → compile → save. Never save
+on `BS_ERROR`.
+
+### ⚠️ Event-style overrides live in `"EventGraph"` — not in a graph named after the function
+
+Void/latent overrides (`ReceiveTick`, `ReceiveLatentEnterState`, `ReceiveStateCompleted`,
+`ReceiveTreeStart`…) are **event nodes in the ubergraph**. There is no graph of that name, so a scope
+of `ReceiveTreeStart` selects nothing and a `GetGraph` for it returns nothing. Only value-returning
+overrides (`GetStaticDescription`…) get their own function graph.
+
+| Raw function name | Scope / graph | Title in the graph |
+|---|---|---|
+| `ReceiveTreeStart` | `EventGraph` | `Event TreeStart` |
+| `ReceiveTick` | `EventGraph` | `Event Tick` |
+| `ReceiveTreeStop` | `EventGraph` | `Event TreeStop` |
+| `ReceiveLatentEnterState` | `EventGraph` | `Event EnterState` |
+| `ReceiveLatentTick` | `EventGraph` | `Event Tick` |
+| `ReceiveStateCompleted` | `EventGraph` | `Event StateCompleted` |
+
+In the DSL the entry is `` (event `self.ReceiveLatentEnterState` …) `` — the member reference, inside
+the ubergraph scope. `BlueprintToolset.AddEvent(bp, "ReceiveLatentEnterState", pos)` is the
+imperative equivalent and is idempotent: naming an inherited member *is* taking the override.
+
+### ⚠️ Do not guess function or node names
+
+Blueprint display titles and internal `UFunction` names routinely differ (`Get Actor Location` is
+`K2_GetActorLocation`; `VInterp To` is `VInterpTo`). Resolve the name before you write it:
+`FindNodeReferences` for a DSL reference, `FindNodeTypes` for a palette type id. If a lookup comes
+back empty, make the search term **more** specific rather than raising the result cap.
+
+### ⚠️ UE uses doubles for Blueprint math
+
+| Wrong | Right |
+|---|---|
 | `Greater_FloatFloat` | `Greater_DoubleDouble` |
 | `Add_FloatFloat` | `Add_DoubleDouble` |
 | `MakeLiteralFloat` | `MakeLiteralDouble` |
 
-The editor still *displays* "Make Literal Float", but its spawner is `FUNC KismetSystemLibrary::MakeLiteralDouble`. A `build_graph` `function_call` node (or engine `create_node`) targeting `"KismetSystemLibrary", "MakeLiteralFloat"` resolves to nothing silently — use `MakeLiteralDouble`, or `discover_nodes(bp, "Make Literal Float")` and spawn via the returned `spawner_key`.
+`UKismetSystemLibrary::MakeLiteralFloat` is `UE_DEPRECATED(5.1)` and is not a `UFUNCTION` at all;
+`MakeLiteralDouble` carries `DisplayName = "Make Literal Float"`, which is why the editor still shows
+the old label. A reference to `KismetSystemLibrary.MakeLiteralFloat` resolves to nothing. In the DSL
+you rarely need these by name — `(> a b)`, `(+ a b)` and a bare literal resolve the operator from the
+wired operands — but a member call must use the real name.
 
-### ⚠️ Compile Before Using Variables in Nodes
+### 💬 Comment boxes — write *informative* text
 
-The variable must exist on the compiled skeleton class before a getter/setter can resolve it.
-Add the variable and compile through the engine `BlueprintTools` toolset, then create the
-`variable_get` node (here via `build_graph`):
+`BlueprintToolset.AddCommentBox` (and the DSL's comment-box headers, which cover the next contiguous
+statement run) are documentation that lives next to the code. A future reader should learn **what
+this group accomplishes and why** without re-reading every pin.
 
-```python
-# Engine basics go through call_tool / BlueprintTools
-call_tool(tool_name="add_variable",
-          toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
-          arguments={"blueprint": path, "name": "Health", "type": "float", "default": "100.0"})
-call_tool(tool_name="compile_blueprint",
-          toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
-          arguments={"blueprint": path})  # REQUIRED before adding nodes
+**Good:** `"Pick a random patrol point and cache its world location for the Move To task"`,
+`"On Damage > 0: play hit reaction, flash material, decrement Health"`,
+`"Debounce input — ignore re-presses within 0.25s of the last fire"`.
 
-# Now the getter resolves — VibeUE build_graph
-unreal.BlueprintService.build_graph(path, func,
-    [{"ref": "GetHP", "type": "variable_get", "params": {"variable": "Health"}}],
-    [], [], True, True)
-```
+**Bad:** `"Print String"` (just the node name), `"Logic"` / `"Stuff"` / `"TODO"` (says nothing),
+`"Branch + Set Variable"` (mechanical, not intent), or the user's verbatim request like
+`"add a comment around the nodes"` (that's the task, not the meaning).
 
-### ⚠️ Verify Pins Immediately After Adding Variable Get/Set Nodes
+Derive the text from the nodes — the event, the variables read/written, the functions called —
+before you place the box. Use `\n` when the group's flow is worth narrating. `AddCommentBox` picks up
+and drags any K2 nodes whose bounds fall inside it, exactly like the editor's `C` shortcut.
 
-A variable Get/Set node can occasionally be created with **zero pins** (the variable property
-failed to resolve on the skeleton class at spawn time). The create call still returns a GUID, so
-you won't notice until every `connect_nodes` against it returns `False`. After creating a
-variable node, check its pins before wiring anything (create it via `build_graph`'s
-`variable_get`; `ref_to_node_id` maps your ref back to the GUID):
+### ⚠️ Verification is mandatory before claiming success
 
-```python
-r = unreal.BlueprintService.build_graph(bp_path, graph,
-    [{"ref": "Get", "type": "variable_get", "params": {"variable": "Armor"}}],
-    [], [], False, False)
-gid = r.ref_to_node_id["Get"]
-pins = unreal.BlueprintService.get_node_pins(bp_path, graph, gid)
-if not pins:  # corrupt node — recover
-    unreal.BlueprintService.delete_node(bp_path, graph, gid)
-    call_tool(tool_name="compile_blueprint",
-              toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
-              arguments={"blueprint": bp_path})
-    r = unreal.BlueprintService.build_graph(bp_path, graph,
-        [{"ref": "Get", "type": "variable_get", "params": {"variable": "Armor"}}],
-        [], [], False, False)
-    gid = r.ref_to_node_id["Get"]
-    assert unreal.BlueprintService.get_node_pins(bp_path, graph, gid)
-```
+After any graph edit, prove it from live data:
 
-Recovery notes:
-- `delete_node` can return `False` here — confirm with a fresh `get_nodes_in_graph()` and don't
-  leave a stray pin-less duplicate behind (two nodes with the same title, one never connected).
-- Compiling between delete and re-add refreshes the skeleton class so the retry resolves.
-- This is another reason to create **one node at a time** instead of batching 4–6 creates in one call.
+1. **Shape** — `BlueprintDslToolset.Read` the scope back and check the statements and wires you
+   intended are in the canonical text (wires are explicit in the DSL). Or `FindNodes` +
+   `GetNodeInfos` for a per-node check.
+2. **Pins** — if something did not connect, read the real pin list (`GetNodeTypePins`, `Schema`) and
+   use the actual names.
+3. **Compile** — `BlueprintToolset.CompileBlueprint` and read the result. Treat a `ReturnNode`
+   warning as a bug, not a nit.
+4. **Layout** — `unreal.BlueprintService.analyze_graph_layout` and confirm `issues` is empty.
 
-### ⚠️ The Result Node's `execute` Pin MUST Be Wired — the Warning Is Not Minor
+Never print `MODIFIED` or describe a graph as complete until the expected statements are present and
+the compile is clean. Never treat compile success alone as proof the graph matches the request.
 
-Compile warning **`ReturnNode Exec pin has no connections`** means the execution chain never
-reaches the Return Node, so the function's **output parameters are never set** — callers always
-get default values. The function is broken even though `compile.success` is `True`.
+---
 
-Every non-pure function needs an exec path `Entry.then → ... → Result.execute`. For a
-"compute-only" function (e.g. read a variable, compare, return bool), wire the entry **directly**
-to the result — connecting only the data pin is not enough:
+## VibeUE's surviving graph tools
 
-```python
-# CheckDeath: IsDead = (Health <= 0)
-connect_nodes(bp, "CheckDeath", entry_id, "then", result_id, "execute")        # exec — REQUIRED
-connect_nodes(bp, "CheckDeath", lessequal_id, "ReturnValue", result_id, "IsDead")  # data
-```
+All 19 are `unreal.BlueprintService.<snake_name>()` from inside `execute_python`. Sixteen are
+Timelines; the other three are below. **Nothing in Epic's toolsets replaces any of them.**
 
-Do not dismiss this warning in your summary or claim the function "works". Treat any
-`ReturnNode` compile warning as a wiring bug and fix it before reporting success. (If the
-function has no side effects, the cleaner fix is making it **pure**, but wiring the exec chain is
-the minimal correct repair.)
+### `create_macro_graph(blueprint_path, macro_name)` → bool
 
-### ⚠️ Node IDs Are GUID Strings, Not Small Integers
+Adds a macro graph to a Blueprint, typically a Macro Library. It survives because **the engine has
+no path to it**: `BlueprintToolset.AddFunctionGraph` makes *function* graphs (and adding one to a
+Macro Library asserts in the K2 schema), and `BlueprintDslToolset` **refuses a macro library
+outright** — "macro graphs have no Graph DSL representation"
+(`BlueprintDslDomain.cpp:51-55`). The DSL can place a macro *instance* but cannot author a macro.
 
-Do **not** assume Blueprint nodes have numeric IDs like `0` or `1`.
-`get_nodes_in_graph()` returns **GUID strings** in `node.node_id`.
-
-```python
-nodes = unreal.BlueprintService.get_nodes_in_graph(bp_path, graph)
-for node in nodes:
-    print(node.node_id, node.node_title)
-```
-
-For function graphs, find nodes by `node_type` or `node_title`.
-For event-style overrides, find nodes by the **display title Unreal shows in the graph**, not by the raw override function name.
-
-### ⚠️ Event-Style Overrides Use `"EventGraph"` — NOT the Function Name
-
-When an override is **event-style** (void/latent functions like `ReceiveTreeStart`, `ReceiveTick`,
-`ReceiveLatentEnterState`, `ReceiveStateCompleted`), the event node lives inside `"EventGraph"`.
-Do **NOT** use the function name as the graph name — that graph doesn't exist.
-
-```python
-# WRONG — returns 0 nodes, creates nothing
-nodes = unreal.BlueprintService.get_nodes_in_graph(bp_path, "ReceiveTreeStart")
-# ...and creating into "ReceiveTreeStart" (build_graph or create_node) goes nowhere
-
-# CORRECT — event-style overrides are in EventGraph
-nodes = unreal.BlueprintService.get_nodes_in_graph(bp_path, "EventGraph")
-unreal.BlueprintService.build_graph(bp_path, "EventGraph",
-    [{"ref": "Call", "type": "function_call",
-      "params": {"class": "KismetSystemLibrary", "function": "PrintString"}}],
-    [], [], True, True)
-```
-
-Common event-style overrides and their **graph name → node title**:
-
-| Raw Function Name | Graph Name | Node Title in Graph |
-|---|---|---|
-| `ReceiveTreeStart` | `"EventGraph"` | `Event TreeStart` |
-| `ReceiveTick` | `"EventGraph"` | `Event Tick` |
-| `ReceiveTreeStop` | `"EventGraph"` | `Event TreeStop` |
-| `ReceiveLatentEnterState` | `"EventGraph"` | `Event EnterState` |
-| `ReceiveLatentTick` | `"EventGraph"` | `Event Tick` |
-| `ReceiveStateCompleted` | `"EventGraph"` | `Event StateCompleted` |
-
-Only **function-style** overrides (non-void, like `GetStaticDescription`) create a separate function graph.
-
-### ⚠️ Do Not Guess Blueprint Function Node Names
-
-Blueprint display titles and internal UFunction names are often **not the same**.
-
-Common examples:
-
-| Display title in graph | Internal callable name may be |
-|---|---|
-| `Get Actor Location` | `K2_GetActorLocation` |
-| `Set Actor Location` | `K2_SetActorLocation` |
-| `VInterp To` | `VInterpTo` |
-
-If you do not already know the exact callable name, do **not** guess and do **not** batch multiple node creations into one shot. Use one of these two patterns:
-
-1. `discover_nodes()` + `create_node_by_key()` for deterministic editor-style creation.
-2. A `build_graph` `function_call` node (or engine `BlueprintTools.create_node`) only after discovery, or when you already know the exact function name.
+Idempotent — returns `True` if the macro already exists.
 
 ```python
 import unreal
 
-bp_path = "/Game/StateTree/Tasks/STT_Chase"
-graph = "EventGraph"
+# The library asset itself is a factory call (BlueprintMacroFactory, NOT BlueprintFactory):
+f = unreal.BlueprintMacroFactory()
+f.set_editor_property("parent_class", unreal.Actor.static_class())
+unreal.AssetToolsHelpers.get_asset_tools().create_asset("ML_Doors", "/Game/Macros", unreal.Blueprint, f)
 
-matches = unreal.BlueprintService.discover_nodes(bp_path, "Get Actor Location")
-actor_get_location = next(
-    node for node in matches
-    if node.spawner_key.startswith("FUNC AActor::") or node.spawner_key.startswith("FUNC Actor::")
-)
-
-node_id = unreal.BlueprintService.create_node_by_key(
-    bp_path, graph, actor_get_location.spawner_key, 400, 0)
-assert node_id, actor_get_location.spawner_key
+# The macro graph inside it — this is the VibeUE tool.
+unreal.BlueprintService.create_macro_graph("/Game/Macros/ML_Doors", "SwingOpen")
 ```
 
-If a node-create call returns an empty ID, stop immediately. Re-read the graph, inspect the error output, and fix the lookup before creating anything else.
+Place an instance from the DSL by **owner reference** — the library asset path, dot, the macro name
+— the same shape the engine's own StandardMacros use:
 
-#### Variable get/set keys: own variables, and the qualified form
+```
+(`/Game/Macros/ML_Doors.SwingOpen` door)
+(`/Engine/EditorBlueprintResources/StandardMacros.Gate` :!via `Open` :!label _gate)
+(`self.MyLocalMacro`)
+```
 
-`SPAWN K2Node_VariableGet|<MenuName>` (and `...VariableSet`) binds a variable the Blueprint **owns** —
-one of its own variables, an inherited one, or an SCS component. A variable you just added with
-`add_member_variable()` works immediately; the action database has no spawner for it yet, so the
-service binds it as a self member directly. Menu names use the variable's *display* spelling, and a
-bool drops its `b` prefix: `bIsOpen` is `"Get Is Open"` (the raw `"Get bIsOpen"` is accepted too).
+Standard macros (`ForEachLoop`, `ForLoop`, `WhileLoop`, `DoOnce`, `DoN`, `Gate`, `IsValid`,
+`FlipFlop`, `MultiGate`…) need no macro authoring at all — write `(for …)` / `(while …)` /
+`(if …)` where the grammar has a statement for it, reference
+`/Engine/EditorBlueprintResources/StandardMacros.<Name>` where it does not, or place one with
+`BlueprintToolset.CreateNode` and the palette type id (`Utilities|FlowControl|ForLoop`). `IsValid`
+is one node with both `Is Valid` and `Is Not Valid` exec outputs; there is no separate
+`IsNotValid` macro.
 
-A variable owned by an **unrelated** class is refused, because binding one silently produces a node
-that fails to compile with "uses an invalid target". When you deliberately want another class's
-property wired through the node's Target pin, qualify the key with its owning class:
+### `analyze_graph_layout(blueprint_path, graph_name)` → (report_json, error)
+
+Measures a graph's current layout **without changing it**. Epic's layout tools only *write* a
+layout; nothing there reads one back, which is why this is still VibeUE's. The bool return is folded
+away by UE Python, so the two out-strings come back as a tuple.
 
 ```python
-# Refused — ACharacter is not in this Actor Blueprint's hierarchy:
-unreal.BlueprintService.create_node_by_key(bp, "EventGraph", "SPAWN K2Node_VariableGet|Get Jump Max Count", 0, 0)   # -> ""
-
-# Deliberate cross-class read, wired through the Target pin:
-unreal.BlueprintService.create_node_by_key(
-    bp, "EventGraph", "SPAWN K2Node_VariableGet|Get Jump Max Count|Character", 0, 0)                                # -> node id
+import json, unreal
+report, err = unreal.BlueprintService.analyze_graph_layout("/Game/BP/BP_Door", "EventGraph")
+data = json.loads(report)
+if data["issues"]:
+    print(data["issues"])   # e.g. ["2 overlapping node pair(s)", "1 backward exec wire(s) — ..."]
 ```
 
-Format: `SPAWN <NodeClass>|<MenuName>|<OwnerClass>`. If the named class is one the Blueprint already
-derives from, the node is bound as a self member instead (no redundant Target pin).
+The intended loop: author or arrange (`BlueprintDslToolset.Write`, or
+`BlueprintToolset.ArrangeGraphLayered`) → `analyze_graph_layout` → fix the offenders
+(`BlueprintToolset.ArrangeNodes` on just those nodes, or `SetNodePosition`) → re-check. Don't
+hand-place coordinates first. Details and metric meanings: `node-layout.md`.
 
-### ⚠️ Standard Macro nodes (ForEachLoop, etc.) — do NOT use `create_node_by_key`
+### `refresh_blueprint_editor(blueprint_path)` → bool
 
-Macro instances (`K2Node_MacroInstance`) have **no spawner key**, so `discover_nodes()` won't find them and `create_node_by_key()` **fails silently** (returns empty, no error). Use the dedicated method instead:
+Forces the open Blueprint editor to re-run the construction script in its SCS viewport and redraw its
+graphs. Use it after authoring changes the open editor does not reflect live. Returns `False` when no
+editor is open for that Blueprint — which is not an error, there is simply nothing to refresh; the
+on-disk asset is already current.
 
-```python
-import unreal
-node_id = unreal.BlueprintService.add_macro_instance_node(bp_path, graph, "ForEachLoop", x, y)
-```
+### Timelines (16 tools)
 
-Supported shorthands:
+A Timeline is a `UK2Node_Timeline` node **plus** a `UTimelineTemplate` on the Blueprint, and no
+engine tool touches a `UTimelineTemplate`. The full CRUD — `add_timeline`, `modify_timeline`,
+`remove_timeline`, `get_timelines`, the four `add_timeline_*_track`, the four `add_timeline_*_key`,
+`remove_timeline_key`, `remove_timeline_track`, `rename_timeline_track`,
+`clear_timeline_track_keys` — is documented with signatures, pin names and sentinels in
+**`node-reference.md`**.
 
-| Shorthand | Engine macro graph |
+Settings on the spawned `UTimelineComponent` are ordinary properties:
+`EditorToolset.ObjectToolset.SetProperties`.
+
+---
+
+## Migration table — removed VibeUE tool → replacement
+
+| Removed | Replacement |
 |---|---|
-| `ForEachLoop` | StandardMacros:ForEachLoop |
-| `ForEachLoopWithBreak` | StandardMacros:ForEachLoopWithBreak |
-| `ReverseForEachLoop` | StandardMacros:ReverseForEachLoop |
-| `ForLoop` | StandardMacros:ForLoop |
-| `ForLoopWithBreak` | StandardMacros:ForLoopWithBreak |
-| `WhileLoop` | StandardMacros:WhileLoop |
-| `IsValid` | StandardMacros:IsValid |
-| `Gate` | StandardMacros:Gate |
-| `DoOnce` | StandardMacros:DoOnce |
-| `DoN` | StandardMacros:Do N |
-| `FlipFlop` | StandardMacros:FlipFlop |
-
-A full `AssetPath:GraphName` string is also accepted for user-defined macro libraries (e.g. `/Game/Macros/ML_X.ML_X:MyMacro`).
-
-Notes:
-- `IsValid` places **one** node exposing both `Is Valid` and `Is Not Valid` exec outputs — there is no separate `IsNotValid` macro.
-- `MultiGate` is `K2Node_MultiGate` (a distinct node type), not a StandardMacro — it is not in this list.
-- To create a macro graph on a `MacroLibrary` Blueprint, use `create_macro_graph(lib_path, "MacroName")` (the engine `BlueprintTools.add_function_graph` path asserts on MacroLibrary BPs). To create the **library asset** itself from Python (issue #449):
-  ```python
-  f = unreal.BlueprintMacroFactory()   # NOT BlueprintFactory
-  unreal.AssetToolsHelpers.get_asset_tools().create_asset("ML_X", "/Game/Macros", unreal.Blueprint, f)
-  unreal.BlueprintService.create_macro_graph("/Game/Macros/ML_X", "MyMacro")
-  # reference it from a graph: add_macro_instance_node(bp, graph, "/Game/Macros/ML_X.ML_X:MyMacro", x, y)
-  ```
-
-### 🔎 Calling a function (self / parent / library) — discover the spawner key (#449)
-
-`build_graph`'s `function_call` works for library statics, but the **most reliable** way to add a
-call to a **self** function, a **parent-class** function (Character/Pawn/Actor…), or any discoverable
-function is `discover_nodes` → `create_node_by_key`:
-
-```python
-# Find the function — self functions show category "Self Functions"; parents show "FUNC Parent::Func"
-hits = unreal.BlueprintService.discover_nodes(bp, "Jump")        # search_term (NOT a graph name)
-key  = hits[0].spawner_key                                       # e.g. "FUNC Character::Jump"
-node = unreal.BlueprintService.create_node_by_key(bp, "EventGraph", key, 400, 200)
-```
-
-`discover_nodes(blueprint_path, search_term, category="", max_results=20)` surfaces the blueprint's
-OWN functions (your custom functions, callable on self) plus the full parent hierarchy and library
-functions. The returned `spawner_key` (`"FUNC <Class>::<Func>"`) feeds straight into
-`create_node_by_key` — this is how you add a **self-call** node deterministically.
-
-> ⚠️ **Leave `category` empty unless you are echoing a category you saw in a result.** It is a
-> substring match against the node's *menu* category, which is `"Self Functions"`, `"Parent: Actor"`,
-> or the editor's own menu path — **not** a topic word. Passing something reasonable-looking like
-> `"Math"` silently filters out everything and returns zero results, which looks identical to "no
-> such node exists". Search first with `category=""`, then read `.category` off the hits.
-
-> ⚠️ **Search the exact display name, not a fragment.** Results fill in order (self → parents →
-> action database) and stop at `max_results`, so a short common fragment gets crowded out before the
-> node you want is reached. `discover_nodes(bp, "Sin", "", 500)` returns 500 rows and **none** of
-> them is `Sin (Radians)`; `discover_nodes(bp, "Sin (Radians)", "", 20)` finds it immediately as
-> `FUNC KismetMathLibrary::Sin`. If a search comes back without an obvious node, make the term
-> **more** specific rather than raising the cap.
-
-#### Full node coverage — every action-menu node, not just functions/events
-
-`discover_nodes` enumerates the **entire** Blueprint action database, so it also returns template/custom
-K2 nodes and variable get/set on other classes — e.g. **Get Subsystem** (`Get EnhancedInputLocalPlayerSubsystem`,
-`Get GameInstanceSubsystem`, …), **Cast To** nodes, etc. These come back with a faithful
-**`SPAWN <NodeClass>|<MenuName>`** key:
-
-```python
-# Get Enhanced Input Local Player Subsystem, fully bound (ReturnValue typed to the subsystem)
-hits = unreal.BlueprintService.discover_nodes(bp, "EnhancedInputLocalPlayerSubsystem", "", 100)
-key  = next(h.spawner_key for h in hits if h.node_class == "K2Node_GetSubsystem")
-nid  = unreal.BlueprintService.create_node_by_key(bp, "EventGraph", key, 0, 0)
-```
-
-`create_node_by_key` resolves a `SPAWN` key back to the exact action-database spawner and **invokes**
-it — the same path the editor's Add-Node menu uses — so the node is created fully bound (Get Subsystem's
-`CustomClass`, a variable's member reference, …), not as a blank node.
-
-> **Search specifically.** Node menu names are **spaceless** (`EnhancedInputLocalPlayerSubsystem`, not
-> "Enhanced Input …"), and a broad term like `"Subsystem"` matches hundreds of function nodes that can
-> crowd out the template nodes under `max_results`. Search the exact spaceless name (or raise
-> `max_results`) and filter by `node_class` (`K2Node_GetSubsystem`, `K2Node_GetSubsystemFromPC`,
-> `K2Node_GetEngineSubsystem`, `K2Node_GetEditorSubsystem`).
-
-### ⚠️ Complex Graphs: Create and Verify One Node at a Time
-
-For fragile graph work such as `STT_*` task Blueprints, timers, delegate workflows, or any graph being built from a screenshot:
-
-1. Create **one** node.
-2. Re-read the graph and confirm the returned GUID exists.
-3. Read that node's pins.
-4. Only then create the next node.
-5. After all required nodes exist, connect **one** edge at a time and verify the new connection appears in `get_connections()`.
-
-Do **not** create 4-6 nodes in one tool call when some of them have unresolved function names. That makes cleanup harder and leaves duplicate nodes behind on retry.
-
-### ⚠️ Recovery After a Failed Graph Attempt
-
-If a graph-edit attempt fails partway through:
-
-1. Call `get_nodes_in_graph()` and `get_connections()` to see the true post-failure state.
-2. Remove orphaned nodes with `delete_node()`.
-3. Remove stale links with `disconnect_pin()`.
-4. Retry from a clean baseline.
-
-Do **not** invent helper names like `disconnect_all_pins()`. Use the real APIs that exist.
-
-Examples for StateTree task blueprints:
-
-| Override created | Typical graph title |
-|---|---|
-| `ReceiveLatentEnterState` | `Event EnterState` |
-| `ReceiveLatentTick` | `Event Tick` |
-| `ReceiveStateCompleted` | `Event StateCompleted` |
-
-### ⚠️ Delay vs Set Timer by Event
-
-When a user asks for a "timer" or "timed delay" in a Blueprint, **use `Set Timer by Event`**, NOT `Delay`:
-
-| Node | Behavior | Use When |
-|------|----------|----------|
-| `Delay` | **Latent action** — blocks execution flow on that path | Simple linear sequences where nothing else runs during the wait |
-| `Set Timer by Event` | **Non-blocking** — fires a delegate callback after the duration | The Blueprint must keep ticking/running during the wait (e.g. State Tree tasks that rotate while waiting, animation tasks, any gameplay that shouldn't freeze) |
-
-The pattern for `Set Timer by Event` requires a **Custom Event**:
-
-Important: after `add_custom_event_node(...)`, immediately re-read the graph and re-find that callback by the returned `node_id`. Do **not** assume the title will be exactly the event name you passed in. Unreal can display custom event titles as multi-line labels such as `OnTimerFinished` + `Custom Event`.
-
-Do **not** silently substitute a `Create Event` / `Create Delegate` node plus a separate function graph when the user asked for a `Custom Event` node or when the target graph should visibly contain the callback in `EventGraph`. A `Create Event` delegate can compile and still be the wrong implementation for the requested graph shape.
-
-```python
-import unreal
-
-bp_path = "/Game/MyBlueprint"
-graph = "EventGraph"
-
-# 1. Add Set Timer by Event node (build_graph function_call; ref_to_node_id gives the GUID)
-r = unreal.BlueprintService.build_graph(bp_path, graph,
-    [{"ref": "Timer", "type": "function_call",
-      "params": {"class": "KismetSystemLibrary", "function": "K2_SetTimerDelegate"}}],
-    [], [], False, False)
-timer_id = r.ref_to_node_id["Timer"]
-
-# 2. Set the Time pin
-unreal.BlueprintService.set_node_pin_value(bp_path, graph, timer_id, "Time", "1.0")
-
-# 3. Add a Custom Event node — this is the callback
-custom_event_id = unreal.BlueprintService.add_custom_event_node(
-    bp_path, graph, "OnTimerFinished", 300, 300)
-
-# 4. Connect the Custom Event's delegate output to the timer's Delegate pin
-unreal.BlueprintService.connect_nodes(
-    bp_path, graph, custom_event_id, "OutputDelegate",
-    timer_id, "Delegate")
-
-# 5. Wire: EnterState → Set Timer by Event
-unreal.BlueprintService.connect_nodes(
-    bp_path, graph, enter_state_id, "then", timer_id, "execute")
-
-# 6. Wire: Custom Event → Finish Task (or whatever follows)
-unreal.BlueprintService.connect_nodes(
-    bp_path, graph, custom_event_id, "then", finish_id, "execute")
-```
-
-### ⚠️ StateTree Task Timer Workflow: Always Discover Real Titles and Pins First
-
-For `STT_*` Blueprint tasks, do **not** guess event titles or pin names. The stable pattern is:
-
-1. `override_function(bp, "ReceiveLatentEnterState")`
-2. `get_nodes_in_graph(bp, "EventGraph")` and locate the event by title `Event EnterState`
-3. After `add_custom_event_node(...)`, call `get_nodes_in_graph()` again and re-find the callback by the returned GUID
-4. Treat the callback title as display-only evidence; custom event titles can be multi-line and should not be your primary lookup key
-5. `get_node_pins()` on every newly created node
-6. Wire using the **actual pin names returned by the graph**
-
-Current UE 5.7 / VibeUE graph details for this workflow:
-
-| Node | Pin to use |
-|---|---|
-| `Event EnterState` | `then` |
-| `Custom Event` | `OutputDelegate`, `then` |
-| `Set Timer by Event` | `execute`, `Delegate`, `Time`, `bLooping`, `bMaxOncePerFrame` |
-| `Finish Task` | `execute`, `bSucceeded` |
-
-Success for this workflow also requires the callback node in `EventGraph` to be a real custom event node, typically `K2Node_CustomEvent` in a fresh node listing. `K2Node_CreateDelegate` is a different node type and should not be treated as equivalent when the requested outcome is a visible custom event callback in the graph.
-
-```python
-import unreal
-
-bp_path = "/Game/StateTree/STT_Rotate"
-graph = "EventGraph"
-
-unreal.BlueprintService.override_function(bp_path, "ReceiveLatentEnterState")
-
-# Timer + Finish Task are function_call nodes — create them via build_graph;
-# the Custom Event callback uses the surviving add_custom_event_node.
-r = unreal.BlueprintService.build_graph(bp_path, graph,
-    [{"ref": "Timer", "type": "function_call",
-      "params": {"class": "KismetSystemLibrary", "function": "K2_SetTimerDelegate"}},
-     {"ref": "Finish", "type": "function_call",
-      "params": {"class": "StateTreeTaskBlueprintBase", "function": "FinishTask"}}],
-    [], [], False, False)
-timer_id = r.ref_to_node_id["Timer"]
-finish_id = r.ref_to_node_id["Finish"]
-custom_id = unreal.BlueprintService.add_custom_event_node(
-    bp_path, graph, "OnTimerFinished", 0, 420)
-
-nodes = unreal.BlueprintService.get_nodes_in_graph(bp_path, graph)
-enter_node = next((n for n in nodes if n.node_title == "Event EnterState"), None)
-custom_node = next((n for n in nodes if n.node_id == custom_id), None)
-assert enter_node, "Event EnterState not found"
-assert custom_node, f"Custom event {custom_id} not found after create"
-
-custom_pins = unreal.BlueprintService.get_node_pins(bp_path, graph, custom_node.node_id)
-print("CUSTOM EVENT TITLE:", custom_node.node_title)
-print("CUSTOM EVENT PINS:", [p.pin_name for p in custom_pins])
-
-unreal.BlueprintService.set_node_pin_value(bp_path, graph, timer_id, "Time", "1.0")
-unreal.BlueprintService.set_node_pin_value(bp_path, graph, timer_id, "bLooping", "false")
-unreal.BlueprintService.set_node_pin_value(bp_path, graph, finish_id, "bSucceeded", "true")
-
-assert unreal.BlueprintService.connect_nodes(bp_path, graph, enter_node.node_id, "then", timer_id, "execute")
-assert unreal.BlueprintService.connect_nodes(bp_path, graph, custom_node.node_id, "OutputDelegate", timer_id, "Delegate")
-assert unreal.BlueprintService.connect_nodes(bp_path, graph, custom_node.node_id, "then", finish_id, "execute")
-```
-
-Use `add_create_event_node()` only when you need a **Create Event / Create Delegate** node. For `Set Timer by Event`, a `Custom Event` node is the simpler callback source and matches the Blueprint editor workflow shown in screenshots.
-
-If a previous attempt already inserted a `Create Event` node for this timer callback, treat that as the wrong graph shape when the request is for a custom event. Remove the wrong node, remove any stale callback function graph that only existed to support that delegate node, then create the real `Custom Event` node and verify it by node ID and node type.
-
-### ⚠️ Verification Is Mandatory Before Claiming Success
-
-After any graph edit, verify all three layers:
-
-1. **Connections**: call `get_connections()` and confirm the exact expected wiring.
-2. **Pins**: if a connection fails, call `get_node_pins()` and use the real pin names.
-3. **Compile**: inspect the compile result's `success`, `num_errors`, and `errors`. Either the engine `BlueprintTools.compile_blueprint`, or `unreal.BlueprintService.compile_blueprint(bp_path)` — the latter returns an `FBlueprintCompileResult` (`success`, `num_errors`, `num_warnings`, `errors`, `warnings`) directly from the service, so you can compile and read the error text without leaving `BlueprintService`.
-
-For any node you claim you created, also re-read the graph with `get_nodes_in_graph()` and confirm that node actually exists in the graph after the edit. A returned node ID from a create call is not enough.
-
-For `Custom Event` timer callbacks, verify both of these before wiring:
-
-1. The returned GUID appears in a fresh `get_nodes_in_graph()` result.
-2. `get_node_pins()` on that exact node shows the pins you intend to use, typically `OutputDelegate` and `then` for the callback path.
-
-Also verify that the node type is the expected custom event form rather than `K2Node_CreateDelegate`.
-
-```python
-# compile via the engine BlueprintTools toolset ...
-result = call_tool(tool_name="compile_blueprint",
-                   toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
-                   arguments={"blueprint": bp_path})
-assert result["success"], result.get("errors")
-
-# ... or straight from BlueprintService, which returns the compiler's error text:
-res = unreal.BlueprintService.compile_blueprint(bp_path)
-assert res.success, (res.num_errors, res.errors)
-
-nodes = unreal.BlueprintService.get_nodes_in_graph(bp_path, graph)
-for node in nodes:
-    print(f"NODE {node.node_id} {node.node_title}")
-
-connections = unreal.BlueprintService.get_connections(bp_path, graph)
-for conn in connections:
-    print(f"{conn.source_node_title}.{conn.source_pin_name} -> {conn.target_node_title}.{conn.target_pin_name}")
-
-unreal.EditorAssetLibrary.save_asset(bp_path)
-```
-
-Never print `MODIFIED` or describe the graph as complete until the expected connections are present and compile succeeds.
-Never describe a node as present until it appears in a fresh `get_nodes_in_graph()` result.
-Never treat compile success alone as proof that the graph matches the requested design.
-
-### Required Success Gate For Graph Edits
-
-If you edit a graph, your success check must answer all of these from live asset data:
-
-1. Which required node titles are present?
-2. Which exact connection lines prove the intended wiring exists?
-3. Did compile succeed with zero relevant errors?
-
-If you cannot answer those three questions from tool output, the task is not complete yet.
-
-For complex graph tasks, also answer these two questions before claiming completion:
-
-4. Which node IDs were created successfully, one by one?
-5. What cleanup was done after any failed intermediate attempt?
-
-**Common mistake**: Using `Delay` when the user says "timer". `Delay` is a latent action that
-pauses the execution chain. `Set Timer by Event` is non-blocking and fires a separate event —
-this is critical for State Tree tasks, animation blueprints, and any actor that must keep
-ticking during the wait period.
+| `build_graph` | `BlueprintDslToolset.Write` (whole document) or `.Edit` (targeted). `Docs()` first. |
+| `get_graph_definition`, `get_graph_summary` | `BlueprintDslToolset.Read` (with a graph `Scope` for a summary) |
+| `get_connections` | `BlueprintDslToolset.Read` — wires are explicit in the DSL |
+| `get_nodes_in_graph` | `BlueprintToolset.FindNodes` + `GetNodeInfos`, or `BlueprintDslToolset.Read` |
+| `discover_nodes` | `BlueprintToolset.FindNodes` / `FindNodeTypes` / `FindNodeCategories`, or `BlueprintDslToolset.FindNodeReferences` |
+| `create_node_by_key`, `add_macro_instance_node`, `add_create_event_node`, `add_call_delegate_node` | `BlueprintToolset.CreateNode` with a palette type id, or a node form in a DSL `Write` |
+| `delete_node` | `BlueprintToolset.DeleteNode` |
+| `connect_nodes` | `BlueprintToolset.ConnectPins` |
+| `disconnect_pin` | `BlueprintToolset.DisconnectPins` |
+| `set_node_pin_value` / `get_node_pins` | `BlueprintToolset.SetPinValue` / `GetPinValue`, `GetNodeTypePins` |
+| `set_node_position` | `BlueprintToolset.SetNodePosition` |
+| `auto_layout_graph` | `BlueprintToolset.ArrangeGraphLayered` |
+| `auto_layout_selected_nodes` | `BlueprintToolset.ArrangeNodes` |
+| `get_selected_nodes`, `get_focused_graph_context` | the DSL is scope-addressed — select a `Scope` instead. For live editor selection, `EditorToolset.EditorAppToolset.GetAssetEditorSelection` (+ `GetOpenAssets` / `OpenEditorForAsset`). |
+| `add_comment_node` / `add_comment_around_nodes` | `BlueprintToolset.AddCommentBox`, `ListCommentBoxes`, `GetCommentBoxText`, `SetCommentBoxText` |
+| `add_custom_event_node`, `create_component_bound_event` | `BlueprintToolset.AddEvent` / `AddComponentBoundEvent`, or an `(event …)` entry in a DSL `Write` |
+| `add_custom_event_input` / `modify_` / `remove_` / `get_custom_event_inputs` | the `(params …)` section of the DSL `(event …)` entry |
+| `add_delegate_bind_on_variable`, `add_delegate_bind_node` | `BlueprintToolset.AddComponentBoundEvent` / `AddMatchingDelegateEvent`, or a DSL `add` statement with a `CreateDelegate` handler (see `graph-dsl.md`) |
+| `add_function_parameter`, `create_function_graph` | `BlueprintToolset.AddFunctionParam` / `AddFunctionGraph`, or the DSL `(fn …)` `(params …)`/`(returns …)`/`(locals …)` sections |
+| `list_overridable_functions` | `BlueprintToolset.ListEvents` / `ListFunctions` — both include inheritable members, with `is_implemented` as the old `already_overridden` |
+| `override_function` | `BlueprintToolset.AddEvent` (event-style) / `AddFunctionGraph` (function-style), named after the inherited member |
+| `list_variables`, `get_variable_info`, `add_member_variable`, `remove_member_variable` | `BlueprintToolset.ListVariables` / `AddVariable` / `AddObjectVariable` / `AddStructVariable` / `RemoveVariable` + the per-variable getters/setters |
+| `set_variable_default_value`, `get_property` / `set_property` | `EditorToolset.ObjectToolset.SetProperties` / `GetProperties` on the CDO (`BlueprintToolset.GetDefaultObject`) |
+| `compile_blueprint` | `BlueprintToolset.CompileBlueprint` |
+| `get_blueprint_info` | `BlueprintToolset.ListGraphs` / `ListVariables` / `ListFunctions` / `GetParent` |
+| `list_graphs`, `list_functions` | `BlueprintToolset.ListGraphs` / `ListFunctions` / `ListEvents` |
+| `search_variable_types` | type strings are documented on `BlueprintToolset.AddFunctionParam` / `AddVariable`; `ObjectToolset.GetPropertySchema` for a live object's shape |
 
 ---
 
 ## Sample scripts (run via `execute_python`)
 
-- **`scripts/build_event_graph.txt`** — wire Event BeginPlay → Print String, verify connection, compile.
-- **`scripts/timer_with_custom_event.txt`** — non-blocking Set Timer by Event + Custom Event callback.
+- **`scripts/build_event_graph.txt`** — the full DSL loop on a tiny graph: `Docs` → `Read` →
+  `Write` → `Read`-back → compile → layout audit.
+- **`scripts/timer_with_custom_event.txt`** — non-blocking Set Timer by Event with a custom-event
+  callback, written as one DSL document, plus the stale-revision `Edit` retry.
 
-## Sub-docs Available
+## Sub-docs
 
-This skill index contains the frontmatter, intro, and the **Critical Rules / gotchas** section. For everything else, load the matching sub-doc by reading its file under this same folder (`Plugins/VibeUE/Content/Skills/blueprint-graphs/`):
+Load the matching file from this same folder:
 
-- **`node-reference.md`** — Reference for specific node APIs that are part of Critical Rules but read as reference material: the `member_get` / `validated_get` build_graph node types (pin tables), Custom Event Input Pins CRUD (`*_custom_event_input`), and Timelines CRUD (`*_timeline*`).
-- **`workflows.md`** — Step-by-step workflows: overriding a parent function (`override_function`), creating a function with logic, adding an Enhanced Input Action node.
-- **`node-layout.md`** — Node layout best practices: layout constants, execution flow, data flow above execution, branch layout, repositioning Entry/Result nodes.
-- **`function-classes.md`** — Quick reference for the common class names you pass to a `build_graph` `function_call` node / engine `create_node` (KismetMathLibrary, KismetSystemLibrary, KismetArrayLibrary, GameplayStatics, etc.).
-- **`array-operations.md`** — Array operations on wildcard pins: `Array_Random`, available array functions, `K2Node_GetArrayItem`, wildcard pin type propagation, common array mistakes.
-- **`build-graph.md`** — The batch `build_graph` API: when to use it, node types, connection format, examples (BeginPlay → PrintString, Branch with Math, StateTreeDelegate Broadcast), round-trip export/rebuild, auto-layout, Make Struct / Make Instanced Struct, error handling.
+- **`graph-dsl.md`** — the DSL in depth: entries, statements, expressions, binds and multi-exec
+  continuations, struct values, scopes and revisions, `Edit` recipes, error handling, `Diff`.
+- **`node-reference.md`** — Timelines CRUD (the VibeUE survivors, with signatures and sentinels) and
+  the DSL forms that replaced the old `member_get` / `member_set` / `validated_get` /
+  custom-event-input node types.
+- **`node-layout.md`** — arrange with Epic, measure with `analyze_graph_layout`, what each metric
+  means, when to hand-place.
+- **`function-classes.md`** — the owner names you put in a DSL `Owner.Member` reference
+  (KismetMathLibrary, KismetSystemLibrary, KismetArrayLibrary, GameplayStatics…).
+- **`array-operations.md`** — arrays in the DSL: `|MakeArray`, `(for item array …)`, the
+  `KismetArrayLibrary` functions, element-type metadata on wildcard pins.
+- **`workflows.md`** — taking an override, authoring a function with a body, Enhanced Input action
+  events.
 
 ## Additional gotchas
 
-- `discover_nodes` returns clean `FUNC <BP>_C::Fn` keys now (no `SKEL_` prefix to strip). BP custom events are callable cross-BP through such a key; BP functions cannot call custom events — `FUNC Self::<Event>` in a function graph returns "".
-- Class names in `FUNC <Class>::Fn` keys, `build_graph` nodes and class pin defaults accept a Blueprint SHORT name of any Blueprint type, with or without `_C` (`BP_Enemy_C`, `WBP_Menu_C`, `ABP_Zombie`), loaded or not. If two Blueprint assets share that short name the call is refused with a warning listing both paths: pass the full path (`/Game/UI/WBP_Menu.WBP_Menu_C`) instead.
-- Read pin defaults from `get_node_pins` (it now reports non-string defaults too); `get_graph_definition`'s `defaults` array and a node's `default_object` are the cross-checks. Bool pins on VariableSet nodes work (the pin name is the variable name).
-- Variable GET/SET spawners are scoped to the owning Blueprint now, so their keys are unambiguous — you no longer disambiguate by `n.category` (`Variables|<OwningBlueprint>`).
-- `build_graph` that fails on one node spec leaves the OTHER nodes behind; inspect the graph and delete the strays before retrying.
-- An interface function spawns as a plain `K2Node_CallFunction` with an interface-typed self pin — feed self through a `Cast To <Interface>` node; some query functions spawn PURE (no exec pins).
-- Compile errors surface in `compile_blueprint`'s `res.error`, and `get_editor_property("status")` reads `BS_ERROR`; never save on `BS_ERROR`, and stop PIE before structural edits (service calls against a BP with live PIE instances fail silently or return None).
-- Script-baked BP-CDO `TArray<TSubclassOf<...>>` defaults can be LOST on editor reload — read them back after a restart to confirm they persisted (writing the CDO is allowed; the engine just drops these array defaults across a reload).
-- Editor-world edits issued immediately after `StopPIE` can silently no-op; let the editor settle (poll) before editing.
-- `list_graphs`/`get_graph_summary` returning empty or None in a long session is a stale-session artifact, not a per-asset fact — restart before diagnosing. `list_graphs` legitimately returns `[]` for Anim Blueprints (use `AnimGraphService.list_graphs`).
+- A DSL `Write` or `Edit` that **fails leaves the asset untouched** — there is no half-applied state
+  to clean up. That is the opposite of the old batch builder, which left successful nodes behind on
+  partial failure. Fix the document and resubmit rather than inspecting for strays.
+- `(stale name)` reads a bound value from another exec scope in the same entry, and
+  `` (stale `Entry` Name) `` from another entry. It changes no execution order and cannot be
+  rebound — it is how `Read` represents a cross-chain data read, so preserve it on a round-trip.
+- Preserve emitted metadata on a round-trip, especially `:!type` / `:!valuetype` container types and
+  `:!label` goto targets. Values alone may not replay to the same type, and labels are graph-unique.
+- `_` is a no-op statement; as an argument it leaves that pin unchanged, including an unspellable
+  struct default or a by-reference parameter. Use it rather than inventing a value you cannot spell.
+- An interface function spawns as a plain `K2Node_CallFunction` with an interface-typed self pin —
+  feed self through a cast, or use the DSL's `` (message `Interface.Function` target args…) `` for a
+  runtime-checked call. Some query functions are pure (no exec pins).
+- Class, object, soft and interface pins take an **object path** (`/Script/Engine.StaticMeshActor`,
+  `/Game/Meshes/SM_Cube.SM_Cube`); quote it in the DSL, because every bare non-literal atom is a
+  local reference. `null` clears such a pin.
+- Script-baked BP-CDO `TArray<TSubclassOf<...>>` defaults can be LOST on editor reload — read them
+  back after a restart to confirm they persisted.
+- `ListGraphs` legitimately returns `[]` for Anim Blueprints — use `AnimGraphService.list_graphs`.
+  A Blueprint can hold several graph objects with the same `GraphName`; name-keyed code must reject
+  the ambiguity rather than overwrite, and `FBlueprintGraphInfo.GraphPath` disambiguates.
+- Everything returning empty across a long session is usually a stale editor session, not a
+  per-asset fact — restart before diagnosing.
 
 ## Reference pages
 
 Open these with the paths below; UE rewrites them to absolute paths when it serves this skill.
 
-- [array-operations](array-operations.md) - Blueprint array operations with wildcard pins - Array_Random, KismetArrayLibrary functions, K2Node_GetArrayItem, wildcard pin type propagation, common...
-- [build-graph](build-graph.md) - Batch Blueprint graph builder (build_graph) - when to use, node types, connection format, examples, round-trip export/rebuild, auto-layout, Make Struc...
-- [function-classes](function-classes.md) - Common class names for a build_graph function_call node / engine create_node - KismetMathLibrary, KismetSystemLibrary, KismetArrayLibrary, GameplaySta...
-- [node-layout](node-layout.md) - Node layout for Blueprint graphs - auto-layout first, audit with analyze_graph_layout, group hints for comment boxes, when (rarely) to hand-place
-- [node-reference](node-reference.md) - Reference for specific Blueprint node APIs - member_get and validated_get build_graph node types, Custom Event Input Pin CRUD, and Timeline CRUD
-- [workflows](workflows.md) - Step-by-step Blueprint graph workflows - overriding parent functions, creating functions with logic, adding Enhanced Input Action nodes
+- [array-operations](array-operations.md) - Arrays in the Blueprint Graph DSL - MakeArray, for-each over an array, KismetArrayLibrary functions, element-type metadata on wildcard pins
+- [function-classes](function-classes.md) - Owner names for a DSL `Owner.Member` reference - KismetMathLibrary, KismetSystemLibrary, KismetArrayLibrary, GameplayStatics and the other UE libraries
+- [graph-dsl](graph-dsl.md) - The Blueprint Graph DSL in depth - entries, statements, expressions, binds, scopes, revisions, Write vs Edit, tombstones, Diff, error handling
+- [node-layout](node-layout.md) - Blueprint graph layout - arrange with BlueprintToolset, measure with analyze_graph_layout, metric meanings, when to hand-place
+- [node-reference](node-reference.md) - Timeline CRUD (VibeUE survivors) and the DSL forms that replaced member_get / member_set / validated_get / custom event input pins
+- [workflows](workflows.md) - Step-by-step Blueprint graph workflows - taking an override, authoring a function body, Enhanced Input action events
 - [scripts/build_event_graph.txt](scripts/build_event_graph.txt) - runnable sample
 - [scripts/timer_with_custom_event.txt](scripts/timer_with_custom_event.txt) - runnable sample

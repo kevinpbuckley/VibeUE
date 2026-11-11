@@ -82,12 +82,13 @@ Python field names drop the `b` prefix from C++ bools.
 | `instance_id` | str | informational |
 | `error_message` | str | e.g. "PIE is not running." |
 
-> The other `FWidget*` structs still declared in `UWidgetService.h` (`FWidgetInfo`,
-> `FWidgetComponentSnapshot`, `FWidgetSlotInfo`, `FWidgetPropertyInfo`, `FWidgetFontInfo`,
-> `FWidgetBrushInfo`, `FWidgetAnimInfo`, `FWidgetAnimKeyframe`, `FWidgetPreviewResult`,
-> `FWidgetEventInfo`, `FWidgetValidationResult`, `FWidgetViewModelInfo`,
-> `FWidgetViewModelBindingInfo`) are **orphans** — no surviving method produces or consumes them.
-> Don't build code around them.
+> The `FWidget*` result structs that the removed tools returned (`FWidgetInfo`,
+> `FWidgetComponentSnapshot`, `FWidgetBrushInfo`, `FWidgetAnimInfo`, `FWidgetAnimKeyframe`,
+> `FWidgetPreviewResult`, `FWidgetEventInfo`, `FWidgetValidationResult`, `FWidgetViewModelInfo`,
+> `FWidgetViewModelBindingInfo`) have been **deleted** from `UWidgetService.h` — they were
+> reflected types no surviving method could produce, so they cost UHT generation and showed up in
+> the Python surface as types you could never obtain. Nothing to build around; `get_symbol` will not
+> show them either.
 
 ## Child order
 

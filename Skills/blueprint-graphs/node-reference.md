@@ -1,237 +1,246 @@
 ---
 name: node-reference
-description: Reference for specific Blueprint node APIs - member_get and validated_get build_graph node types, Custom Event Input Pin CRUD, and Timeline CRUD
+description: Timeline CRUD on unreal.BlueprintService (the 16 surviving VibeUE tools - signatures, sentinels, node pins) plus the Graph DSL forms that replaced the old member_get / member_set / validated_get / custom-event-input node types
 ---
 
-This sub-doc continues from skill.md → reference subsections of "Critical Rules" (member getter, validated get, custom event inputs, timelines).
+This sub-doc continues from SKILL.md → "VibeUE's surviving graph tools" and "The DSL workflow".
 
-## Node Reference
+# Node Reference
 
-### Accessing Members of Another Blueprint (`member_get` node)
+Two halves. The first is **VibeUE's** — 16 of the 19 surviving `BlueprintService` tools are
+Timelines, and no engine tool can do any of it. The second shows the **DSL spellings** that replaced
+the old `build_graph` node types this file used to document.
 
-> The standalone `add_member_get_node` method is **gone**. Create this node as the `build_graph`
-> node type **`member_get`** (`params`: `member`, `class`). The resulting node and its pin names
-> are unchanged.
+---
 
-Use `member_get` to read a property or component that belongs to another class
-(not the current Blueprint). This creates a getter node with a **Target** input pin.
+## Timelines — full CRUD (`unreal.BlueprintService.*timeline*`)
 
-```
-Target (input) — the object reference (e.g. your BP_Cube variable output)
-MemberName (output) — the property value (e.g. the CubeMesh component)
-```
+A Timeline is a `UK2Node_Timeline` node **plus** a `UTimelineTemplate` on the Blueprint.
+`add_timeline` creates both. Nothing in `BlueprintToolsets` or `EditorToolset` touches a
+`UTimelineTemplate`, which is why this whole surface stayed in VibeUE. The DSL can **anchor** to a
+timeline node that already exists (`` (`Timeline|Name` …) ``) but cannot create one.
 
-```python
-# Get the CubeMesh component from a "Cube" variable of type BP_Cube.
-# build_graph member_get descriptor; ref_to_node_id maps the ref back to the GUID.
-r = unreal.BlueprintService.build_graph(bp_path, graph,
-    [{"ref": "Mesh", "type": "member_get",
-      "params": {"member": "CubeMesh", "class": "BP_Cube_C"}}],
-    [], [], False, False)
-mesh_id = r.ref_to_node_id["Mesh"]
+All of these are plain Python inside `execute_python`, and every one refuses while PIE is running.
 
-# Connect: Cube (from validated get) -> Target of the member getter
-unreal.BlueprintService.connect_nodes(bp_path, graph, val_get_id, "Cube", mesh_id, "self")
-# Output pin name matches the member name: "CubeMesh"
-unreal.BlueprintService.connect_nodes(bp_path, graph, mesh_id, "CubeMesh", next_id, "Target")
-```
-
-The `class` param accepts `"BP_Cube"`, `"BP_Cube_C"`, or a `/Game/...` asset path, and loads
-unloaded Blueprints (fixed in issue #552 — previously only an exact, already-loaded `_C` name
-worked; `cast` node specs got the same treatment).
-
-### Setting a Member of Another Class / Component (`member_set` node)
-
-The write-side counterpart of `member_get`. Use it to SET a property that lives on
-another class — most commonly a **component property** such as
-`UCharacterMovementComponent::MaxWalkSpeed`. Plain `variable_set` only binds variables
-on the Blueprint itself (`SetSelfMember`); for a component property it produces a blank
-Set node with no value/Target pin. `member_set` uses `SetExternalMember` so the node
-comes out fully bound.
-
-```
-self (input, Target)   — the owning object; wire a Get of the component here
-<MemberName> (input)   — the value to set (e.g. "MaxWalkSpeed", real)
-execute / then         — exec in/out
-Output_Get (output)    — passthrough of the new value (use instead of a separate Get)
-```
-
-```python
-# Hold-to-sprint: IA_Sprint Started -> MaxWalkSpeed = 1000, Completed -> 600.
-# CharacterMovement is an inherited component, so variable_get resolves it on self.
-unreal.BlueprintService.build_graph(bp, "EventGraph",
-    [
-        {"ref": "Sprint", "type": "input_action", "params": {"action": "/Game/Input/Actions/IA_Sprint"}},
-        {"ref": "GetCMV1", "type": "variable_get", "params": {"variable": "CharacterMovement"}},
-        {"ref": "SetRun",  "type": "member_set",   "params": {"member": "MaxWalkSpeed", "class": "CharacterMovementComponent"}},
-        {"ref": "GetCMV2", "type": "variable_get", "params": {"variable": "CharacterMovement"}},
-        {"ref": "SetWalk", "type": "member_set",   "params": {"member": "MaxWalkSpeed", "class": "CharacterMovementComponent"}},
-    ],
-    [
-        {"from_": "Sprint.Started",            "to": "SetRun.execute"},
-        {"from_": "GetCMV1.CharacterMovement", "to": "SetRun.self"},
-        {"from_": "Sprint.Completed",          "to": "SetWalk.execute"},
-        {"from_": "GetCMV2.CharacterMovement", "to": "SetWalk.self"},
-    ],
-    [
-        {"node_ref": "SetRun",  "pin_name": "MaxWalkSpeed", "value": "1000.0"},
-        {"node_ref": "SetWalk", "pin_name": "MaxWalkSpeed", "value": "600.0"},
-    ],
-    True, True)
-```
-
-The `class` param is the property's owning class name (`CharacterMovementComponent`,
-not the `U`-prefixed C++ name). Round-trips: an external-member Set exported by
-`get_graph_definition` comes back as `member_set` (self variables stay `variable_set`).
-
-### Validated Get Nodes (`validated_get` node)
-
-> The standalone `add_validated_get_node` method is **gone**. Create this node as the
-> `build_graph` node type **`validated_get`** (`params`: `variable`). The resulting node and its
-> pin names are unchanged.
-
-Use `validated_get` to create a **Validated Get** — a variable getter with execution
-pins that only continues on the valid path if the object reference is non-null.
-
-Pin names produced:
-
-| Pin | Name | Direction |
-|-----|------|-----------|
-| Execution in | `"execute"` | input |
-| Is Valid (object non-null) | `"then"` | output exec |
-| Is Not Valid (object null) | `"else"` | output exec |
-| Variable data | variable name e.g. `"MyObject"` | output data |
-
-The whole BeginPlay → ValidatedGet → SomeFunction graph is a clean single `build_graph` call
-(`event`, `validated_get`, and `function_call` are all build_graph node types; compile runs as
-the final positional flag):
+### Create the node, add tracks, add keys
 
 ```python
 import unreal
+bs = unreal.BlueprintService
+bp, g = "/Game/Path/BP_Thing", "EventGraph"
 
-bp_path = "/Game/BP_MyActor"
-graph = "EventGraph"
+# 1) The node + template. Length is seconds; use_last_key_frame=True auto-sizes to the last key.
+#    add_timeline(bp, graph, name, length=5.0, use_last_key_frame=False, auto_play=False,
+#                 loop=False, pos_x=0.0, pos_y=0.0, replace_existing=False)
+tnode = bs.add_timeline(bp, g, "LookAtTimeline", 0.5, False, False, False, 600.0, 200.0)
 
-# Compile first so the variable type is resolved (engine BlueprintTools toolset)
-call_tool(tool_name="compile_blueprint",
-          toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
-          arguments={"blueprint": bp_path})
+# 2) Tracks. Each adds an output pin on the node, named after the track.
+bs.add_timeline_float_track(bp, "LookAtTimeline", "Alpha")    # real out
+bs.add_timeline_vector_track(bp, "LookAtTimeline", "Offset")  # vector out
+bs.add_timeline_color_track(bp, "LookAtTimeline", "Tint")     # linear-color out
+bs.add_timeline_event_track(bp, "LookAtTimeline", "Halfway")  # named EXEC out
 
-unreal.BlueprintService.build_graph(bp_path, graph,
-    [
-        {"ref": "Begin", "type": "event", "params": {"event": "ReceiveBeginPlay"}},
-        {"ref": "ValGet", "type": "validated_get", "params": {"variable": "MyObject"}},
-        {"ref": "Call", "type": "function_call",
-         "params": {"class": "MyObject", "function": "SomeFunction"}},
-    ],
-    [
-        # Execution flow: BeginPlay -> ValidatedGet (Is Valid path) -> SomeFunction
-        {"from_": "Begin.then", "to": "ValGet.execute"},
-        {"from_": "ValGet.then", "to": "Call.execute"},
-        # Data flow: MyObject output -> function Target
-        {"from_": "ValGet.MyObject", "to": "Call.self"},
-    ],
-    [], True, True)  # auto_layout, compile
-
-unreal.EditorAssetLibrary.save_asset(bp_path)
+# 3) Keys. interp_mode: "Auto" (cubic + auto tangents = smooth), "Linear", "Constant",
+#    "CubicAuto", "CubicUser". Default "Auto".
+bs.add_timeline_float_key(bp, "LookAtTimeline", "Alpha", 0.0, 0.0)
+bs.add_timeline_float_key(bp, "LookAtTimeline", "Alpha", 0.5, 1.0)
+bs.add_timeline_vector_key(bp, "LookAtTimeline", "Offset", 0.0, 0.0, 0.0, 0.0)
+bs.add_timeline_color_key(bp, "LookAtTimeline", "Tint", 0.0, 1.0, 1.0, 1.0, 1.0)
+bs.add_timeline_event_key(bp, "LookAtTimeline", "Halfway", 0.25)   # time only
 ```
 
-> Only Object/Actor reference variables support Validated Get (`ValidatedObject` variation).
-> Primitive types (int, float, bool) produce a Branch-style impure get instead.
+### ⚠️ `add_timeline`'s three return cases
+
+| Return | Meaning |
+|---|---|
+| a GUID string | success — the Timeline node's id |
+| `""` | the Blueprint or the graph could not be loaded (PIE? wrong path? wrong graph name?) |
+| a string starting with `"ERROR:"` | a `UTimelineTemplate` with that name already exists and `replace_existing` was `False` |
+
+A **deleted Timeline node can leave its template behind**, which is exactly how you hit the third
+case on a name you believe is free. Pass `replace_existing=True` to remove the orphan and re-add, or
+call `remove_timeline(bp, name)` first. Check the string before treating it as a node id:
+
+```python
+tnode = bs.add_timeline(bp, g, "LookAtTimeline", 0.5)
+assert tnode and not tnode.startswith("ERROR:"), tnode
+```
+
+### Timeline node pins
+
+With the `Alpha` float track and the `Halfway` event track above:
+
+- **exec in**: `Play`, `PlayFromStart`, `Stop`, `Reverse`, `ReverseFromEnd`, `SetNewTime` (plus data
+  in `NewTime`)
+- **exec out**: `Update`, `Finished`, plus one per **event** track (`Halfway`)
+- **data out**: `Direction` (byte enum), plus one per float/vector/color track (`Alpha` real,
+  `Offset` vector, `Tint` color)
+
+Wire them from the DSL by anchoring to the node. The statement enters `Play` unless
+``:!via `Pin` `` names another exec input, and any other arrival is a `goto` to its label with the
+same `:!via`:
+
+```
+(event `self.ReceiveBeginPlay`
+  (bind (_direction _alpha) (`Timeline|LookAtTimeline` :!via `PlayFromStart` :!label _look)
+    (:`Update`
+      (`KismetSystemLibrary.PrintString` "ticking"))
+    (:`Finished`
+      (`KismetSystemLibrary.PrintString` "done"))
+    (:`Halfway`
+      (`KismetSystemLibrary.PrintString` "halfway"))))
+
+(event `Cancel`
+  (goto _look :!via `Stop`))
+```
+
+Or imperatively: `BlueprintToolset.ConnectPins` with the node handle from
+`FindNodes` / `GetNodeInfos`.
+
+### Edit and remove
+
+```python
+# modify_timeline sentinels: "" for the name, a NEGATIVE number for length, -1 for the int flags
+#   (1 = true, 0 = false, -1 = leave unchanged)
+#   modify_timeline(bp, name, new_name="", length=-1.0, use_last_key_frame=-1, auto_play=-1,
+#                   loop=-1, replicated=-1, ignore_time_dilation=-1)
+bs.modify_timeline(bp, "LookAtTimeline", "", 0.75, -1, 1, -1, -1, -1)   # length 0.75, auto_play ON
+bs.modify_timeline(bp, "LookAtTimeline", "RotateTimeline")              # rename only
+
+bs.rename_timeline_track(bp, "RotateTimeline", "Alpha", "Blend")        # any track type
+bs.remove_timeline_key(bp, "RotateTimeline", "Blend", 0.25, 0.001)      # by time (± tolerance)
+bs.clear_timeline_track_keys(bp, "RotateTimeline", "Blend")
+bs.remove_timeline_track(bp, "RotateTimeline", "Offset")                # also removes its node pin
+bs.remove_timeline(bp, "RotateTimeline")                                # node + template
+
+for t in bs.get_timelines(bp):
+    # FBlueprintTimelineInfo: timeline_name, track_count (all types), length, loop, auto_play
+    print(t.timeline_name, "| tracks:", t.track_count, "| len:", t.length,
+          "| loop:", t.loop, "| auto_play:", t.auto_play)
+```
+
+Renaming a timeline also renames the component variable and its event-track functions.
+
+### Timeline gotchas
+
+- **Track names are unique within a timeline across all track types** — a float track and an event
+  track cannot both be `Alpha`.
+- **Adding, removing or renaming a track, or changing settings, reconstructs the node.** Any node
+  handle, pin id or DSL `Revision` you were holding for that graph is stale afterwards: re-read.
+- Compile (`BlueprintToolset.CompileBlueprint`) then verify with `get_timelines` and a fresh pin
+  read before claiming the timeline is wired.
+- Settings on the spawned `UTimelineComponent` are ordinary properties — use
+  `EditorToolset.ObjectToolset.SetProperties`, not a timeline tool.
 
 ---
 
-### Custom Event Input Pins — Full CRUD (`*_custom_event_input`)
+## DSL spellings for the node types this file used to document
 
-`add_function_parameter` **only works on real function graphs** (`UK2Node_FunctionEntry`).
-They return `False` on a Custom Event node. To manage the input pins (parameters) of a Custom Event node,
-use these (identify the node by GUID, as returned by `add_custom_event_node` / `get_nodes_in_graph`):
+The `build_graph` node types `member_get`, `member_set`, `validated_get` and the
+`*_custom_event_input` CRUD are all gone. Each has a grammar form instead. Run
+`BlueprintDslToolset.Schema(AssetPath, NodeType)` to confirm pin names before writing any of them.
 
-```python
-# node_id = the Custom Event node's GUID
-unreal.BlueprintService.add_custom_event_input(bp, "EventGraph", node_id, "Rotation", "FRotator")
-unreal.BlueprintService.add_custom_event_input(bp, "EventGraph", node_id, "Speed", "float")
+### Reading a member of another object (was `member_get`)
 
-# rename and/or retype (keeps wires on rename; keeps wires on retype only if compatible)
-unreal.BlueprintService.modify_custom_event_input(bp, "EventGraph", node_id, "Rotation", "TargetRotation")          # rename
-unreal.BlueprintService.modify_custom_event_input(bp, "EventGraph", node_id, "Speed", "", "int")                    # retype
-unreal.BlueprintService.modify_custom_event_input(bp, "EventGraph", node_id, "Speed", "MoveSpeed", "double")        # both
+A member read is a call head: `` (`Owner.Member` target) ``. `Owner` is a native class name or a
+Blueprint class path; `target` is the object to read from. The authored name is what counts, exactly
+as `Read` returns it.
 
-unreal.BlueprintService.remove_custom_event_input(bp, "EventGraph", node_id, "Speed")
-
-for p in unreal.BlueprintService.get_custom_event_inputs(bp, "EventGraph", node_id):
-    print(p.parameter_name, p.parameter_type)
+```
+(event `self.ReceiveBeginPlay`
+  (bind mesh (`BP_Cube_C.CubeMesh` (`self.Cube`)))
+  (`KismetSystemLibrary.PrintString` (`KismetSystemLibrary.GetDisplayName` mesh)))
 ```
 
-- Type strings are the same format as `add_variable` (`"float"`, `"int"`, `"FRotator"`, `"FVector"`, `"AActor"`, `"BP_Foo"`, …).
-- Custom Event input pins appear as **output** pins on the node (they flow out of the event). `get_node_pins` will show e.g. `Rotation | struct | input=False`.
-- Empty `new_name` / `new_type` in `modify_custom_event_input` means "leave that part unchanged".
-- Always compile afterwards (engine `BlueprintTools.compile_blueprint` via `call_tool`) and verify with `get_custom_event_inputs` / `get_node_pins`.
+A member of **this** Blueprint's own class chain is `self.Member` — unless a node reaches it through
+a target pin, in which case it is spelled with its class instead of `self`.
 
----
+### Writing a member of another object (was `member_set`)
 
-### Timelines — Full CRUD (`*_timeline*`)
-
-There is no Timeline node in `discover_nodes` / `build_graph` / engine `create_node`; use the dedicated API. A Timeline is a
-`UK2Node_Timeline` node **plus** a `UTimelineTemplate` on the blueprint — `add_timeline` creates both.
-
-**Create the node + tracks + keys, then wire it:**
-
-```python
-bp = "/Game/Path/BP_Thing"; g = "EventGraph"
-
-# 1) Timeline node. Length is in seconds; pass use_last_keyframe=True to auto-size to the last key instead.
-#    add_timeline(bp, graph, name, length=5.0, use_last_keyframe=False, auto_play=False, loop=False, pos_x=0, pos_y=0)
-tnode = unreal.BlueprintService.add_timeline(bp, g, "LookAtTimeline", 0.5, False, False, False, 600.0, 200.0)
-
-# 2) Tracks (each adds an output pin on the node, named after the track)
-unreal.BlueprintService.add_timeline_float_track(bp, "LookAtTimeline", "Alpha")
-unreal.BlueprintService.add_timeline_vector_track(bp, "LookAtTimeline", "Offset")
-unreal.BlueprintService.add_timeline_color_track(bp, "LookAtTimeline", "Tint")
-unreal.BlueprintService.add_timeline_event_track(bp, "LookAtTimeline", "Halfway")   # adds a named exec-out pin
-
-# 3) Keys. interp_mode: "Auto" (cubic + auto tangents = smooth), "Linear", "Constant", "CubicUser"
-unreal.BlueprintService.add_timeline_float_key(bp, "LookAtTimeline", "Alpha", 0.0, 0.0)
-unreal.BlueprintService.add_timeline_float_key(bp, "LookAtTimeline", "Alpha", 0.5, 1.0)
-unreal.BlueprintService.add_timeline_vector_key(bp, "LookAtTimeline", "Offset", 0.0, 0,0,0)
-unreal.BlueprintService.add_timeline_color_key(bp, "LookAtTimeline", "Tint", 0.0, 1,1,1,1)
-unreal.BlueprintService.add_timeline_event_key(bp, "LookAtTimeline", "Halfway", 0.25)   # time only
-
-# 4) Wire it: e.g. a Custom Event's exec out -> the timeline's "Play" input
-unreal.BlueprintService.connect_nodes(bp, g, custom_event_id, "then", tnode, "Play")
-
-# compile via the engine BlueprintTools toolset
-call_tool(tool_name="compile_blueprint",
-          toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
-          arguments={"blueprint": bp})
-unreal.EditorAssetLibrary.save_asset(bp)
+```
+(set `Owner.Member` target value)
 ```
 
-**Timeline node pins** (after adding the Alpha float + Halfway event tracks above):
-- exec in: `Play`, `PlayFromStart`, `Stop`, `Reverse`, `ReverseFromEnd`, `SetNewTime` (+ data in `NewTime`)
-- exec out: `Update`, `Finished`, plus one per **event track** (`Halfway`)
-- data out: `Direction` (byte enum), plus one per float/vector/color track (`Alpha` real, `Offset` vector, `Tint` color)
+The classic case is a component property. `set` on `self.X` binds a variable on the Blueprint
+itself; an external member needs the owner and a target:
 
-**Edit / remove:**
-
-```python
-# settings — pass "" for name, a negative number for length, and -1 for the int flags to leave them unchanged
-#   modify_timeline(bp, name, new_name="", length=-1, use_last_keyframe=-1, auto_play=-1, loop=-1, replicated=-1, ignore_time_dilation=-1)
-unreal.BlueprintService.modify_timeline(bp, "LookAtTimeline", "", 0.75, -1, 1, -1, -1, -1)   # length 0.75, auto_play on
-unreal.BlueprintService.modify_timeline(bp, "LookAtTimeline", "RotateTimeline")               # rename the timeline
-
-unreal.BlueprintService.rename_timeline_track(bp, "RotateTimeline", "Alpha", "Blend")         # any track type
-unreal.BlueprintService.remove_timeline_key(bp, "RotateTimeline", "Blend", 0.25, 0.001)       # by time (±tolerance)
-unreal.BlueprintService.clear_timeline_track_keys(bp, "RotateTimeline", "Blend")
-unreal.BlueprintService.remove_timeline_track(bp, "RotateTimeline", "Offset")                 # also removes its node pin
-unreal.BlueprintService.remove_timeline(bp, "RotateTimeline")                                 # deletes node + template
-
-for t in unreal.BlueprintService.get_timelines(bp):
-    print(t.timeline_name, "| tracks:", t.track_count, "| len:", t.length, "| loop:", t.loop, "| auto_play:", t.auto_play)
-    # get_timelines returns FBlueprintTimelineInfo: timeline_name, track_count (all track types), length, loop, auto_play
+```
+(event `self.ReceiveBeginPlay`
+  (set `CharacterMovementComponent.MaxWalkSpeed` (`self.CharacterMovement`) 1000.0))
 ```
 
-- Track names must be unique within a timeline (across all track types). Adding/removing/renaming a track or changing settings reconstructs the node, so re-read pins afterwards.
-- Always compile (engine `BlueprintTools.compile_blueprint` via `call_tool`) then verify with `get_timelines` and `get_node_pins(bp, "EventGraph", tnode)`.
+`Owner` is the property's owning class, spelled without the C++ `U`/`A` prefix
+(`CharacterMovementComponent`). To change only some fields of a struct member, use
+`` (setmembers `Struct` :`StructRef` target :`Member` value …) `` — it touches only the members it
+names.
+
+### Validated Get (was `validated_get`)
+
+There is no separate node type. **Execution continuations turn a pure variable getter into a
+validated getter**: bind the variable and give the bind `` (:`then` …) `` / `` (:`else` …) ``
+continuations.
+
+```
+(event `self.ReceiveBeginPlay`
+  (bind _owner (`self.DslOwner`)
+    (:`then`
+      (`KismetSystemLibrary.PrintString` (`KismetSystemLibrary.GetDisplayName` _owner)))
+    (:`else`)))
+```
+
+`` (:`else`) `` with an empty body leaves the invalid path unwired. Only object/actor reference
+variables support this; a primitive produces an ordinary impure get. For a non-variable value, the
+`IsValid` standard macro is the multi-exec equivalent, with continuation arms named after its pins:
+
+```
+(`/Engine/EditorBlueprintResources/StandardMacros.IsValid` some_object
+  (:`Is Valid`    (`KismetSystemLibrary.PrintString` "valid"))
+  (:`Is Not Valid` (`KismetSystemLibrary.PrintString` "not valid")))
+```
+
+### Custom event parameters (was `add_custom_event_input` & friends)
+
+A custom event's input pins are its `(params …)` section. The section **is the exact set**: listed
+items are added or updated, unlisted ones are removed, and `(params)` with nothing in it removes
+every parameter. Items match by name, so a rename is a removal plus an addition, and the section's
+order is the pin order.
+
+```
+(event `OnHit`
+  (params (Damage :type Integer)
+          (Instigator :type "Actor Object Reference"))
+  (set `self.Health` (- (`self.Health`) Damage)))
+```
+
+- A new parameter needs `:type`. A listed one is retyped when `:type` names another type, and its
+  `:default` is set when it differs.
+- Pin types are spelled as the editor words them, with the kind suffixed: `Integer`,
+  `Pawn Object Reference`, `Vector Structure`, `/Game/Modes/E_Mode Enum`,
+  `Array of Actor Object Reference`.
+- Custom-event parameters appear as **output** pins on the node — they flow out of the event.
+- A handler whose parameters come from a function or dispatcher signature declares the source with
+  ``:!signature `Owner.Member` `` and gets a **read-only** signature: naming a pin it lacks fails,
+  and a mismatched `:type` warns while the graph wins.
+
+`BlueprintToolset.AddFunctionParam(Graph, ParamName, ParamType, bInputParam, Options)` is the
+imperative route for a **function or event-dispatcher** graph (dispatchers take inputs only). It does
+not apply to a custom event node — that is the `(params …)` section's job.
+
+### Make Struct / Make Instanced Struct (was `make_struct` / `instanced_struct`)
+
+Struct construction is `` (make `Struct` …) ``, positionally or by field, and a struct **default** is
+a literal:
+
+```
+(set `self.Stats` (make `/Game/Types/F_Stats.F_Stats` :`Health` 5 :`Label` "x"))
+(set `self.Bounds` (struct :`Min` (1 2 3)))
+(set `self.Spin` (struct :`Yaw` 90))
+```
+
+Vector-family values use positional tuples (`(1 2 3)`); other structs use
+``(struct :`Field` value …)`` with default-valued fields omitted. A Rotator's fields are `Pitch`,
+`Yaw`, `Roll`; colors use their named channels. An engine struct needs its real name or full path —
+`Schema` and `FindNodeReferences` resolve it. An incompatible struct form fails the write outright,
+so there is no "wildcard pin not yet resolved" trap the old `instanced_struct` node had.
 
 ---

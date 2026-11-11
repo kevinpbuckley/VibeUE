@@ -1,35 +1,85 @@
 # Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
-# add_component.txt — Add components (with a child) and set their properties.
+# add_component.txt — Add components (with a child), set their properties, promote a scene root.
 #
 # Sample script for the blueprints skill. Run via execute_python.
-# Compile after adding components, before setting properties that depend on them.
 #
-# add_component / set_component_property are surviving VibeUE delta methods (kept as-is).
-# CANONICAL compile path is the engine BlueprintTools toolset:
-#   call_tool(tool_name="compile_blueprint",
-#             toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
-#             arguments={"blueprint": BP_PATH})
-# This script stays pure-Python, so it compiles via the native BlueprintEditorLibrary equivalent.
-import unreal
-bs = unreal.BlueprintService
+# UE 5.9: components on a Blueprint are Epic's EditorToolset.ActorToolset, and every property goes
+# through EditorToolset.ObjectToolset. BlueprintService.add_component / remove_component /
+# set_component_property / get_component_property / list_components / reparent_component /
+# set_root_component / set_collision_settings were all cut.
+#
+# From an MCP client these are call_tool; inside execute_python they are
+# vibeue.exec_tool(toolset, tool, args). Object/class arguments are {"refPath": ...} handles, and
+# the tools RETURN the same shape — chain the handle you were given instead of rebuilding one.
+import json, unreal, vibeue
+
+BT = "BlueprintToolsets.BlueprintToolset"
+AT = "EditorToolset.ActorToolset"
+OT = "EditorToolset.ObjectToolset"
+AS = "EditorToolset.AssetToolset"
+E  = "/Script/Engine."
 
 BP_PATH = "/Game/Blueprints/BP_Player"
 
-def compile_bp(path):
-    # Pure-Python equivalent of BlueprintTools.compile_blueprint (the canonical interface).
-    unreal.BlueprintEditorLibrary.compile_blueprint(unreal.load_asset(path))
 
-bs.add_component(BP_PATH, "StaticMeshComponent", "BodyMesh")          # parent defaults to root
-bs.add_component(BP_PATH, "PointLightComponent", "Glow", "BodyMesh")  # child of BodyMesh
-compile_bp(BP_PATH)
+def ref(p):
+    tail = p.rsplit("/", 1)[-1]
+    return {"refPath": p if "." in tail else "{}.{}".format(p, tail)}
 
-# property values are strings; UE strips the lowercase b prefix (bVisible -> set as "bVisible" key here is fine)
-bs.set_component_property(BP_PATH, "BodyMesh", "bVisible", "true")
-bs.set_component_property(BP_PATH, "Glow", "Intensity", "5000.0")
-# LightColor is FColor: integer bytes 0-255 (LinearColor-style 0-1 floats give a near-black light)
-bs.set_component_property(BP_PATH, "Glow", "LightColor", "(R=255,G=127,B=0,A=255)")
 
-compile_bp(BP_PATH)
-print("compiled:", BP_PATH)
-unreal.EditorAssetLibrary.save_asset(BP_PATH)
+les = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
+assert not les.is_in_play_in_editor(), "stop PIE before editing a Blueprint"
+
+bp = ref(BP_PATH)
+
+# 1. Add components. AddComponent's owner is "the actor blueprint, instance, or SceneComponent to
+#    add to", so pass the Blueprint for a root-level component and a component to nest under it.
+body = vibeue.exec_tool(AT, "AddComponent", {"owner": bp, "name": "BodyMesh",
+                                             "componentType": {"refPath": E + "StaticMeshComponent"}})
+glow = vibeue.exec_tool(AT, "AddComponent", {"owner": body, "name": "Glow",
+                                             "componentType": {"refPath": E + "PointLightComponent"}})
+vibeue.exec_tool(BT, "CompileBlueprint", {"blueprint": bp})
+
+# 2. Find the property, check its type, THEN write it. ListProperties defaults to MaxDepth 1 so a
+#    whole object tree cannot be dumped by accident; nameFilter is a case-insensitive regex.
+print(vibeue.exec_tool(OT, "ListProperties", {"instance": glow, "nameFilter": "intensity|color|units"}))
+print(vibeue.exec_tool(OT, "GetPropertySchema", {"instance": glow, "root": "LightColor"}))
+
+# 3. Set them. LightColor is an FColor: INTEGER BYTES 0-255. LinearColor-style floats
+#    ({"r": 1, "g": 0.5, "b": 0}) are in bounds and give a nearly-black light, not orange.
+vibeue.exec_tool(OT, "SetProperties", {"instance": glow, "values": json.dumps({
+    "Intensity": 5000.0,
+    "IntensityUnits": "Candelas",
+    "LightColor": {"r": 255, "g": 127, "b": 0, "a": 255}})})
+
+# An asset value is its object path; a class value is the _C path.
+vibeue.exec_tool(OT, "SetProperties", {"instance": body, "values": json.dumps({
+    "bVisible": True,
+    "StaticMesh": {"refPath": "/Game/Meshes/SM_Body.SM_Body"}})})
+
+# Collision lives in BodyInstance, which SetProperties reaches by dotted path.
+vibeue.exec_tool(OT, "SetProperties", {"instance": body, "values": json.dumps({
+    "BodyInstance.CollisionProfileName": "BlockAllDynamic"})})
+
+# 4. Promote BodyMesh to the scene root: passing a component as the parent of the CURRENT root
+#    makes it the root and the old root its child. An auto-generated DefaultSceneRoot is removed
+#    by Unreal. This replaces set_root_component / reparent_component.
+root = vibeue.exec_tool(AT, "GetRootComponent", {"actor": vibeue.exec_tool(BT, "GetDefaultObject",
+                                                                          {"blueprint": bp})})
+if root:
+    vibeue.exec_tool(AT, "SetParentComponent", {"component": root, "parent": body})
+
+vibeue.exec_tool(BT, "CompileBlueprint", {"blueprint": bp})
+
+# 5. Verify. GetComponents on the Blueprint's CDO DOES enumerate the SCS: it detects a Blueprint
+#    actor and switches to SubobjectDataSubsystem. (Raw K2_GetComponentsByClass on a CDO is the
+#    call that returns an empty list.)
+cdo = vibeue.exec_tool(BT, "GetDefaultObject", {"blueprint": bp})
+for c in vibeue.exec_tool(AT, "GetComponents", {"actor": cdo}):
+    print("component:", c)
+print("glow now:", vibeue.exec_tool(OT, "GetProperties",
+                                    {"instance": glow, "properties": ["Intensity", "LightColor"]}))
+
+vibeue.exec_tool(AS, "SaveAsset", {"assetPath": BP_PATH})
+print("saved:", BP_PATH)

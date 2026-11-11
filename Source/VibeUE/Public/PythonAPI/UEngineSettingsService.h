@@ -6,61 +6,7 @@
 #include "ToolsetRegistry/ToolsetDefinition.h"
 #include "UEngineSettingsService.generated.h"
 
-/**
- * Vestigial: the return type of the ini writers removed on the 5-9 branch. Nothing in this service
- * returns it any more. Config writes are ConfigSettingsToolset.SetSectionProperties.
- */
-USTRUCT(BlueprintType)
-struct FEngineSettingResult
-{
-	GENERATED_BODY()
 
-	UPROPERTY(BlueprintReadWrite, Category = "EngineSettings")
-	bool bSuccess = false;
-
-	UPROPERTY(BlueprintReadWrite, Category = "EngineSettings")
-	FString ErrorMessage;
-
-	UPROPERTY(BlueprintReadWrite, Category = "EngineSettings")
-	TArray<FString> ModifiedSettings;
-
-	UPROPERTY(BlueprintReadWrite, Category = "EngineSettings")
-	TArray<FString> FailedSettings;
-
-	UPROPERTY(BlueprintReadWrite, Category = "EngineSettings")
-	bool bRequiresRestart = false;
-};
-
-/**
- * Vestigial: the return type of the cvar readers removed on the 5-9 branch. Nothing in this service
- * returns it any more. Cvars are ConsoleToolset.GetCVarValue / SetCVarValue / SearchCVars.
- */
-USTRUCT(BlueprintType)
-struct FConsoleVariableInfo
-{
-	GENERATED_BODY()
-
-	UPROPERTY(BlueprintReadWrite, Category = "EngineSettings")
-	FString Name;
-
-	UPROPERTY(BlueprintReadWrite, Category = "EngineSettings")
-	FString Value;
-
-	UPROPERTY(BlueprintReadWrite, Category = "EngineSettings")
-	FString DefaultValue;
-
-	UPROPERTY(BlueprintReadWrite, Category = "EngineSettings")
-	FString Description;
-
-	UPROPERTY(BlueprintReadWrite, Category = "EngineSettings")
-	FString Type;
-
-	UPROPERTY(BlueprintReadWrite, Category = "EngineSettings")
-	FString Flags;
-
-	UPROPERTY(BlueprintReadWrite, Category = "EngineSettings")
-	bool bIsReadOnly = false;
-};
 
 /**
  * Play-In-Editor multiplayer settings snapshot.

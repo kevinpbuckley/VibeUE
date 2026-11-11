@@ -6,26 +6,6 @@
 #include "ToolsetRegistry/ToolsetDefinition.h"
 #include "UStateTreeService.generated.h"
 
-/**
- * Info about a root parameter in the StateTree property bag
- */
-USTRUCT(BlueprintType)
-struct FStateTreeParameterInfo
-{
-	GENERATED_BODY()
-
-	/** Parameter name */
-	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
-	FString Name;
-
-	/** Type string: "Bool", "Int32", "Int64", "Float", "Double", "Name", "String", "Text", "Enum", "Struct", "Object", "SoftObject", "Class", "SoftClass" */
-	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
-	FString Type;
-
-	/** Current default value exported as string */
-	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
-	FString DefaultValue;
-};
 
 /**
  * Info about a single task, evaluator, or condition node inside a StateTree
@@ -231,76 +211,7 @@ struct FStateTreeStateInfo
 	TArray<FStateTreeNodeInfo> Considerations;
 };
 
-/**
- * Detailed info about a StateTree asset
- */
-USTRUCT(BlueprintType)
-struct FStateTreeInfo
-{
-	GENERATED_BODY()
 
-	/** Content path to the asset */
-	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
-	FString AssetPath;
-
-	/** Asset name */
-	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
-	FString AssetName;
-
-	/** Schema class name */
-	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
-	FString SchemaClass;
-
-	/** Context actor class name (empty if not set; assign it via ObjectToolset.SetProperties on the
-	 * schema subobject -- see the class comment) */
-	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
-	FString ContextActorClass;
-
-	/** Global evaluators */
-	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
-	TArray<FStateTreeNodeInfo> Evaluators;
-
-	/** Global tasks */
-	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
-	TArray<FStateTreeNodeInfo> GlobalTasks;
-
-	/** Root parameters (property bag) */
-	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
-	TArray<FStateTreeParameterInfo> RootParameters;
-
-	/** All states (flattened hierarchy) */
-	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
-	TArray<FStateTreeStateInfo> AllStates;
-
-	/** Whether the asset has been successfully compiled */
-	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
-	bool bIsCompiled = false;
-
-	/** Human-readable compile status */
-	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
-	FString LastCompileStatus;
-};
-
-/**
- * Result of a StateTree compilation
- */
-USTRUCT(BlueprintType)
-struct FStateTreeCompileResult
-{
-	GENERATED_BODY()
-
-	/** Whether compilation succeeded */
-	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
-	bool bSuccess = false;
-
-	/** Error messages */
-	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
-	TArray<FString> Errors;
-
-	/** Warning messages */
-	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
-	TArray<FString> Warnings;
-};
 
 /**
  * Info about a single editable task property discovered on either the task node struct or its instance data
@@ -432,38 +343,6 @@ struct FVibeUEStateTreeBindingInfo
 	bool bIsOutputBinding = false;
 };
 
-/**
- * Detailed result of setting a task property value
- */
-USTRUCT(BlueprintType)
-struct FStateTreeTaskPropertySetResult
-{
-	GENERATED_BODY()
-
-	/** Whether the property was set successfully */
-	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
-	bool bSuccess = false;
-
-	/** Error message when the set fails */
-	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
-	FString ErrorMessage;
-
-	/** C++ type name of the resolved property */
-	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
-	FString PropertyType;
-
-	/** Value before the write, exported as a string */
-	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
-	FString PreviousValue;
-
-	/** Value after the write, exported as a string */
-	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
-	FString NewValue;
-
-	/** Which matching task instance was targeted for the struct type */
-	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
-	int32 ResolvedTaskMatchIndex = INDEX_NONE;
-};
 
 /**
  * StateTree Service - the 45 tools the engine's StateTree surface cannot reach. Python:

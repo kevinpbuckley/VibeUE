@@ -7,32 +7,6 @@
 #include "Types/MVVMBindingMode.h"
 #include "UWidgetService.generated.h"
 
-/**
- * Information about a widget in a Widget Blueprint
- */
-USTRUCT(BlueprintType)
-struct FWidgetInfo
-{
-	GENERATED_BODY()
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	FString WidgetName;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	FString WidgetClass;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	FString ParentWidget;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	bool bIsRootWidget = false;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	bool bIsVariable = false;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	TArray<FString> Children;
-};
 
 /**
  * Information about a widget component property
@@ -115,75 +89,8 @@ struct FWidgetSlotInfo
 	TEnumAsByte<EVerticalAlignment> VerticalAlignment = VAlign_Fill;
 };
 
-/**
- * Full state snapshot of a single widget component.
- * Combines hierarchy info, slot layout, and all properties in one struct.
- */
-USTRUCT(BlueprintType)
-struct FWidgetComponentSnapshot
-{
-	GENERATED_BODY()
 
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	FString WidgetName;
 
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	FString WidgetClass;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	FString ParentWidget;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	bool bIsRootWidget = false;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	bool bIsVariable = false;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	TArray<FString> Children;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	FWidgetSlotInfo SlotInfo;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	TArray<FWidgetPropertyInfo> Properties;
-};
-
-/**
- * Information about a widget event
- */
-USTRUCT(BlueprintType)
-struct FWidgetEventInfo
-{
-	GENERATED_BODY()
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	FString EventName;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	FString EventType;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	FString Description;
-};
-
-/**
- * Result of validation operation
- */
-USTRUCT(BlueprintType)
-struct FWidgetValidationResult
-{
-	GENERATED_BODY()
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	bool bIsValid = true;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	TArray<FString> Errors;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	FString ValidationMessage;
-};
 
 /**
  * Result of adding a component
@@ -233,53 +140,7 @@ struct FWidgetRemoveComponentResult
 	FString ErrorMessage;
 };
 
-/**
- * Information about a ViewModel registered on a Widget Blueprint
- */
-USTRUCT(BlueprintType)
-struct FWidgetViewModelInfo
-{
-	GENERATED_BODY()
 
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	FString ViewModelName;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	FString ViewModelClassName;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	FString CreationType;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	FString ViewModelId;
-};
-
-/**
- * Information about an MVVM binding on a Widget Blueprint
- */
-USTRUCT(BlueprintType)
-struct FWidgetViewModelBindingInfo
-{
-	GENERATED_BODY()
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	int32 BindingIndex = -1;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	FString SourcePath;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	FString DestinationPath;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	FString BindingMode;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	bool bEnabled = true;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	FString BindingId;
-};
 
 /**
  * Font configuration for text-based widget components.
@@ -317,92 +178,9 @@ struct FWidgetFontInfo
 	FString OutlineColor = TEXT("(R=0.0,G=0.0,B=0.0,A=1.0)");
 };
 
-/**
- * Brush configuration for widget components that expose FSlateBrush values.
- */
-USTRUCT(BlueprintType)
-struct FWidgetBrushInfo
-{
-	GENERATED_BODY()
 
-	UPROPERTY(BlueprintReadWrite, Category = "Widget|Brush")
-	FString ResourcePath;
 
-	UPROPERTY(BlueprintReadWrite, Category = "Widget|Brush")
-	FString TintColor = TEXT("(R=1.0,G=1.0,B=1.0,A=1.0)");
 
-	UPROPERTY(BlueprintReadWrite, Category = "Widget|Brush")
-	FString DrawAs = TEXT("Image");
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget|Brush")
-	FString ImageSize = TEXT("(X=0.0,Y=0.0)");
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget|Brush")
-	FString Margin = TEXT("(Left=0.0,Top=0.0,Right=0.0,Bottom=0.0)");
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget|Brush")
-	FString CornerRadius = TEXT("(TopLeft=0.0,TopRight=0.0,BottomRight=0.0,BottomLeft=0.0)");
-};
-
-/**
- * Keyframe data for a widget animation property track.
- */
-USTRUCT(BlueprintType)
-struct FWidgetAnimKeyframe
-{
-	GENERATED_BODY()
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget|Animation")
-	float Time = 0.0f;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget|Animation")
-	FString Value;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget|Animation")
-	FString Interpolation = TEXT("Linear");
-};
-
-/**
- * Summary information about a widget animation.
- */
-USTRUCT(BlueprintType)
-struct FWidgetAnimInfo
-{
-	GENERATED_BODY()
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget|Animation")
-	FString AnimationName;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget|Animation")
-	float Duration = 0.0f;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget|Animation")
-	int32 TrackCount = 0;
-};
-
-/**
- * Result of capturing an off-screen widget preview render.
- */
-USTRUCT(BlueprintType)
-struct FWidgetPreviewResult
-{
-	GENERATED_BODY()
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget|Preview")
-	bool bSuccess = false;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget|Preview")
-	FString OutputPath;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget|Preview")
-	int32 Width = 0;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget|Preview")
-	int32 Height = 0;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget|Preview")
-	FString ErrorMessage;
-};
 
 /**
  * Handle for a widget instance spawned during PIE.

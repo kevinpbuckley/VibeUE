@@ -1,39 +1,85 @@
 # Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
-# build_event_graph.txt — Wire Event BeginPlay -> Print String, then verify + compile.
+# build_event_graph.txt — Author Event BeginPlay -> Print String with the Graph DSL, then verify.
 #
 # Sample script for the blueprint-graphs skill. Run via execute_python.
-# Demonstrates: build the whole graph in one build_graph batch (the VibeUE delta), then verify.
-# The standalone add_function_call_node / add_event_node / compile_blueprint methods are gone —
-# build_graph creates the event + function_call nodes, wires them, and compiles in a single call.
-import unreal
-bs = unreal.BlueprintService
+#
+# UE 5.9: graph authoring is Epic's BlueprintToolsets.BlueprintDslToolset. VibeUE's batch graph
+# builder, its per-node creators and its wiring/compile tools were all cut from BlueprintService;
+# what survives there is Timelines, create_macro_graph, analyze_graph_layout and
+# refresh_blueprint_editor.
+#
+# From an MCP client the same tools are call_tool:
+#   call_tool(tool_name="Write", toolset_name="BlueprintToolsets.BlueprintDslToolset",
+#             arguments={"assetPath": BPP, "dsl": DOC, "scope": "EventGraph"})
+# Inside execute_python they are vibeue.exec_tool(toolset, tool, args), which fills missing
+# optional args from the tool schema, unwraps "returnValue" and raises RuntimeError on a tool
+# error. BlueprintDslToolset is AICallable only, so unreal.BlueprintDslToolset does NOT exist.
+import json, unreal, vibeue
 
-BP = "/Game/Blueprints/BP_GraphTest"   # must already exist (Actor-based)
+DSL = "BlueprintToolsets.BlueprintDslToolset"
+BT  = "BlueprintToolsets.BlueprintToolset"
+
+BP    = "/Game/Blueprints/BP_GraphTest"          # must already exist (Actor-based)
+BPP   = BP + ".BP_GraphTest"                     # DSL AssetPath: full object path
 GRAPH = "EventGraph"
 
-# 1. Build BeginPlay -> Print String in one batch (auto-layout + compile = the last two flags)
-result = bs.build_graph(BP, GRAPH,
-    [
-        {"ref": "Begin", "type": "event", "params": {"event": "ReceiveBeginPlay"}},
-        {"ref": "Print", "type": "print_string", "params": {}},
-    ],
-    [
-        {"from_": "Begin.then", "to": "Print.execute"},
-    ],
-    [
-        {"node_ref": "Print", "pin_name": "InString", "value": "Hello World!"},
-    ],
-    True,  # auto-layout
-    True,  # compile after
-)
-print("build_graph success:", result.success)   # field is `success` (not b_success)
-print("nodes:", result.nodes_created, "connections:", result.connections_made)
-for e in result.errors:
-    print("  ERROR:", e)
 
-# 2. Verify the connection exists in the live graph
-for c in bs.get_connections(BP, GRAPH):
-    print(f"{c.source_node_title}.{c.source_pin_name} -> {c.target_node_title}.{c.target_pin_name}")
+def ref(p):
+    tail = p.rsplit("/", 1)[-1]
+    return {"refPath": p if "." in tail else "{}.{}".format(p, tail)}
+
+
+# 0. Stop PIE first — every Blueprint authoring entry point refuses while PIE runs.
+les = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
+assert not les.is_in_play_in_editor(), "stop PIE before editing a Blueprint"
+
+# 1. Grammar, once per session, BEFORE the first Write or Edit.
+docs = vibeue.exec_tool(DSL, "Docs", {})
+print("grammar chars:", len(docs))
+
+# 2. Resolve the reference, then its pins. A palette type id (Development|PrintString) is a
+#    CreateNode argument, NOT a DSL call head — these are two different naming systems.
+print("refs:", vibeue.exec_tool(DSL, "FindNodeReferences", {"assetPath": BPP, "query": "print string"}))
+print("schema:", vibeue.exec_tool(DSL, "Schema",
+                                  {"assetPath": BPP, "nodeType": "KismetSystemLibrary.PrintString"}))
+
+# 3. Read the scope we are about to change, and keep the revision.
+before = vibeue.exec_tool(DSL, "Read", {"assetPath": BPP, "scope": GRAPH})
+print("before:\n" + before["dsl"])
+rev = before["revision"]
+
+# 4. Write. Upsert semantics: this replaces the BeginPlay entry and LEAVES every other entry
+#    alone (omitted entries warn). Removing one needs a tombstone: (event `Foo` :!delete).
+DOC = """
+(event `self.ReceiveBeginPlay`
+  (`KismetSystemLibrary.PrintString` "Hello World!"))
+"""
+res = vibeue.exec_tool(DSL, "Write", {"assetPath": BPP, "dsl": DOC, "scope": GRAPH})
+rev = res["revision"]
+print("canonical:\n" + res.get("dsl", "<already canonical>"))
+
+# 5. A targeted change is an Edit against THAT revision. A stale token fails and leaves the
+#    asset unchanged — the fix is always to Read again and rebuild the replacement.
+try:
+    e = vibeue.exec_tool(DSL, "Edit", {"assetPath": BPP, "revision": rev, "scope": GRAPH,
+                                       "edits": [{"oldString": '"Hello World!"',
+                                                  "newString": '"Hello from the DSL"'}]})
+    rev = e["revision"]
+except RuntimeError as err:
+    print("edit refused:", err)
+    fresh = vibeue.exec_tool(DSL, "Read", {"assetPath": BPP, "scope": GRAPH})
+    rev = fresh["revision"]
+
+# 6. Verify: read the shape back, compile, and measure the layout.
+after = vibeue.exec_tool(DSL, "Read", {"assetPath": BPP, "scope": GRAPH})
+print("after:\n" + after["dsl"])
+
+vibeue.exec_tool(BT, "CompileBlueprint", {"blueprint": ref(BP)})
+
+# analyze_graph_layout is one of VibeUE's 19 survivors: Epic's tools write a layout, nothing
+# there reads one back. The bool return is folded away, so the out-strings come back as a tuple.
+report, err = unreal.BlueprintService.analyze_graph_layout(BP, GRAPH)
+print("layout issues:", json.loads(report)["issues"] if report else err)
 
 unreal.EditorAssetLibrary.save_asset(BP)

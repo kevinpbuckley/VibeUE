@@ -1,32 +1,82 @@
 # Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
-# event_dispatcher.txt — Add a Blueprint Event Dispatcher (multicast delegate) with a parameter.
+# event_dispatcher.txt — Add a Blueprint Event Dispatcher (multicast delegate) with a parameter,
+# broadcast it from the event graph, and subscribe to it from another Blueprint.
 #
 # Sample script for the blueprints skill. Run via execute_python.
-# Use the dedicated dispatcher API — NOT add_variable(..., "EventDispatcher") (not a real type).
 #
-# add_event_dispatcher / add_event_dispatcher_parameter / add_call_delegate_node are surviving
-# VibeUE delta methods (kept as-is). CANONICAL compile path is the engine BlueprintTools toolset:
-#   call_tool(tool_name="compile_blueprint",
-#             toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
-#             arguments={"blueprint": BP_PATH})
-# This script stays pure-Python, so it compiles via the native BlueprintEditorLibrary equivalent.
-import unreal
-bs = unreal.BlueprintService
+# UE 5.9:
+#   - The dispatcher itself is Epic's BlueprintToolset.AddEventDispatcher, which returns the
+#     dispatcher's SIGNATURE GRAPH. Its parameters are AddFunctionParam on that graph (inputs
+#     only). Removing one is RemoveFunctionGraph — there is no RemoveEventDispatcher.
+#   - BROADCASTING is a Graph DSL statement now. add_call_delegate_node, add_event_dispatcher,
+#     add_event_dispatcher_parameter and add_delegate_bind_* were all cut from BlueprintService.
+#   - "EventDispatcher" is NOT a variable type string. Never try AddVariable for a dispatcher.
+import unreal, vibeue
+
+BT  = "BlueprintToolsets.BlueprintToolset"
+DSL = "BlueprintToolsets.BlueprintDslToolset"
+AS  = "EditorToolset.AssetToolset"
 
 BP_PATH = "/Game/Blueprints/BP_Player"
+BPP     = BP_PATH + ".BP_Player"          # DSL AssetPath: full object path
 
-# 1. Create the dispatcher (skeleton recompiles inline; callable immediately)
-print("dispatcher:", bs.add_event_dispatcher(BP_PATH, "OnDied"))
 
-# 2. Add a parameter to its signature (subscribers receive it as an input)
-print("param:", bs.add_event_dispatcher_parameter(BP_PATH, "OnDied", "Killer", "Actor"))
+def ref(p):
+    tail = p.rsplit("/", 1)[-1]
+    return {"refPath": p if "." in tail else "{}.{}".format(p, tail)}
 
-# 3. Spawn the "Call OnDied" broadcast node in the EventGraph (wire something into its execute pin)
-call_id = bs.add_call_delegate_node(BP_PATH, "EventGraph", "OnDied", 1400, -700)
-print("call node id:", call_id)
 
-# 4. Compile (pure-Python equivalent of BlueprintTools.compile_blueprint) + save
-unreal.BlueprintEditorLibrary.compile_blueprint(unreal.load_asset(BP_PATH))
-print("compiled:", BP_PATH)
-unreal.EditorAssetLibrary.save_asset(BP_PATH)
+les = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
+assert not les.is_in_play_in_editor(), "stop PIE before editing a Blueprint"
+
+bp = ref(BP_PATH)
+
+# 1. The dispatcher. The return value is its signature graph — keep it.
+sig = vibeue.exec_tool(BT, "AddEventDispatcher", {"blueprint": bp, "name": "OnDied"})
+print("signature graph:", sig)
+
+# 2. Its parameters, on that graph. Dispatchers take INPUTS ONLY (outputs are refused).
+vibeue.exec_tool(BT, "AddFunctionParam", {"graph": sig, "paramName": "Killer",
+                                          "paramType": "Actor", "inputParam": True})
+vibeue.exec_tool(BT, "CompileBlueprint", {"blueprint": bp})
+print("dispatchers:", vibeue.exec_tool(BT, "ListEventDispatchers", {"blueprint": bp}))
+
+# 3. Broadcast it from the event graph. Read the grammar before the first Write, and read the
+#    scope so a later Edit has a revision to work against.
+vibeue.exec_tool(DSL, "Docs", {})
+before = vibeue.exec_tool(DSL, "Read", {"assetPath": BPP, "scope": "EventGraph"})
+rev = before["revision"]
+
+res = vibeue.exec_tool(DSL, "Write", {"assetPath": BPP, "scope": "EventGraph", "dsl": """
+(event `self.ReceiveAnyDamage`
+  (`self.OnDied` (`self.GetInstigator`)))
+"""})
+rev = res["revision"]
+
+# 4. Subscribe, in the SAME Blueprint for the sample: a handler whose parameters come from the
+#    dispatcher's signature declares the source with :!signature, and |CreateDelegate wraps it.
+res = vibeue.exec_tool(DSL, "Write", {"assetPath": BPP, "scope": "EventGraph", "dsl": """
+(event `HandleDied`
+  :!signature `self.OnDied`
+  (params (Killer))
+  (`KismetSystemLibrary.PrintString` "died"))
+
+(event `self.ReceiveBeginPlay`
+  (add `self.OnDied` (`|CreateDelegate` :!event `HandleDied`)))
+"""})
+rev = res["revision"]
+
+# 5. Verify from the canonical text, not from what we sent. Write is UPSERT: the entries above
+#    were added or replaced and every other entry was left alone (and warned about). Removing one
+#    needs a tombstone: (event `Foo` :!delete).
+after = vibeue.exec_tool(DSL, "Read", {"assetPath": BPP, "scope": "EventGraph"})
+print(after["dsl"])
+assert "OnDied" in after["dsl"], "broadcast/subscribe entries missing"
+
+vibeue.exec_tool(BT, "CompileBlueprint", {"blueprint": bp})
+vibeue.exec_tool(AS, "SaveAsset", {"assetPath": BP_PATH})
+print("saved:", BP_PATH)
+
+# To delete the dispatcher later (function graph OR dispatcher — same tool):
+#   vibeue.exec_tool(BT, "RemoveFunctionGraph", {"blueprint": bp, "graphName": "OnDied"})

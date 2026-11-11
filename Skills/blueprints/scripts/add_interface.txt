@@ -1,22 +1,78 @@
 # Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
-# add_interface.txt — Implement (and later remove) a Blueprint Interface on a Blueprint.
+# add_interface.txt — Author a Blueprint Interface, implement it on a Blueprint, take its members,
+# and remove it again.
 #
 # Sample script for the blueprints skill. Run via execute_python.
-# Prefer the FULL interface asset path — short names only resolve if already loaded.
-# The interface must be a true Blueprint Interface (made with BlueprintInterfaceFactory).
-import unreal
-bs = unreal.BlueprintService
+#
+# UE 5.9: interfaces are Epic's BlueprintToolset.AddInterface / RemoveInterface / ListInterfaces.
+# BlueprintService.add_interface / remove_interface / create_function_graph / override_function /
+# add_function_parameter were all cut.
+#
+# TWO THINGS THAT BITE:
+#   1. interfaceClass wants the interface's CLASS handle (".._C"), not the asset path.
+#   2. AddInterface is idempotent, but "the Blueprint must be recompiled for the change to take
+#      effect" — so compile before you look for the new members.
+import unreal, vibeue
 
-BP_PATH = "/Game/Blueprints/BP_Player"
-INTERFACE_PATH = "/Game/Interfaces/BPI_Interactable"   # full path
+BT = "BlueprintToolsets.BlueprintToolset"
+AS = "EditorToolset.AssetToolset"
 
-print("add:", bs.add_interface(BP_PATH, INTERFACE_PATH))   # idempotent; False if not a real BP interface
-unreal.EditorAssetLibrary.save_asset(BP_PATH)
+BP_PATH  = "/Game/Blueprints/BP_Player"
+BPI_PATH = "/Game/Interfaces/BPI_Interactable"
 
-# Interface functions now appear as overridable — implement one:
-# bs.override_function(BP_PATH, "OnInteract")
 
-# To remove later:
-# bs.remove_interface(BP_PATH, INTERFACE_PATH)
-# unreal.EditorAssetLibrary.save_asset(BP_PATH)
+def ref(p):
+    tail = p.rsplit("/", 1)[-1]
+    return {"refPath": p if "." in tail else "{}.{}".format(p, tail)}
+
+
+def cls(p):
+    """A Blueprint's generated CLASS handle: /Game/Dir/X -> /Game/Dir/X.X_C"""
+    name = p.rsplit("/", 1)[-1].split(".")[0]
+    return {"refPath": "{}.{}_C".format(p.split(".")[0], name)}
+
+
+les = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
+assert not les.is_in_play_in_editor(), "stop PIE before editing a Blueprint"
+
+bp, bpi = ref(BP_PATH), ref(BPI_PATH)
+
+# 1. Author the interface. A Blueprint Interface is nothing but its function graphs, so an empty
+#    one contributes nothing when implemented. The asset must be a real Blueprint Interface
+#    (BPTYPE_Interface, from BlueprintInterfaceFactory) — a normal Blueprint, or one merely
+#    parented to UInterface, will not resolve as an interface class.
+g = vibeue.exec_tool(BT, "AddFunctionGraph", {"blueprint": bpi, "graphName": "GetDisplayName"})
+vibeue.exec_tool(BT, "AddFunctionParam", {"graph": g, "paramName": "Name",
+                                          "paramType": "string", "inputParam": False})  # a return
+vibeue.exec_tool(BT, "AddFunctionGraph", {"blueprint": bpi, "graphName": "Interact"})    # void
+vibeue.exec_tool(BT, "CompileBlueprint", {"blueprint": bpi})
+vibeue.exec_tool(AS, "SaveAsset", {"assetPath": BPI_PATH})
+
+# 2. Implement it on the Blueprint. The CLASS handle, not the asset path.
+vibeue.exec_tool(BT, "AddInterface", {"blueprint": bp, "interfaceClass": cls(BPI_PATH)})
+vibeue.exec_tool(BT, "CompileBlueprint", {"blueprint": bp})
+print("interfaces:", vibeue.exec_tool(BT, "ListInterfaces",
+                                      {"blueprint": bp, "includeInherited": True}))
+
+# 3. Take its members. A void interface member is an overridable EVENT; a value-returning one is a
+#    function graph. Which list a member appears in tells you which tool to use — ListEvents and
+#    ListFunctions both include inheritable members, with is_implemented as the old
+#    "already_overridden" flag.
+for e in vibeue.exec_tool(BT, "ListEvents", {"blueprint": bp}):
+    print("event:", e)
+vibeue.exec_tool(BT, "AddEvent", {"blueprint": bp, "eventName": "Interact", "position": [0, 0]})
+vibeue.exec_tool(BT, "AddFunctionGraph", {"blueprint": bp, "graphName": "GetDisplayName"})
+vibeue.exec_tool(BT, "CompileBlueprint", {"blueprint": bp})
+vibeue.exec_tool(AS, "SaveAsset", {"assetPath": BP_PATH})
+print("saved:", BP_PATH)
+
+# Bodies go in with BlueprintDslToolset.Write — see the blueprint-graphs skill:
+#   (fn `GetDisplayName` (return "Door"))
+#   (event `BPI_Interactable.Interact` (`KismetSystemLibrary.PrintString` "interacted"))
+#
+# To remove the interface later. bPreserveFunctions=True keeps the implemented graphs as ordinary
+# Blueprint functions instead of deleting them; recompile afterwards either way:
+#   vibeue.exec_tool(BT, "RemoveInterface", {"blueprint": bp, "interfaceClass": cls(BPI_PATH),
+#                                            "preserveFunctions": True})
+#   vibeue.exec_tool(BT, "CompileBlueprint", {"blueprint": bp})
