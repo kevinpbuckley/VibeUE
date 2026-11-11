@@ -68,7 +68,7 @@ only that this process's module started a server, not that it won the port — a
 
 ## A long-running script and the editor's safety rails
 
-Python execution is engine-native on this branch: `EditorToolset.PythonScriptingTools.execute_python`
+Python execution is engine-native on this branch: `editor_toolset.toolsets.python_scripting.PythonScriptingTools.execute_python`
 (call `read_me` once per conversation first). VibeUE's own `execute_python_code` is gone, and with it
 its run-record persistence — so there is no `last_python_result()` recovery for a call you abandoned.
 Keep scripts short enough to answer inside your client's budget, and split long work with `await`

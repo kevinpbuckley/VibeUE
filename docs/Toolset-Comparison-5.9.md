@@ -474,13 +474,59 @@ exists" basis. It is left removed on outcome grounds: reading bindings is still 
 as `unreal.StateTreeEditorData.get_editor_data(st).get_bindings(state)`, which the `state-trees`
 skill documents. Restoring it would add a tool without adding a capability.
 
-### Method flaw found and fixed
+### Method flaw found and fixed — four times
 
-The shared Epic tool index used by the audits covered only
-`Engine/Plugins/Experimental/Toolsets`, so it missed `Engine/Plugins/Fab/Source/FabToolset`
-(`UFabToolset`, 5 AICallable tools, in an `EnabledByDefault` plugin) and would have preserved all 7
-`FabService` tools. Any future "Epic has none" claim must be tested against a scan of **all** of
-`Engine/Plugins` and `Engine/Source`, not that subtree.
+Every attempt at the Epic tool index missed a whole family, and each miss would have produced
+wrong verdicts. Recording them because the pattern is the lesson: **a toolset can be declared in
+more ways than you expect, so never enumerate them structurally when you can enumerate the
+metadata instead.**
+
+1. The first index covered only `Engine/Plugins/Experimental/Toolsets`, so it missed
+   `Engine/Plugins/Fab/Source/FabToolset` (`UFabToolset`, 5 tools, in an `EnabledByDefault`
+   plugin) and would have preserved all 7 `FabService` tools. 979 of the then-known 1831 names
+   were outside the subtree it scanned.
+2. The next matched the `UFUNCTION` specifier with `[^)]*`, which stops at the inner paren of
+   `meta = (AICallable)`. It found **zero** C++ toolsets and looked plausible doing it.
+3. The next required `: public UToolsetDefinition` directly, and so missed all five
+   `NiagaraToolsets` toolsets (57 tools), which derive from an intermediate `UNiagaraToolset`.
+4. The next missed `UInputToolset` because it is a `ULocalPlayerSubsystem` implementing
+   **`IToolsetProvider`**, not a `UToolsetDefinition` subclass at all. `UToolsetDefinition` is
+   itself just `UObject, IToolsetProvider` — the interface is the real abstraction, and 48 more
+   classes in `Plugins` plus 4 in `Source` implement it directly, including
+   `ControlRigSequencerEditorLibrary` (230 tools), `LevelSequenceEditorSubsystem` (136), the
+   whole `SequencerScripting` extension-library family, `WidgetBlueprintEditorSubsystem` (23) and
+   `ProceduralVegetationEditorSubsystem` (18).
+
+The working method attributes every `UFUNCTION` carrying `AICallable` or `AIRuntimeCallable` to
+its enclosing class by position, over every header in a module that contains a toolset. That
+metadata is what `ToolsetRegistry` keys on, so a tool cannot hide from it however its owner is
+declared. Result: **137 toolsets, 2073 tools.**
+
+It is validated against the live registry rather than trusted: a headless editor run calling
+`unreal.ToolsetRegistry.get_all_toolset_json_schemas()` reports 85 toolsets and 1616 tools
+registered in this project, and **every one of them appears in the static index** — zero gaps,
+the index being a strict superset because it also covers plugins this project has not enabled.
+Any future audit should re-run that comparison before trusting the index.
+
+### The surface is not the same as what is reachable
+
+`FPlugin::IsEnabledByDefault` (`PluginManager.cpp:455-469`) disables an engine plugin whose
+`EnabledByDefault` field is **absent**, not only one that sets it to `false` — the fallback is
+`GetLoadedFrom() == Project`, and these are engine plugins. Of the 2073 tools, 540 are in plugins
+enabled by default, 263 are in always-available `Engine/Source` modules, and **1270 are in
+plugins that are off** until something turns them on.
+
+`EditorToolset` is in that last group, and it carries `ObjectToolset`, `AssetToolset`,
+`ActorToolset`, `LevelToolset`, `MaterialToolset`, `SkeletalMeshToolset`, `StaticMeshToolset`,
+`EditorAppToolset`, `DataTableToolset`, `TextureToolset` and `UndoHistoryToolset` — the backbone
+of nearly every cut in this document, referenced 218 times by VibeUE's own skills. Across the
+plugin, 443 references pointed at 29 toolset plugins that were neither enabled nor declared as
+VibeUE dependencies, so a user following the rewritten skills would have found the tools absent.
+`VibeUE.uplugin` now declares the eighteen the skills route to, all `Optional` so a renamed or
+dropped experimental toolset cannot stop VibeUE loading.
+
+This is the part of an audit like this that is easy to skip: deciding a capability belongs to
+Epic is only half of it, and the other half is making sure Epic's version is actually there.
 
 ### Known-stale items the pending cuts must fix
 

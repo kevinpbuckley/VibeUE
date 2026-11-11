@@ -43,7 +43,7 @@ into the engine's `ToolsetRegistry` and are reachable through the MCP tools you 
 There are two ways to act on the editor. Pick the cheap one:
 
 - **`execute_python` — your workhorse.** Engine-native
-  (`EditorToolset.PythonScriptingTools`). Runs an arbitrary Python script in the editor in **one
+  (`editor_toolset.toolsets.python_scripting.PythonScriptingTools`). Runs an arbitrary Python script in the editor in **one
   round-trip**, on the game thread, with top-level `await`. Every VibeUE service is exposed to
   Python (`unreal.StateTreeService.create_state_tree(...)`) and sits next to the whole native `unreal.*`
   API in the same script. **Batch aggressively** — do a whole multi-step task (create + edit +
@@ -80,7 +80,7 @@ tool in a toolset (the most token-heavy thing here). Reach for a **skill** plus 
 
 ## 2. Tool roster — what's where
 
-**Python and API discovery (engine-native, `EditorToolset.PythonScriptingTools`):**
+**Python and API discovery (engine-native, `editor_toolset.toolsets.python_scripting.PythonScriptingTools`):**
 - `execute_python` — run a Python script. The workhorse.
 - `read_me` — usage instructions; call once per conversation before `execute_python`.
 - `search_symbols` — regex search across the registered tools **and** the whole `unreal` API;

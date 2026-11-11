@@ -6,7 +6,7 @@
 > 1. **Epic `LogsToolset`** via `call_tool` — `GetLogEntries` returns structured editor log
 >    entries. **You MUST pass `category=""` and `pattern=""`** for "all"; the defaults are a bogus
 >    `"LogsToolset"` category that matches nothing. Discover the exact action/params with
->    `describe_toolset("EditorToolset.LogsToolset")` (or whatever `list_toolsets` shows).
+>    `describe_toolset("ConsoleToolset.LogsToolset")` (or whatever `list_toolsets` shows).
 > 2. **Raw file I/O** from `execute_python` — the editor log lives under
 >    `<ProjectDir>/Saved/Logs/`. Read/tail/grep it with plain Python (`open().read().splitlines()`).
 >

@@ -115,7 +115,7 @@ VibeUE plugs into three native UE 5.9+ systems:
    methods are callable from Python as `unreal.<Name>Service.<method>()`.
 2. **MCP server** (`ModelContextProtocol`) — only two VibeUE utility tools are registered directly on
    the endpoint, both things the engine has no tool for: `deep_research` and `terrain_data`. Python
-   execution and API discovery are engine-native in 5.9 (`EditorToolset.PythonScriptingTools`:
+   execution and API discovery are engine-native in 5.9 (`editor_toolset.toolsets.python_scripting.PythonScriptingTools`:
    `execute_python`, `read_me`, `search_symbols`, `get_symbol`), so VibeUE no longer ships its own.
 3. **Skills** (`AgentSkillToolset`) — 32 markdown skill packs under `Skills/`, discovered natively by
    5.9 (`<Plugin>/Skills/**/SKILL.md`), listed by `ListSkills` and loaded lazily via `GetSkills`,

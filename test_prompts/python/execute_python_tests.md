@@ -1,4 +1,4 @@
-# execute_python (engine-native, EditorToolset.PythonScriptingTools)
+# execute_python (engine-native, editor_toolset.toolsets.python_scripting.PythonScriptingTools)
 
 ## Code that mentions a .py file
 
