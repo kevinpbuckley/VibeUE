@@ -31,13 +31,24 @@ keywords:
 > (`unreal.AnimGraphService.<method>()`); reach engine toolsets with `call_tool`.
 
 > An AnimBP **is a Blueprint**. The state-machine/AnimGraph authoring here is VibeUE
-> `AnimGraphService` (intact). For its **variables and compile**, note VibeUE's `BlueprintService`
-> was trimmed: **variable creation and blueprint compile moved to the engine** toolset
-> `BlueprintToolsets.BlueprintToolset` (`add_variable`, `compile_blueprint`), called via
-> `call_tool`. `BlueprintService` still has `list_variables`, `get_variable_info`,
-> `set_variable_default_value`, `variable_exists`, components, and overridable functions. Bool fields
-> on info structs drop the C++ `b` prefix in Python — use `is_pure`, `is_output`, `already_overridden`
-> (NOT `b_is_pure`); call `get_symbol` to confirm field names rather than guessing.
+> `AnimGraphService` (intact, 48 tools). Everything else about it as a Blueprint is the engine's:
+> `BlueprintToolsets.BlueprintToolset` owns variables, components, interfaces, events, function
+> graphs, node CRUD and compiling (`AddVariable`, `AddObjectVariable`, `AddStructVariable`,
+> `ListVariables`, `GetVariableTooltip`/`SetVariableTooltip` and the other flag accessors,
+> `AddFunctionGraph`, `AddEvent`, `CompileBlueprint`, ...), and
+> `BlueprintToolsets.BlueprintDslToolset` reads and writes whole graphs as DSL. Both are C++
+> toolsets, so their tool names are **PascalCase** and they are reached with `call_tool`, never as
+> `unreal.BlueprintToolset.*`.
+>
+> VibeUE's `BlueprintService` is down to 19 tools: all the Timeline ones, plus `CreateMacroGraph`,
+> `AnalyzeGraphLayout` and `RefreshBlueprintEditor`. It no longer has `list_variables`,
+> `get_variable_info`, `set_variable_default_value`, `variable_exists`, components or overridable
+> functions -- those are the engine's now.
+>
+> Bool fields on info structs drop the C++ `b` prefix in Python -- use `is_pure`, `is_output`,
+> `already_overridden` (NOT `b_is_pure`). `PythonizePropertyName` strips a leading `b` before an
+> uppercase letter, so a `bool bIsPure` UPROPERTY is read as `.is_pure`. Call `get_symbol` to
+> confirm field names rather than guessing.
 
 ## ⚠️ #1 GOTCHA — Transitions need a RULE or they NEVER fire
 
@@ -342,7 +353,7 @@ import unreal
 
 abp_path = "/Game/ABP_Character"
 
-# If you have a node GUID from get_nodes_in_graph
+# If you have a node GUID from BlueprintToolset.FindNodes / GetNodeInfos
 node_id = "ABC123-DEF456-..."
 unreal.AnimGraphService.focus_node(abp_path, node_id)
 ```
@@ -468,16 +479,18 @@ for i in range(0, 12):
 
 ### ⚠️ Variable getter names differ between BP variables and C++ properties
 
-`create_node_by_key` needs the spawner key, which embeds the node's **display name**, and the two
-kinds of variable are spelled differently:
+A variable getter is addressed by the node's **display name**, and the two kinds of variable are
+spelled differently -- which is the part that bites, whichever tool you create the node with:
 
-| Variable lives on | Display name | Spawner key |
-|---|---|---|
-| The AnimBP itself (`add_member_variable`) | `Get SailRotation` | `SPAWN K2Node_VariableGet\|Get SailRotation` |
-| A C++ `UAnimInstance` subclass | `Get Sail Rotation` (spaced) | `SPAWN K2Node_VariableGet\|Get Sail Rotation` |
+| Variable lives on | Display name |
+|---|---|
+| The AnimBP itself (`BlueprintToolset.AddVariable`) | `Get SailRotation` |
+| A C++ `UAnimInstance` subclass | `Get Sail Rotation` (spaced) |
 
-Never hard-code either — `discover_nodes(PATH, "SailRotation", "", 20)` and match on `display_name`,
-which works for both.
+Never hard-code either. Find it first with `BlueprintToolset.FindNodes` (or
+`BlueprintDslToolset.FindNodeReferences`, which searches palette names and categories) and match on
+what comes back -- that works for both spellings. VibeUE's `create_node_by_key` /
+`add_member_variable` / `discover_nodes` were removed with the rest of the node surface.
 
 ### Continuous motion without an animation asset
 

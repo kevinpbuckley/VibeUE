@@ -109,7 +109,7 @@ are `call_tool`; VibeUE services are `unreal.<Service>.<method>()` inside `execu
 | `capture_game` | `call_tool` → `SceneCaptureToolset.CaptureGameViewport` |
 | `console_command` | `call_tool` → `ConsoleToolset.RunConsoleCommand`, or `unreal.PIEActorService.console_command(selector, cmd)` when it must run in one specific PIE world |
 | `python_assert` / `python_assert_number` | your own comparison inside Epic's `execute_python`: read the live value, compare it, and print expected *and* actual as the evidence |
-| `preflight: {save_dirty_assets, compile_blueprints}` | `unreal.EditorLoadingAndSavingUtils.save_dirty_packages(True, True)` and `unreal.BlueprintService.compile_blueprint(path)` **before** you start PIE |
+| `preflight: {save_dirty_assets, compile_blueprints}` | `unreal.EditorLoadingAndSavingUtils.save_dirty_packages(True, True)`, and `BlueprintToolsets.BlueprintToolset.CompileBlueprint` via `call_tool`, **before** you start PIE |
 | `dependencies` freshness hashing | nothing — no tool hashes inputs or reports `stale`. Save, compile, re-run after changes |
 | the run report under `Saved/VibeUE` | write your own: `FileSystemToolset.WriteTextFile` / `ReadTextFile` (it mounts `/Saved`), plus `UndoHistoryToolset.GetRecentTransactions` / `GetTransactionDetails` for which assets the run actually touched |
 

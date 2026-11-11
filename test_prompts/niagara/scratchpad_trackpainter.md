@@ -122,16 +122,22 @@ If compilation fails, surface the error to me; do NOT silently retry.
 
 These three calls should now all succeed cleanly (they previously failed):
 
-1. `NiagaraEmitterService.get_module_info(NS_TrackPainter, CompletelyEmpty, "SplatLine")` should
-   return a result whose `script_asset_path` points at the scratch script (was empty before).
+The three VibeUE tools these checks were written against (`get_module_info`, `set_module_input`,
+`remove_module`/`add_module`) were removed on the 5-9 branch -- Epic's
+`NiagaraToolsets.NiagaraToolset_System` owns the stack now. Run the equivalents and report what the
+engine does:
 
-2. `NiagaraEmitterService.set_module_input(NS_TrackPainter, CompletelyEmpty,
-   <SetVariables_*>, "GridWidth", "512")` should succeed without returning NOT FOUND for the
-   bare name `GridWidth` (the service now also tries `Module.GridWidth`).
+1. `GetModuleSchema` on the `SplatLine` module of `CompletelyEmpty` should resolve the scratch
+   script rather than returning it blank.
 
-3. `NiagaraEmitterService.remove_module(...)` followed by `add_module(...)` of the same module
-   should NOT trigger the `StackNodeGroups.Num() >= 2` assert or crash the editor; on a broken
-   stack it should log a clear refusal instead.
+2. `SetStackInputData` should set `GridWidth` to 512 on that emitter's SetVariables module. Note
+   whether it needs the bare name or the fully-qualified `Module.GridWidth` -- VibeUE used to try
+   both, and this is the behaviour worth recording.
+
+3. `RemoveModule` followed by `AddModule` of the same module should not trip the
+   `StackNodeGroups.Num() >= 2` assert or crash the editor. On a broken stack, record whether Epic
+   refuses cleanly or asserts -- `GetStackIssues` / `ApplyStackIssueFix` are the engine's own
+   repair path and are worth trying first.
 
 Report pass/fail for each.
 

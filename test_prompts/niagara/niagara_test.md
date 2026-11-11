@@ -314,8 +314,11 @@ compile with zero errors.
 
 ---
 
-Verify that `NiagaraEmitterService.get_module_info(NS_SmokeTest, Sparks, ScratchSmoke)`
-now returns a non-empty `script_asset_path` (this was empty for scratch modules before).
+Verify that the scratch module on `Sparks` resolves to its script asset. `get_module_info` was
+removed with the rest of the stack surface -- read it with Epic's
+`NiagaraToolsets.NiagaraToolset_System.GetModuleSchema` (or `GetModuleTopology` for the stack
+position), and check the script asset comes back non-empty rather than blank as it used to for
+scratch modules.
 
 ---
 

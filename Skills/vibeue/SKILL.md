@@ -169,8 +169,8 @@ VibeUE services are plain Python on the editor's `unreal` module. Run everything
 
 ```python
 import unreal
-widgets = unreal.WidgetService.list_widget_blueprints()
 unreal.StateTreeService.create_state_tree("/Game/AI/MyBehavior")
+unreal.PerformanceService.set_background_throttling(False)
 ```
 
 You get the full `unreal.*` API plus every `unreal.<Service>` VibeUE adds. Reserve `call_tool` for
@@ -391,8 +391,11 @@ with vibeue.gate_session(clients=3, net_mode="ListenServer"):   # throttling + P
 
 ### Already in the plugin (stop hand-rolling these)
 
-- `unreal.BlueprintService.compile_blueprint(path)` exists. It returns `FBlueprintCompileResult` (`success`, `num_errors`, `num_warnings`, `errors`, `warnings`).
-- `BlueprintService.set_node_pin_value` writes class and object pins (into the pin's `DefaultObject`), and `get_node_pins` reports them in `default_object`.
+- Compiling is engine-side: `BlueprintToolsets.BlueprintToolset.CompileBlueprint` via `call_tool`
+  (or `vibeue.exec_tool` from inside `execute_python`). VibeUE's `compile_blueprint` is gone.
+- Pin values are engine-side too: `BlueprintToolset.GetPinValue` / `SetPinValue`, or read the whole
+  graph as DSL with `BlueprintDslToolset.Read`. VibeUE's `set_node_pin_value` / `get_node_pins` are
+  gone with the rest of the node surface.
 - `unreal.PerformanceService.set_background_throttling(False)` / `get_background_throttling()` replace the hand-written `EditorPerformanceSettings` CDO write. Both return a JSON string.
 - Runtime input: Epic `InputToolset.ApplyInput` (`Entries` + `DurationSeconds`) via `call_tool` for every bounded press or hold -- `inject_action_for` and `inject_key` are **gone**. VibeUE keeps exactly `unreal.InputService.inject_action(action_path, x, y, z, pie_instance)` and `stop_injection(action_path, pie_instance)` for an INDEFINITE hold released in a later call. Either way, don't hand-roll a slate-tick loop around `inject_input_vector_for_action`. `pie_instance` picks the PIE world; -1 means the first PIE world with a local player.
 - `unreal.EngineSettingsService.set_pie_settings(net_mode, clients, run_under_one_process)` / `get_pie_settings()` set and read the PIE net mode ("Standalone", "ListenServer", "Client"). It is saved to the user's ini. These two are **Python-only helpers** now: `EngineSettingsService` has no MCP tools left, so they only exist inside `execute_python`.

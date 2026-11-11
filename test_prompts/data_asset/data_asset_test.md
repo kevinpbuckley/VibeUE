@@ -237,11 +237,17 @@ Verify the changes by reading back the Settings property.
 
 **Important Note on Complex Property Formats:**
 When setting complex properties like arrays of structs, you must use **Unreal's string format (T3D-like syntax)**, not JSON. Example:
-```python
-# Complex struct array format:
-keys_str = '((EntryName="Key1"),(EntryName="Key2",EntryCategory="Combat"))'
-unreal.DataAssetService.set_property(path, "Keys", keys_str)
+`DataAssetService` was removed entirely -- data-asset properties are Epic's
+`EditorToolset.ObjectToolset` now, which takes JSON rather than T3D:
+
 ```
+call_tool SetProperties {"instance": {"refPath": "<asset path>"},
+                         "values": "{\"Keys\": [{\"EntryName\": \"Key1\"}, {\"EntryName\": \"Key2\", \"EntryCategory\": \"Combat\"}]}"}
+```
+
+Run `GetPropertySchema` on `Keys` first to get the element shape. The old T3D form
+(`((EntryName="Key1"),...)`) is what `set_editor_property` wants from `execute_python`, and is
+still correct there -- it is not what `ObjectToolset` accepts.
 
 ---
 

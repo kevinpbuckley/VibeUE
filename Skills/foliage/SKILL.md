@@ -82,7 +82,7 @@ If you get `instances_added=0` with `instances_rejected ≈ 4× requested`, ever
 | Expecting `list_foliage_types()` to shrink after `clear_all_foliage()` | Clearing removes **instances**, not type registrations — 0-instance entries remain listed. Filter on `ft.instance_count > 0` |
 | `set_foliage_type_property(path, "CullDistance", "30000")` | Whole structs need UE import text: `"(Min=0,Max=30000)"`. Simpler: set the member via a dotted path — `set_foliage_type_property(path, "CullDistance.Max", "30000")` |
 | Scattering "around the landscape at (0,0)" centered on (0,0) | Landscapes are corner-anchored: created at (0,0) the terrain spans +X/+Y only. Center the scatter on the landscape's actual center (`location + (resolution-1)*scale/2`) or most candidates miss the surface |
-| `AssetDiscoveryService.list_assets(path)` for cleanup | `AssetDiscoveryService.list_assets_in_path(path, asset_type)` — or the `manage_asset` tool with `action='list'` |
+| `AssetDiscoveryService.list_assets(path)` for cleanup | Both that and `list_assets_in_path` are gone, as is `manage_asset`. Use Epic's `EditorToolset.AssetToolset.FindAssets` (filter by class path, e.g. `/Script/Foliage.FoliageType_InstancedStaticMesh`), or `unreal.EditorAssetLibrary.list_assets(path)` from `execute_python` |
 
 ---
 

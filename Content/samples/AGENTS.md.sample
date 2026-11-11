@@ -45,7 +45,7 @@ There are two ways to act on the editor. Pick the cheap one:
 - **`execute_python` — your workhorse.** Engine-native
   (`EditorToolset.PythonScriptingTools`). Runs an arbitrary Python script in the editor in **one
   round-trip**, on the game thread, with top-level `await`. Every VibeUE service is exposed to
-  Python (`unreal.BlueprintService.build_graph(...)`) and sits next to the whole native `unreal.*`
+  Python (`unreal.StateTreeService.create_state_tree(...)`) and sits next to the whole native `unreal.*`
   API in the same script. **Batch aggressively** — do a whole multi-step task (create + edit +
   compile + verify) in a single call, and `print()` only what you need back (print goes to the
   Output Log; the script's final expression is what comes back).
@@ -217,7 +217,7 @@ import unreal  # lowercase
 sub = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
 
 # VibeUE services are static classes, called directly:
-info = unreal.BlueprintService.get_blueprint_info("/Game/MyBP")
+tl = unreal.BlueprintService.get_timelines("/Game/MyBP")
 
 # Batch a whole task in ONE execute_python call, printing evidence as you go.
 # Blueprint create / variables are ENGINE-side (native libs + BlueprintTools toolset), NOT
@@ -228,8 +228,8 @@ bp = unreal.AssetToolsHelpers.get_asset_tools().create_asset("BP_Enemy", "/Game/
 unreal.ToolsetRegistry.execute_tool("BlueprintToolsets.BlueprintToolset", "AddVariable",
     json.dumps({"blueprint": {"refPath": "/Game/Blueprints/BP_Enemy.BP_Enemy"},   # refPath = full object path
                 "name": "Health", "type_name": "float"})); print("ADDED: Health")
-res = unreal.BlueprintService.compile_blueprint("/Game/Blueprints/BP_Enemy")      # FBlueprintCompileResult
-print("COMPILED: BP_Enemy", res.success, res.num_errors, res.errors)
+unreal.ToolsetRegistry.execute_tool("BlueprintToolsets.BlueprintToolset", "CompileBlueprint",
+    json.dumps({"blueprint": {"refPath": "/Game/Blueprints/BP_Enemy.BP_Enemy"}})); print("COMPILED: BP_Enemy")
 ```
 
 ---
@@ -390,16 +390,19 @@ crash handler — MCP will hang; relaunch); fresh and small → the editor is fi
   after each op so a mid-script failure can be undone.
 - **Idempotent: check before create.** Use the service `*_exists()` (or `unreal.EditorAssetLibrary.does_asset_exist`)
   before creating, to avoid duplicates.
-- **Compile after structure changes.** `unreal.BlueprintService.compile_blueprint(path)` after adding
+- **Compile after structure changes.** `BlueprintToolsets.BlueprintToolset.CompileBlueprint` after adding
   variables/functions/components. It returns `success`, `num_errors`, `num_warnings`, `errors` and
   `warnings`. `unreal.BlueprintEditorLibrary.compile_blueprint(loaded_bp)` also works but returns no
-  errors, and `build_graph`'s compile flag works for graph edits.
+  errors. A `BlueprintDslToolset.Write` or `.Edit` is transactional and reports parse failures itself,
+  but still compile afterwards.
 - **Verify success with evidence.** For Blueprint/Widget/Material/AnimGraph/StateTree edits, a successful
-  tool call isn't proof — re-read the asset (`get_nodes_in_graph`, `get_connections`, compile result)
+  tool call isn't proof — re-read the asset (`BlueprintDslToolset.Read` for a graph, which shows nodes
+  and wires together; `BlueprintToolset.FindNodes` / `GetNodeInfos` for one node; the compile result)
   and report brief evidence.
 - **Non-destructive.** Never remove-and-recreate to change a value, clear data to make a write succeed,
   or replace a whole object to change one field. Discover the supported setter; if none exists, report
-  the gap. (StateTree reparenting: `move_state`, never remove+add.)
+  the gap. (StateTree reparenting: Epic's `move_child_state` / `move_sub_tree`, never remove+add --
+  a remove-and-re-add mints new IDs and orphans every binding keyed on the old ones.)
 - **Loop prevention.** Track *outcomes*. Never repeat the same call with the same args >2× when output
   is unchanged; after 2 failed attempts at a goal, stop and report — don't try a 3rd variation.
 - **Never** use modal dialogs, `input()`, blocking ops, long `time.sleep()`, or infinite loops.

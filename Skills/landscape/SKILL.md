@@ -370,8 +370,8 @@ Do this in separate steps:
 | `segment.start_control_point_index` | `segment.start_point_index` (spline segment) |
 | `segment.end_control_point_index` | `segment.end_point_index` (spline segment) |
 | `layer.name` on list_layers result | `layer.layer_name` (LandscapeLayerInfo_Custom property) |
-| `LandscapeService.create_spline_control_point(...)` | `LandscapeService.create_spline_point(...)` (no "control" in name) |
-| `LandscapeMaterialService.add_material_layer(...)` | `LandscapeMaterialService.add_layer_to_blend_node(...)` |
+| `LandscapeService.create_spline_control_point(...)` (no such method) | `LandscapeService.create_spline_point(...)` -- no "control" in the name |
+| `LandscapeMaterialService.add_material_layer(...)` (no such method) | `LandscapeMaterialService.add_layer_to_blend_node(...)` |
 | `mat_path = create_landscape_material(...)` as string | Returns `LandscapeMaterialCreateResult` — use `result.asset_path` |
 | `connect_spline_points(..., tangent_length=25.0)` ignoring negative source | Pass `tangent_length=seg.start_tangent_length, end_tangent_length=seg.end_tangent_length` — **both** tangents are needed for exact shape |
 | Only passing `tangent_length` to `connect_spline_points` | Must also pass `end_tangent_length=seg.end_tangent_length` — end tangent is typically negative (UE convention). Omitting it defaults to `-start_tangent` which is usually correct for NEW splines, but when copying, always pass both explicitly |
