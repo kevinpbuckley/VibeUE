@@ -274,7 +274,7 @@ ends   = [unreal.Vector(x * 200, 0, -1000) for x in range(20)]
 
 hits = unreal.LandscapeService.batch_line_trace(starts, ends)
 for hit in hits:
-    if hit.b_hit:
+    if hit.hit:
         print(f"Hit {hit.actor_name} at Z={hit.hit_location.z:.0f}, normal={hit.hit_normal}")
 ```
 
@@ -291,7 +291,7 @@ hits = unreal.LandscapeService.batch_line_trace_grid(
     start_z=50000.0,
     end_z=-5000.0
 )
-terrain_hits = [h for h in hits if h.b_hit]
+terrain_hits = [h for h in hits if h.hit]
 print(f"{len(terrain_hits)}/{len(hits)} hits")
 zs = [h.hit_location.z for h in terrain_hits]
 if zs: print(f"Height range: {min(zs):.0f} to {max(zs):.0f}")

@@ -1,4 +1,23 @@
-# VibeUE × Unreal Engine 5.8 — Toolset Comparison & Consolidation Plan
+# VibeUE x Unreal Engine 5.8 - Toolset Comparison & Consolidation Plan
+
+> ## SUPERSEDED - HISTORICAL RECORD
+>
+> This is the **5.8** analysis. It is kept because it is the record of how the consolidation was
+> reasoned about, and much of its method still reads well. **Do not use its verdicts.** 5.9
+> invalidated them substantially: it ships 49 toolset plugins and 1831 tool names against the ~28
+> this document was written over, Epic absorbed whole domains it lists as VibeUE's (StateTree
+> structural authoring, Blueprint graph authoring, materials, UMG, cvars and project settings), and
+> several tool names here no longer exist on either side.
+>
+> **The current authority is [`Toolset-Comparison-5.9.md`](Toolset-Comparison-5.9.md)**, whose §6
+> carries the executed per-service verdicts. For what exists right now, the live sources are
+> `ListSkills`, `describe_toolset`, and the service headers under
+> `Source/VibeUE/Public/PythonAPI/`.
+>
+> One method flaw in this document is worth knowing before trusting any of its overlap claims: the
+> Epic tool index it was built on covered only `Engine/Plugins/Experimental/Toolsets`, missing 979
+> of 1831 tool names. "Epic has no tool for X" here often means "the index did not look where X
+> lives."
 
 **Goal:** make VibeUE *enhance* Unreal 5.8's native AI toolset system, not compete with it. This
 document inventories every Epic and VibeUE toolset/tool, maps the overlaps, and for each VibeUE

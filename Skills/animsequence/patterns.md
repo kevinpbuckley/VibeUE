@@ -107,12 +107,12 @@ def find_notify_index(anim_path, name):
     return -1
 
 # Step 1: Find an animation and get the FULL asset path
-results = unreal.AssetDiscoveryService.search_assets("Run", "AnimSequence")
+results = unreal.AnimSequenceService.search_animations("Run", "/Game")
 if not results:
     print("No animations found")
 else:
-    # CRITICAL: Use package_name (full path), NOT package_path (folder only)
-    anim_path = str(results[0].package_name)
+    # CRITICAL: anim_path is the full asset path, not the containing folder
+    anim_path = results[0].anim_path
     print(f"Using animation: {anim_path}")
     
     # List existing notifies
@@ -222,7 +222,7 @@ if info:
 11. **Bone Rotation Axes Are Non-Intuitive**: Roll/Pitch/Yaw do NOT map predictably to world-space movement. Each bone's local coordinate system is different. **Always discover axis mappings** using `get_reference_pose()` and `get_pose_at_time()` before creating rotation animations!
 12. **Notify indices are unstable**: Notifies are sorted by `trigger_time`; any add/retime shifts indices. Re-fetch `list_notifies` and resolve by name before each index-based call. (See the notify gotcha box above.)
 13. **`list_anim_sequences` does NOT report root motion**: it returns `root_motion=False` for every entry. For accurate root-motion status (and `raw_size`/`compressed_size`/`bone_track_count`), use `search_animations` / `get_anim_sequence_info`, whose results expose `enable_root_motion`.
-14. **Search-result objects use `anim_path`/`anim_name`, NOT `package_name`**: `search_animations`, `find_animations_for_skeleton`, and `list_anim_sequences` return `AnimSequenceInfo` objects (fields: `anim_path`, `anim_name`, `enable_root_motion`, `frame_rate`, `frame_count`, `bone_track_count`, `curve_count`, `notify_count`, `rate_scale`, `additive_anim_type`, `skeleton_path`, `raw_size`, `compressed_size`). `package_name`/`package_path` only exist on `AssetDiscoveryService.search_assets` results. Also **filter out `None`** entries before reading fields.
+14. **Search-result objects use `anim_path`/`anim_name`, NOT `package_name`**: `search_animations`, `find_animations_for_skeleton`, and `list_anim_sequences` return `AnimSequenceInfo` objects (fields: `anim_path`, `anim_name`, `enable_root_motion`, `frame_rate`, `frame_count`, `bone_track_count`, `curve_count`, `notify_count`, `rate_scale`, `additive_anim_type`, `skeleton_path`, `raw_size`, `compressed_size`). There is no `package_name`/`package_path` on them — that pair belonged to the removed `AssetDiscoveryService.search_assets`, and Epic's `AssetToolset.FindAssets` returns plain object-path strings instead. Also **filter out `None`** entries before reading fields.
 15. **Scope searches to a folder**: a project-wide wildcard (e.g. `*Run*` over all of `/Game`) can exceed the 30 s Python timeout. Pass a `search_path` folder to keep `search_animations`/`list_anim_sequences` fast.
 16. **Verify frame rate after creation**: `create_anim_sequence(frame_rate=...)` has been observed to come back at 30 FPS for a 60 FPS request — always read back `get_animation_frame_rate(anim_path)` and don't assume a non-30 rate stuck.
 17. **Montages use `AnimMontageService`**: `AnimSequenceService` accepts `AnimSequence` assets only.

@@ -272,8 +272,9 @@ FEQSRunResult UEnvQueryService::RunQuery(const FString& AssetPath,
 	{
 		return VibeEQSRunRefusal(FString::Printf(
 			TEXT("%s produced no query instance. UEnvQueryManager::CreateQueryInstance refuses a "
-				 "template with no options (EnvQueryManager.cpp:782); check GetQueryInfo's "
-				 "OptionCount, and ValidateQuery if it is zero on a query that should have some."),
+				 "template with no options (EnvQueryManager.cpp:782); count the options with "
+				 "AIModuleToolset.EnvironmentQueryToolset GetOptionGraphNodes, and check "
+				 "GetRootGraphNode if it is zero on a query that should have some."),
 			*AssetPath));
 	}
 

@@ -81,11 +81,15 @@ render in a private preview scene, never the open level, and work during PIE. De
 > **DO NOT** use `unreal.load_asset()` in loops - causes memory crashes!
 >
 > **USE THESE SAFE METHODS:**
-> - `unreal.SkeletonService.list_skeletons(search_path)` - Find skeletons
+> - Find skeletons with Epic's `EditorToolset.AssetToolset.FindAssets`, filtered to class
+>   `Skeleton` (`{"filter": {"assetType": {"refPath": "/Script/Engine.Skeleton"}}}`) — VibeUE's own
+>   skeleton list call is gone. It is async: `await vibeue.exec_tool_await(...)`, or
+>   `vibeue.exec_tool_async(...)` then `vibeue.collect_tool_result(...)` next call. It returns full
+>   object paths, so strip the trailing `.AssetName` before passing one to a VibeUE service.
 > - `unreal.AnimSequenceService.find_animations_for_skeleton(skeleton_path)` - Find animations
 > - `unreal.AnimSequenceService.list_anim_sequences(search_path, skeleton_filter)` - List all animations
 >
-> These methods query asset metadata WITHOUT loading assets into memory.
+> These all query the asset registry WITHOUT loading assets into memory.
 > - **animation-blueprint** - For state machines and AnimGraph navigation
 >
 > **Workflow:** Create skeleton profile → Learn constraints → Preview bone rotations → Validate pose → Bake to keyframes
@@ -298,27 +302,32 @@ for anim_info in anims[:10]:
 
 ## IMPORTANT: Asset Path Format
 
-**All `anim_path` parameters require the FULL asset path (package_name), NOT the folder path (package_path).**
+**All `anim_path` parameters require the FULL asset path, NOT the folder path.**
 
-When using `AssetDiscoveryService.search_assets()`, use `package_name` NOT `package_path`:
+Search animations with `AnimSequenceService.search_animations()` — its results carry `anim_path`,
+already in the form every other method wants. `AssetDiscoveryService.search_assets` is gone (that
+service is down to `export_texture` / `reimport_asset`, plus Python-only `import_asset` /
+`delete_asset_unattended`), so there is no `package_name` / `package_path` to pick between any more:
 
 ```python
 import unreal
 
 # Search for an animation
-results = unreal.AssetDiscoveryService.search_assets("Run", "AnimSequence")
+results = unreal.AnimSequenceService.search_animations("Run", "/Game/Animations")
 if results:
-    asset = results[0]
-    
-    # CORRECT: Use package_name (full asset path)
-    anim_path = str(asset.package_name)  # e.g., "/Game/Animations/Run/AS_Run_Forward"
-    
-    # WRONG: Do NOT use package_path (folder only)
-    # folder = asset.package_path  # e.g., "/Game/Animations/Run" - This will FAIL!
-    
+    # CORRECT: anim_path is the full asset path
+    anim_path = results[0].anim_path  # e.g., "/Game/Animations/Run/AS_Run_Forward"
+
+    # WRONG: Do NOT pass the containing folder
+    # anim_path = "/Game/Animations/Run"  # - This will FAIL!
+
     # Now you can use the anim_path with AnimSequenceService
     info = unreal.AnimSequenceService.get_anim_sequence_info(anim_path)
 ```
+
+> If you reach for Epic's `AssetToolset.FindAssets` instead (the general asset-discovery path),
+> remember it returns full **object** paths — strip the trailing `.AssetName` with
+> `path.rsplit(".", 1)[0]` before handing one to `AnimSequenceService`.
 
 ---
 

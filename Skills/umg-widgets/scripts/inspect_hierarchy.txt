@@ -38,7 +38,7 @@ for e in res.widgets:
         where = f"named-slot on {e.named_slot_host.get_name()}"
     else:
         where = "ROOT (or inherited named slot)"
-    flags = " ".join(f for f, on in (("var", e.b_is_variable), ("inherited", e.b_inherited)) if on)
+    flags = " ".join(f for f, on in (("var", e.is_variable), ("inherited", e.inherited)) if on)
     print(f"{pad}- {e.widget_name} ({e.widget_class_path}) {where} {flags}")
     for p in e.properties:
         print(f"{pad}    {p.property_name} = {p.exported_value}")

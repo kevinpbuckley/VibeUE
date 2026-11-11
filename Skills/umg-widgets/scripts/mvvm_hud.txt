@@ -85,7 +85,7 @@ unreal.EditorAssetLibrary.save_asset(asset_path)
 
 for b in MVVM.list_widget_view_bindings(wbp):
     print(f"{b.binding_id} {b.display_name} mode={b.binding_type} "
-          f"enabled={b.b_enabled} compiled={b.b_compile}")
+          f"enabled={b.enabled} compiled={b.compile}")
 
 # One call audits the lot — unconnected/misconfigured rows first:
 cmap = unreal.WidgetStaticAnalysisToolset.get_widget_connection_map(wbp, "")

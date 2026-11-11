@@ -1,4 +1,18 @@
-# Skill Pack Review — Consolidation Alignment
+# Skill Pack Review - Consolidation Alignment
+
+> ## SUPERSEDED - HISTORICAL RECORD
+>
+> This tracked the **5.8** skill-pack review. Its ground truth is the 5.8 verdicts in
+> `Toolset-Comparison-and-Consolidation.md`, which are themselves superseded, so its per-pack
+> conclusions no longer hold. Two concrete examples: it records the umg-widgets verdict as
+> "engine UMGToolSet/MVVMToolset", and there is no `UMGToolSet` - the real ones are
+> `WidgetStaticAnalysisToolset` and `WidgetAnimationToolset`; and several packs it lists were
+> deleted or rewritten entirely on the 5-9 branch.
+>
+> **The current authority is [`Toolset-Comparison-5.9.md`](Toolset-Comparison-5.9.md)** plus each
+> pack's own `SKILL.md`. The 5-9 branch carries 32 packs under `Skills/`, discovered natively by
+> 5.9 at `<Plugin>/Skills/**/SKILL.md` and keyed `/Skills/VibeUE/<name>`; `ListSkills` is the live
+> list.
 
 Reviewing every `Skills/<name>/SKILL.md` (+ sub-docs) after the 5.8 consolidation. For each:
 **delete** if a fully-cut service made it dead/redundant with an engine toolset; **rewrite** to point

@@ -190,9 +190,9 @@ svc.flatten_at_location("Landscape", 0.0, 0.0, 0.0, 250.0)   # any height writer
 # What did that write actually touch?
 rep = svc.get_last_landscape_write()
 print(rep.summary)                       # e.g. "49 proxies dirtied; 49 written to disk by the edit-layer flush (mtime changed)"
-print(rep.num_proxies_dirtied, rep.num_written_to_disk, rep.b_any_written_to_disk)
+print(rep.num_proxies_dirtied, rep.num_written_to_disk, rep.any_written_to_disk)
 for p in rep.proxies:
-    print(p.package_name, "dirty:", p.b_dirty_after, "written:", p.b_written_to_disk, p.file_size_bytes)
+    print(p.package_name, "dirty:", p.dirty_after, "written:", p.written_to_disk, p.file_size_bytes)
 ```
 
 - **`get_last_landscape_write()`** reports, per proxy package the last write touched: `b_dirty_before` /
@@ -211,7 +211,7 @@ for p in rep.proxies:
 
 ```python
 res = svc.save_landscape("Landscape")
-if res.b_success:
+if res.success:
     print("saved", res.num_requested, "packages:", list(res.saved_packages))
 else:
     print("save failed:", res.error_message)   # e.g. a read-only / source-controlled file

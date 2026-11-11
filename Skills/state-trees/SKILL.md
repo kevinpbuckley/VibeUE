@@ -720,7 +720,7 @@ UE Python bindings strip the `b` prefix from bool UPROPERTY names and convert to
 
 for p in unreal.StateTreeService.get_transition_condition_property_names(
         path, "Root", 0, "StateTreeObjectIsValidCondition"):
-    print(p.name, p.is_bound, p.bound_to)   # NOT p.b_is_bound or p.bIsBound
+    print(p.name, p.is_bound, p.bound_to)   # NOT p.is_bound or p.bIsBound
 ```
 
 ### ⚠️ Use `ReceiveLatentTick`, Not `ReceiveTick` on StateTree Tasks

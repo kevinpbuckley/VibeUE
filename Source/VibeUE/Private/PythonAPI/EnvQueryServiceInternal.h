@@ -56,8 +56,8 @@ namespace VibeEQS
 	/**
 	 * The graph's root node, or nullptr. A linear sweep of Nodes is the whole search: an EQS graph
 	 * holds its tests as SubNodes of the option nodes, never as entries in Nodes, so nothing is
-	 * nested out of reach. Shared because the root is needed in three places across two
-	 * translation units (layout, the commit-time discard guard, and GetQueryInfo).
+	 * nested out of reach. Shared because the root is needed in more than one place across two
+	 * translation units (layout and the commit-time discard guard).
 	 */
 	UEnvironmentQueryGraphNode_Root* FindRootNode(UEnvironmentQueryGraph* Graph);
 

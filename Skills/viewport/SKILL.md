@@ -280,7 +280,7 @@ res = unreal.ViewportService.capture_scene(
     1280, 720,                                # width, height (px)
     "C:/temp/shot.png",                       # absolute path, or relative → Saved/VibeUE/Captures
     manual_ev100=-6.0)                        # 0 = auto (black when hidden); negative EV = brighter fixed exposure — see below
-if res.b_success:
+if res.success:
     print("wrote", res.output_path, res.file_size_bytes, "bytes")
 else:
     print("failed:", res.error_message)

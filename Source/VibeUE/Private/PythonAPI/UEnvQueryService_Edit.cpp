@@ -360,11 +360,12 @@ FString UEnvQueryService::RepairGraphFromOptions(const FString& AssetPath)
 			TEXT("Nothing to repair in %s: its graph's root already feeds %d option node(s). "
 				 "Rebuilding is refused rather than repeated — SpawnMissingNodes skips options that "
 				 "already have a node, so a second run is a no-op that would still report success "
-				 "and still save. Use CompileAndSave to recommit a healthy query."),
+				 "and still save. Save a healthy query with EditorToolset.AssetToolset SaveAsset."),
 			*AssetPath, OptionNodesBefore);
 	}
 
-	// A graph with no root, which ValidateQuery already reports first-class as "no root node".
+	// A graph with no root. AIModuleToolset.EnvironmentQueryToolset GetRootGraphNode is the engine's
+	// first-class check for this shape: it returns nothing when the graph has no root.
 	// Without this the repair DAMAGES the asset it was asked to fix: EnsureGraph only creates a root
 	// when EdGraph is null, so an existing rootless graph keeps none; SpawnMissingNodes finds
 	// MyRootNode == nullptr and spawns option nodes with no RootOutPin to link them to
@@ -377,11 +378,12 @@ FString UEnvQueryService::RepairGraphFromOptions(const FString& AssetPath)
 	{
 		return FString::Printf(
 			TEXT("Refusing to repair %s: its editor graph has no root node, which is the shape "
-				 "ValidateQuery reports as 'no root node'. SpawnMissingNodes has nothing to link the "
+				 "EnvironmentQueryToolset GetRootGraphNode reports by returning no node. SpawnMissingNodes has nothing to link the "
 				 "rebuilt options to, and the commit that follows would rebuild an EMPTY option list "
 				 "over this query's %d — so proceeding would destroy in memory exactly what the "
 				 "repair was asked to recover. Nothing was touched. Recreate the root in the "
-				 "Environment Query editor, or create the query again with CreateQuery."),
+				 "Environment Query editor, or create the query again with "
+				 "AIModuleToolset.EnvironmentQueryToolset CreateEnvironmentQuery."),
 			*AssetPath, OptionCount);
 	}
 

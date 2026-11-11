@@ -190,7 +190,7 @@ wbp = unreal.load_asset("/Game/UI/WBP_MainMenu")
 res = unreal.WidgetStaticAnalysisToolset.describe_widget(wbp, None, -1, "", False)
 for e in res.widgets:
     print("  " * e.depth, e.widget_name, e.widget_class_path,
-          "var" if e.b_is_variable else "")
+          "var" if e.is_variable else "")
 ```
 
 Tree depth alone: `GetWidgetTreeDepth(WidgetBlueprint, StartWidget=null)` → int (`-1` on error or

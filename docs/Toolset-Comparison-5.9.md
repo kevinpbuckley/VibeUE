@@ -377,17 +377,35 @@ invalidated one already-committed cut (see §5's ActorService correction).
 | `BlueprintService` | 89 + 2 demoted | 19 | **done** |
 | `SkeletonService` | 13 | 26 | **done** |
 | `FabService` | 7 | 0 | **done** — service deleted |
-| `StateTreeService` | ~61 | ~37 | **held**, see below |
-| `MaterialService` + `MaterialNodeService` | 50 | 1 (+1 open) | pending |
-| `WidgetService` | 34 | 9 | pending |
+| `StateTreeService` | 53 | 45 | **done** — resolved, see below |
+| `MaterialService` + `MaterialNodeService` | 50 | 2 | **done** |
+| `WidgetService` | 34 | 9 | **done** |
 | `EngineSettings` + `ProjectSettings` | 27 + 2 demoted | 0 | **done** |
-| `ViewportService` | 4 | 18 | pending |
-| `PerformanceService` | 10 + 2 demoted | 7 | pending |
-| `WorkflowService` | 11 | 1 | pending |
+| `ViewportService` | 4 | 18 | **done** |
+| `PerformanceService` | 10 + 2 demoted | 7 | **done** |
+| `WorkflowService` | 11 | 1 | **done** |
+| `InputService` | 3, then 1 restored | 26 | **done** — see below |
 | `PIEActorService` | 0 | 7 | nothing to do |
 | `PythonTools` | 0 | 2 | nothing to do |
 
-### Why StateTree is held rather than cut
+All twelve are executed. 1000 AI tools at the branch point, 620 now; 397 UFUNCTIONs deleted
+outright and 4 demoted to Python-only. DLL 18.93 MB -> 9.58 MB.
+
+### InputService: one cut partly reversed
+
+Cutting `InjectActionFor` as a duplicate of `InputToolset.ApplyInput` was right about the *timed*
+hold and wrong about the indefinite one. It was the only writer of `GHeldInjections`, so
+`StopInjection` was left unable to ever succeed (`was_active` permanently false) and
+`InjectAction`'s own user-visible note still told agents to call the removed tool. `ApplyInput`
+takes a `DurationSeconds` and returns an async result that completes only once the hold has ended,
+so the hold and the agent's turn are one span — you cannot hold an input and then look at anything
+while it is held. `StartInjection` restores the continuous injection and hold registration without
+the release ticker: `ApplyInput` keeps every hold of known length (and multi-entry presses, which
+VibeUE never did), and VibeUE keeps the one whose release depends on something you have to observe
+first. The lesson is the same one the ActorService and GameplayTag corrections taught — a
+replacement that covers *most* of a tool's behaviour is not a duplicate of it.
+
+### How StateTree resolved
 
 Its audit cut 85 of 98 on the premise that `ObjectToolset` "reaches every `UPROPERTY`, skipping only
 `CPF_Deprecated`". That premise is false (above), and it is load-bearing for specific cuts —
@@ -397,8 +415,47 @@ owner's scoping rule returns the **24-tool `Bind*`/`Unbind*` family** to KEEP: i
 toolset tools. What remains genuinely cuttable is the `StateTreeToolset`-backed CRUD
 (`add_child_state`, `add_task`, `remove_*`, `move_*`, `compile`, `request_ui_refresh`),
 `AssetToolset`-backed list/save, and the property setters that survive a per-property
-`CPF_Edit` check against `StateTreeState.h`. **That per-property pass is the prerequisite for
-executing it.**
+`CPF_Edit` check against `StateTreeState.h`.
+
+**That per-property pass was run, and it found a third gate clause neither earlier pass had:**
+`PropertyAccessUtil::CanSetPropertyValue` also refuses `CPF_DisableEditOnInstance`, which
+`EditDefaultsOnly` sets — and nearly every StateTree editor property is `EditDefaultsOnly`. That
+clause alone would have flipped the whole list to KEEP. It resolves toward CUT because
+`PropertyAccessUtil::IsObjectTemplate` admits "objects within an asset that are edit-inline can edit
+default properties", and `UStateTreeState`, `UStateTreeEditorData` and `UStateTreeComponentSchema`
+are all `EditInlineNew` inside the `UStateTree` asset, so `bOwnerIsTemplate` is true and there is no
+`CanEditChange` override anywhere in `StateTree/` to intervene. Epic's route is in fact *more*
+correct than VibeUE's: a toolset write goes through `EmitPostChangeNotify` ->
+`PostEditChangeChainProperty`, so the engine's own fixups fire (setting `Type` resets `Tasks` for a
+Group, forces `SelectionBehavior` for the linked types, clears `LinkedSubtree`/`LinkedAsset` when
+leaving them, flips `Parameters.bFixedLayout`) where VibeUE hand-mirrored them and could drift.
+
+Final verdict 53 CUT / 45 KEEP. The per-property pass also confirmed the `SetStateExpanded` keep
+outright: `bExpanded` is `UPROPERTY(meta = (ExcludeFromHash))` — no `CPF_Edit`, no
+`CPF_BlueprintVisible` — so the toolset refuses it for read *and* write and it is invisible even to
+`ListProperties`. Seven keeps survived that pass, reducing to three rules worth reusing:
+
+1. A bare `UPROPERTY()` is refused for read AND write (`SetStateExpanded`; same shape as `Parent`,
+   which adds `PythonReadOnly`).
+2. Anything inside an `FInstancedStruct` or behind an `Instanced` object reference is not
+   path-addressable at all — `ToolsetPropertyPath` refuses to cross an object reference and
+   `FInstancedStruct` has no reflected fields (`SetTaskEnabled`, `SetTaskConsideredForCompletion`,
+   `GetTransitionConditionPropertyNames`, `SetTransitionConditionPropertyValue`,
+   `AddTransitionCondition`, which additionally needs `InitializeAs` to allocate
+   `Instance`/`InstanceObject` with the right outer and mint the node ID).
+3. Array **reorder** is expressible only as a lossy same-size rewrite that never emits `ArrayMove`
+   (`MoveTransition`). Add and remove are safe because `HandleArrayAdds`/`HandleArrayRemoves` apply
+   them incrementally — an add mints only the new element's GUID, a remove is diffed against the
+   engine's own `PreEditTransitions` copy — so the IDs `EditorBindings` is keyed on survive. A
+   wholesale clear-then-re-add would regenerate every ID and silently orphan every binding, which is
+   why the array tools were judged per operation rather than as a group. `grep` confirms zero
+   occurrences of `EPropertyChangeType::ArrayMove` anywhere in the engine's toolset library.
+
+Epic's own StateTree toolset file confirms two of the keeps in its header comment: "there is no K2
+path for creating a StateTree asset with a schema in head (`UStateTreeFactory::SetSchemaClass` isn't
+a UFUNCTION) ... asset creation is deliberately left out", and "The wrappers below do not open undo
+or transaction scopes of their own" — so a batch of Epic StateTree edits needs the caller's own
+transaction, which VibeUE's removed tools each opened for themselves.
 
 The 13 originally-argued keeps stand and are well evidenced: `CreateStateTree` (Epic has no StateTree
 factory tool and the skill records `unreal.StateTreeFactory` failing from Python), the four

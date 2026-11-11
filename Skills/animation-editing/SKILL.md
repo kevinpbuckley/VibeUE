@@ -49,8 +49,10 @@ bone-space handling and constraint validation.
 > VibeUE services below with `execute_python` (`unreal.<Service>.<method>()`).
 
 > **🛡️ Safe discovery — never `unreal.load_asset()` in loops (memory crash 0xC0000005).**
-> Use `SkeletonService.list_skeletons(path)`, `AnimSequenceService.find_animations_for_skeleton(skeleton)`,
-> `AnimSequenceService.list_anim_sequences(path, skeleton_filter)` — they query metadata without loading.
+> Use `AnimSequenceService.find_animations_for_skeleton(skeleton)` and
+> `AnimSequenceService.list_anim_sequences(path, skeleton_filter)` — they query metadata without
+> loading. VibeUE's own skeleton list call is gone: find skeletons with Epic's
+> `EditorToolset.AssetToolset.FindAssets` filtered to class `Skeleton` (see api-reference.md).
 
 ## ⚠️ Critical Rules
 

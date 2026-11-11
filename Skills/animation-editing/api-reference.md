@@ -54,7 +54,13 @@ AnimSequenceService.find_animations_for_skeleton(skeleton_path) -> Array[AnimSeq
 AnimSequenceService.list_anim_sequences(search_path, skeleton_filter) -> Array[AnimSequenceInfo]
 AnimSequenceService.get_anim_sequence_info(anim_path) -> AnimSequenceInfo
 AnimSequenceService.search_animations(name_pattern, search_path) -> Array[AnimSequenceInfo]
-SkeletonService.list_skeletons(search_path) -> Array[str]   # raw skeleton object paths, e.g. "/Game/.../SK_X.SK_X"
+
+# Skeletons: Epic's EditorToolset.AssetToolset, not VibeUE (whose list call is gone).
+# FindAssets is async -- await vibeue.exec_tool_await(...), or vibeue.exec_tool_async(...) now
+# and vibeue.collect_tool_result("EditorToolset.AssetToolset.FindAssets") on the next call.
+AssetToolset.FindAssets({"filter": {"assetType": {"refPath": "/Script/Engine.Skeleton"},
+                                    "folderPath": search_path}})
+    -> Array[str]   # raw skeleton object paths, e.g. "/Game/.../SK_X.SK_X"
 ```
 `AnimSequenceInfo`: `anim_name`, `anim_path`, `duration`, `frame_count`.
 

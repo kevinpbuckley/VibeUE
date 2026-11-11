@@ -6,13 +6,15 @@
 # Use the service discovery methods — NEVER unreal.load_asset() in a loop (memory crash).
 import unreal
 ass = unreal.AnimSequenceService
-sks = unreal.SkeletonService
 
-skeletons = sks.list_skeletons("/Game")
+# Pick a skeleton out of animation metadata. VibeUE's own skeleton list call is gone; to search for
+# skeleton assets directly, use Epic's EditorToolset.AssetToolset FindAssets filtered to class
+# Skeleton (async — see the SAFE DISCOVERY box in SKILL.md).
+skeletons = [a.skeleton_path for a in ass.list_anim_sequences("/Game", "") if a and a.skeleton_path]
 if not skeletons:
     print("no skeletons found");
 else:
-    skeleton_path = str(skeletons[0]).split(" ")[0]
+    skeleton_path = skeletons[0]
     anims = ass.find_animations_for_skeleton(skeleton_path)
     print(f"{len(anims)} animations for {skeleton_path}")
     for a in anims[:5]:

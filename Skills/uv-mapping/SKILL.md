@@ -74,7 +74,7 @@ Detailed inspection and all mutating operations target `UStaticMesh`. SkeletalMe
 
 ```python
 unreal.UVMappingService.set_lightmap_settings("/Game/Meshes/SM_Wall", 1, 0, 128, True)
-unreal.UVMappingService.generate_lightmap_uvs("/Game/Meshes/SM_Wall", 0, 1, 1.0)
+unreal.UVMappingService.generate_lightmap_u_vs("/Game/Meshes/SM_Wall", 0, 1, 1.0)
 # Save once at the end:
 unreal.EditorAssetLibrary.save_asset("/Game/Meshes/SM_Wall")
 ```
@@ -90,11 +90,11 @@ By UE convention:
 - **Channel 1** is the lightmap UV channel.
 - `LightMapCoordinateIndex` on the static mesh **must** point at the lightmap channel.
 
-`generate_lightmap_uvs` automatically sets `LightMapCoordinateIndex = DestUVIndex` for you. `remove_uv_channel` adjusts it if you remove a channel above or at the lightmap.
+`generate_lightmap_u_vs` automatically sets `LightMapCoordinateIndex = DestUVIndex` for you. `remove_uv_channel` adjusts it if you remove a channel above or at the lightmap.
 
 ### Channel 0 Cannot Be Removed
 
-`remove_uv_channel` rejects channel 0 — every static mesh must have at least one UV channel. To replace channel 0's contents, use `auto_unwrap_uvs` or `copy_uv_channel`.
+`remove_uv_channel` rejects channel 0 — every static mesh must have at least one UV channel. To replace channel 0's contents, use `auto_unwrap_u_vs` or `copy_uv_channel`.
 
 ### MAX_MESH_TEXTURE_COORDS_MD = 8
 
@@ -106,7 +106,7 @@ Static meshes support at most 8 UV channels. `add_uv_channel` returns failure be
 
 ### Pack Is Fit-To-Square, Not True Island Packing
 
-`pack_uvs` rescales the entire channel's UV bounds into `[padding, 1-padding]^2`. It does **not** detect connected islands and shelf-pack them. For real island packing, run `auto_unwrap_uvs` with `Box` projection first — that produces island-shaped charts the engine packs internally.
+`pack_u_vs` rescales the entire channel's UV bounds into `[padding, 1-padding]^2`. It does **not** detect connected islands and shelf-pack them. For real island packing, run `auto_unwrap_u_vs` with `Box` projection first — that produces island-shaped charts the engine packs internally.
 
 ---
 
@@ -208,8 +208,9 @@ unreal.UVMappingService.transform_u_vs_by_polygon_group(
 | WRONG | CORRECT |
 |-------|---------|
 | `result.success` returning False but no error string | Check `result.message` — every failure includes a reason |
+| `transform_uvs` / `pack_uvs` / `auto_unwrap_uvs` / `generate_lightmap_uvs` | A trailing `UVs` splits: `transform_u_vs`, `pack_u_vs`, `auto_unwrap_u_vs`, `generate_lightmap_u_vs`. `UV` + a word does not: `add_uv_channel`, `get_uv_health`, `identify_uv_islands` |
 | Generating lightmap UVs without setting `MinChartSpacingPercent` | Pass at least `1.0` for typical meshes; smaller values pack tighter but risk bleeding |
-| Calling `transform_uvs` on the lightmap channel | Avoid — transforms break the channel's `[0,1]` packing. Use it on material UV channels only |
+| Calling `transform_u_vs` on the lightmap channel | Avoid — transforms break the channel's `[0,1]` packing. Use it on material UV channels only |
 | Forgetting to save after edits | Add `unreal.EditorAssetLibrary.save_asset(...)` after the batch |
 | Editing UVs on a skeletal mesh | Not supported — only StaticMesh works |
 | Setting `LightMapCoordinateIndex` past the channel count | Use `set_uv_channel_count` first, or `add_uv_channel` |
@@ -244,15 +245,15 @@ unreal.UVMappingService.transform_u_vs_by_polygon_group(
 | `lod_count` | int | |
 | `lightmap_coordinate_index` | int | The channel lightmaps sample at runtime |
 | `light_map_resolution` | int | Per-mesh lightmap texel size |
-| `b_generate_lightmap_uvs` | bool | LOD 0 BuildSettings flag |
+| `generate_lightmap_u_vs` | bool | LOD 0 BuildSettings flag |
 | `channels` | list[FUVChannelInfo] | Per-LOD per-channel stats |
-| `b_lightmap_has_overlaps` | bool | True if the lightmap channel has any AABB overlap |
+| `lightmap_has_overlaps` | bool | True if the lightmap channel has any AABB overlap |
 | `warnings` | list[str] | Human-readable warnings |
 
 ### FUVLightmapSettings (`get_lightmap_settings`)
 | Property | Type | Description |
 |---|---|---|
-| `b_generate_lightmap_uvs` | bool | LOD 0 BuildSettings flag |
+| `generate_lightmap_u_vs` | bool | LOD 0 BuildSettings flag |
 | `source_lightmap_index` | int | UV channel the generator reads seams from |
 | `destination_lightmap_index` | int | UV channel the generator writes into |
 | `lightmap_coordinate_index` | int | Runtime sample channel |
@@ -275,7 +276,7 @@ ok, health = unreal.UVMappingService.get_uv_health(mesh)
 print(f"Channels found: {len(health.channels)}, lightmap idx: {health.lightmap_coordinate_index}")
 
 # 2. Generate the lightmap channel (creates channel 1 if needed, sets LightMapCoordinateIndex=1)
-result = unreal.UVMappingService.generate_lightmap_uvs(
+result = unreal.UVMappingService.generate_lightmap_u_vs(
     mesh,
     source_uv_index=0,
     dest_uv_index=1,
@@ -291,7 +292,7 @@ unreal.EditorAssetLibrary.save_asset(mesh)
 
 # 5. Verify
 ok, health = unreal.UVMappingService.get_uv_health(mesh)
-assert not health.b_lightmap_has_overlaps, "Lightmap still has overlaps after generation"
+assert not health.lightmap_has_overlaps, "Lightmap still has overlaps after generation"
 ```
 
 ### Workflow: Add a Detail-Texture UV Channel and Tile It
@@ -311,7 +312,7 @@ r = unreal.UVMappingService.copy_uv_channel(mesh, 0, 0, 2)
 print(f"COPIED: {r.message}")
 
 # Tile by 4 (scale UVs)
-r = unreal.UVMappingService.transform_uvs(mesh, 0, 2, scale_u=4.0, scale_v=4.0)
+r = unreal.UVMappingService.transform_u_vs(mesh, 0, 2, scale_u=4.0, scale_v=4.0)
 print(f"TILED: {r.message}")
 
 unreal.EditorAssetLibrary.save_asset(mesh)
@@ -325,7 +326,7 @@ import unreal
 mesh = "/Game/Meshes/SM_RuinPiece"
 
 # Box projection produces clean per-face charts on chunky props
-r = unreal.UVMappingService.auto_unwrap_uvs(
+r = unreal.UVMappingService.auto_unwrap_u_vs(
     mesh, lod_index=0, channel_index=0,
     projection_type="Box",
     hard_angle_threshold=66.0,
@@ -333,11 +334,11 @@ r = unreal.UVMappingService.auto_unwrap_uvs(
 print(f"UNWRAPPED: {r.message}")
 
 # Pack the result tightly
-r = unreal.UVMappingService.pack_uvs(mesh, 0, 0, padding_percent=1.0)
+r = unreal.UVMappingService.pack_u_vs(mesh, 0, 0, padding_percent=1.0)
 print(f"PACKED: {r.message}")
 
 # Regenerate the lightmap channel from the new charts
-unreal.UVMappingService.generate_lightmap_uvs(mesh, 0, 1, 1.0)
+unreal.UVMappingService.generate_lightmap_u_vs(mesh, 0, 1, 1.0)
 
 unreal.EditorAssetLibrary.save_asset(mesh)
 ```
@@ -362,15 +363,17 @@ print(f"EXPORTED: {r.message}")
 ```python
 import unreal
 
-results = unreal.EditorAssetLibrary.list_assets("/Game/Meshes/Architecture")
-for asset in results["assets"]:
-    if asset["asset_class"] != "StaticMesh":
+# list_assets returns a flat list of OBJECT paths ("/Game/.../SM_Wall.SM_Wall") — strip the
+# suffix for VibeUE, and read the class off the asset registry rather than loading each mesh.
+for object_path in unreal.EditorAssetLibrary.list_assets("/Game/Meshes/Architecture"):
+    data = unreal.EditorAssetLibrary.find_asset_data(object_path)
+    if str(data.asset_class_path.asset_name) != "StaticMesh":
         continue
-    path = asset["asset_path"]
+    path = object_path.rsplit(".", 1)[0]
 
     ok, health = unreal.UVMappingService.get_uv_health(path)
-    if health.b_lightmap_has_overlaps or not health.b_generate_lightmap_uvs:
-        unreal.UVMappingService.generate_lightmap_uvs(path, 0, 1, 1.0)
+    if health.lightmap_has_overlaps or not health.generate_lightmap_u_vs:
+        unreal.UVMappingService.generate_lightmap_u_vs(path, 0, 1, 1.0)
         unreal.UVMappingService.set_lightmap_settings(path, 1, 0, 128, True)
         unreal.EditorAssetLibrary.save_asset(path)
         print(f"FIXED: {path}")
@@ -382,13 +385,13 @@ for asset in results["assets"]:
 
 ## Property Formats
 
-### Projection Types (`auto_unwrap_uvs`)
+### Projection Types (`auto_unwrap_u_vs`)
 String, case-insensitive:
 - `"Planar"` — projects along world +Z. Best for flat panels.
 - `"Box"` — six-axis projection with seams along sharp edges. Best general-purpose unwrap.
 - `"Cylindrical"` — wraps around world Z axis. Best for tubes / columns.
 
-### Min Chart Spacing (`generate_lightmap_uvs`)
+### Min Chart Spacing (`generate_lightmap_u_vs`)
 Float, percent of UV space (0.5..2.0 typical):
 - `0.5` — tight packing, risk of bleeding at low lightmap resolution
 - `1.0` — default, safe for 64–128 lightmap resolution
@@ -409,7 +412,7 @@ For lightmap-related changes, **always re-run `get_uv_health`** after the save t
 ```python
 ok, health = unreal.UVMappingService.get_uv_health(mesh)
 assert ok
-assert not health.b_lightmap_has_overlaps
+assert not health.lightmap_has_overlaps
 assert health.lightmap_coordinate_index == 1
 ```
 

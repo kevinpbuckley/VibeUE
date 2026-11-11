@@ -153,7 +153,7 @@ executes one against a querier actor and returns the ranked items with their sco
 ```python
 import unreal
 res = unreal.EnvQueryService.run_query("/Game/AI/EQS_Cover", "BP_Enemy_1", "AllMatching")
-if res.b_success:
+if res.success:
     for item in res.items:
         print(item.description, item.score)
 else:

@@ -33,7 +33,7 @@ keywords:
 > An AnimBP **is a Blueprint**. The state-machine/AnimGraph authoring here is VibeUE
 > `AnimGraphService` (intact). For its **variables and compile**, note VibeUE's `BlueprintService`
 > was trimmed: **variable creation and blueprint compile moved to the engine** toolset
-> `editor_toolset.toolsets.blueprint.BlueprintTools` (`add_variable`, `compile_blueprint`), called via
+> `BlueprintToolsets.BlueprintToolset` (`add_variable`, `compile_blueprint`), called via
 > `call_tool`. `BlueprintService` still has `list_variables`, `get_variable_info`,
 > `set_variable_default_value`, `variable_exists`, components, and overridable functions. Bool fields
 > on info structs drop the C++ `b` prefix in Python — use `is_pure`, `is_output`, `already_overridden`
@@ -48,7 +48,7 @@ machine will never move. You MUST set a rule on every transition:
 ```python
 import unreal
 abp = "/Game/ABP_Character"
-BT  = "editor_toolset.toolsets.blueprint.BlueprintTools"
+BT  = "BlueprintToolsets.BlueprintToolset"
 
 # 1) Add the bool/float variable the rule reads, then COMPILE so it resolves.
 #    Variable creation + compile are ENGINE BlueprintTools (call_tool), not VibeUE:
@@ -250,7 +250,7 @@ the entry state, then compiles — and returns a JSON report.
 import unreal, json
 
 abp = "/Game/ABP_Character"
-BT  = "editor_toolset.toolsets.blueprint.BlueprintTools"
+BT  = "BlueprintToolsets.BlueprintToolset"
 
 # Add the variables the rules read FIRST, then compile so the rules can resolve them.
 # Variable creation + compile are ENGINE BlueprintTools (call_tool), not VibeUE:
@@ -304,7 +304,7 @@ unreal.AnimGraphService.set_transition_rule_comparison(abp, "Locomotion", "Idle"
 unreal.AnimGraphService.set_transition_priority(abp, "Locomotion", "Idle", "Walk", 1)
 
 # Compile via engine BlueprintTools:
-call_tool("editor_toolset.toolsets.blueprint.BlueprintTools", "compile_blueprint", {"blueprint": {"refPath": abp}})
+call_tool("BlueprintToolsets.BlueprintToolset", "CompileBlueprint", {"blueprint": {"refPath": abp}})
 ```
 
 ### Verify before claiming success — `validate_state_machine`

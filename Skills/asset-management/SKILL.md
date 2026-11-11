@@ -31,7 +31,7 @@ and remapping through the existing engine Python API; no native service rebuild.
 > | Tool | Why it survives |
 > |---|---|
 > | `reimport_asset(asset_path, new_source_path)` | Nothing in Epic's toolset surface reimports an asset |
-> | `export_texture(asset_path, file_path)` | Epic imports and inspects textures but has no plain texture export |
+> | `export_texture(asset_path, file_path)` | Epic's `TextureToolset.ExportPng` is **PNG-only and `UTexture2D`-only**; this goes through `AssetTools::ExportAssets`, so it uses whichever registered exporter matches the asset and format. Use `ExportPng` when a PNG of a 2D texture is all you need. Note only the **directory** part of the path is used -- the exporter names the file |
 >
 > **Python-only helpers** (still callable as `unreal.AssetDiscoveryService.*` from `execute_python`,
 > but no longer MCP tools, so don't look for them in `list_toolsets`):
@@ -94,12 +94,12 @@ Use the plugin's dialog-free delete instead:
 result = unreal.AssetDiscoveryService.delete_asset_unattended("/Game/Anim/AM_Old", False)
 # Delete anyway and null every reference (what the dialog's Force Delete does):
 result = unreal.AssetDiscoveryService.delete_asset_unattended("/Game/Anim/AM_Old", True)
-if not result.b_success:
+if not result.success:
     print(result.error_message)     # why it did not happen
     print(result.referencers)       # what pointed at the asset
 ```
 
-The call returns an `FUnattendedDeleteResult` struct — `result.b_success`, `result.referencers`,
+The call returns an `FUnattendedDeleteResult` struct — `result.success`, `result.referencers`,
 `result.error_message` — so the reason ALWAYS survives, even on a refusal. (It used to return a
 bool with out-params, and Python maps a `False` return to `None`, which silently dropped the reason;
 that is fixed.) `result.referencers` is filled on a refusal AND on a forced delete, so you always see
@@ -128,13 +128,13 @@ buffer, and a reset with a transaction open cancels that transaction. Leave the 
 **An asset held by the undo buffer still deletes, but it costs the undo history.** When undo is the
 asset's only holder (it was edited in a committed transaction), the engine's delete resets the undo
 history and removes the asset completely; it always did. The call logs a Warning and reports it:
-`result.b_undo_buffer_reset` is True and `result.message` says earlier edits can no longer be undone.
+`result.undo_buffer_reset` is True and `result.message` says earlier edits can no longer be undone.
 `True` (force) does not change this; it only governs referencers.
 
 **Check the file, not just `b_success`.** If undo AND something else still hold the package, the engine
 drops the asset from the registry but keeps its `.uasset` on disk (it would come back on the next editor
 start). The call then fails with `error_code == "FILE_NOT_REMOVED"` and `file_status == "still_on_disk"`;
-delete the file with the editor closed. On success, `result.b_file_removed` / `result.file_status` say
+delete the file with the editor closed. On success, `result.file_removed` / `result.file_status` say
 what happened to the file: `removed`, or `never_on_disk` for an asset that was never saved.
 
 The check never mutates state (it does not null any references before deciding), so a refusal leaves the

@@ -62,7 +62,7 @@ E   = "CompletelyEmpty"
 
 # 1. Create the empty scratch module on the Particle Update stage
 r = unreal.NiagaraScratchPadService.create_scratch_module(S, E, "ParticleUpdate", "SplatLine")
-assert r.success, r.message   # result field is `.success` (NOT `.b_success`)
+assert r.success, r.message   # result field is `.success` (NOT `.success`)
 MOD = r.module_name           # e.g. "SplatLine"
 print("script path:", r.script_path)
 

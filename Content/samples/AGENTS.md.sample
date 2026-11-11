@@ -225,7 +225,7 @@ info = unreal.BlueprintService.get_blueprint_info("/Game/MyBP")
 import json
 factory = unreal.BlueprintFactory(); factory.set_editor_property("ParentClass", unreal.Actor)
 bp = unreal.AssetToolsHelpers.get_asset_tools().create_asset("BP_Enemy", "/Game/Blueprints", unreal.Blueprint, factory); print("CREATED:", bp)
-unreal.ToolsetRegistry.execute_tool("editor_toolset.toolsets.blueprint.BlueprintTools", "add_variable",
+unreal.ToolsetRegistry.execute_tool("BlueprintToolsets.BlueprintToolset", "AddVariable",
     json.dumps({"blueprint": {"refPath": "/Game/Blueprints/BP_Enemy.BP_Enemy"},   # refPath = full object path
                 "name": "Health", "type_name": "float"})); print("ADDED: Health")
 res = unreal.BlueprintService.compile_blueprint("/Game/Blueprints/BP_Enemy")      # FBlueprintCompileResult
