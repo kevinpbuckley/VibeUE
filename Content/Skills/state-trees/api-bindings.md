@@ -414,7 +414,7 @@ chase = unreal.StateTreeService.get_bindings("/Game/AI/ST_Zombie_AI", "Root/Chas
 is_dest_bound = any(b.target_kind == "Task" and b.target_property_path == "Destination" for b in chase)
 ```
 
-Fields of each `FStateTreeBindingInfo` (Python drops the `b` prefix on bools):
+Fields of each `FVibeUEStateTreeBindingInfo` (Python: `unreal.VibeUEStateTreeBindingInfo`; Python drops the `b` prefix on bools):
 - `target_kind`: Task, Evaluator, GlobalTask, Condition, Consideration, Transition, Parameter, PropertyFunction, Unknown
 - `target_state_path` (empty for global nodes), `target_node_name` (display name), `target_node_struct`
   (e.g. `StateTreeDelayTask`), `target_node_index` (raw array index in the owning list, NOT the

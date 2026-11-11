@@ -14,6 +14,7 @@
 #include "Tools/PythonTools.h"
 #include "Misc/IQueuedWork.h"
 #include "Misc/QueuedThreadPool.h"
+#include "Misc/EngineVersionComparison.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Serialization/JsonReader.h"
@@ -72,7 +73,12 @@ namespace
 	FString RequestKey(const FModelContextProtocolToolRequestId& RequestId)
 	{
 		// The id's own operator== and hash are not exported; its JSON text is what Epic hashes too.
-		return RequestId.RequestId.IsValid() ? RequestId.RequestId->AsString() : FString();
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 9, 0)
+		const TSharedPtr<FJsonValue>& JsonRequestId = RequestId.GetRequestId();
+#else
+		const TSharedPtr<FJsonValue>& JsonRequestId = RequestId.RequestId;
+#endif
+		return JsonRequestId.IsValid() ? JsonRequestId->AsString() : FString();
 	}
 
 	/** Turn a tool's JSON string into the MCP result and hand it over (safe from any thread). */

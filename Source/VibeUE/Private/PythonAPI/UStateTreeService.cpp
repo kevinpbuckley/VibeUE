@@ -2355,13 +2355,13 @@ static bool BindingSourcePathResolves(const FPropertyBindingPath& SourcePath, co
 	return SourcePath.ResolveIndirections(SourceValue.GetStruct(), Indirections, /*OutError*/ nullptr, bHandleRedirects);
 }
 
-static FStateTreeBindingInfo MakeBindingInfo(const TMap<FGuid, FBindingStructLocation>& Locations,
+static FVibeUEStateTreeBindingInfo MakeBindingInfo(const TMap<FGuid, FBindingStructLocation>& Locations,
 	const FStateTreePropertyPathBinding& Binding)
 {
 	const FPropertyBindingPath& SourcePath = Binding.GetSourcePath();
 	const FPropertyBindingPath& TargetPath = Binding.GetTargetPath();
 
-	FStateTreeBindingInfo Info;
+	FVibeUEStateTreeBindingInfo Info;
 	Info.bIsOutputBinding = Binding.IsOutputBinding();
 	Info.TargetPropertyPath = BindingPathToNameString(TargetPath);
 	Info.SourcePropertyPath = BindingPathToNameString(SourcePath);
@@ -2404,7 +2404,7 @@ static FStateTreeBindingInfo MakeBindingInfo(const TMap<FGuid, FBindingStructLoc
  * "<SourceKind>:<SourceStatePath/><SourceNodeName>.<SourcePropertyPath>", the FStateTreePropertyInfo::BoundTo form,
  * with " (output)" appended for an output binding (the target property WRITES the source, not the reverse).
  */
-static FString FormatBindingSource(const FStateTreeBindingInfo& Info)
+static FString FormatBindingSource(const FVibeUEStateTreeBindingInfo& Info)
 {
 	FString Owner = Info.SourceStatePath;
 	if (!Info.SourceNodeName.IsEmpty())
@@ -5098,7 +5098,7 @@ TArray<FStateTreePropertyInfo> UStateTreeService::GetTaskPropertyNames(const FSt
 				Locations = BuildBindingStructMap(*EditorData);
 				bLocationsBuilt = true;
 			}
-			const FStateTreeBindingInfo BindingInfo = MakeBindingInfo(Locations, Binding);
+			const FVibeUEStateTreeBindingInfo BindingInfo = MakeBindingInfo(Locations, Binding);
 			BoundToByPath.Add(BindingInfo.TargetPropertyPath, FormatBindingSource(BindingInfo));
 		}
 
@@ -5506,9 +5506,9 @@ bool UStateTreeService::UnbindTaskProperty(const FString& AssetPath, const FStri
 #endif
 }
 
-TArray<FStateTreeBindingInfo> UStateTreeService::GetBindings(const FString& AssetPath, const FString& StatePath)
+TArray<FVibeUEStateTreeBindingInfo> UStateTreeService::GetBindings(const FString& AssetPath, const FString& StatePath)
 {
-	TArray<FStateTreeBindingInfo> Result;
+	TArray<FVibeUEStateTreeBindingInfo> Result;
 
 #if WITH_EDITORONLY_DATA
 	UStateTree* StateTree = LoadStateTree(AssetPath);

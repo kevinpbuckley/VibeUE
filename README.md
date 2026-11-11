@@ -2,11 +2,11 @@
 
 # VibeUE — AI-Powered Unreal Engine Development
 
-### 🧩 MCP Expansion + AI Editor Toolset for Unreal Engine 5.8+
+### 🧩 MCP Expansion + AI Editor Toolset for Unreal Engine 5.8 – 5.9
 
 https://www.vibeue.com/
 
-[![Unreal Engine](https://img.shields.io/badge/Unreal%20Engine-5.8%2B-orange)](https://www.unrealengine.com)
+[![Unreal Engine](https://img.shields.io/badge/Unreal%20Engine-5.8%20%E2%80%93%205.9-orange)](https://www.unrealengine.com)
 [![MCP](https://img.shields.io/badge/MCP-Model%20Context%20Protocol-blue)](https://modelcontextprotocol.io)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white)](https://discord.gg/hZs73ST59a)
@@ -112,7 +112,11 @@ multi-step task into one round-trip and reaches every VibeUE service plus the fu
 
 ## 🚀 Installation & setup
 
-**Requirements:** Unreal Engine **5.8+** · Git
+**Requirements:** Unreal Engine **5.8 – 5.9** · Git
+
+> ℹ️ **Python API note:** the StateTree binding struct returned by `unreal.StateTreeService.get_bindings()` is now
+> `FVibeUEStateTreeBindingInfo` (Python: `unreal.VibeUEStateTreeBindingInfo`), renamed from `FStateTreeBindingInfo`
+> because Unreal 5.9 adds an engine struct of that name — the field names and the tool JSON output are unchanged.
 
 ### Step 1 — Set up Unreal's native MCP (do this FIRST)
 

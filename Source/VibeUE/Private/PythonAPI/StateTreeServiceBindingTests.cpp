@@ -73,12 +73,12 @@ bool FVibeStateTreeBindingsRootParameterTest::RunTest(const FString&)
 	}
 
 	// Whole asset: exactly the one binding the fixture made, fully described.
-	const TArray<FStateTreeBindingInfo> All = UStateTreeService::GetBindings(AssetPath);
+	const TArray<FVibeUEStateTreeBindingInfo> All = UStateTreeService::GetBindings(AssetPath);
 	if (!TestEqual(TEXT("whole-asset read returns exactly one binding"), All.Num(), 1))
 	{
 		return false;
 	}
-	const FStateTreeBindingInfo& Binding = All[0];
+	const FVibeUEStateTreeBindingInfo& Binding = All[0];
 	AddInfo(FString::Printf(TEXT("Binding raw: %s"), *Binding.Raw));
 	TestEqual(TEXT("TargetKind"), Binding.TargetKind, FString(TEXT("Task")));
 	TestEqual(TEXT("TargetStatePath"), Binding.TargetStatePath, FString(kWorkState));
@@ -99,7 +99,7 @@ bool FVibeStateTreeBindingsRootParameterTest::RunTest(const FString&)
 	TestTrue(TEXT("Raw ends with the raw target path"), Binding.Raw.EndsWith(TEXT(":Duration")));
 
 	// State filter: the owning state sees it, a sibling state does not.
-	const TArray<FStateTreeBindingInfo> InWork = UStateTreeService::GetBindings(AssetPath, kWorkState);
+	const TArray<FVibeUEStateTreeBindingInfo> InWork = UStateTreeService::GetBindings(AssetPath, kWorkState);
 	if (TestEqual(TEXT("filtered to Root/Work returns the binding"), InWork.Num(), 1))
 	{
 		TestEqual(TEXT("filtered binding is the same target path"), InWork[0].TargetPropertyPath, FString(TEXT("Duration")));

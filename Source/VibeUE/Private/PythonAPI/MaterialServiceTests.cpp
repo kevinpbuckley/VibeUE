@@ -7,6 +7,7 @@
 #include "EditorAssetLibrary.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialInstanceConstant.h"
+#include "Misc/EngineVersionComparison.h"
 #include "PythonAPI/UMaterialService.h"
 #include "Serialization/JsonSerializer.h"
 #include "ToolsetRegistry/UToolsetRegistry.h"
@@ -204,7 +205,12 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMaterialInfoRegistryTest, "VibeUE.Materials.Ge
 
 bool FMaterialInfoRegistryTest::RunTest(const FString&)
 {
-	UToolCallAsyncResultString* Call = UToolsetRegistry::ExecuteTool(TEXT("VibeUE.MaterialService"),
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 9, 0)
+	UAsyncFunctionResultString* Call = UToolsetRegistry::ExecuteTool(
+#else
+	UToolCallAsyncResultString* Call = UToolsetRegistry::ExecuteTool(
+#endif
+		TEXT("VibeUE.MaterialService"),
 		TEXT("GetMaterialInfoResult"), TEXT("{\"materialPath\":\"/Engine/EngineMaterials/PPVolumeMaterialInstance\"}"));
 	if (!TestNotNull(TEXT("Registry returned a result"), Call) ||
 		!TestTrue(TEXT("Registry call completed synchronously"), Call->bIsComplete) ||

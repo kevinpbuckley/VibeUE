@@ -343,7 +343,7 @@ struct FStateTreePropertyInfo
  * Transition, Unknown.
  */
 USTRUCT(BlueprintType)
-struct FStateTreeBindingInfo
+struct FVibeUEStateTreeBindingInfo
 {
 	GENERATED_BODY()
 
@@ -964,7 +964,7 @@ public:
 	 * @param StatePath Optional state path filter; empty means the whole asset.
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
-	static TArray<FStateTreeBindingInfo> GetBindings(const FString& AssetPath, const FString& StatePath = TEXT(""));
+	static TArray<FVibeUEStateTreeBindingInfo> GetBindings(const FString& AssetPath, const FString& StatePath = TEXT(""));
 
 	/** Remove a task from a state by struct type name. */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
