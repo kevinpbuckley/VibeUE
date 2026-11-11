@@ -1,9 +1,14 @@
 ---
 name: profiling
 display_name: Profiling & Performance
-description: Diagnose frame-rate bottlenecks (CPU vs GPU bound FIRST), control Unreal Insights traces, sample live frame times, and annotate performance captures. Use when FPS is low/bad, the game is slow, or you need to find what is limiting the frame rate.
+description: Diagnose frame-rate bottlenecks (CPU vs GPU bound FIRST), read live per-thread frame timings, drive Unreal Insights traces, and capture representative standalone runs. Use when FPS is low/bad, the game is slow, or you need to find what is limiting the frame rate.
 vibeue_classes:
   - PerformanceService
+unreal_classes:
+  - PerfToolset
+  - ConsoleToolset
+  - EditorAppToolset
+  - RewindDebuggerToolset
 keywords:
   - profiling
   - performance
@@ -35,60 +40,122 @@ keywords:
 
 # Profiling Skill
 
-Unreal 5.8's native toolsets have **no** performance or tracing tools, so this is VibeUE's net-new
-capability: `unreal.PerformanceService` answers "are we CPU- or GPU-bound?" and drives Unreal
-Insights captures from Python with no C++ required. Run everything here through `execute_python`.
+## 🚨 Two call styles — pick the wrong one and the call fails
 
-The whole API is small — read the live signatures once with
-`get_symbol(class_name="unreal.PerformanceService")`:
+Unreal 5.9 ships its own performance surface, so most of this skill is now **Epic's toolsets**,
+not VibeUE's:
 
-| Method | Purpose |
-|--------|---------|
-| `frame_timing(target_fps=60.0)` | Game/Render/GPU/RHI thread ms + a CPU-vs-GPU `bound` verdict + a `hint`, plus a per-thread `budget` breakdown gated against `target_fps` (`budget.meets_target` PASS/FAIL). **Run FIRST.** |
-| `force_hitch(thread="game", ms=250.0, frames=1)` | Validation helper — deliberately stall a KNOWN thread (`"game"`/`"render"`/`"both"`/`"gpu"`) to confirm the verdict fires. CPU paths are self-measuring: validate from the SAME response (`observed_peak_*_ms`, `verdict_matched_expect`) — do NOT follow up with `frame_timing`. Only the async `gpu` path is read back on a following frame. Clamped (≤5000 ms, ~10 s total) for safety. |
-| `report(title=..., source="both", file="")` | Write a self-contained, shareable HTML report (live verdict + budget + analyse stats + a data-driven "fix in this order" list) to `Saved/VibeUE/Performance/report_<timestamp>.html`. |
-| `start_pie()` / `stop_pie()` | In-process PIE so `frame_timing`/`force_hitch` read a live game world (PIE starts on the next tick — read on a following frame, `pie_running` flips true). Quick checks only; prefer `start_standalone` when the numbers must be trusted. |
-| `start_trace(name="mcp_capture", channels="")` | Start an Insights trace to file (default channel set if `channels` empty). |
-| `stop_trace()` | Stop the active trace; returns the trace file path + size. |
-| `get_trace_status()` | Whether a trace is active and which channels are enabled. |
-| `bookmark(name)` | Drop a point-in-time bookmark in the active trace. |
-| `region_start(name)` / `region_end(name)` | Begin / end a named region span in the active trace. |
-| `analyse(source="both", file="")` | Read back trace and/or log → frame stats, worst frames, hitches, notable log lines. Combined analysis reports `complete`, `partial`, or `failed`; partial is never top-level success. |
-| `start_standalone(name="standalone_capture", channels="")` | Request a separate process with a unique direct-to-file trace. The first response is `start_pending`; poll status for verified capture. |
-| `stop_standalone()` | Gracefully stop the exact tracked process and verify the exact trace finalized; forced/partial outcomes are explicit failures. |
-| `get_standalone_status()` | Session ID, PID, map, exact trace/log destinations, process state, and capture/finalization verification. |
+- **Epic's toolsets** — `PerfToolset` (with `StatsToolset`, `CsvProfilerToolset`,
+  `GpuProfilerToolset`), `ConsoleToolset` (with `LogsToolset`), `EditorAppToolset`,
+  `FileSystemToolset`, `RewindDebuggerToolset` — are **`call_tool` actions**. They carry no
+  `PythonCallable`, so `unreal.PerfToolset` **does not exist**. Run `describe_toolset` on one for
+  its exact action names and params.
+- **VibeUE's 7 surviving `PerformanceService` methods** are `unreal.PerformanceService.<method>()`
+  run through **`execute_python`**, and each returns a JSON string. Read the live signatures with
+  `get_symbol(class_name="unreal.PerformanceService")`.
 
-All methods return a JSON string. For a representative reading, profile under PIE or a standalone
+### What moved to Epic in 5.9 (10 VibeUE tools removed)
+
+| Was (removed) | Use instead | Style |
+|---|---|---|
+| `frame_timing` | `PerfToolset.StatsToolset.GetFrameTimings` → `FFrameTimings` (`FrameMs`, `GameThreadMs`, `RenderThreadMs`, `RhiThreadMs`, `GpuMs`) — the same numbers `stat unit` shows. **The CPU-vs-GPU verdict and the budget check are now *your* arithmetic over those fields** (STEP 0 below). | `call_tool`; `FFrameTimings` is `BlueprintType`, so it is also readable from Python |
+| `start_trace`, `stop_trace`, `get_trace_status`, `bookmark`, `region_start`, `region_end` | `ConsoleToolset.RunConsoleCommand` with `Trace.File <name> <channels>`, `Trace.Start`, `Trace.Stop`, `Trace.Status`, `Trace.Bookmark <name>`, `Trace.RegionBegin <name>`, `Trace.RegionEnd <name>`; read the replies with `ConsoleToolset.LogsToolset.GetLogEntries` | `call_tool` |
+| `report` | Gone, with no replacement: compose the summary yourself and write it with `FileSystemToolset.WriteTextFile` | `call_tool` |
+| `start_pie`, `stop_pie` | `EditorAppToolset.StartPIE` / `StopPIE` / `IsPIERunning` — broader than VibeUE's pair (PIE vs Simulate, play mode, spawn transform, warmup) | `call_tool` |
+
+Also on Epic's side and worth reaching for:
+
+- **`PerfToolset.CsvProfilerToolset`** — `GetCsvInfo`, `ReduceStat` (avg/min/max, P50–P99),
+  `ReadStatValues`, `TopStats`, `ListEvents`. Drive the capture itself with
+  `RunConsoleCommand("CsvProfile start")` / `("CsvProfile stop")`. Cheapest route to statistical
+  frame-time aggregates.
+- **`PerfToolset.GpuProfilerToolset`** — GPU pass breakdown, once you know you are GPU-bound.
+- **`RewindDebuggerToolset`** (10 tools) — loads a trace for **object / property / event**
+  timelines. It does *not* give frame timings.
+
+### The 7 VibeUE methods that survive — and when to reach for them
+
+| Method | Purpose | Why it is still here |
+|---|---|---|
+| `analyse(source="both", file="")` | Read a finished trace and/or log → frame stats, worst frames, hitches, notable log lines. Reports `complete` / `partial` / `failed`; partial is never top-level success. | Nothing in Epic's surface parses a `.utrace` for timings — `RewindDebuggerToolset` loads traces, but only for objects, properties and events. |
+| `force_hitch(thread="game", ms=250.0, frames=1)` | Deliberately stall a KNOWN thread (`"game"`/`"render"`/`"both"`/`"gpu"`) to prove your verdict logic fires. CPU paths are self-measuring — validate from the SAME response (`observed_peak_*_ms`, `verdict_matched_expect`); only the async `gpu` path is read back on a following frame. Clamped (≤5000 ms, ~10 s total). | No Epic tool and no console command stalls a named thread, and Epic's `execute_python` blocks `time.sleep` by design. |
+| `start_standalone(name=..., channels="")` | Launch a **separate** game process with one unique direct-to-file trace. First reply is `start_pending`; poll status for verified capture. | `EditorAppToolset.StartPIE` documents that out-of-process play modes (NewProcess, MobilePreview, VR, QuickLaunch) are **downgraded to in-viewport PIE**, so nothing in Epic launches, tracks or terminates a separate game process with a trace attached. |
+| `stop_standalone()` | Gracefully stop the exact tracked process and verify the exact trace finalized; forced/partial outcomes are explicit failures. | as above |
+| `get_standalone_status()` | Session ID, PID, map, exact trace/log destinations, process state, capture/finalization verification. | as above |
+| `set_background_throttling(bool)` | Stop the editor throttling while it is not in the foreground. | **The one that matters for unattended runs.** `UEditorEngine::ShouldThrottleCPUUsage` consults `ShouldDisableCPUThrottlingDelegates` FIRST and returns early; a plain `bThrottleCPUWhenNotForeground=false` then still falls through to `AreAllWindowsHidden()`, so a minimized/background editor throttles anyway. Only VibeUE registers that delegate. |
+| `get_background_throttling()` | Read the current throttling state — snapshot it so you can restore it. | as above |
+
+For a representative reading, profile under PIE (`EditorAppToolset.StartPIE`) or a standalone
 session (`start_standalone`), not the bare editor viewport.
 
 ## 🚦 STEP 0 — Is it CPU-bound or GPU-bound? (DO THIS FIRST, ALWAYS)
 
-**Never optimise before you know which processor is the bottleneck.** The frame time is
-roughly `max(GameThread, RenderThread, GPU)` — these run in parallel, so only the *longest*
-one sets your FPS. Cutting GPU cost (shadows, Lumen, post-process) does **nothing** if the
-frame is actually game-thread or render-thread bound, and vice-versa. Getting this wrong
-wastes the whole session.
+**Never optimise before you know which processor is the bottleneck.** The frame time is roughly
+`max(GameThread, RenderThread, GPU)` — these run in parallel, so only the *longest* one sets your
+FPS. Cutting GPU cost (shadows, Lumen, post-process) does **nothing** if the frame is actually
+game-thread or render-thread bound, and vice-versa. Getting this wrong wastes the whole session.
 
-### Fastest check — one call
+### Fastest check — one `call_tool`
 
-```python
-import unreal, json
-result = json.loads(unreal.PerformanceService.frame_timing())
-print(result)  # game_thread_ms, render_thread_ms, gpu_ms, rhi_thread_ms, frame_ms, bound, hint
+```
+call_tool GetFrameTimings {}
 ```
 
-Start PIE first (see the `pie-testing` skill) and park in a representative/worst spot, then call it.
-It returns `game_thread_ms`, `render_thread_ms`, `gpu_ms`, `rhi_thread_ms`, the `frame_ms`, a `bound`
-verdict (`GameThread` / `RenderThread` / `GPU`), and a `hint` with what to do next. This is the same
-data the `stat unit` overlay shows, read straight from engine globals — no screenshots, no trace
-parsing.
+Start PIE first (`call_tool StartPIE {}`, or the `pie-testing` skill) and park in a
+representative/worst spot, then read it. The reply is an `FFrameTimings`:
+
+| Field | Meaning |
+|---|---|
+| `FrameMs` | Wall-clock frame time — this is what sets FPS (`1000 / FrameMs`) |
+| `GameThreadMs` | CPU, game thread: Tick, Blueprints, AI, animation |
+| `RenderThreadMs` | CPU, render thread: draw setup, visibility, shadow setup |
+| `RhiThreadMs` | CPU, RHI thread: command-list submission to the driver |
+| `GpuMs` | GPU work for the frame |
+
+These are the same numbers the `stat unit` overlay shows, read straight from engine globals — no
+screenshots, no trace parsing.
+
+### The verdict is now YOUR arithmetic — here is how
+
+VibeUE used to hand back a `bound` verdict, a `hint` and a `budget` block. Compute them yourself
+from the five fields:
+
+1. **Pick the bottleneck.** Take the largest of `GameThreadMs`, `RenderThreadMs`, `RhiThreadMs`,
+   `GpuMs`. That subsystem gates the frame.
+2. **Confirm it actually accounts for the frame.** The winner should be close to `FrameMs`
+   (say ≥ 85 % of it). If *nothing* reaches that, no single subsystem is saturated — suspect a
+   frame-rate cap (see the `frame-rate` skill), VSync, or a sync/stall rather than a workload.
+3. **Gate against the target.** `budget_ms = 1000 / target_fps`. Every thread *and* the GPU must
+   individually finish inside `budget_ms`; report each one's headroom (`budget_ms - thread_ms`) and
+   PASS only when all of them fit.
+
+```python
+# FFrameTimings is BlueprintType, so the same fields are readable from execute_python.
+# (Prefer `call_tool GetFrameTimings {}` when you are not already inside Python.)
+TARGET_FPS = 60.0
+budget_ms = 1000.0 / TARGET_FPS
+
+t = {"GameThread": 24.8, "RenderThread": 9.1, "RhiThread": 1.4, "GPU": 11.2}   # FFrameTimings
+frame_ms = 25.1                                                                # FrameMs
+
+bound, bound_ms = max(t.items(), key=lambda kv: kv[1])
+saturated = bound_ms >= 0.85 * frame_ms
+
+print(f"frame {frame_ms:.2f} ms = {1000.0 / frame_ms:.1f} FPS")
+for name, ms in sorted(t.items(), key=lambda kv: -kv[1]):
+    print(f"  {name:<12} {ms:6.2f} ms   headroom {budget_ms - ms:+6.2f} ms"
+          f"   {'OVER' if ms > budget_ms else 'ok'}")
+print(f"bound: {bound} ({bound_ms:.2f} ms)" if saturated else
+      "bound: NO single subsystem saturates the frame — look for a cap / VSync / stall")
+print(f"meets {TARGET_FPS:.0f} FPS:",
+      "PASS" if all(ms <= budget_ms for ms in t.values()) else "FAIL")
+```
+
+Always state the bottleneck's ms next to the target budget so the gap is explicit, e.g. "game
+thread 24.8 ms vs 16.66 ms for 60 FPS → must cut 8.2 ms on the game thread". To prove your verdict
+logic works against a known ground truth, stall a thread on purpose with `force_hitch`.
 
 ## ⏱️ Frame-time budgets — what a target FPS actually costs
-
-FPS is just `1000 / frame_ms`. Because the threads run in parallel, **every** thread
-(GameThread, RenderThread, GPU) must *individually* finish inside the budget below — the
-slowest one alone sets your FPS. A 12 ms GPU is wasted if the game thread takes 25 ms: you
-still get ~40 FPS.
 
 | Target FPS | Per-frame budget | Meaning |
 |---|---|---|
@@ -98,23 +165,16 @@ still get ~40 FPS.
 | **240 FPS** | **4.16 ms**  | Maximum allowable time per frame |
 | **360 FPS** | **2.77 ms**  | Maximum allowable time per frame |
 
-Read `frame_timing()` against this table: if `game_thread_ms = 25`, you are hard-capped at
-~40 FPS **no matter what you do to the GPU**. To hit 60 FPS the game thread must drop under
-16.66 ms; to hit 120 FPS, under 8.33 ms. Always state the bottleneck thread's ms next to the
-target budget so the gap is explicit (e.g. "game thread 25 ms vs 16.66 ms for 60 FPS → must
-cut 8.3 ms on the game thread").
-
-You don't have to do this arithmetic yourself: `frame_timing(target_fps=...)` returns the gate —
-the `budget` block carries each thread's headroom / `over_budget` against the per-frame budget and
-a single `budget.meets_target` PASS/FAIL you can assert on (CI-style perf checks included). To
-prove the verdict logic works against a known ground truth, use `force_hitch` (see the API table).
+Because the threads run in parallel, **every** one of them must *individually* finish inside the
+budget. A 12 ms GPU is wasted if the game thread takes 25 ms: you still get ~40 FPS, no matter what
+you do to the GPU.
 
 ## 🛠️ CVars tune the renderer — they do NOT fix the game thread
 
 `r.*` console variables almost exclusively move **GPU** and **RenderThread** cost (Lumen,
 shadows, reflections, resolution, draw setup). There is **no CVar that makes your Tick,
-AI, or animation logic cheaper.** When `bound == GameThread`, the fix lives in **code and
-Blueprints**, driven by what the profiler shows:
+AI, or animation logic cheaper.** When the game thread is the bottleneck, the fix lives in **code
+and Blueprints**, driven by what the profiler shows:
 
 | Profiler symptom (`stat dumpframe -root=gamethread`) | Fix lives in | Typical change |
 |---|---|---|
@@ -129,36 +189,39 @@ edit the code/Blueprint that owns it → rebuild → re-profile to confirm.** Re
 here is a category error; they will not move the number.
 
 ### Decision tree
-| `bound` | Meaning | Where to look next |
+
+| Bottleneck field | Meaning | Where to look next |
 |---|---|---|
-| **GameThread** | CPU, game thread | Tick / Blueprint / AI / animation. Run `stat dumpframe -ms=0.5 -root=gamethread` then read the log (`LogsToolset`). **Fix is code/Blueprint, not CVars** (see "CVars do NOT fix the game thread" above): throttle ticks, enable anim URO, event-drive logic. Compare the ms to the budget table. |
-| **RenderThread** | CPU, render thread | Draw calls & primitives, **dynamic shadow-casting lights**. Check `stat scenerendering`. Instance/merge meshes, enable Nanite, cut dynamic lights. |
-| **GPU** | GPU | *Now* run ProfileGPU (below). Shadows (VSM), Lumen, translucency, resolution. |
+| **`GameThreadMs`** | CPU, game thread | Tick / Blueprint / AI / animation. Run `stat dumpframe -ms=0.5 -root=gamethread` then read the log (`ConsoleToolset.LogsToolset.GetLogEntries`). **Fix is code/Blueprint, not CVars** (see above): throttle ticks, enable anim URO, event-drive logic. Compare the ms to the budget table. |
+| **`RenderThreadMs`** | CPU, render thread | Draw calls & primitives, **dynamic shadow-casting lights**. Check `stat scenerendering`. Instance/merge meshes, enable Nanite, cut dynamic lights. |
+| **`RhiThreadMs`** | CPU, RHI submission | Command-list volume / driver overhead — usually a symptom of too many draws, so attack the render thread's draw count. |
+| **`GpuMs`** | GPU | *Now* run `ProfileGPU` or `PerfToolset.GpuProfilerToolset`. Shadows (VSM), Lumen, translucency, resolution. |
 
 ### Confirm / fallback methods
+
 1. **Numeric thread split via log** — reliable, works headless:
-   ```python
-   import unreal
-   w = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_game_world()
-   unreal.SystemLibrary.execute_console_command(w, "stat dumpframe -ms=0.5 -root=gamethread")
-   unreal.SystemLibrary.execute_console_command(w, "stat dumpframe -ms=0.5 -root=renderthread")
    ```
-   Then read the dump with the engine **`LogsToolset`** (tail the main log, ~150 lines) — it prints
-   the full thread hierarchy in ms (e.g. `World Tick Time`, `FTickFunctionTask`, individual
-   Blueprint `ReceiveTick` costs). This is the single most useful CPU drill-down.
-2. **Resolution-scaling test** (decisive GPU-bound proof) — sample frame time at full res via
-   `frame_timing()`, then `r.ScreenPercentage 50`, and compare. FPS jumps a lot → **GPU-bound**.
-   FPS barely moves → **CPU-bound**.
-3. **`stat unit`** is the canonical overlay, but its numbers do **not** go to the log, and
-   PIE often runs in a separate window so screenshots are unreliable. Prefer `frame_timing()`
-   or methods 1–2 over trying to OCR `stat unit`.
+   call_tool RunConsoleCommand {"Command": "stat dumpframe -ms=0.5 -root=gamethread"}
+   call_tool RunConsoleCommand {"Command": "stat dumpframe -ms=0.5 -root=renderthread"}
+   call_tool GetLogEntries {}
+   ```
+   `LogsToolset.GetLogEntries` returns the full thread hierarchy in ms (e.g. `World Tick Time`,
+   `FTickFunctionTask`, individual Blueprint `ReceiveTick` costs). This is the single most useful
+   CPU drill-down.
+2. **Resolution-scaling test** (decisive GPU-bound proof) — read `GetFrameTimings` at full res,
+   then `RunConsoleCommand {"Command": "r.ScreenPercentage 50"}`, and read it again. Frame time
+   drops a lot → **GPU-bound**. Barely moves → **CPU-bound**.
+3. **`stat unit`** is the canonical overlay, but its numbers do **not** go to the log, and PIE
+   often runs in a separate window so screenshots are unreliable. Prefer `GetFrameTimings` or
+   methods 1–2 over trying to OCR `stat unit`.
 
 ## ⚠️ Gotchas — read before writing any code
 
 0. **`ProfileGPU` tells you WHERE GPU time goes, not WHETHER you are GPU-bound.** It always
    produces a GPU breakdown even on a CPU-bound frame — so reading it first will happily send
    you optimising shadows on a frame whose real cost is the game thread. Run STEP 0
-   (`frame_timing()`) first; only reach for `ProfileGPU` once `bound == GPU`.
+   (`GetFrameTimings`) first; only reach for `ProfileGPU` / `GpuProfilerToolset` once the GPU is
+   the bottleneck.
 
 0b. **Never run `ProfileGPU` (or `stat dumpframe`) *during* a trace you intend to average.**
    Each `ProfileGPU` stalls the GPU for a full readback (hundreds of ms to seconds), and those
@@ -166,69 +229,73 @@ here is a category error; they will not move the number.
    GPU/CPU drill-downs.
 
 0c. **`analyse()` reports frame-time aggregates** (avg/p95/worst frames, hitches, notable log
-   lines), **not** the live CPU/GPU split. Use `frame_timing()` for the per-thread split.
+   lines), **not** the live CPU/GPU split. Use `GetFrameTimings` for the per-thread split.
 
 1. **Profile under PIE or standalone, not the bare editor viewport.** The empty editor viewport
-   is not representative. Start PIE (`pie-testing` skill) or use `start_standalone()`.
+   is not representative. Start PIE (`EditorAppToolset.StartPIE`) or use `start_standalone()`.
 
 2. **Trace files are large** — a ~10 second trace with default channels is 30–50 MB.
    Traces land under `Saved/Profiling/` (already excluded from source control).
 
-3. **A trace must be active before you bookmark / mark regions.** `bookmark()` and
-   `region_start()/region_end()` only do something while `get_trace_status()` reports a live
-   trace. Call `start_trace()` first.
+3. **A trace must be running before you bookmark or mark regions.** `Trace.Bookmark`,
+   `Trace.RegionBegin` and `Trace.RegionEnd` only do something while `Trace.Status` reports a live
+   trace. Issue `Trace.File` + `Trace.Start` first.
+
+4. **Channels are chosen when you name the file.** `Trace.File <name> <channels>` sets the
+   destination *and* the channel set; `Trace.Start` then begins recording. Confirm with
+   `Trace.Status` → `GetLogEntries`, because channel naming varies slightly by build.
 
 ---
 
-## Trace Control
+## Trace Control — Epic's `ConsoleToolset` (`call_tool`, not Python)
 
 ### Start / stop a trace
-```python
-import unreal, json
 
-# Default channel set (frame, cpu, gpu, log, ...) — pass channels="" or omit
-res = json.loads(unreal.PerformanceService.start_trace("combat_encounter"))
-print(res)  # includes the trace file path
+```
+call_tool RunConsoleCommand {"Command": "Trace.File combat_encounter frame,cpu,gpu,stats,log"}
+call_tool RunConsoleCommand {"Command": "Trace.Start"}
+call_tool GetLogEntries {}                   # confirm the destination it chose
 
 # ... reproduce the workload ...
 
-stopped = json.loads(unreal.PerformanceService.stop_trace())
-print(stopped)  # trace file path + size
-```
-
-### Custom channels
-```python
-# Comma-separated channel list (short names accepted by the service)
-unreal.PerformanceService.start_trace("mem_capture", "frame,cpu,memalloc,memtag,object,loadtime")
+call_tool RunConsoleCommand {"Command": "Trace.Stop"}
+call_tool GetLogEntries {}                   # trace path + size
 ```
 
 ### Check status
-```python
-import unreal, json
-print(json.loads(unreal.PerformanceService.get_trace_status()))  # active? which channels?
+
+```
+call_tool RunConsoleCommand {"Command": "Trace.Status"}
+call_tool GetLogEntries {}                   # active? which channels?
 ```
 
----
+### Annotations — bookmarks and regions
 
-## Annotations — Mark Regions and Bookmarks
+Use these **while a trace is running** to label interesting moments in the Insights timeline.
 
-Use these **while a trace is active** to label interesting moments in the Unreal Insights timeline.
+```
+call_tool RunConsoleCommand {"Command": "Trace.Bookmark spawn_wave_3"}
 
-```python
-import unreal
-
-# Single point-in-time bookmark (vertical line in Insights)
-unreal.PerformanceService.bookmark("spawn_wave_3")
-
-# Named region (coloured span)
-unreal.PerformanceService.region_start("loading_level")
+call_tool RunConsoleCommand {"Command": "Trace.RegionBegin loading_level"}
 # ... trigger the thing you want to measure ...
-unreal.PerformanceService.region_end("loading_level")
+call_tool RunConsoleCommand {"Command": "Trace.RegionEnd loading_level"}
 ```
+
+### CSV profiler — aggregates without opening Insights
+
+```
+call_tool RunConsoleCommand {"Command": "CsvProfile start"}
+# ... workload ...
+call_tool RunConsoleCommand {"Command": "CsvProfile stop"}
+call_tool GetCsvInfo {}                      # then ReduceStat / ReadStatValues / TopStats / ListEvents
+```
+
+`CsvProfilerToolset.ReduceStat` gives avg/min/max and P50–P99 for a named stat — use it instead of
+hand-rolling percentiles.
 
 ---
 
-## Reading a capture back — `analyse()`
+## Reading a capture back — `analyse()` (VibeUE, `execute_python`)
 
 `analyse()` reads a finished trace and/or the log and returns a perf summary (frame stats, worst
 frames, hitches, notable log lines) without opening Unreal Insights:
@@ -239,7 +306,7 @@ import unreal, json
 summary = json.loads(unreal.PerformanceService.analyse("both"))   # "trace", "logs", or "both"
 print(summary)  # avg/p95/worst frame ms, hitches, notable log lines
 
-# Analyse a specific file instead of the last trace started/stopped
+# Analyse a specific file instead of the last trace recorded
 unreal.PerformanceService.analyse("trace", "Saved/Profiling/combat_encounter.utrace")
 ```
 
@@ -250,15 +317,17 @@ a successful capture. Log output separates `pso_hitch_event_lines`, cumulative
 `pso_hitches_reported`, and `pso_hitch_summary_lines`; repeated cumulative summary lines are not
 summed. The backward-compatible `pso_hitches` field is the best supported count.
 
-Remember: `analyse()` is frame-time aggregates only — use `frame_timing()` for the CPU/GPU split.
+Remember: `analyse()` is frame-time aggregates only — use `GetFrameTimings` for the CPU/GPU split.
 
 ---
 
 ## Standalone capture — representative readings
 
-The editor viewport (and even PIE) is not always representative of a packaged run. `start_standalone()`
-launches the game as a **separate standalone process** with one unique, direct-to-file trace. It does
-not use the global Unreal Trace Server store and never substitutes an unrelated "latest" trace:
+The editor viewport (and even PIE) is not always representative of a packaged run, and
+`EditorAppToolset.StartPIE` **downgrades** out-of-process play modes back to in-viewport PIE.
+`start_standalone()` launches the game as a real **separate process** with one unique,
+direct-to-file trace. It does not use the global Unreal Trace Server store and never substitutes an
+unrelated "latest" trace:
 
 ```python
 import unreal, json
@@ -279,40 +348,55 @@ If shutdown is forced or the exact trace stays missing/empty, stop returns failu
 available log/partial trace as `partial`; do not silently use another store trace. `analyse("both")`
 can still return a clearly marked log-only partial summary.
 
-For comparisons, keep map/route, resolution, scalability, difficulty, power mode, and warm-up fixed;
-disable editor background throttling for unattended runs and restore its prior value afterward.
-Treat short or sparse samples as observations, not stable averages. Compare median/p95/p99 and frame
-counts above 33/50/100 ms, and separate cold-start/shader/PSO runs from warm-cache runs. Run
-`ProfileGPU` or `stat dumpframe` separately because their instrumentation stalls contaminate traces.
+For comparisons, keep map/route, resolution, scalability, difficulty, power mode, and warm-up fixed.
+For unattended runs, snapshot `get_background_throttling()`, call `set_background_throttling(False)`,
+and restore the prior value afterward — a background editor throttles even with
+`bThrottleCPUWhenNotForeground=false`, and this is the only tool that defeats that. Treat short or
+sparse samples as observations, not stable averages. Compare median/p95/p99 and frame counts above
+33/50/100 ms, and separate cold-start/shader/PSO runs from warm-cache runs. Run `ProfileGPU` or
+`stat dumpframe` separately because their instrumentation stalls contaminate traces.
 
 ---
 
 ## Recommended flow
 
-```python
-import unreal, json
-
-# 1. CPU vs GPU verdict FIRST (PIE running, parked in a representative spot)
-print(json.loads(unreal.PerformanceService.frame_timing()))
+```
+# 1. Live per-thread split FIRST (PIE running, parked in a representative spot)
+call_tool StartPIE {}
+call_tool GetFrameTimings {}
+#    → then do the STEP 0 arithmetic: largest field, vs FrameMs, vs 1000/target_fps
 
 # 2. Capture a clean trace around the workload
-unreal.PerformanceService.start_trace("combat_encounter")
-unreal.PerformanceService.region_start("wave_spawn")
+call_tool RunConsoleCommand {"Command": "Trace.File combat_encounter frame,cpu,gpu,stats,log"}
+call_tool RunConsoleCommand {"Command": "Trace.Start"}
+call_tool RunConsoleCommand {"Command": "Trace.RegionBegin wave_spawn"}
 # (trigger the gameplay here)
-unreal.PerformanceService.region_end("wave_spawn")
-res = json.loads(unreal.PerformanceService.stop_trace())
-print("trace:", res)
+call_tool RunConsoleCommand {"Command": "Trace.RegionEnd wave_spawn"}
+call_tool RunConsoleCommand {"Command": "Trace.Stop"}
+call_tool GetLogEntries {}
+```
 
-# 3. Summarise without leaving Python
+```python
+# 3. Summarise the trace without leaving Python (VibeUE)
+import unreal, json
 print(json.loads(unreal.PerformanceService.analyse("both")))
 ```
+
+```
+# 4. Write up the findings yourself — there is no report tool any more
+call_tool WriteTextFile {"Path": "Saved/VibeUE/Performance/combat_encounter.md", "Contents": "..."}
+```
+
+Put in that write-up what the old `report` generated: the per-thread numbers, the bottleneck and
+the budget gap you computed, the `analyse()` aggregates, and a "fix in this order" list derived from
+the decision tree above.
 
 ---
 
 ## Channel Reference
 
-`start_trace` / `start_standalone` accept a comma-separated `channels` string; empty uses the
-default set (frame, cpu, gpu, log, …). Common channels:
+`Trace.File <name> <channels>` and `start_standalone(..., channels=...)` both take a
+comma-separated channel list; empty uses the default set (frame, cpu, gpu, log, …).
 
 | Channel | What it captures | Use for |
 |---|---|---|
@@ -330,10 +414,11 @@ default set (frame, cpu, gpu, log, …). Common channels:
 | `slate` | UI widget tick and paint | UI overhead |
 | `loadtime` | Asset streaming / load events | Load hitches |
 
-> Channel naming may vary slightly by build; call `get_trace_status()` after `start_trace()` to see
-> the channels actually enabled.
+> Channel naming may vary slightly by build; run `Trace.Status` and read `GetLogEntries` after
+> starting to see the channels actually enabled.
 
 ### Common channel presets
+
 | Investigation | `channels` string |
 |---|---|
 | General (balanced) | `frame,cpu,gpu,stats,log` |
@@ -348,7 +433,8 @@ default set (frame, cpu, gpu, log, …). Common channels:
 
 ## Opening Traces in Unreal Insights
 
-`analyse()` covers most needs from Python, but you can open a `.utrace` for the full timeline UI:
+`analyse()` covers most needs from Python, and `RewindDebuggerToolset` can load a trace for
+object/property/event timelines, but you can open a `.utrace` for the full timeline UI:
 
 ```
 Editor menu: Tools → Run Unreal Insights

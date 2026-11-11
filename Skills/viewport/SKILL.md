@@ -1,11 +1,13 @@
 ---
 name: viewport
 display_name: Viewport Control
-description: Control the Unreal Editor level viewport — camera type/position, view mode, FOV, exposure, layout, and rendering settings (ViewportService). Use when the user asks to move the editor camera, change the view mode (Lit/Unlit/Wireframe), set FOV/exposure, switch viewport layout, or frame the level for a screenshot.
+description: Control the Unreal Editor level viewport — viewport type, view mode, FOV, exposure, clip planes, layout, realtime and off-screen captures. VibeUE's ViewportService owns the setters for FOV/exposure/type/layout and the capture paths; camera transform, view-mode setting and viewport/FOV read-back are Epic's EditorAppToolset / SceneCaptureToolset. Use when the user asks to move the editor camera, change the view mode (Lit/Unlit/Wireframe), set FOV/exposure, switch viewport layout, or frame the level for a screenshot.
 vibeue_classes:
   - ViewportService
 unreal_classes:
   - LevelEditorSubsystem
+  - EditorAppToolset
+  - SceneCaptureToolset
 keywords:
   - viewport
   - camera
@@ -24,21 +26,29 @@ keywords:
 
 # Viewport Control Skill
 
-## Methods
+## 🚨 Two call styles — mixing them up is the #1 failure here
+
+- **VibeUE's `ViewportService`** is `unreal.ViewportService.<method>()` run through
+  **`execute_python`** (the table below).
+- **Epic's 5.9 toolsets** (`EditorAppToolset`, `SceneCaptureToolset`) are **`call_tool` actions**.
+  They carry no `PythonCallable`, so `unreal.EditorAppToolset` **does not exist** — run
+  `describe_toolset` on one for its exact action names and params.
+
+Some getter/setter pairs are now **split across the two**. That is deliberate, not a bug: Epic ships
+a reader with no writer in one case and a writer with no reader in the other, so each side keeps the
+half the other lacks. The table in "What moved to the engine" says which is which.
+
+## Methods (VibeUE `ViewportService` — `execute_python`)
 
 | Method | Description |
 |--------|-------------|
 | `get_viewport_info()` | Get full viewport state (type, camera, FOV, exposure, layout) |
 | `set_viewport_type(type)` | Switch perspective/orthographic views |
-| `get_viewport_type()` | Get current view type as string |
-| `set_view_mode(mode)` | Switch rendering mode (lit, wireframe, unlit, etc.) |
-| `get_view_mode()` | Get current rendering mode |
-| `set_fov(degrees)` | Set field of view (5-170, default 90) |
-| `get_fov()` | Get current FOV |
+| `get_view_mode()` | Get current rendering mode (**the setter is Epic's** — see below) |
+| `set_fov(degrees)` | Set field of view (5-170, default 90). ⚠️ PERSISTS into the user's editor settings (**the getter is Epic's** — see below) |
 | `set_near_clip_plane(distance)` | Set near clipping plane (-1 = engine default) |
 | `set_far_clip_plane(distance)` | Set far clipping plane (0 = infinity) |
 | `set_exposure(fixed, ev100)` | Set fixed/auto exposure with EV100 value. ⚠️ PERSISTS into the user's editor settings — snapshot + restore (see below) |
-| `set_exposure_game_settings()` | Reset exposure to auto (game settings) |
 | `restore_viewport_info(info)` | Put camera, FOV, exposure, base realtime (`realtime_base`) and game view back to a `get_viewport_info()` snapshot (writes only what differs; skips the camera if the view type changed) |
 | `capture_with_view(location, rotation, width, height, out_png, fov=0, fixed_exposure=False, ev100=0)` | Draw the REAL level viewport from a temporary camera/FOV/exposure into a PNG, then restore the viewport (on ordinary failures too; see the crash caveat below) |
 | `get_editor_window_state()` | JSON: is the main editor window minimized / maximized / foreground |

@@ -1,10 +1,9 @@
 ---
 name: materials
 display_name: Material System
-description: Create and edit materials and material instances — graph nodes, parameters, functions, custom HLSL, and instance overrides (MaterialService + MaterialNodeService). Use when the user asks to create or edit a material/material instance, wire material nodes, add material parameters, set blend/shading modes, or recreate a material graph. For landscape materials load landscape-materials.
+description: Create and edit materials and material instances — graph nodes, parameters, functions, custom HLSL, and instance overrides. In UE 5.9 this is Epic's MaterialToolset / MaterialInstanceToolset / ObjectToolset via `call_tool`; VibeUE keeps exactly two graph calls (create_function_call, create_collection_parameter). Use when the user asks to create or edit a material/material instance, wire material nodes, add material parameters, set blend/shading modes, or recreate a material graph. For landscape materials load landscape-materials.
   Also use for generated organic PBR detail, texture seams, projection coordinates, and surface-normal diagnosis.
 vibeue_classes:
-  - MaterialService
   - MaterialNodeService
 unreal_classes:
   - EditorAssetLibrary
@@ -26,313 +25,309 @@ or overly strong tissue relief, read [generated organic surfaces](references/gen
 For gray/default surfaces after mesh reimport, use the asset-management skill's
 LOD-section mapping helper before changing the shader or buying new textures.
 
+## 🚨 Who owns what (read this first — the wrong call style just fails)
+
+`UMaterialService` **no longer exists** (all 16 tools deleted). `UMaterialNodeService` is down to
+**exactly two** calls. Everything else is Epic's, in `EditorToolset`, reached with `call_tool`.
+
+| Call style | What it covers |
+|---|---|
+| **`call_tool`** → `EditorToolset.MaterialToolset` (25) | material/function assets, expressions, connections, layout, recompile, statistics, parameter groups, diffs |
+| **`call_tool`** → `EditorToolset.MaterialInstanceToolset` (14) | instance create, list/get/set Scalar · Vector · Texture · StaticSwitch, `SetParent` |
+| **`call_tool`** → `EditorToolset.ObjectToolset` | **any** property on a material, instance or expression — this is how you set `ParameterName`, `DefaultValue`, `Group`, `SortPriority`, `BlendMode`, a Custom node's `Code`/`OutputType`/`Inputs` |
+| **`call_tool`** → `EditorToolset.AssetToolset` | `Exists`, `SaveAsset`, `Duplicate`, `Delete`, `GetReferencers`, `GetDependencies` |
+| **`call_tool`** → `EditorToolset.EditorAppToolset` | `OpenEditorForAsset` |
+| **`execute_python`** → `unreal.MaterialNodeService` | **only** `create_function_call` and `create_collection_parameter` |
+
+```python
+MT  = "EditorToolset.MaterialToolset"
+MIT = "EditorToolset.MaterialInstanceToolset"
+OT  = "EditorToolset.ObjectToolset"
+AT  = "EditorToolset.AssetToolset"
+
+def ref(p):   # "/Game/Materials/M_Foo" -> {"refPath": "/Game/Materials/M_Foo.M_Foo"}
+    tail = p.rsplit("/", 1)[-1]
+    return {"refPath": p if "." in tail else f"{p}.{tail}"}
+```
+
+**Three argument rules for every Epic material call:**
+
+1. Arg names are **lowerCamelCase** of the C++ parameter (`FolderPath` → `folderPath`,
+   `MaterialOrFunction` → `materialOrFunction`).
+2. Every object/class argument is a **`{"refPath": "<full object path>"}`** handle, never a bare
+   string — `/Game/Dir/M_X.M_X` with the asset name repeated. Expression handles come back from
+   `AddExpression` / `GetExpressions` already in that shape; pass them straight through.
+3. `materialProperty` is the **`EMaterialProperty` enum name** — `"MP_BaseColor"`, `"MP_Normal"`,
+   `"MP_Roughness"`. The friendly `"BaseColor"` spelling that VibeUE's old service accepted is gone.
+
 ## Critical Rules
 
-### Material information over MCP: use `GetMaterialInfoResult`
+### 🚨 The two VibeUE survivors — and why they must survive
 
-Call `VibeUE.MaterialService.GetMaterialInfoResult` with only `materialPath`.
-UE 5.8's native ToolsetRegistry serializes the direct return value, not output-reference
-parameters: legacy `GetMaterialInfo` can return `returnValue: true` without `outInfo`.
-The new operation returns `returnValue` containing `bSuccess`, `info`, and `errorMessage`.
-Check `bSuccess` before reading `info`; failure returns an error and default-empty details.
-Parameter results cover scalar, vector and texture parameters (not static switches). Scalar and
-vector values are rounded to three decimals; `defaultValue` is the inherited value excluding this
-instance's override, and `bIsOverridden` reports only this instance. Layer association and index
-are not returned, so equal parameter names in different layers cannot be distinguished.
-Expression and texture-sample counts are populated only for base materials; the texture count
-counts only parameter sample nodes, not all texture samples. Only the first shading model is reported.
-`Summarize` and `GetPropertyInfo` also use output references; they are not MCP substitutes.
-The existing C++/Blueprint/Python `get_material_info` signature is unchanged, but its instance
-properties and parameter details now report effective values, inherited defaults and local overrides.
-`ListParameters` returns the corrected parameter details too. In Python,
-`get_material_info_result(path)` returns `.success`, `.info`, and `.error_message`.
+Epic's generic property tool never calls `PostEditChangeProperty`, and two node types need that hook
+to become usable at all:
 
-Regression: run `Automation RunTests VibeUE.Materials.GetMaterialInfo` in the Editor console.
-One test creates an unsaved in-memory `/Game` package; the tests do not save assets.
-
-### 🚨 Connecting Function Call Inputs: Use Bare Names, Not Display Names
-
-`get_expression_pins(mat, expr_id)` (MaterialNodeService) returns input pins with **display labels including type suffixes** like `"TextureObject (T2d)"`, `"TextureSize (V3)"`, `"Use High Quality Normals (SB)"`. Connections are made through the **engine** `MaterialTools.connect_expressions` call, and UE's connect API matches against the *bare* input name only — **never pass these display labels** as `to_input_name`:
+- **`create_function_call`** — a `MaterialFunctionCall` node's pins are populated only by
+  `SetMaterialFunctionEx` → `UpdateFromFunctionResource`, reached from that hook. So
+  `AddExpression` + `SetProperties({"MaterialFunction": ...})` + `Recompile` yields a **pin-less node
+  that cannot be wired**. There is no other way.
+- **`create_collection_parameter`** — same shape: the node's `ParameterId` GUID is derived in that
+  hook by looking the name up in the collection. A missing id compiles to
+  `"CollectionParameter has invalid parameter"`.
 
 ```python
-MT = "editor_toolset.toolsets.material.MaterialTools"
-# ❌ WRONG — display label with type suffix; connection fails silently or gets ignored
-call_tool(tool_name="connect_expressions", toolset_name=MT,
-          arguments={"from_expression": src_id, "from_output_name": "",
-                     "to_expression": fn_id, "to_input_name": "TextureObject (T2d)"})
-
-# ✅ CORRECT — bare name
-call_tool(tool_name="connect_expressions", toolset_name=MT,
-          arguments={"from_expression": src_id, "from_output_name": "",
-                     "to_expression": fn_id, "to_input_name": "TextureObject"})
+# execute_python — these two are VibeUE, NOT call_tool.
+fn = unreal.MaterialNodeService.create_function_call(
+    "/Game/Materials/M_Rock",
+    "/Engine/Functions/Engine_MaterialFunctions01/Texturing/WorldAlignedTexture", -600, 0)
+coll = unreal.MaterialNodeService.create_collection_parameter(
+    "/Game/Materials/M_Rock", "/Game/Materials/MPC_GlobalParams", "WindStrength", -600, 300)
 ```
 
-The authoritative source for input names is `get_function_info(function_path).inputs` — those are the bare names (`TextureObject`, `TextureSize`, `WorldPosition`, etc.). For built-in expressions, use `get_inputs_for_material_expression` from `unreal.MaterialEditingLibrary`.
+Both return a `MaterialExpressionInfo`: read `.id` (session-specific) or `.object_path` (durable),
+plus `.input_names` / `.output_names`. To hand one of these nodes to an Epic call, wrap its
+`object_path`: `{"refPath": fn.object_path}`. Passing the struct itself where a string is expected
+gives `TypeError: Nativize: Cannot nativize 'MaterialExpressionInfo' as 'String'`.
 
-> ⚠️ Why this is easy to miss: `get_expression_pins` returns `is_connected=True` for both real and phantom connections, and our service used to silently produce phantom wires when given display names. The wires would appear in the graph export but the shader compiler would never see the texture flow through. Always verify with `unreal.MaterialEditingLibrary.get_used_textures(mat)` after wiring — if it returns 0 on a material that samples textures, your connections are phantom.
+Every other node — parameters, math, texture samples, Custom HLSL — is `AddExpression`.
 
-### 🚨 Verifying Wiring: Use `get_material_diagnostics`
+### ✅ Pin names: what you read is what connect accepts
 
-**`MaterialNodeService.get_material_diagnostics(path)` is the canonical way to verify a material is sampling textures and compiling cleanly.** It returns the real compile errors, the textures the shader actually references, and node-type counts. Always run it after non-trivial graph rewiring:
+`MaterialToolset.GetExpressionInputNames` and `MaterialToolset.ConnectExpressions` are both driven
+from `UMaterialEditingLibrary`'s **bare-name** matching, so the names you read back are exactly the
+names the connect call accepts — no display labels, no type suffixes, no translation step. And a
+connect that does not land now **raises** (`Failed to connect output "X" on A to input "Y" on B`)
+instead of silently producing a phantom wire. Read, connect, trust it.
 
 ```python
-diag = unreal.MaterialNodeService.get_material_diagnostics("/Game/Materials/M_Foo")
-assert diag.success
-print(f"compiled ok:                     {diag.is_compiled_ok}")
-print(f"compile errors ({len(diag.compile_errors)}):")
-for e in diag.compile_errors: print(f"  {e}")
-print(f"referenced textures ({len(diag.referenced_texture_paths)}):")
-for t in diag.referenced_texture_paths: print(f"  {t}")
-print(f"expression count:                {diag.expression_count}")
-print(f"texture sample count:            {diag.texture_sample_count}")
-print(f"texture object parameter count:  {diag.texture_object_parameter_count}")
-print(f"function call count:             {diag.function_call_count}")
+names = call_tool(tool_name="GetExpressionInputNames", toolset_name=MT,
+                  arguments={"expression": fn_ref})["returnValue"]
+# -> ["TextureObject", "TextureSize", "WorldPosition", ...]
+call_tool(tool_name="ConnectExpressions", toolset_name=MT,
+          arguments={"fromExpression": tex_ref, "fromOutputName": "",
+                     "toExpression": fn_ref, "toInputName": names[0]})
 ```
 
-Sample compile errors caught by this:
-- `"(Function WorldAlignedTexture) (Node TextureSample) Sampler type is Color, should be Masks for /Game/.../T_xevtfjz_2K_ORM"` — ORM/data textures need `SAMPLERTYPE_Masks` or `SAMPLERTYPE_LinearColor`, not the default `SAMPLERTYPE_Color`.
-- Type mismatch errors when wiring scalars to vector inputs without proper conversion.
-- Missing required inputs on function calls.
+`GetExpressionOutputNames` is the same for the other end; `""` means the default (first) output.
+`GetExpressionInputs(materialOrFunction, expression)` reads back the live wiring, one entry per
+input pin, with `expression: null` for an unwired pin.
 
-**Why prefer this over the older signals:**
+### 🚨 Diagnostics: `Recompile` raises, `GetStatistics` counts
 
-`unreal.MaterialEditingLibrary.get_used_textures(mat)` is **unreliable** for multi-branch graphs (BC + Normal + ORM, or anything with ComponentMask after a function-call output). It returns `0` even when the material is sampling textures correctly. Don't use it as proof of broken wiring.
+There is no `get_material_diagnostics` and no `get_used_textures` workaround any more — 5.9 reports
+both halves directly:
 
-Visual confirmation via the material editor preview is also useful but harder. Asset-editor
-capture now goes through the **engine** `EditorAppToolset` (toolset_name
-`EditorToolset.EditorAppToolset` via `call_tool`) — it opens, focuses, and captures the asset
-editor. (The old `unreal.ScreenshotService` and its `capture_asset_editor` are gone.) After the
-capture, `attach_image(...)` the returned file to inspect it.
+- **`MaterialToolset.Recompile`** raises on a compile failure with every error **localized to the
+  failing node**: `Material failed to compile:\nnode '/Game/M_Rock.M_Rock:MaterialExpressionTextureSample_0': Sampler type is Color, should be Masks for ...`.
+  A clean compile returns quietly. Call it once after a batch of graph edits, not per node.
+- **`MaterialToolset.GetStatistics`** returns the real **post-compile** counts from the shader map:
+  `num_pixel_texture_samples`, `num_samplers`, `num_pixel_shader_instructions`,
+  `num_vertex_shader_instructions`, `num_vertex_texture_samples`, `num_virtual_texture_samples`,
+  `num_uv_scalars`, `num_interpolator_scalars`.
 
-> ⚠️ Best-effort focus: when many asset editors are already open as tabs, the editor tab may not switch reliably. Close other asset editors first if the screenshot keeps catching the wrong tab:
+```python
+call_tool(tool_name="Recompile", toolset_name=MT, arguments={"materialOrFunction": ref(path)})
+stats = call_tool(tool_name="GetStatistics", toolset_name=MT,
+                  arguments={"material": ref(path)})["returnValue"]
+assert stats["num_pixel_texture_samples"] > 0   # a texturing material that samples nothing is broken
+call_tool(tool_name="SaveAsset", toolset_name=AT, arguments={"assetPath": path})
+```
+
+`num_pixel_texture_samples == 0` on a material that is supposed to sample textures is the honest
+signal that the texture branch never reaches an output. `GetStatistics` also works on a
+MaterialInstance (it takes a `UMaterialInterface`), so an instance's static-switch permutation can be
+measured the same way.
+
+Visual confirmation: `call_tool("OpenEditorForAsset", "EditorToolset.EditorAppToolset", {"assetPath": path})`,
+then capture with `EditorAppToolset` and `attach_image(...)` the result.
+
+> ⚠️ Best-effort focus: with many asset editors open as tabs, the editor tab may not switch
+> reliably. Close the others first if the screenshot keeps catching the wrong tab:
 >
 > ```python
 > ed = unreal.get_editor_subsystem(unreal.AssetEditorSubsystem)
-> for path in [other_open_paths]:
->     ed.close_all_editors_for_asset(unreal.load_asset(path))
+> for p in other_open_paths:
+>     ed.close_all_editors_for_asset(unreal.load_asset(p))
 > ```
 
-### 🚨 Tiling on Basic Shapes: Prefer a Child MI with `Tiling` Override
+### 🚨 Every property — material, instance or expression — goes through `ObjectToolset`
 
-For Megascans `M_MS_Srf` and similar surface materials with a `Tiling` scalar parameter, the cleanest per-actor tiling fix is a **child material instance with `Tiling` overridden** — *not* a UV transform on the mesh. UV transforms apply to all faces uniformly and break orientation; the parent material's UV mapping is already correct per face.
-
-```python
-# ✅ CORRECT pattern for "this disc shows brick too sparse / too dense"
-# Material instances are created and overridden through the engine MaterialInstanceTools toolset.
-MIT = "editor_toolset.toolsets.material_instance.MaterialInstanceTools"
-call_tool(tool_name="create_material_instance", toolset_name=MIT,
-          arguments={"parent_material": "/Game/Fab/Megascans/.../MI_xevtfjz",
-                     "asset_name": "MI_xevtfjz_Disc", "folder_path": "/Game/Materials/"})
-ip = "/Game/Materials/MI_xevtfjz_Disc"
-call_tool(tool_name="set_scalar_parameter", toolset_name=MIT,
-          arguments={"instance_path": ip, "parameter_name": "Tiling", "value": 4.0})
-unreal.EditorAssetLibrary.save_asset(ip)
-# assign ip to the actor
-```
-
-For triplanar / world-aligned (where the same material works on cube, sphere, cylinder with no UV concerns), build a master material wrapping `WorldAlignedTexture` / `WorldAlignedNormal` (functions live under `/Engine/Functions/Engine_MaterialFunctions01/Texturing/`). Use `TextureObjectParameter` (not `TextureSampleParameter2D`) to feed the `TextureObject` input on those functions — the function brings its own sampler. Feed `TextureSize` from a `Constant3Vector` or `Multiply(Scalar, Constant3Vector(1,1,1))`; **a bare scalar will broadcast incorrectly to V3** in this input slot.
-
-### 🚨 Inspect Before Modifying Existing Materials
-
-Before adding, removing, or reconnecting nodes in an **existing** material, you **MUST** export and review the current graph first:
+`ObjectToolset.SetProperties` takes the **instance** plus a **JSON string** of values. This is the
+only property writer left: there is no `MaterialService.set_property`, no `set_expression_property`,
+no `set_parameter_metadata`.
 
 ```python
-import unreal, json
+import json
+# A parameter expression's identity and default.
+call_tool(tool_name="SetProperties", toolset_name=OT, arguments={
+    "instance": vec_ref,
+    "values": json.dumps({"ParameterName": "BaseColor", "Group": "Surface",
+                          "SortPriority": 0,
+                          "DefaultValue": {"r": 0.8, "g": 0.2, "b": 0.2, "a": 1.0}})})
 
-path = "/Game/Materials/M_Existing"
-
-# Step 1: Get high-level info (blend mode, shading model)
-info = unreal.MaterialService.get_material_info(path)
-print(f"Blend: {info.blend_mode}, Shading: {info.shading_model}")
-
-# Step 2: Export the full node graph
-graph = json.loads(unreal.MaterialNodeService.export_material_graph(path))
-print(f"Expressions: {len(graph['expressions'])}")
-print(f"Connections: {len(graph['connections'])}")
-print(f"Output connections: {len(graph['output_connections'])}")
-
-# Step 3: Review what already exists
-for expr in graph['expressions']:
-    name = expr.get('parameter_name') or expr.get('class')
-    print(f"  [{expr['id']}] {expr['class']} - {name}")
-for oc in graph['output_connections']:
-    print(f"  Output '{oc['property']}' ← expr {oc['expression_id']}")
+# The material's own render state. Enum values are the full prefixed identifiers.
+call_tool(tool_name="SetProperties", toolset_name=OT, arguments={
+    "instance": ref(path),
+    "values": json.dumps({"BlendMode": "BLEND_Masked", "OpacityMaskClipValue": 0.33,
+                          "TwoSided": True})})
+call_tool(tool_name="Recompile", toolset_name=MT, arguments={"materialOrFunction": ref(path)})
 ```
 
-**Why this matters:**
-- The material may already have nodes connected to the output you want to modify
-- Blindly adding nodes creates duplicates and orphaned connections
-- You need to know what IDs exist so you can reconnect or replace, not just append
-- `export_material_graph` returns the ground truth — use it to plan your edits
+- Internal property names only (`TwoSided`, `BlendMode`, `ShadingModels`, `MaterialDomain`,
+  `OpacityMaskClipValue`, `bUsedWithStaticLighting`, `DitheredLODTransition`). The old display-name
+  tolerance (`"Two Sided"`, `"Blend Mode"`) went with `MaterialService`.
+- Enum values are the prefixed identifiers: `BLEND_Opaque` / `BLEND_Masked` / `BLEND_Translucent`,
+  `MSM_DefaultLit`, `MD_Surface`. **Discover, don't guess:** `ObjectToolset.ListProperties` finds the
+  property name, then `GetPropertySchema` gives its type and legal values. `ListProperties` defaults
+  to `maxDepth: 1` — pass `0` to search every level, and a `nameFilter` regex to stay small.
+- `SetProperties` returns a **bool**. Check it, or read back with `GetProperties`
+  (`{"instance": ..., "properties": ["BlendMode"]}`).
+- Changing a parameter's `ParameterName` after instances exist orphans their overrides — the override
+  is keyed by name. Rename on the parent and the children silently fall back to the default.
 
-**Workflow for modifying existing materials:**
-1. **Export** the graph JSON and review expressions + connections
-2. **Plan** your changes — identify which nodes to keep, replace, or add
-3. **Disconnect** existing connections if needed before reconnecting
-4. **Add** only the new nodes that don't already exist
-5. **Reconnect** outputs to their correct sources
-6. **Compile** and save
+### 🚨 Inspect before modifying an existing material
 
-### 🚨 Return Types — `create_parameter`/`create_function_call` Return `.id`, NOT the Raw Object
-
-Material/instance **creation** now goes through the engine toolsets (`MaterialTools.create_material`
-returns the **Material object** itself — not a result-with-`.asset_path`; `MaterialInstanceTools`
-creates the instance), so build the asset path yourself from `folder_path + asset_name`:
+There is no `export_material_graph`. Read the graph with the Epic trio before you touch it:
 
 ```python
-# Engine: create_material returns the Material object (no .asset_path) — reference by path you chose.
-call_tool(tool_name="create_material",
-          toolset_name="editor_toolset.toolsets.material.MaterialTools",
-          arguments={"folder_path": "/Game/Materials/", "asset_name": "M_MyMat"})
-path = "/Game/Materials/M_MyMat"
+exprs = call_tool(tool_name="GetExpressions", toolset_name=MT,
+                  arguments={"materialOrFunction": ref(path)})["returnValue"]
+for e in exprs:
+    props = call_tool(tool_name="GetProperties", toolset_name=OT,
+                      arguments={"instance": e, "properties": ["ParameterName", "Group"]})
+    ins = call_tool(tool_name="GetExpressionInputs", toolset_name=MT,
+                    arguments={"materialOrFunction": ref(path), "expression": e})["returnValue"]
+    print(e["refPath"], props, [(i["inputName"], i["expression"]) for i in ins])
 
-# Engine: create the instance via MaterialInstanceTools, then reference the path you chose.
-call_tool(tool_name="create_material_instance",
-          toolset_name="editor_toolset.toolsets.material_instance.MaterialInstanceTools",
-          arguments={"parent_material": "/Game/Materials/M_Base",
-                     "asset_name": "MI_Red", "folder_path": "/Game/Materials/"})
-instance_path = "/Game/Materials/MI_Red"
+# What currently drives an output, before you overwrite it:
+src = call_tool(tool_name="GetPropertyInput", toolset_name=MT,
+                arguments={"material": ref(path), "materialProperty": "MP_BaseColor"})["returnValue"]
 ```
 
-The surviving VibeUE graph-authoring calls **still** return **result objects** — extract the field:
+Then: plan → `DisconnectExpressions` / `DisconnectFromOutput` what you are replacing → `AddExpression`
+only the genuinely new nodes → `ConnectExpressions` / `ConnectToOutput` → `LayoutExpressions` →
+`Recompile` → `AssetToolset.SaveAsset`. `DeleteUnusedExpressions` sweeps up abandoned nodes (it does
+**not** recompile — follow it with `Recompile`). `MaterialToolset.DiffMaterial(oldAssetPath,
+newAssetPath)` gives a readable text diff of two material assets, and `DiffFunction` the same for
+functions — the fastest way to confirm an edit changed only what you intended.
+
+### ✅ `LayoutExpressions` exists — auto-arrange the graph
+
+Earlier versions of this pack said there is no layout API. **That was wrong for 5.9.**
+`MaterialToolset.LayoutExpressions` auto-arranges every node in a material or function graph
+(`UMaterialEditingLibrary::LayoutMaterialExpressions`). You still pass `x`/`y` to `AddExpression`, but
+you no longer have to get them right — tidy up afterwards:
 
 ```python
-# create_parameter / create_function_call → MaterialExpressionInfo
-expr = unreal.MaterialNodeService.create_parameter(path, "Vector", "BaseColor", "Surface", "1,0,0,1", -400, 0)
-node_id = expr.id  # ← use .id, NOT expr itself
+call_tool(tool_name="LayoutExpressions", toolset_name=MT,
+          arguments={"materialOrFunction": ref(path)})
 ```
 
-> ⚠️ Passing a `MaterialExpressionInfo` where a string is expected gives:
-> `TypeError: Nativize: Cannot nativize 'MaterialExpressionInfo' as 'String'`
+### ⚠️ Creating nodes: `AddExpression` takes a class **path**, not a bare name
 
-### ⚠️ Two Services
-
-- **MaterialService** - Create materials, instances, manage properties
-- **MaterialNodeService** - Build material graphs, expressions, parameters
-
-### ⚠️ Compile After Graph Changes
-
-Full graph workflow: **create nodes → connect nodes → connect to material output → compile → save.**
+`expressionClass` is a `UClass` handle, so it is a `{"refPath": "/Script/Engine.MaterialExpression<X>"}`.
+The old bare-name-minus-prefix form (`"Multiply"`) is not accepted. Discover the exact paths with
+`ListExpressionClasses` (it filters by context: `FunctionInput`/`FunctionOutput` appear only for a
+MaterialFunction, never for a Material):
 
 ```python
-mns = unreal.MaterialNodeService
-expr = mns.create_parameter(path, "Vector", "BaseColor", ...)
-
-# Wire an expression output straight into a material output (BaseColor, Normal, Roughness, ...).
-# output_name="" selects output 0; property accepts "BaseColor" or "MP_BaseColor" (case-insensitive).
-mns.connect_expression_to_output(path, expr.id, "", "BaseColor")   # returns True only after a read-back
-# ...and to clear it again:  mns.disconnect_output(path, "BaseColor")
-
-unreal.MaterialService.compile_material(path)  # REQUIRED after graph changes
-unreal.EditorAssetLibrary.save_asset(path)
+classes = call_tool(tool_name="ListExpressionClasses", toolset_name=MT,
+                    arguments={"materialOrFunction": ref(path), "search": "Multiply"})["returnValue"]
+mult = call_tool(tool_name="AddExpression", toolset_name=MT,
+                 arguments={"materialOrFunction": ref(path),
+                            "expressionClass": {"refPath": classes[0]},
+                            "x": -300, "y": 0})["returnValue"]
 ```
 
-> ⚠️ **expr.id is session-specific** (`"<Class>_<pointer>"`) — it changes on editor restart. For a
-> durable reference use `expr.object_path`, which every id-based call (`connect_expression_to_output`,
-> `get_expression_details`, `set_expression_property`, ...) also accepts. Empty / bogus / foreign ids
-> are now rejected (they used to silently resolve to expression index 0).
+### ⚠️ Parameter expressions and their properties
 
-The engine's own `MaterialTools.connect_to_output` (`call_tool`, `material_property="MP_BaseColor"`) still
-works and is interchangeable — use whichever fits the surrounding code.
+A parameter is `AddExpression` of the parameter class, then `ObjectToolset.SetProperties`.
 
-### ⚠️ Parameter Types
+| Parameter | `expressionClass` refPath (`/Script/Engine.` +) | Properties to set |
+|---|---|---|
+| Scalar | `MaterialExpressionScalarParameter` | `ParameterName`, `Group`, `DefaultValue` (float) |
+| Vector / colour | `MaterialExpressionVectorParameter` | `ParameterName`, `Group`, `DefaultValue` (`{r,g,b,a}`) |
+| Texture (with sampler) | `MaterialExpressionTextureSampleParameter2D` | `ParameterName`, `Texture` (refPath), **`SamplerType`** |
+| Texture object (no sampler) | `MaterialExpressionTextureObjectParameter` | `ParameterName`, `Texture` (refPath), **`SamplerType`** |
+| Static switch | `MaterialExpressionStaticSwitchParameter` | `ParameterName`, `DefaultValue` (bool) |
+| Collection parameter | — | **VibeUE `create_collection_parameter`** (see above) |
+| Material function call | — | **VibeUE `create_function_call`** (see above) |
 
-| Type | Use | Example Value |
-|------|-----|---------------|
-| `Scalar` | Single float | `0.5` |
-| `Vector` | Color/vector | `(R=1.0,G=0.0,B=0.0,A=1.0)` |
-| `Texture` | Texture parameter | `/Game/T_Diffuse.T_Diffuse` |
-| `TextureObject` | Texture object (no sampler) | `/Game/T_Diffuse.T_Diffuse` |
-| `StaticSwitch` | Static bool switch | `true` or `false` |
+> 🚨 **`SamplerType` is the single most common compile failure.** The default is
+> `SAMPLERTYPE_Color`, which is wrong for any data texture. ORM / mask / packed maps need
+> `SAMPLERTYPE_Masks` or `SAMPLERTYPE_LinearColor`; a tangent normal map needs
+> `SAMPLERTYPE_Normal`; a single-channel linear mask needs `SAMPLERTYPE_LinearGrayscale`. Get it
+> wrong and `Recompile` raises `"Sampler type is Color, should be Masks for /Game/.../T_X_ORM"`.
+> Set it in the same `SetProperties` call as `Texture`.
 
-### ⚠️ Material Output Names
+Pin names worth knowing (they are not guessable): `StaticSwitchParameter` inputs are `True` / `False`;
+`LandscapeLayerBlend` inputs are `"Layer <name>"` / `"Height <name>"`, and `LayerBlendInput` fields are
+invisible to `dir()` but `set_editor_property("layer_name" | "blend_type" | "preview_weight")` works.
 
-- `BaseColor`, `Metallic`, `Specular`, `Roughness`
-- `EmissiveColor`, `Normal`, `Opacity`, `OpacityMask`
-- `WorldPositionOffset`, `AmbientOcclusion`
+### ⚠️ Custom HLSL: `AddExpression` + `SetProperties`
 
-### ⚠️ Discovering Node Types & Categories
-
-To answer "what nodes / categories are available", use the MaterialNodeService discovery
-calls — do **not** hunt through `search_symbols` or a material-editor palette API
-(there isn't a Python one):
+There is no `create_custom_expression`. A Custom node is a plain expression whose `Code`,
+`OutputType` and `Inputs` are properties — and because it has no pin-generating `PostEditChange`
+dependency, the generic path works:
 
 ```python
-# All material-expression categories (Math, Color, Constants, Coordinates, Parameters, ...)
-cats = unreal.MaterialNodeService.get_categories()
-
-# Search node types by name/category (returns MaterialExpressionTypeInfo:
-#   class_name, display_name, category, description, is_parameter)
-types = unreal.MaterialNodeService.discover_types(category="", search_term="Add", max_results=100)
+custom = call_tool(tool_name="AddExpression", toolset_name=MT, arguments={
+    "materialOrFunction": ref(path),
+    "expressionClass": {"refPath": "/Script/Engine.MaterialExpressionCustom"},
+    "x": -500, "y": 0})["returnValue"]
+call_tool(tool_name="SetProperties", toolset_name=OT, arguments={
+    "instance": custom,
+    "values": json.dumps({
+        "Code": "return sin(Time * Speed);",
+        "Description": "SineWave",
+        "OutputType": "CMOT_Float1",                       # CMOT_Float1..4, CMOT_MaterialAttributes
+        "Inputs": [{"InputName": "Time"}, {"InputName": "Speed"}]})})
 ```
 
-To create a node, pass the bare class name minus the `MaterialExpression` prefix
-(`"Add"`, `"Multiply"`, `"Constant3Vector"`, `"OneMinus"`, `"LinearInterpolate"`/`"Lerp"`) as
-`expression_class` to the engine `MaterialTools.add_expression` call (single node), or to the
-surviving `MaterialNodeService.batch_create_expressions` (many nodes in one transaction).
+`Inputs` is a container, so **set the whole array** to add or remove pins — a subscript only
+addresses an element that already exists. The input pin names you just declared are what
+`ConnectExpressions` takes as `toInputName`. Extra outputs go in `AdditionalOutputs` as
+`[{"OutputName": "Mask", "OutputType": "CMOT_Float3"}]`.
 
-### ⚠️ Check Node Existence
+### ⚠️ Material output properties (`EMaterialProperty`)
+
+`MP_BaseColor`, `MP_Metallic`, `MP_Specular`, `MP_Roughness`, `MP_EmissiveColor`, `MP_Normal`,
+`MP_Opacity`, `MP_OpacityMask`, `MP_WorldPositionOffset`, `MP_AmbientOcclusion`.
 
 ```python
-# WRONG - crashes if not found
-add_node = next((n for n in nodes if "Add" in n.display_name))
-
-# CORRECT
-add_node = next((n for n in nodes if "Add" in n.display_name), None)
-if add_node:
-    pins = unreal.MaterialNodeService.get_expression_pins(mat_path, add_node.id)
+call_tool(tool_name="ConnectToOutput", toolset_name=MT,
+          arguments={"expression": mult, "outputName": "", "materialProperty": "MP_BaseColor"})
+call_tool(tool_name="DisconnectFromOutput", toolset_name=MT,
+          arguments={"material": ref(path), "materialProperty": "MP_BaseColor"})
 ```
 
-### ⚠️ Property Names
+### 🚨 Tiling on basic shapes: prefer a child MI with a `Tiling` override
 
-Use `get_symbol()` first (batch: `class_name='unreal.A, unreal.B'`):
-- `MaterialExpressionTypeInfo` uses `display_name`, NOT `name`
-- `MaterialOutputConnectionInfo` uses `connected_expression_id`, NOT `expression_id`
-
-Complete field lists (don't guess):
-
-| Struct | Fields |
-|---|---|
-| `MaterialExpressionInfo` (from `list_expressions` / `get_expression_info`) | `id`, `class_name`, `display_name`, `category`, `description`, `pos_x`, `pos_y`, `is_parameter`, `parameter_name`, `input_names`, `output_names` — the class is `class_name`, **not `expression_class`** |
-| `MaterialNodePropertyInfo` (from expression property lists) | `name`, `value`, `property_type`, `is_editable` — it's `name` here, **not `property_name`** |
-| `MaterialSummary` (from `MaterialService.summarize`) | `material_name`, `material_path`, `blend_mode`, `shading_model`, `material_domain`, `two_sided`, `expression_count`, `parameter_count`, `parameter_names`, `key_properties`, `editable_properties` — it's `material_name`/`material_path`/`parameter_count`, **not `name`/`path`/`num_parameters`** |
-| `MaterialDetailedInfo` (from `MaterialService.get_material_info`) | `material_name`, `material_path`, `blend_mode`, `shading_model`, `material_domain`, `two_sided`, `expression_count`, `texture_sample_count`, `is_material_instance`, `parent_material`, `parameters` — it's `two_sided`, **not `is_two_sided`** |
-| `MaterialPropertyInfo_Custom` (from `MaterialService.list_properties` / `get_property_info`) | `property_name`, `display_name`, `property_type`, `current_value`, `allowed_values`, `category`, `is_editable`, `is_advanced` — it's `property_name`/`current_value`, **not `name`/`value`** (differs from `MaterialNodePropertyInfo` above) |
-
-### 🚨 Setting Material Properties: `set_property` Takes Display OR Internal Name
-
-`MaterialService.set_property(path, name, value)` / `get_property` accept **either** the editor
-display name (`"Two Sided"`, `"Blend Mode"`, `"Opacity Mask Clip Value"`) **or** the internal
-property name (`"TwoSided"`, `"BlendMode"`, `"OpacityMaskClipValue"`) — matching is
-case-insensitive and ignores spaces. Both of these work:
+For Megascans `M_MS_Srf` and similar surface materials with a `Tiling` scalar, the cleanest
+per-actor tiling fix is a **child material instance with `Tiling` overridden** — *not* a UV transform
+on the mesh. UV transforms apply to all faces uniformly and break orientation; the parent material's
+UV mapping is already correct per face.
 
 ```python
-unreal.MaterialService.set_property(path, "Two Sided", "true")   # display name
-unreal.MaterialService.set_property(path, "BlendMode", "BLEND_Masked")  # internal name
-unreal.MaterialService.set_property(path, "OpacityMaskClipValue", "0.33")
-unreal.MaterialService.compile_material(path)   # enum/blend changes need a recompile
-unreal.MaterialService.save_material(path)
+# ✅ "this disc shows brick too sparse / too dense"
+# NOTE MaterialInstanceToolset.Create arg order: folderPath, assetName, parent.
+mi = call_tool(tool_name="Create", toolset_name=MIT, arguments={
+    "folderPath": "/Game/Materials/", "assetName": "MI_xevtfjz_Disc",
+    "parent": ref("/Game/Fab/Megascans/.../MI_xevtfjz")})["returnValue"]
+call_tool(tool_name="SetScalarParameter", toolset_name=MIT,
+          arguments={"instance": mi, "name": "Tiling", "value": 4.0})
+call_tool(tool_name="SaveAsset", toolset_name=AT,
+          arguments={"assetPath": "/Game/Materials/MI_xevtfjz_Disc"})
+# then assign it to the actor
 ```
 
-> ⚠️ `set_property` returns a **bool** (`True`/`False`), it does **not** raise on an unknown
-> property — a `False` means the name didn't resolve or the value didn't parse. Don't assume
-> success: check the return, or verify with `get_property` / `summarize` afterward. Enum values
-> are the `BLEND_*` / `MSM_*` / `MD_*` identifiers (see below), not the friendly labels.
-
-**Discover legal enum values, don't guess:** `list_properties` / `get_property_info` populate
-`allowed_values` for enum properties — including the classic `TEnumAsByte` ones
-(`BlendMode`, `ShadingModel`, `MaterialDomain`). Read them instead of probing `unreal` for the
-enum class:
-
-```python
-for p in unreal.MaterialService.list_properties(path):
-    if p.property_name == "BlendMode":
-        print(p.allowed_values)
-        # ['BLEND_Opaque','BLEND_Masked','BLEND_Translucent','BLEND_Additive', ...]
-```
-
-Common material property internal names: `TwoSided`, `BlendMode`, `ShadingModel`,
-`MaterialDomain`, `OpacityMaskClipValue`, `bUsedWithStaticLighting`, `DitheredLODTransition`.
+For triplanar / world-aligned (the same material on cube, sphere and cylinder with no UV concerns),
+build a master material wrapping `WorldAlignedTexture` / `WorldAlignedNormal` (functions under
+`/Engine/Functions/Engine_MaterialFunctions01/Texturing/`) — via **`create_function_call`**, since a
+function call node is one of the two survivors. Feed its `TextureObject` input from a
+`MaterialExpressionTextureObjectParameter` (**not** a `TextureSampleParameter2D` — the function brings
+its own sampler). Feed `TextureSize` from a `Constant3Vector`, or `Multiply(Scalar, Constant3Vector(1,1,1))`;
+**a bare scalar broadcasts incorrectly to V3** in that input slot.
 
 ---
 
@@ -343,23 +338,23 @@ Common material property internal names: `TwoSided`, `BlendMode`, `ShadingModel`
 | Create a material (+ params) | `workflows.md` → Create a basic material | `scripts/create_material.txt` |
 | Create a material instance | `workflows.md` → Create a material instance | `scripts/create_instance.txt` |
 | Add texture / math / function / HLSL nodes | `workflows.md` | — |
-| Build a graph with batch ops | `workflows.md` → Batch create/connect/set | `scripts/material_graph_batch.txt` |
-| Inspect/export an existing graph | `reference.md` → Export JSON schema | `scripts/export_graph.txt` |
-| Recreate a material from export | `reference.md` → Recreate from export | — |
-| Verify wiring / compile | Critical Rules → `get_material_diagnostics` | — |
+| Build a multi-node graph | `workflows.md` → Build a graph | `scripts/material_graph_batch.txt` |
+| Inspect / dump an existing graph | `reference.md` → Reading a graph | `scripts/export_graph.txt` |
+| Clone a material and edit the copy | `reference.md` → Duplicate and retarget | — |
+| Verify wiring / compile | Critical Rules → `Recompile` + `GetStatistics` | — |
 
 ## Sub-docs
 
 - **`workflows.md`** — create material/instance, texture/math/function/HLSL/collection/switch nodes,
-  set properties, and batch create/connect/set.
-- **`reference.md`** — parameter types, output names, enum formats, the `export_material_graph` JSON
-  schema, recreate-from-export steps, and Material Function authoring.
+  set properties, and build a graph node by node.
+- **`reference.md`** — the full tool inventory, parameter expression classes, output names, enum
+  formats, reading a graph, duplicate-and-retarget, and Material Function authoring.
 
 ## Verification
 
-After non-trivial wiring run `MaterialNodeService.get_material_diagnostics(path)` and confirm
-`is_compiled_ok` and the expected `referenced_texture_paths` — do **not** rely on `get_used_textures`
-(unreliable for multi-branch graphs). `compile_material` + `save_asset` to persist.
+After non-trivial wiring: `MaterialToolset.Recompile` (it raises with the failing node's path), then
+`MaterialToolset.GetStatistics` and confirm `num_pixel_texture_samples` / `num_samplers` match what
+the graph should sample. `AssetToolset.SaveAsset` to persist.
 
 ## Related skills
 - **landscape-materials** — `LandscapeLayerBlend` nodes.
@@ -368,18 +363,17 @@ After non-trivial wiring run `MaterialNodeService.get_material_diagnostics(path)
 ## Additional gotchas
 
 - `StaticMesh.get_editor_property("static_materials")` returns struct COPIES, so writing the array back is a silent no-op; use `set_material(index, mat)` and confirm with `get_material(index)`.
-- `MEL.set_material_instance_scalar_parameter_value` returns False on success, and the static-switch setter returns False while the write still lands — verify by readback; MI reads return 0.0 and writes no-op while PIE runs.
+- `MEL.set_material_instance_scalar_parameter_value` returns False on success, and the static-switch setter returns False while the write still lands — prefer `MaterialInstanceToolset.SetScalarParameter` / `SetStaticSwitchParameter`, which raise instead of lying. Either way, MI reads return 0.0 and writes no-op while PIE runs.
 - Changing `body_setup.collision_trace_flag` does not rebuild the physics mesh; toggle `StaticMeshEditorSubsystem.enable_section_collision` off then on.
-- Enumerate expressions with `ObjectIterator(unreal.MaterialExpression)` filtered on `path.startswith(mat_path + ":")` (class-specific iterators miss nodes); `delete_material_expression` enables in-place rebuilds that keep instance overrides when parameter names match.
-- Pin names: StaticSwitchParameter inputs are `True`/`False`; LandscapeLayerBlend inputs are `"Layer <name>"`/`"Height <name>"`; `LayerBlendInput` fields are invisible to `dir()` but `set_editor_property("layer_name"|"blend_type"|"preview_weight")` works.
-- Gate optional master-material features behind STATIC switches (a scalar "off" still samples); measure with `MEL.get_statistics`. A material used on a Niagara sprite renderer needs `bUsedWithNiagaraSprites`.
-- Delete a material with `AssetDiscoveryService.delete_asset_unattended`; it refuses (and returns a result struct naming the holder) when the material is still referenced or held by a Python global, instead of wedging on a modal dialog.
+- `MaterialToolset.GetExpressions` is the reliable enumeration. In raw Python, `ObjectIterator(unreal.MaterialExpression)` filtered on `path.startswith(mat_path + ":")` also works (class-specific iterators miss nodes). `MaterialToolset.DeleteExpression` enables in-place rebuilds that keep instance overrides when parameter names match.
+- Gate optional master-material features behind STATIC switches (a scalar "off" still samples); measure with `MaterialToolset.GetStatistics`. A material used on a Niagara sprite renderer needs `bUsedWithNiagaraSprites`.
+- `AssetToolset.Delete` is the normal delete. For a material that may still be referenced, `unreal.AssetDiscoveryService.delete_asset_unattended` refuses and returns a result struct naming the holder (including a pinning Python global) instead of wedging on a modal dialog. `AssetToolset.GetReferencers` tells you who holds it first.
 
 ## Reference pages
 
 Open these with the paths below; UE rewrites them to absolute paths when it serves this skill.
 
-- [reference](reference.md) - Material reference — parameter types, material output names, enum formats, the export_material_graph JSON schema, recreate-from-export steps, and Mate...
+- [reference](reference.md) - Material reference — the UE 5.9 tool inventory, parameter expression classes, material output names, enum formats, reading a graph, duplicate-and-ret...
 - [workflows](workflows.md) - Step-by-step material authoring workflows — create a material, material instance, texture/math/function-call/custom-HLSL/collection/static-switch node...
 - [scripts/create_instance.txt](scripts/create_instance.txt) - runnable sample
 - [scripts/create_material.txt](scripts/create_material.txt) - runnable sample

@@ -31,10 +31,13 @@ coming from somewhere else (usually VSync to a 60 Hz monitor, or the smoothed fr
 range). Read every source below before changing anything.
 
 > 🩺 **"Capped" vs "slow" are different problems.** If the frame rate is *low* rather than *pinned*
-> at a round number, it's not a cap — it's a workload. Run `unreal.PerformanceService.frame_timing()`
-> first (NEW service that replaced the removed `editor_control` tool) for a CPU-vs-GPU-bound verdict
-> before touching any cap below. The caps here only matter when something is artificially holding FPS
-> down. (Cvar/INI work is now Epic's ConsoleToolset / ConfigSettingsToolset via call_tool -- see the engine-settings skill. Formerly `EngineSettingsService`.)
+> at a round number, it's not a cap — it's a workload. Read the per-thread split first with
+> `call_tool GetFrameTimings {}` (Epic's `PerfToolset.StatsToolset`; VibeUE's `frame_timing` was
+> removed) and work out the bottleneck yourself: the largest of `GameThreadMs` / `RenderThreadMs` /
+> `RhiThreadMs` / `GpuMs` gates the frame, and it should be close to `FrameMs`. **If no single one of
+> them comes near `FrameMs`, that is the signature of a cap** — carry on down this page. See the
+> `profiling` skill for the full verdict/budget arithmetic.
+> (Cvar/INI work is now Epic's ConsoleToolset / ConfigSettingsToolset via call_tool -- see the engine-settings skill. Formerly `EngineSettingsService`.)
 
 | # | Setting | Where | "Uncapped" value |
 |---|---------|-------|------------------|
