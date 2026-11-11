@@ -1,168 +1,107 @@
 ---
 name: umg-widgets/reference
-description: Field-name reference for UMG WidgetService return types (WidgetInfo, snapshots, slot/font/brush/anim info, preview + PIE handles), the WidgetService action list, common widget properties, and event names.
+description: UMG reference — the 9 surviving WidgetService signatures and their return-struct field names, the Epic toolset index with exact toolset_name strings and tool signatures, child-order rules, common widget properties, and event names.
 ---
 
 # UMG Widget Reference
 
-All struct names below are the Python names exactly as `unreal` exposes them (no `F` prefix).
+Two surfaces, two call styles. See SKILL.md ▸ "Call styles" before using either.
 
 ## Contents
-- WidgetInfo (list_components / get_hierarchy)
-- WidgetComponentSnapshot (get_widget_snapshot / get_component_snapshot)
-- WidgetSlotInfo
-- WidgetPropertyInfo
-- WidgetFontInfo
-- WidgetBrushInfo
-- WidgetAnimInfo
-- WidgetPreviewResult
-- PIEWidgetHandle
-- WidgetAddComponentResult / WidgetEventInfo
+- VibeUE `WidgetService` — the 9 survivors
+- Return structs (the only 3 still reachable)
+- Child order
+- Epic toolset index (`toolset_name` strings + signatures)
+- `DescribeWidget` result shape
 - Common properties
-- WidgetService actions
 - Event names
 
-## WidgetInfo
+---
 
-Returned by `list_components()` and `get_hierarchy()`.
+## VibeUE `WidgetService` — the 9 survivors
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `widget_name` | str | Component name — **NOT** `component_name` or `name` |
-| `widget_class` | str | UE class name (e.g. "TextBlock") |
-| `parent_widget` | str | Parent component name (empty for root) |
-| `is_root_widget` | bool | True if this is the root |
-| `is_variable` | bool | Exposed as Blueprint variable |
-| `children` | list[str] | Child component names |
+Python, inside `execute_python`. Python names are the snake_case of the C++ method.
 
-## WidgetComponentSnapshot
+| Method | Signature | Returns |
+|---|---|---|
+| `add_component` | `(widget_path, component_type, component_name, parent_name="", is_variable=True, child_index=-1)` | `WidgetAddComponentResult` |
+| `reorder_component` | `(widget_path, component_name, new_index)` | `bool` |
+| `remove_component` | `(widget_path, component_name, remove_children=False)` | `WidgetRemoveComponentResult` |
+| `rename_widget` | `(widget_path, old_name, new_name)` | `bool` |
+| `reparent_widget` | `(widget_path, widget_name, new_parent_name)` | `bool` |
+| `bind_event` | `(widget_path, widget_name, event_name, function_name)` | `bool` |
+| `spawn_widget_in_pie` | `(widget_path, z_order=0)` | `PIEWidgetHandle` |
+| `remove_widget_from_pie` | `(handle)` | `bool` |
+| `remove_view_model` | `(widget_path, view_model_name)` | `bool` |
 
-Returned by `get_widget_snapshot()` and `get_component_snapshot()`. All `WidgetInfo` fields plus:
+Notes:
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `slot_info` | WidgetSlotInfo | Slot layout data |
-| `properties` | list[WidgetPropertyInfo] | All widget properties |
+- `add_component` takes a native widget type name (`"Button"`, `"CanvasPanel"`) **or** a custom WBP
+  asset name (`"WBP_HealthBar"` — the asset name, not the package path). Custom WBPs are resolved
+  through the Asset Registry and compiled before use; a circular reference (a WBP containing itself)
+  is detected and rejected; the parent recompiles automatically.
+- `is_variable` defaults to **`True`**. An empty `parent_name` makes the widget the **root** — that
+  is what makes it the root, not the `is_variable` flag.
+- `remove_component` with `remove_children=False` reports the widgets it orphaned in
+  `orphaned_children`.
+- `reparent_widget` preserves the widget object/GUID. It rejects moving a panel into itself or a
+  descendant, and the root cannot be reparented.
+- `rename_widget` preserves the GUID.
+- `remove_view_model` **invalidates but does not delete** that ViewModel's bindings — see `mvvm.md`.
 
-## WidgetSlotInfo
+## Return structs (the only 3 still reachable)
 
-Snapshot of a widget's slot. `set_property` can write: Canvas layout (`Position X/Y`, `Size X/Y`,
-`Anchor Min/Max X/Y`, `Alignment X/Y`, `ZOrder`) and box/overlay layout (`Horizontal Alignment`,
-`Vertical Alignment`, `Padding`[`Left/Top/Right/Bottom`], `Size Rule`, `Size Value`). See SKILL.md →
-"Slot editing via set_property". To center on a canvas: anchors `0.5` + `Alignment X/Y` `0.5`.
+Python field names drop the `b` prefix from C++ bools.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `slot_type` | str | "Canvas", "VerticalBox", "HorizontalBox", "Overlay", "None" |
-| `anchor_min` | Vector2D | Canvas: anchor minimum |
-| `anchor_max` | Vector2D | Canvas: anchor maximum |
-| `offsets` | Margin | Canvas: position+size or margins |
-| `alignment` | Vector2D | Canvas: pivot alignment |
-| `z_order` | int | Canvas: Z-order |
-| `auto_size` | bool | Canvas: auto-size to content |
-| `size_rule` | str | Box: "Fill" or "Automatic" |
-| `size_value` | float | Box: fill coefficient |
-| `padding` | Margin | Box/Overlay: slot padding |
-| `horizontal_alignment` | EHorizontalAlignment | Box/Overlay: horizontal alignment |
-| `vertical_alignment` | EVerticalAlignment | Box/Overlay: vertical alignment |
+**`WidgetAddComponentResult`** — from `add_component`:
 
-## WidgetPropertyInfo
+| Field | Type | Note |
+|---|---|---|
+| `success` | bool | **not** `b_success` |
+| `component_name` | str | |
+| `component_type` | str | |
+| `parent_name` | str | |
+| `is_variable` | bool | |
+| `error_message` | str | populated when `success` is false |
 
-Returned in `WidgetComponentSnapshot.properties` and by `list_properties()`.
+**`WidgetRemoveComponentResult`** — from `remove_component`:
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `property_name` | str | Property name — **NOT** `name` |
-| `property_type` | str | Property type — **NOT** `type` |
-| `current_value` | str | Current value as string — **NOT** `property_value` |
-| `is_editable` | bool | Whether the property is editable |
+| Field | Type | Note |
+|---|---|---|
+| `success` | bool | |
+| `removed_components` | list[str] | every widget actually removed |
+| `orphaned_children` | list[str] | children left without a parent when `remove_children=False` |
+| `error_message` | str | |
 
-## WidgetFontInfo
+**`PIEWidgetHandle`** — from `spawn_widget_in_pie`. Pass the **whole handle object** to
+`remove_widget_from_pie`, not `handle.instance_id`:
 
-Used by `set_font` / returned by `get_font`. `set_font(widget_path, component_name, font_info, property_name="Font")`.
-`color` is applied to the widget's `ColorAndOpacity` (an `FSlateColor`): pass a LINEAR tuple like
-`(R=0.035,G=0.002,B=0.002,A=1)`; `set_font` returns **False** (and logs a Warning) if a supplied colour did not land.
+| Field | Type | Note |
+|---|---|---|
+| `valid` | bool | **not** `b_valid` |
+| `instance_id` | str | informational |
+| `error_message` | str | e.g. "PIE is not running." |
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `font_family` | str | Font asset object path or family name when available |
-| `typeface` | str | Typeface name such as `Regular` or `Bold` |
-| `size` | int | Font size |
-| `letter_spacing` | int | Letter spacing/tracking |
-| `color` | str | Text color as linear color text |
-| `shadow_offset` | str | Shadow offset as vector text |
-| `shadow_color` | str | Shadow color as linear color text |
-| `outline_size` | int | Outline thickness |
-| `outline_color` | str | Outline color as linear color text |
-
-## WidgetBrushInfo
-
-Used by `set_brush` / returned by `get_brush`. **Both take a `slot_name`:**
-`set_brush(widget_path, component_name, slot_name, brush_info)` /
-`get_brush(widget_path, component_name, slot_name)`. For an Image the slot is `"Brush"`.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `resource_path` | str | Texture or material object path |
-| `tint_color` | str | Brush tint as linear color text |
-| `draw_as` | str | `Image`, `Box`, `Border`, or `RoundedBox` |
-| `image_size` | str | Image size as vector text |
-| `margin` | str | Brush margin as margin text |
-| `corner_radius` | str | Rounded-box radii text |
-
-## WidgetAnimInfo
-
-Returned by `list_animations()`.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `animation_name` | str | Animation asset name inside the widget blueprint |
-| `duration` | float | Playback duration in seconds |
-| `track_count` | int | Number of possessable property tracks |
-
-## WidgetPreviewResult
-
-Returned by `capture_preview(widget_path, width=1920, height=1080)` — note: **no output-path
-argument**; the PNG is written to `<project>/Saved/WidgetPreviews/<WidgetName>.png`. The PNG now
-renders with a single gamma pass (sRGB, matching the designer) and a layout prepass (centred content
-is centred, not bottom-aligned).
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `success` | bool | True when the preview PNG was written (**not** `b_success`) |
-| `output_path` | str | Auto-generated saved image path |
-| `width` | int | Render width |
-| `height` | int | Render height |
-| `error_message` | str | Failure message when `success` is false |
-
-## PIEWidgetHandle
-
-Returned by `spawn_widget_in_pie(widget_path, z_order=0)`. Pass the **whole handle object** to
-`get_live_property(handle, component_name, property_name)` and `remove_widget_from_pie(handle)`.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `valid` | bool | True when the PIE widget instance was spawned (**not** `b_valid`) |
-| `instance_id` | str | Stable ID string (informational) |
-| `error_message` | str | Failure message when spawn fails (e.g. "PIE is not running.") |
-
-## WidgetAddComponentResult / WidgetEventInfo
-
-`add_component()` returns **WidgetAddComponentResult**: `success`, `component_name`, `component_type`,
-`parent_name`, `is_variable`, `error_message`.
+> The other `FWidget*` structs still declared in `UWidgetService.h` (`FWidgetInfo`,
+> `FWidgetComponentSnapshot`, `FWidgetSlotInfo`, `FWidgetPropertyInfo`, `FWidgetFontInfo`,
+> `FWidgetBrushInfo`, `FWidgetAnimInfo`, `FWidgetAnimKeyframe`, `FWidgetPreviewResult`,
+> `FWidgetEventInfo`, `FWidgetValidationResult`, `FWidgetViewModelInfo`,
+> `FWidgetViewModelBindingInfo`) are **orphans** — no surviving method produces or consumes them.
+> Don't build code around them.
 
 ## Child order
 
-Panels keep their children in an ordered list, and that order is what a VerticalBox, HorizontalBox or
-Overlay actually lays out. Two ways to control it:
+Panels keep their children in an ordered list, and that order is what a VerticalBox, HorizontalBox
+or Overlay actually lays out. Two ways to control it:
 
 - `add_component(..., child_index=N)` — insert the new widget at position `N` instead of appending.
   `child_index` defaults to `-1` (append). Valid values are `0` to the parent's current child count;
   anything else **fails with an error rather than silently appending**, so check `success`.
-- `reorder_component(widget_path, name, new_index)` — move a widget that already exists to another
-  position **under its current parent**. Valid range is `0` to `child_count - 1`. Returns `False` (with
-  the reason in the log) for an unknown widget, a widget with no panel parent (i.e. the root), or an
-  out-of-range index. To move a widget to a *different* parent, use `reparent_widget` instead.
+- `reorder_component(widget_path, component_name, new_index)` — move a widget that already exists to
+  another position **under its current parent**. Valid range is `0` to `child_count - 1`. Returns
+  `False` (with the reason in the log) for an unknown widget, a widget with no panel parent (i.e.
+  the root), or an out-of-range index. To move a widget to a *different* parent, use
+  `reparent_widget`.
 
 ```python
 # Insert a banner above everything already in the list
@@ -173,53 +112,226 @@ unreal.WidgetService.reorder_component(path, "PlayButton", 0)
 
 `child_index` is positional argument 6 — `is_variable` comes before it, so pass both when inserting.
 
-`get_available_events()` returns **WidgetEventInfo** list: `event_name`, `event_type`, `description`.
+---
+
+## Epic toolset index
+
+`toolset_name` is the string `call_tool` / `vibeue.exec_tool` needs. Tool names are PascalCase
+exactly as written. JSON argument keys are the lowerCamelCase of the parameter name — read a tool's
+schema (`describe_tools`, or `vibeue.get_toolset_schema(name)`) when in doubt instead of guessing.
+
+| Toolset | `toolset_name` | Python-callable? |
+|---|---|---|
+| Widget static analysis | `WidgetStaticAnalysisToolset.WidgetStaticAnalysisToolset` | ✅ `unreal.WidgetStaticAnalysisToolset.*` |
+| Widget animations | `WidgetAnimationToolset.WidgetAnimationToolset` | ✅ `unreal.WidgetAnimationToolset.*` |
+| MVVM | `MVVMToolset.MVVMToolset` | ✅ `unreal.MVVMToolset.*` |
+| Properties | `EditorToolset.ObjectToolset` | ❌ `call_tool` / `exec_tool` only |
+| Assets | `EditorToolset.AssetToolset` | ❌ `call_tool` / `exec_tool` only |
+| Editor app / PIE | `EditorToolset.EditorAppToolset` | ❌ `call_tool` / `exec_tool` only |
+| Live Slate UI | `SlateInspectorToolset.SlateInspectorToolset` | ❌ `call_tool` / `exec_tool` only |
+| Blueprint graphs / compile | `BlueprintToolsets.BlueprintToolset` | ✅ `unreal.BlueprintToolset.*` |
+| Sequencer bindings | `SequencerScripting.MovieSceneBindingExtensions` | ✅ `unreal.MovieSceneBindingExtensions.*` |
+| Sequencer tracks | `SequencerScripting.MovieSceneTrackExtensions` | ✅ |
+| Sequencer property tracks | `SequencerScripting.MovieScenePropertyTrackExtensions` | ✅ |
+| Sequencer sections / keys | `SequencerScripting.MovieSceneSectionExtensions` | ✅ |
+
+### `WidgetStaticAnalysisToolset`
+
+| Tool | Signature |
+|---|---|
+| `DescribeWidget` | `(WidgetBlueprint, StartWidget=null, MaxDepth=-1, PropertyNameFilter="", bSkipDefaultValues=true, bIncludeFullDescription=false, bIncludeComposedColors=false)` → `FWidgetDescriptionResult` |
+| `GetWidgetTreeDepth` | `(WidgetBlueprint, StartWidget=null)` → int32 (root-only = 0; `-1` on error / no root) |
+| `TraceWidgetPropertyOverrides` | `(WidgetBlueprint, PropertyNameFilter="", WidgetNameFilter="")` → `{AvailablePropertyCount, Chains[], Winners[], Flags[]}`. Both filters are **exact** matches |
+| `GetWidgetConnectionMap` | `(WidgetBlueprint, ScopeFilter="")` → `{AvailableConnectionCount, Connections[], ConnectedCount, UnconnectedCount, MisconfiguredCount}` |
+| `GetViewModelConnectionMap` | `(ViewModelClass, ScopeFilter="")` → `{AvailableConnectionCount, AvailableWidgetCount, Widgets[]}` |
+
+`DescribeWidget` reports **designer-time state stored in the asset**. Anything set at runtime (a
+Blueprint graph writing a slot through `SlotAsCanvasSlot`, style state that is not a UPROPERTY) does
+not appear — use `TraceWidgetPropertyOverrides` for graph writes.
+
+### `WidgetAnimationToolset`
+
+| Tool | Signature |
+|---|---|
+| `CreateWidgetAnimation` | `(WidgetBlueprint, AnimationName, LengthSeconds=1.0)` → `FWidgetAnimationInfo`; `Animation == null` means failure |
+| `ListWidgetAnimations` | `(WidgetBlueprint)` → `FWidgetAnimationInfo[]` |
+| `FindWidgetAnimation` | `(WidgetBlueprint, AnimationName)` → `FWidgetAnimationInfo` (empty when not found) |
+| `RenameWidgetAnimation` | `(WidgetBlueprint, Animation, NewName)` → bool |
+| `SetWidgetAnimationDisplayLabel` | `(Animation, DisplayLabel)` → bool |
+| `SetWidgetAnimationLength` | `(Animation, LengthSeconds)` → bool; must be > 0 |
+| `RemoveWidgetAnimation` | `(WidgetBlueprint, Animation)` → bool |
+| `AddWidgetToAnimation` | `(WidgetBlueprint, Animation, ObjectToBind)` → `FMovieSceneBindingProxy` |
+| `GetWidgetAnimationBindings` | `(Animation)` → `FMovieSceneBindingProxy[]` |
+| `RemoveWidgetBinding` | `(Animation, BindingGuid)` → bool |
+
+`FWidgetAnimationInfo`: `Animation` (the `UWidgetAnimation` — pass it to `AddWidgetToAnimation` and
+to every SequencerScripting tool that accepts a `UMovieSceneSequence`), `AnimationName` (internal
+name, also the Blueprint variable name for runtime playback), `DisplayLabel`, `LengthSeconds`,
+`BindingCount`.
+
+`ObjectToBind` must be a `UWidget` in the tree, or a `UPanelSlot` whose `Content` is non-null (to
+animate slot properties). The WBP needs a compiled `GeneratedClass`; the implementation compiles it
+if needed.
+
+### SequencerScripting — tracks, sections, keys
+
+`UWidgetAnimation` extends `UMovieSceneSequence`, so these work on widget animations unmodified.
+
+| Tool | Signature |
+|---|---|
+| `MovieSceneBindingExtensions.AddTrack` | `(Binding, TrackType)` → `UMovieSceneTrack` |
+| `MovieScenePropertyTrackExtensions.SetPropertyNameAndPath` | `(Track, PropertyName, PropertyPath)` |
+| `MovieSceneTrackExtensions.AddSection` | `(Track)` → `UMovieSceneSection` |
+| `MovieSceneSectionExtensions.GetNumericChannels` | `(Section)` → `FMovieSceneNumericChannelDescriptor[]` (float channels then double channels) |
+| `MovieSceneSectionExtensions.AddFloatKey` | `(Channel, InTime, NewValue, SubFrame=0, TimeUnit=DisplayRate, Interpolation=SmartAuto)` → key descriptor |
+| `MovieSceneSectionExtensions.AddDoubleKey` | same shape, `double` value |
+| `MovieSceneSectionExtensions.AddBoolKey` | `(Section, ChannelName, Frame, Value)` — section + channel **name**, not a descriptor |
+| `MovieSceneSectionExtensions.SetKeyTime` | `(Channel, Key, NewFrameNumber, SubFrame=0, TimeUnit=DisplayRate)` |
+| `MovieSceneSectionExtensions.GetChannelNames` / `GetChannelKeys` | `(Section)` / `(Section, ChannelName)` — readback |
+
+`FMovieSceneNumericChannelDescriptor`: `Section`, `ChannelType` (`Float`/`Double`), `ChannelIndex`,
+`ChannelName`. `InTime` is in **display-rate** frames unless `TimeUnit=TickResolution`.
+
+### `ObjectToolset`
+
+| Tool | Signature |
+|---|---|
+| `ListProperties` | `(Instance, Root="", NameFilter="", MaxDepth=1)` → `string[]` dotted paths |
+| `GetPropertySchema` | `(Instance, Root="", MaxDepth=1)` → JSON Schema string |
+| `GetProperties` | `(Instance, Properties[])` → JSON string, keyed by the path as written |
+| `SetProperties` | `(Instance, Values)` → bool. **`Values` is a JSON *string***, so `json.dumps({...})` |
+| `ResetProperties` | `(Instance, Properties[])` → bool — drops per-instance overrides |
+| `SearchSubclasses` | `(BaseClass, ClassName="")` → `FSoftClassPath[]` |
+| `GetClass` | `(Instance)` → `UClass` (resolves a Blueprint to its generated class) |
+
+`MaxDepth` defaults to **1** on `ListProperties`/`GetPropertySchema` so an agent cannot dump a whole
+object tree by accident; pass 0 for every level. `ListProperties`' `NameFilter` is a **regex**
+(case-insensitive) searched in the name and Keywords metadata. An object reference is a **leaf** —
+to list what it points at, pass that object as `Instance`. Container brackets report live occupancy
+(`[0..2]`, `["Alpha","Beta"]`, `[]`, `[?]`); narrow to one entry before using the path in
+`GetProperties`/`SetProperties`.
+
+`Instance` for a widget inside a WBP is `"<pkg>.<Asset>:WidgetTree.<WidgetName>"`. Passing the
+**WidgetBlueprint asset** instead resolves to its generated class's CDO — that edits the
+`UserWidget` itself.
+
+### `AssetToolset`
+
+| Tool | Signature |
+|---|---|
+| `FindAssets` | `(Filter)` → async, object paths. Filter: `folderPath`, `name` (case-insensitive contains), `assetType` (a UClass), `bRecursive`, `tags`, `maxResults` (default 100, 0 = no limit) |
+| `Exists` | `(Path)` → bool |
+| `ValidateAssets` | `(AssetPaths[])` → `FAssetValidationResult` with per-asset errors and warnings |
+| `SaveAsset` / `LoadAsset` / `IsDirty` | `(AssetPath)` |
+
+`FindAssets` only sees assets **saved to disk**; an in-memory asset is not found. An empty
+`folderPath` searches the whole project including plugin content.
+
+### `EditorAppToolset`
+
+| Tool | Signature |
+|---|---|
+| `StartPIE` | `(Options?)` → async void. **PIE is not live in the same call** |
+| `StopPIE` | `()` → async void |
+| `IsPIERunning` | `()` → bool |
+| `OpenEditorForAsset` | `(AssetPath)` |
+| `GetAssetThumbnails` | `(AssetPaths[])` → async, one image per path in request order; an empty image where an asset has no cached thumbnail. Does not load or render the asset |
+| `CaptureEditorImage` | `()` → `FToolsetImage` of the whole editor window |
+| `CaptureAssetImage` | `(AssetPath)` → async image. **Refuses Widget Blueprints** — allowlist is AnimationAsset, Skeleton, StaticMesh, SkeletalMesh, Texture, MaterialInterface; anything else raises "Asset type does not support image capture" |
+
+### `SlateInspectorToolset`
+
+| Tool | Signature |
+|---|---|
+| `Snapshot` | `(Ref, MaxDepth=30, bIncludeSourceLocations=false)` → text tree of refs. `Ref=""` = all windows. Each `[pos=X,Y size=W,H]` is desktop pixels |
+| `GetUMGInfo` | `(Ref)` → `{Error, Widget, WidgetName, WidgetClass, Asset, ResolvedVia, OuterUserWidgets[]}`. `Widget` is a live handle serialized as `{refPath}` — feed it to `ObjectToolset`. `Widget` is non-null exactly when `Error` is empty |
+| `Screenshot` | `(Ref)` → `FToolsetImage`, cropped to that Slate widget. `Ref=""` = active window. Fails (with the reason) on an unknown ref or a widget in no visible window |
+| `Observe` / `Unobserve` | `(Ref, MaxDepth=30)` → identifier / `(Identifier)` — keep a subtree's refs fresh (~100ms tick) before working in it |
+| `Click` / `Hover` / `Type` / `Focus` / `Windows` | live input simulation; see the toolset's own schema |
+
+Refs from an earlier `Snapshot` stay usable — you do not need a fresh `Snapshot` before every
+action. `ResolvedVia` is `"self"` when the Slate widget itself carried UMG metadata, `"parent"` when
+an ancestor did.
+
+### `BlueprintToolset`
+
+| Tool | Signature |
+|---|---|
+| `AddFunctionGraph` | `(Blueprint, GraphName, Flags?)` → `UEdGraph` — create the function `bind_event` will target |
+| `CompileBlueprint` | `(Blueprint, bWarningsAsErrors=false)` |
+| `GetGraph` | `(Blueprint, GraphName)` → `UEdGraph` |
+
+> `AddComponentBoundEvent` is typed `UActorComponent*` and cannot bind a `UWidget` event — that is
+> why `unreal.WidgetService.bind_event` survives.
+
+---
+
+## `DescribeWidget` result shape
+
+`FWidgetDescriptionResult`:
+
+| Field | Type | Description |
+|---|---|---|
+| `AvailableWidgetCount` | int32 | widgets within `StartWidget`/`MaxDepth`'s bound; the canary if `Widgets` got cut |
+| `Description` | str | verbose per-property text tree, only when `bIncludeFullDescription=true`. Line `[N]` matches `Widgets[N]` |
+| `Widgets` | `FWidgetDescriptionEntry[]` | flat **walk order**, always populated |
+
+`FWidgetDescriptionEntry`:
+
+| Field | Type | Description |
+|---|---|---|
+| `Widget` | `UWidget` | the live instance |
+| `Parent` | `UPanelWidget` | null for the root **and** for named-slot content |
+| `WidgetClassPath` | `FSoftClassPath` | e.g. `/Script/UMG.Button` |
+| `WidgetName` | `FName` | |
+| `bIsVariable` | bool | exposed as a Blueprint variable |
+| `Depth` | int32 | 0 at `StartWidget`, +1 per level (panel child or named-slot content alike) |
+| `NamedSlotHost` | `UWidget` | set when this widget is content in a named slot on that host |
+| `bInherited` | bool | the name was already a widget property on the parent class |
+| `UIComponents` | `FWidgetUIComponentInfo[]` | attached UI components, in display order |
+| `Properties` | `FWidgetPropertyEntry[]` | `{PropertyName, ExportedValue}` |
+| `SlotProperties` | `FWidgetPropertyEntry[]` | same shape, for the widget's `Slot` object |
+| `ComposedColors` | `FWidgetComposedColorEntry[]` | only with `bIncludeComposedColors=true` |
+
+Hierarchy reading rule: `Parent` set → child of that panel. `NamedSlotHost` set → named-slot content
+on that host. **Both null** → the root widget, *or* content in a slot inherited from a parent class.
+
+`FWidgetComposedColorEntry`: `State` (`Normal`/`Hovered`/`Pressed`/`Disabled`), `bResolved`,
+`ComposedLinearColor` (meaningful only when `bResolved` — otherwise opaque black),
+`CompositionFactors[]` (ordered, always populated), `Gaps[]` (one per unresolved factor).
+Non-interactable widget kinds (Border, Image, Text) report a single `Normal` entry.
+
+---
 
 ## Common properties
 
-| Widget | Property | Example value (always a string) |
-|--------|----------|----------------------------------|
-| TextBlock | Text | "Hello World" |
-| TextBlock | Font.Size | "24" |
-| Button | Background Color | "(R=0.0,G=0.5,B=1.0,A=1.0)" |
-| Image | ColorAndOpacity | "(R=1.0,G=1.0,B=1.0,A=0.5)" |
-| ProgressBar | Percent | "0.75" |
-| Any | Visibility | "Visible" / "Hidden" / "Collapsed" |
+Values are JSON now, matching the property's real type — confirm with `GetPropertySchema`.
 
-## WidgetService actions
+| Widget | Property | Example JSON value |
+|--------|----------|--------------------|
+| TextBlock | `Text` | `"Hello World"` |
+| TextBlock | `Font.Size` | `24` |
+| TextBlock | `ColorAndOpacity` | `{"SpecifiedColor": {"R":1,"G":1,"B":1,"A":1}, "ColorUseRule": "UseColor_Specified"}` |
+| TextBlock | `ShadowColorAndOpacity` | `{"R":0,"G":0,"B":0,"A":0.75}` (plain FLinearColor) |
+| Button | `BackgroundColor` | `{"SpecifiedColor": {"R":0,"G":0.5,"B":1,"A":1}, "ColorUseRule": "UseColor_Specified"}` |
+| Image | `Brush.DrawAs` | `"RoundedBox"` |
+| Image | `Brush.TintColor` | `{"SpecifiedColor": {"R":1,"G":1,"B":1,"A":0.5}, "ColorUseRule": "UseColor_Specified"}` |
+| ProgressBar | `Percent` | `0.75` |
+| Any | `Visibility` | `"Visible"` / `"Hidden"` / `"Collapsed"` |
+| Any | `RenderOpacity` | `1.0` |
+| SizeBox | width override | `{"bOverride_WidthOverride": true, "WidthOverride": 34.0}` — both keys, always |
 
-| Action | Signature notes |
-|--------|-----------------|
-| `add_component` | `(widget_path, type, name, parent, is_variable, child_index)` → WidgetAddComponentResult |
-| `remove_component` | Remove a widget (and optionally its children) |
-| `rename_widget` | `(widget_path, old_name, new_name)` |
-| `reparent_widget` | `(widget_path, widget_name, new_parent_name)` — move a widget to a new parent panel |
-| `reorder_component` | `(widget_path, component_name, new_index)` → bool — move a widget within its **current** parent |
-| `bind_event` | `(widget_path, widget_name, event_name, function_name)` |
-| `get_hierarchy` / `list_components` | All widgets as `WidgetInfo` list |
-| `get_widget_snapshot` | Full hierarchy + slot + properties as `WidgetComponentSnapshot` list |
-| `get_component_snapshot` | Single-widget snapshot |
-| `search_types` | Search available widget type names (built-ins + `[WBP]` customs) |
-| `list_widget_blueprints` | List custom WBP asset paths |
-| `set_property` / `get_property` | Read/write a single widget property (string value) |
-| `list_properties` | All editable properties for a widget |
-| `get_available_events` | List valid events (`WidgetEventInfo`) for a widget |
-| `set_font` / `get_font` | `(..., font_info, property_name="Font")` / `(..., property_name="Font")` |
-| `set_brush` / `get_brush` | `(widget_path, component_name, slot_name, brush_info)` / `(widget_path, component_name, slot_name)` |
-| `create_animation` | `(widget_path, animation_name, duration=1.0)` |
-| `add_animation_track` | `(widget_path, animation_name, component_name, property_name)` |
-| `add_keyframe` | `(widget_path, animation_name, component_name, property_name, keyframe)` |
-| `list_animations` / `remove_animation` | Manage widget animations |
-| `capture_preview` | `(widget_path, width=1920, height=1080)` → WidgetPreviewResult (no path arg) |
-| `is_pie_running` / `start_pie` / `stop_pie` | PIE lifecycle (`start_pie` is async) |
-| `spawn_widget_in_pie` | `(widget_path, z_order=0)` → PIEWidgetHandle |
-| `get_live_property` | `(handle, component_name, property_name)` → str |
-| `remove_widget_from_pie` | `(handle)` → bool |
-| `add_view_model` / `list_view_models` / `remove_view_model` | MVVM ViewModels (see `mvvm.md`) |
-| `add_view_model_binding` / `list_view_model_bindings` / `remove_view_model_binding` | MVVM bindings |
+Slot properties live on the slot object, not the widget — Canvas: `Anchors` (`Minimum`/`Maximum`),
+`Offsets` (Margin), `Alignment` (pivot), `ZOrder`, `bAutoSize`. Box/Overlay: `Padding`,
+`HorizontalAlignment`, `VerticalAlignment`, and on box slots `Size` (`SizeRule` + `Value`).
 
 ## Event names
+
+For `unreal.WidgetService.bind_event(path, widget_name, event_name, function_name)`:
 
 - `OnClicked` — Button clicked
 - `OnPressed` / `OnReleased` — Press/release
 - `OnHovered` / `OnUnhovered` — Mouse enter/leave
+
+`MVVMToolset.ListWidgetViewEvents(WidgetBlueprint)` lists the multicast-delegate event property
+paths the MVVM view can bind on that Blueprint.

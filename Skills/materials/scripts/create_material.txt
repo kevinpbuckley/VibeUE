@@ -4,49 +4,70 @@
 #
 # Sample script for the materials skill. Run via execute_python.
 #
-# Material BASICS (create the asset, add expressions, wire outputs) are CUT from
-# MaterialService / MaterialNodeService. The CANONICAL MCP path is the engine MaterialTools
-# toolset via call_tool:
-#   call_tool(tool_name="create_material",
-#             toolset_name="editor_toolset.toolsets.material.MaterialTools",
-#             arguments={"folder_path": FOLDER, "asset_name": NAME})
-#   call_tool(tool_name="connect_to_output",
-#             toolset_name="editor_toolset.toolsets.material.MaterialTools",
-#             arguments={"expression": expr.id, "output_name": "", "material_property": "MP_BaseColor"})
-# VibeUE KEEPS MaterialNodeService.create_parameter (and the batch_* graph authoring calls) for
-# parameter/graph work driven by node ids.
+# UE 5.9: material authoring is Epic's EditorToolset.MaterialToolset, and every property goes
+# through EditorToolset.ObjectToolset. UMaterialService is DELETED; unreal.MaterialNodeService
+# keeps only create_function_call and create_collection_parameter (neither is needed here).
 #
-# This script is pure Python (no call_tool), so it uses the native MaterialEditingLibrary
-# equivalents — create_material_expression / connect_material_property — which produce the same
-# result and hand back real UMaterialExpression objects to connect.
-import unreal
-ms, mns = unreal.MaterialService, unreal.MaterialNodeService
-mel = unreal.MaterialEditingLibrary
+# From an MCP client you would call these with call_tool:
+#   call_tool(tool_name="CreateMaterial", toolset_name="EditorToolset.MaterialToolset",
+#             arguments={"folderPath": FOLDER, "assetName": NAME})
+# Inside execute_python the same tools are reached with vibeue.exec_tool(toolset, tool, args),
+# which unwraps "returnValue" and raises RuntimeError on a tool error. Object/class arguments are
+# {"refPath": "/Game/Dir/Asset.Asset"} handles either way.
+import json, unreal, vibeue
 
-NAME = "M_Character"
-FOLDER = "/Game/Materials/"
+MT = "EditorToolset.MaterialToolset"
+OT = "EditorToolset.ObjectToolset"
+AT = "EditorToolset.AssetToolset"
+E  = "/Script/Engine."
+
+NAME, FOLDER = "M_Character", "/Game/Materials/"
 path = FOLDER + NAME
-if unreal.EditorAssetLibrary.does_asset_exist(path):
-    unreal.EditorAssetLibrary.delete_asset(path)
 
-# Create the material asset (engine MaterialTools.create_material is the canonical MCP path).
-mat = unreal.AssetToolsHelpers.get_asset_tools().create_asset(
-    NAME, FOLDER.rstrip("/"), unreal.Material, unreal.MaterialFactoryNew())
 
-# Add the parameter expressions and wire them to the material outputs.
-color = mel.create_material_expression(mat, unreal.MaterialExpressionVectorParameter, -500, 0)
-color.set_editor_property("parameter_name", "BaseColor")
-color.set_editor_property("default_value", unreal.LinearColor(0.8, 0.2, 0.2, 1.0))
-mel.connect_material_property(color, "", unreal.MaterialProperty.MP_BASE_COLOR)
+def ref(p):
+    tail = p.rsplit("/", 1)[-1]
+    return {"refPath": p if "." in tail else "{}.{}".format(p, tail)}
 
-rough = mel.create_material_expression(mat, unreal.MaterialExpressionScalarParameter, -500, 100)
-rough.set_editor_property("parameter_name", "Roughness")
-rough.set_editor_property("default_value", 0.5)
-mel.connect_material_property(rough, "", unreal.MaterialProperty.MP_ROUGHNESS)
 
-ms.compile_material(path)
-mns.layout_expressions(path)
-unreal.EditorAssetLibrary.save_asset(path)
+def add(cls, x, y):
+    return vibeue.exec_tool(MT, "AddExpression", {
+        "materialOrFunction": ref(path), "expressionClass": {"refPath": E + cls},
+        "x": x, "y": y})
 
-diag = mns.get_material_diagnostics(path)
-print("compiled_ok:", diag.is_compiled_ok, "expressions:", diag.expression_count)
+
+def set_props(obj, values):
+    return vibeue.exec_tool(OT, "SetProperties", {"instance": obj, "values": json.dumps(values)})
+
+
+if vibeue.exec_tool(AT, "Exists", {"path": path}):
+    vibeue.exec_tool(AT, "Delete", {"path": path})
+
+# CreateMaterial returns the new Material as a {refPath} handle — interchangeable with ref(path),
+# which the add()/set_props() helpers above use.
+print("created:", vibeue.exec_tool(MT, "CreateMaterial",
+                                   {"folderPath": FOLDER, "assetName": NAME}))
+
+color = add("MaterialExpressionVectorParameter", -500, 0)
+set_props(color, {"ParameterName": "BaseColor", "Group": "Surface",
+                  "DefaultValue": {"r": 0.8, "g": 0.2, "b": 0.2, "a": 1.0}})
+vibeue.exec_tool(MT, "ConnectToOutput", {"expression": color, "outputName": "",
+                                         "materialProperty": "MP_BaseColor"})
+
+rough = add("MaterialExpressionScalarParameter", -500, 150)
+set_props(rough, {"ParameterName": "Roughness", "Group": "Surface", "DefaultValue": 0.5})
+vibeue.exec_tool(MT, "ConnectToOutput", {"expression": rough, "outputName": "",
+                                         "materialProperty": "MP_Roughness"})
+
+# LayoutExpressions DOES exist in 5.9 — approximate x/y above, then auto-arrange.
+vibeue.exec_tool(MT, "LayoutExpressions", {"materialOrFunction": ref(path)})
+
+# Recompile RAISES with the failing node's object path on a compile error; silence means clean.
+vibeue.exec_tool(MT, "Recompile", {"materialOrFunction": ref(path)})
+vibeue.exec_tool(AT, "SaveAsset", {"assetPath": path})
+
+stats = vibeue.exec_tool(MT, "GetStatistics", {"material": ref(path)})
+print("compiled ok; pixel instructions:", stats["num_pixel_shader_instructions"],
+      "samplers:", stats["num_samplers"],
+      "pixel texture samples:", stats["num_pixel_texture_samples"])
+print("groups:", vibeue.exec_tool(MT, "ListParameterGroups", {"materialOrFunction": ref(path)}))

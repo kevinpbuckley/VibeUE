@@ -3,20 +3,34 @@
 # pie_test_loop.txt — Clean PIE start/stop loop for runtime validation.
 #
 # Sample script for the pie-testing skill. Run via execute_python.
-# start_pie() is ASYNCHRONOUS: the world isn't live in the same call. Run the start step,
-# then do your runtime checks / log inspection in a LATER call, then stop.
-import unreal
-ws = unreal.WidgetService
+#
+# PIE control is EPIC's now: EditorToolset.EditorAppToolset -> StartPIE / StopPIE / IsPIERunning.
+# WidgetService.start_pie / stop_pie / is_pie_running are GONE. From a tool client you reach the
+# toolset with call_tool; from inside execute_python (as here) use vibeue.exec_tool, which is the
+# same dispatch in-process and fills the options object for you.
+#
+# StartPIE is ASYNCHRONOUS: the world isn't live in the same call. Run the start step, then do
+# your runtime checks / log inspection in a LATER call, then stop.
+import unreal, vibeue
+
+APP = "EditorToolset.EditorAppToolset"
 
 # Step 1 (its own call): start from a clean state, then request play.
-if ws.is_pie_running():
-    ws.stop_pie()
-ws.start_pie()
-print("PIE requested; running now:", ws.is_pie_running(),
+if vibeue.exec_tool(APP, "IsPIERunning"):
+    vibeue.exec_tool(APP, "StopPIE")
+vibeue.exec_tool(APP, "StartPIE")
+print("PIE requested; running now:", vibeue.exec_tool(APP, "IsPIERunning"),
       "-> if False, re-check in a later call before acting in-world")
 
-# Step 2 (a later call, once is_pie_running() is True): inspect runtime state via other services
-#   e.g. read_logs to confirm a Blueprint event fired, or WidgetService.spawn_widget_in_pie(...)
+# Step 2 (a later call, once IsPIERunning is True): inspect runtime state.
+#   - logs:      call_tool ConsoleToolset.LogsToolset.GetLogEntries (a `pattern` is required)
+#   - a widget:  unreal.WidgetService.spawn_widget_in_pie(...), then
+#                SlateInspectorToolset.Snapshot -> GetUMGInfo -> ObjectToolset.GetProperties
+#                (get_live_property is gone)
+#   - input:     call_tool InputToolset.ApplyInput (Entries + DurationSeconds), or
+#                unreal.InputService.inject_action(...) / stop_injection(...) for a held action
+#   - a picture: call_tool SceneCaptureToolset.CaptureGameViewport
+# Assert on what you read and print expected vs actual — a completed step is not a verification.
 
-# Step 3 (final call): always stop so later edits/recompiles don't fail
-# ws.stop_pie()
+# Step 3 (final call): always stop so later edits/recompiles don't fail — on failure too.
+# vibeue.exec_tool(APP, "StopPIE")

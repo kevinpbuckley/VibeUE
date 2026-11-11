@@ -394,30 +394,40 @@ struct FAddBoneParams
 };
 
 /**
- * Skeleton and Skeletal Mesh service exposed directly to Python.
+ * Skeleton Service - writing the bone hierarchy, and the skeleton-side data nothing else owns.
  *
- * This service provides comprehensive CRUD operations for Skeleton and SkeletalMesh assets
- * including bone hierarchy management, retargeting configuration,
- * curve metadata, and blend profile management.
+ * Cut to the delta on the 5-9 branch. Use the engine for everything else:
+ *  - finding skeletons and meshes, saving them: `EditorToolset.AssetToolset` (FindAssets /
+ *    Exists / SaveAsset / Duplicate) -- FindAssets is what replaced VibeUE's own list call
+ *  - sockets, bone enumeration, materials, LODs, morph targets, physics asset, bounds, import:
+ *    `EditorToolset.SkeletalMeshToolset` (GetBoneNames / GetBoneParent / GetBoneChildren /
+ *    AddSocket / RemoveSocket / RenameSocket / GetSocketNames / GetSocketBone /
+ *    GetSocketTransform / SetSocketTransform / GetMaterialSlots / GetMaterial / SetMaterial /
+ *    GetPhysicsAsset / AssignPhysicsAsset / GetLodCount / GetVertexCount / GetSectionCount /
+ *    GetBounds / GetMorphTargetNames / GetSkeleton / ImportFile). Its AddSocket always adds to the
+ *    MESH, and there is no skeleton-wide socket flag any more.
+ *  - any other property on a skeleton or mesh: `EditorToolset.ObjectToolset`
+ *    (GetProperties / SetProperties / ListProperties)
+ *
+ * What is left is what none of those can do: write the bone hierarchy and reference transforms
+ * (through USkeletonModifier), and own the retargeting modes, curve metadata, blend profiles, and
+ * the bone-constraint / skeleton-profile data the animation services validate poses against.
+ *
+ * Two things to know before calling:
+ *  - add / remove / rename / reparent bone changes are staged and LOST unless commit_bone_changes()
+ *    runs on the same asset afterwards.
+ *  - reparent_bone is known-broken in the engine (UE 5.7+): the commit fails on a hierarchy
+ *    mismatch and can leave it stalled. Add a bone under the parent you want and remove the old one.
  *
  * Python Usage:
  *   import unreal
  *
- *   # Discover skeleton assets
- *   skeletons = unreal.SkeletonService.list_skeletons("/Game", True)
- *
- *   # Get skeleton info
  *   info = unreal.SkeletonService.get_skeleton_info("/Game/Characters/SK_Mannequin")
  *   print(f"Bones: {info.bone_count}, Blend Profiles: {info.blend_profile_count}")
  *
- * @note All methods are static and thread-safe
- * @note C++ out parameters become Python return values
- *
- * **C++ Source:**
- *
- * - **Plugin**: VibeUE
- * - **Module**: VibeUE
- * - **File**: USkeletonService.h
+ *   unreal.SkeletonService.add_bone("/Game/Characters/SKM_Mannequin", "twist_arm_l", "upperarm_l",
+ *                                   unreal.Transform())
+ *   unreal.SkeletonService.commit_bone_changes("/Game/Characters/SKM_Mannequin")
  */
 UCLASS(BlueprintType)
 class VIBEUE_API USkeletonService : public UToolsetDefinition
@@ -542,10 +552,11 @@ public:
 	 * Change the parent of a bone.
 	 * Note: Changes must be committed with CommitBoneChanges.
 	 *
-	 * IMPORTANT: Reparenting changes the skeleton hierarchy, which may require
-	 * user confirmation if the skeleton is shared by multiple assets. To avoid
-	 * the confirmation dialog, first call DuplicateSkeleton to create a unique
-	 * skeleton for this mesh.
+	 * KNOWN-BROKEN in the engine (UE 5.7+): commit_bone_changes then fails with a hierarchy-mismatch
+	 * validation error and can leave the commit stalled. Prefer add_bone under the parent you want
+	 * plus remove_bone on the old one. Reparenting also changes a hierarchy that other assets may
+	 * share, which can ask for user confirmation -- give the mesh its own skeleton first with the
+	 * engine's `EditorToolset.AssetToolset` Duplicate.
 	 *
 	 * @param SkeletalMeshPath - Path to the Skeletal Mesh
 	 * @param BoneName - Name of the bone to reparent
@@ -553,10 +564,6 @@ public:
 	 * @return True if bone was reparented successfully
 	 *
 	 * Example:
-	 *   # For shared skeletons, duplicate first:
-	 *   unreal.SkeletonService.duplicate_skeleton("/Game/SKM_Mannequin", "/Game/SK_MyMannequin")
-	 *   
-	 *   # Then reparent:
 	 *   unreal.SkeletonService.reparent_bone("/Game/SKM_Mannequin", "weapon_bone", "hand_r")
 	 *   unreal.SkeletonService.commit_bone_changes("/Game/SKM_Mannequin")
 	 */
@@ -648,7 +655,7 @@ public:
 	 * @return Array of curve metadata information
 	 *
 	 * Example:
-	 *   curves = unreal.SkeletonService.list_curve_metadata("/Game/SK_Mannequin")
+	 *   curves = unreal.SkeletonService.list_curve_meta_data("/Game/SK_Mannequin")
 	 *   for c in curves:
 	 *       print(f"{c.curve_name} - Morph: {c.is_morph_target}, Material: {c.is_material}")
 	 */
@@ -663,7 +670,7 @@ public:
 	 * @return True if curve was added successfully
 	 *
 	 * Example:
-	 *   unreal.SkeletonService.add_curve_metadata("/Game/SK_Mannequin", "BrowsUp")
+	 *   unreal.SkeletonService.add_curve_meta_data("/Game/SK_Mannequin", "BrowsUp")
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Curves")
 	static bool AddCurveMetaData(
@@ -678,7 +685,7 @@ public:
 	 * @return True if curve was removed successfully
 	 *
 	 * Example:
-	 *   unreal.SkeletonService.remove_curve_metadata("/Game/SK_Mannequin", "OldCurve")
+	 *   unreal.SkeletonService.remove_curve_meta_data("/Game/SK_Mannequin", "OldCurve")
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Curves")
 	static bool RemoveCurveMetaData(
@@ -694,7 +701,7 @@ public:
 	 * @return True if curve was renamed successfully
 	 *
 	 * Example:
-	 *   unreal.SkeletonService.rename_curve_metadata("/Game/SK_Mannequin", "Old", "New")
+	 *   unreal.SkeletonService.rename_curve_meta_data("/Game/SK_Mannequin", "Old", "New")
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Curves")
 	static bool RenameCurveMetaData(

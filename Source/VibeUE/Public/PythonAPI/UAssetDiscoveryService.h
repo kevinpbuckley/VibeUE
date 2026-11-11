@@ -71,25 +71,35 @@ struct FUnattendedDeleteResult
 };
 
 /**
- * Asset import/export and Content Browser service exposed directly to Python.
+ * Asset Service - reimport, texture export, any-format import, and a dialog-free delete.
  *
- * Asset search and general CRUD are provided by the engine's AssetTools toolset.
- * This service owns file import (images, meshes, any format the editor imports),
- * texture export, Content Browser selection, and open-editor checks.
+ * Cut to the delta on the 5-9 branch. Use the engine for everything else:
+ *  - find / load / save / move / duplicate / delete assets, folders, redirectors, referencers,
+ *    dependencies: `EditorToolset.AssetToolset` (FindAssets / LoadAsset / SaveAsset / Move /
+ *    Duplicate / Delete / Exists / CreateFolder / ListFolders / FixUpRedirectors / ReloadAsset /
+ *    IsDirty / ValidateAssets / GetReferencers / GetDependencies / GetAssetClass)
+ *  - importing ONE typed asset: ImportFile on the matching toolset --
+ *    `EditorToolset.TextureToolset`, `StaticMeshToolset`, `SkeletalMeshToolset`,
+ *    `SoundWaveToolset`, `DataTableToolset`, `CurveTableToolset`, `StringTableToolset`
+ *  - a texture out as PNG, or read into the session: `EditorToolset.TextureToolset`
+ *    (ExportPng / ReadTexture / GetSize)
+ *  - Content Browser selection and navigation, and which assets are open in an editor:
+ *    `EditorToolset.EditorAppToolset` (GetSelectedAssets -- this is what replaced VibeUE's
+ *    content-browser-selection call -- SelectAssets / GetContentBrowserPath /
+ *    SetContentBrowserPath / GetOpenAssets)
+ *  - files on disk: `FileSystemToolset` (ReadTextFile / WriteTextFile / ListDirectory / DeleteFile)
  *
- * Python Usage:
- *   import unreal
+ * What is left is four calls. Two are MCP tools: ReimportAsset, because nothing in the engine
+ * surface reimports an asset, and ExportTexture, because the engine's export is PNG-only while
+ * this goes through the asset's registered exporter.
  *
- *   # Import an image (a mesh or any other importable file takes the same call)
- *   path, error = unreal.AssetDiscoveryService.import_asset(
- *       "C:/Images/rocks.jpg", "/Game/UI/Textures", "T_Rocks")
- *
- *   # Inspect the current Content Browser selection
- *   asset_data = unreal.AssetDiscoveryService.get_primary_content_browser_selection()
- *   if asset_data:
- *       print(asset_data.package_name)
- *
- * @note All methods are static.
+ * Two are DEMOTED -- no longer MCP tools, still callable from execute_python:
+ *   path, err = unreal.AssetDiscoveryService.import_asset(
+ *       "C:/Art/crate.fbx", "/Game/Props", "SM_Crate")        # any importable format, one call
+ *   result = unreal.AssetDiscoveryService.delete_asset_unattended("/Game/Anim/AS_Temp", True)
+ * import_asset takes an image, a mesh or anything else the editor imports without first choosing a
+ * per-type toolset; delete_asset_unattended never raises the engine's referenced-asset modal, which
+ * wedges the game thread of an unattended editor until the process is killed.
  */
 UCLASS(BlueprintType)
 class VIBEUE_API UAssetDiscoveryService : public UToolsetDefinition
@@ -129,25 +139,6 @@ public:
 		const FString& AssetName,
 		FString& OutError);
 
-	/**
-	 * Reimport an existing asset through the same handler used by Content Browser Reimport.
-	 *
-	 * Supports both Interchange and legacy factory imports. When NewSourcePath is supplied,
-	 * the registered reimport handler is asked to retarget the asset before reimporting it.
-	 * The operation is automated and never opens a missing-file picker or notification.
-	 *
-	 * @param AssetPath         - Content path or object path of the asset to reimport
-	 * @param NewSourcePath     - Optional replacement source file; empty uses the stored source
-	 * @param OutSourceFileUsed - Receives the resolved source file selected for reimport
-	 * @param OutError          - Receives a human-readable error message on failure
-	 * @return True when Unreal's registered reimport handler completed successfully
-	 *
-	 * Python usage (Unreal maps a false bool plus out parameters to None):
-	 *   result = unreal.AssetDiscoveryService.reimport_asset(
-	 *       "/Game/Characters/SKM_Player", "D:/Source/SKM_Player.fbx")
-	 *   if result is not None:
-	 *       source_file, error = result
-	 */
 	/**
 	 * Delete an asset with NO dialog, for unattended agent sessions. The engine's
 	 * EditorAssetLibrary.delete_asset pops a modal "asset is referenced" dialog when anything
@@ -213,6 +204,26 @@ public:
 		const FString& AssetPath,
 		bool bForceEvenIfReferenced);
 
+	/**
+	 * Reimport an existing asset through the same handler used by Content Browser Reimport.
+	 * No engine toolset reimports an asset, which is why this one is still a tool.
+	 *
+	 * Supports both Interchange and legacy factory imports. When NewSourcePath is supplied,
+	 * the registered reimport handler is asked to retarget the asset before reimporting it.
+	 * The operation is automated and never opens a missing-file picker or notification.
+	 *
+	 * @param AssetPath         - Content path or object path of the asset to reimport
+	 * @param NewSourcePath     - Optional replacement source file; empty uses the stored source
+	 * @param OutSourceFileUsed - Receives the resolved source file selected for reimport
+	 * @param OutError          - Receives a human-readable error message on failure
+	 * @return True when Unreal's registered reimport handler completed successfully
+	 *
+	 * Python usage (Unreal maps a false bool plus out parameters to None):
+	 *   result = unreal.AssetDiscoveryService.reimport_asset(
+	 *       "/Game/Characters/SKM_Player", "D:/Source/SKM_Player.fbx")
+	 *   if result is not None:
+	 *       source_file, error = result
+	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable, CPP_Default_NewSourcePath = ""), Category = "VibeUE|Assets")
 	static bool ReimportAsset(
 		const FString& AssetPath,
@@ -221,10 +232,14 @@ public:
 		FString& OutError);
 
 	/**
-	 * Export a texture to the file system for external analysis.
+	 * Export a texture to the file system for external analysis, through the asset's registered
+	 * exporter (AssetTools::ExportAssets). For a plain PNG the engine's
+	 * `EditorToolset.TextureToolset` ExportPng does the same job; this one survives because the
+	 * exporter also writes the formats ExportPng cannot.
 	 *
 	 * @param AssetPath - Path to the texture asset
-	 * @param ExportFilePath - Absolute path where the texture will be exported
+	 * @param ExportFilePath - Absolute path in the target directory. Only its DIRECTORY is used
+	 *        (created if missing); the exporter names the file after the asset and its own format.
 	 * @return True if export was successful
 	 *
 	 * Example:

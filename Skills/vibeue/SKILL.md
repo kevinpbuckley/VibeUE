@@ -136,7 +136,7 @@ when two areas seem to fit, the one that *excludes* your task is telling you whe
 | **UI (UMG)** | widget blueprints, layout, fonts/brushes, MVVM â€” NOT the gameplay behind the UI (â†’ Blueprints) | `umg-widgets` |
 | **Environment (world-scale)** | landscape sculpt/paint, landscape materials, foliage, PCG, map blockout, real-world terrain â€” NOT single-actor placement (â†’ Scene), NOT sound/audio (â†’ Audio) | `landscape`, `landscape-materials`, `landscape-auto-material`, `foliage`, `pcg`, `map-blockout`, `terrain-data` |
 | **Audio** | SoundCue authoring â€” creating the sound asset itself: ambient, a character's footstep/foley, UI sounds â€” NOT triggering sounds from gameplay logic (â†’ Blueprints), NOT wiring an existing sound to anim-notify foot-plant frames (â†’ Animation) | `sound-cues` (MetaSound is Epic `MetaSoundToolset`) |
-| **Assets, data & project** | import/export assets, Fab catalog acquisition, UV mapping, engine & project settings, and bounded bulk asset maintenance/migrations â€” NOT actors placed in a level (â†’ Scene) | `asset-management`, `fab`, `bulk-maintenance`, `uv-mapping`, `engine-settings`, `project-settings` |
+| **Assets, data & project** | import/export assets, UV mapping, the surviving PIE/engine settings helpers, and bulk asset maintenance you now drive yourself (iterate `AssetToolset` / `BlueprintToolset`, check before you write) â€” NOT actors placed in a level (â†’ Scene) | `asset-management`, `uv-mapping`, `engine-settings` |
 | **Diagnostics, testing & run** | start/stop/query PIE, profile (CPU-vs-GPU / Insights), uncap frame rate â€” NOT fixing the logic a bug points to (â†’ its authoring area) | `pie-testing`, `profiling`, `frame-rate` |
 | **Camera & viewport** | viewport camera, view mode, FOV, exposure, layout â€” NOT material look (â†’ Materials), NOT placing/editing light actors (â†’ Scene) | `viewport` |
 | **Cinematics Â· Physics** | Sequencer cinematics and Physics assets (ragdoll/skeletal) are **Epic-native** â€” VibeUE adds no skill here â€” NOT enabling simulate-physics on a level actor (â†’ Scene) | *(none â€” use `list_toolsets`: `animation_toolset.*` / `PhysicsToolsets`)* |
@@ -153,8 +153,8 @@ one call per class:
 ```
 # ONE call covers all classes and all topics:
 get_symbol(
-    class_name="unreal.MaterialService, unreal.WidgetService, unreal.MaterialNodeService",
-    method_filter="create|delete|compile|property|color")
+    class_name="unreal.LandscapeMaterialService, unreal.WidgetService, unreal.MaterialNodeService",
+    method_filter="create|delete|layer|property|color")
 
 # WRONG â€” three separate calls for three classes wastes round-trips and repeats boilerplate
 ```
@@ -283,13 +283,45 @@ called via `call_tool` (run `describe_toolset` for action names/params):
 |------|----------------------------------|
 | Start / stop / query PIE | `EditorToolset.EditorAppToolset` â†’ `StartPIE` / `StopPIE` / `IsPIERunning` |
 | Capture a viewport screenshot | `EditorToolset.EditorAppToolset` â†’ `CaptureViewport` |
-| List / read / filter / tail UE logs | `LogsToolset` |
+| List / read / filter / tail UE logs | `ConsoleToolset.LogsToolset` -> `GetLogEntries` (needs a `pattern`) |
+| Run a console command | `ConsoleToolset` -> `RunConsoleCommand` |
 | Search / open / save / move / import assets | `AssetTools` |
+| Materials: create, expressions, connections, recompile, stats | `EditorToolset.MaterialToolset` (VibeUE's `MaterialService` is **deleted**) |
+| Material instances: create, reparent, list and set typed parameters | `EditorToolset.MaterialInstanceToolset` (no bulk setter: iterate) |
+| Any material / expression / object property | `EditorToolset.ObjectToolset` -> `GetProperties` / `SetProperties` |
+| Run / poll / cancel automation tests (the old `run_scenario` shape) | `AutomationTestToolset` -> `DiscoverTests`, `RunTests`, `GetTestStatus`, `GetTestResults`, `StopTests` |
+| Frame timings, stat groups, stat counters | `PerfToolset.StatsToolset` -> `GetFrameTimings` |
+| Read / write / list files under `/Saved` (run logs, reports, journals) | `FileSystemToolset` -> `ReadTextFile`, `WriteTextFile`, `EditTextByAnchor`, `ListDirectory`, `DeleteFile` |
+| Which assets a change actually touched (provenance) | `UndoHistoryToolset` -> `GetRecentTransactions`, `GetTransactionDetails`, `SearchTransactions`, `GetTransactionRecencyIndex` |
+| Blueprint interfaces, metadata, compile (the old bulk-maintenance jobs) | `BlueprintToolset` -> `AddInterface`, `RemoveInterface`, `CompileBlueprint`, `SetVariableTooltip`, `SetVariableCategory`, `SetVariableInstanceEditable`, `SetVariableReadOnly` |
+| Move assets, fix redirectors, references, dependencies, search | `AssetToolset` -> `Move`, `FixUpRedirectors`, `GetReferencers`, `GetDependencies`, `FindAssets` |
 | Single-tag gameplay-tag CRUD | Epic `GameplayTagsToolset` via `call_tool` |
 | Inspect a live Ability System (attributes/tags/effects/abilities), attribute-set discovery, gameplay cues | `GASToolsets.*` (see `gas` skill) |
 
 Performance/Insights tracing is the one net-new VibeUE service â€” `unreal.PerformanceService.*` (see
-the `profiling` skill) â€” because Unreal 5.8 ships no performance toolset.
+the `profiling` skill) â€” because Unreal 5.8 shipped no performance toolset. On 5.9 the split is narrower: frame timings are
+Epic's (`PerfToolset.StatsToolset.GetFrameTimings` -- `PerformanceService.frame_timing` is **gone**),
+trace start/stop is `ConsoleToolset.RunConsoleCommand("Trace.*")` (`start_trace` / `stop_trace` are
+gone), and what is left on `PerformanceService` is `force_hitch`, `analyse`, the standalone-capture
+trio (`start_standalone` / `stop_standalone` / `get_standalone_status`) and
+`set_background_throttling` / `get_background_throttling`.
+
+**There is no bulk-maintenance tool any more.** `WorkflowService.run_bulk_maintenance` is deleted,
+and so is the `bulk-maintenance` skill pack. The individual operations are all engine-native --
+`BlueprintToolset.AddInterface` / `RemoveInterface` / `CompileBlueprint` / `SetVariableTooltip` /
+`SetVariableCategory` / `SetVariableInstanceEditable` / `SetVariableReadOnly`, and
+`AssetToolset.Move` / `FixUpRedirectors` / `GetReferencers` / `GetDependencies` / `FindAssets` -- but
+what VibeUE added around them is what you lose: batching, the dry run, path scoping, the per-target
+report and rollback. **That is now your job:** iterate the targets yourself one at a time, check
+each one (`GetReferencers` / `GetDependencies` / `Exists`) *before* you write, keep the explicit
+target list rather than feeding a search straight into a mutation, and record what you did as you go
+(`FileSystemToolset.WriteTextFile`, plus `UndoHistoryToolset.GetRecentTransactions` for what really
+changed) because nothing resumes or rolls back for you. A failure mid-way leaves the earlier targets
+applied.
+
+`WorkflowService.get_environment()` survives, and it is the **only** Workflow tool left -- nothing in
+Epic's toolsets reports the engine version, build configuration, toolchain location or build
+staleness, so call it before claiming any of those.
 
 
 ## Waiting inside one call: top-level await
@@ -362,10 +394,10 @@ with vibeue.gate_session(clients=3, net_mode="ListenServer"):   # throttling + P
 - `unreal.BlueprintService.compile_blueprint(path)` exists. It returns `FBlueprintCompileResult` (`success`, `num_errors`, `num_warnings`, `errors`, `warnings`).
 - `BlueprintService.set_node_pin_value` writes class and object pins (into the pin's `DefaultObject`), and `get_node_pins` reports them in `default_object`.
 - `unreal.PerformanceService.set_background_throttling(False)` / `get_background_throttling()` replace the hand-written `EditorPerformanceSettings` CDO write. Both return a JSON string.
-- Epic `InputToolset.ApplyInput` (entries + DurationSeconds) for runtime presses/holds; VibeUE keeps `inject_action` / `stop_injection` for an INDEFINITE hold released later (pie_instance)`, `inject_key(key, "hold", seconds)` and `stop_injection(action_path, pie_instance)` replace slate-tick loops around `inject_input_vector_for_action`. `pie_instance` picks the PIE world; -1 means the first PIE world with a local player.
-- `unreal.EngineSettingsService.set_pie_settings(net_mode, clients, run_under_one_process)` / `get_pie_settings()` set and read the PIE net mode ("Standalone", "ListenServer", "Client"). It is saved to the user's ini.
+- Runtime input: Epic `InputToolset.ApplyInput` (`Entries` + `DurationSeconds`) via `call_tool` for every bounded press or hold -- `inject_action_for` and `inject_key` are **gone**. VibeUE keeps exactly `unreal.InputService.inject_action(action_path, x, y, z, pie_instance)` and `stop_injection(action_path, pie_instance)` for an INDEFINITE hold released in a later call. Either way, don't hand-roll a slate-tick loop around `inject_input_vector_for_action`. `pie_instance` picks the PIE world; -1 means the first PIE world with a local player.
+- `unreal.EngineSettingsService.set_pie_settings(net_mode, clients, run_under_one_process)` / `get_pie_settings()` set and read the PIE net mode ("Standalone", "ListenServer", "Client"). It is saved to the user's ini. These two are **Python-only helpers** now: `EngineSettingsService` has no MCP tools left, so they only exist inside `execute_python`.
 - `unreal.ActorService.rerun_construction_scripts(label_or_name)` matches an actor by label or object name. It works in the editor world only and refuses during PIE.
-- `WidgetService.capture_preview` applies gamma once and runs the layout prepass. The old double-gamma and bottom-aligned-content bugs are fixed.
+- `WidgetService.capture_preview` is **gone** (as are `get_live_property`, `is_pie_running`, `start_pie` and `stop_pie`): capture a widget asset with `EditorAppToolset.CaptureAssetImage`, or spawn it with `WidgetService.spawn_widget_in_pie` and shoot the running viewport with `SceneCaptureToolset.CaptureGameViewport`, which draws the UMG over it. To read a live widget's properties: `SlateInspectorToolset.Snapshot` -> `GetUMGInfo(ref)` -> `ObjectToolset.GetProperties`.
 
 ## Additional gotchas
 

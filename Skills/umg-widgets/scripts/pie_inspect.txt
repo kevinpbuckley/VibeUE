@@ -1,34 +1,71 @@
 # Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
-# pie_inspect.txt — Spawn a Widget Blueprint in PIE and read a live property, then clean up.
+# pie_inspect.txt — Spawn a Widget Blueprint in PIE, read a LIVE property, then clean up.
 #
 # Sample script for the umg-widgets skill. Run via execute_python.
 #
-# IMPORTANT: start_pie() is asynchronous — PIE is not ready in the same execution call.
-# Run start_pie() FIRST (one call), then run this spawn/read/cleanup block in a SECOND call,
-# otherwise spawn_widget_in_pie returns handle.valid == False ("PIE is not running.").
+# Split surfaces:
+#   PIE lifecycle            -> EditorAppToolset.StartPIE / IsPIERunning / StopPIE  (call_tool only)
+#   spawning the WBP         -> unreal.WidgetService.spawn_widget_in_pie            (VibeUE Python)
+#   reading a live property  -> SlateInspectorToolset.Snapshot -> GetUMGInfo(ref)
+#                               -> ObjectToolset.GetProperties                      (call_tool only)
 #
-# get_live_property and remove_widget_from_pie take the HANDLE OBJECT (not handle.instance_id).
+# IMPORTANT: StartPIE is ASYNCHRONOUS — PIE is not live in the same execution call. Run STEP 1
+# first on its own, then run STEP 2 in a SECOND call, otherwise spawn_widget_in_pie returns
+# handle.valid == False ("PIE is not running.").
+#
+# remove_widget_from_pie takes the HANDLE OBJECT, not handle.instance_id.
 import unreal
+import vibeue
 
 WIDGET_PATH = "/Game/Blueprints/TestWidget"
-LIVE_WIDGET = "TitleText"
+LIVE_WIDGET_REF = ""            # paste a ref from the printed snapshot
 LIVE_PROPERTY = "RenderOpacity"
 
-ws = unreal.WidgetService
+EA = "EditorToolset.EditorAppToolset"
+SI = "SlateInspectorToolset.SlateInspectorToolset"
+OT = "EditorToolset.ObjectToolset"
 
-# Step 1 (run on its own first if PIE is not already running):
-if not ws.is_pie_running():
-    ws.start_pie()
-    print("PIE starting — re-run the spawn block below in a separate call once PIE is live.")
+# ---- STEP 1 (run on its own first if PIE is not already running) -----------------------------
+if not vibeue.exec_tool(EA, "IsPIERunning"):
+    vibeue.exec_tool(EA, "StartPIE")
+    print("PIE starting — re-run this script in a separate call once PIE is live.")
 
-# Step 2 (run after PIE is fully running):
-if ws.is_pie_running():
-    handle = ws.spawn_widget_in_pie(WIDGET_PATH)
+# ---- STEP 2 (run after PIE is fully running) -------------------------------------------------
+if vibeue.exec_tool(EA, "IsPIERunning"):
+    handle = unreal.WidgetService.spawn_widget_in_pie(WIDGET_PATH)
     print("spawned:", handle.valid, "id:", handle.instance_id, "err:", handle.error_message)
+
     if handle.valid:
-        value = ws.get_live_property(handle, LIVE_WIDGET, LIVE_PROPERTY)
-        print(f"{LIVE_WIDGET}.{LIVE_PROPERTY} =", value)
-        ws.remove_widget_from_pie(handle)
-    ws.stop_pie()
-    print("pie running after cleanup:", ws.is_pie_running())
+        # Keep the PIE viewport's refs fresh while we work in it, then snapshot to find the ref.
+        observer = vibeue.exec_tool(SI, "Observe", {"ref": "", "maxDepth": 30})
+        print(vibeue.exec_tool(SI, "Snapshot", {"ref": "", "maxDepth": 30}))
+
+        if LIVE_WIDGET_REF:
+            # GetUMGInfo turns a Slate ref into the live UMG UWidget (a {refPath} handle).
+            info = vibeue.exec_tool(SI, "GetUMGInfo", {"ref": LIVE_WIDGET_REF})
+            if info.get("error"):
+                print("GetUMGInfo failed:", info["error"])   # pure Slate, or the UWidget is gone
+            else:
+                print(info["widgetName"], info["widgetClass"], "via", info["resolvedVia"])
+                # ObjectToolset reflects over the LIVE instance's own class.
+                print(vibeue.exec_tool(OT, "GetProperties",
+                                       {"instance": info["widget"],
+                                        "properties": [LIVE_PROPERTY]}))
+        else:
+            print("\n^ pick a widget ref from the snapshot, set LIVE_WIDGET_REF, and re-run.\n")
+
+        vibeue.exec_tool(SI, "Unobserve", {"identifier": observer})
+        unreal.WidgetService.remove_widget_from_pie(handle)   # the HANDLE, not instance_id
+
+    vibeue.exec_tool(EA, "StopPIE")
+    print("pie running after cleanup:", vibeue.exec_tool(EA, "IsPIERunning"))
+
+# Notes:
+# - bind_event is only provably bound on the GameInstance_*-outered PIE instance (asset and
+#   preview instances always read unbound). Simulate a click with on_clicked.broadcast() on that
+#   instance, or drive the real UI with SlateInspectorToolset.Click(ref).
+# - vibeue.pie_worlds() gives the live PIE worlds keyed by net role, skipping the stale
+#   /Memory/UEDPIE_* shells a name match would grab.
+# - For a screenshot of the running UI, SceneCaptureToolset.CaptureGameViewport captures the PIE
+#   viewport WITH the UMG/Slate HUD drawn over it.

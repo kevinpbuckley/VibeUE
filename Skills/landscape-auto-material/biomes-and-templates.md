@@ -22,14 +22,22 @@ A **biome** is a specific landscape look defined entirely through a **material i
 
 ### Configure Feature Toggles via Static Switches
 
-```python
-count = unreal.MaterialService.set_instance_parameters_bulk(
-    inst_path,
-    ["EnableSnow", "EnableDisplacement", "EnableRVT", "EnableDistanceFades"],
-    ["StaticSwitch", "StaticSwitch", "StaticSwitch", "StaticSwitch"],
-    ["false", "true", "true", "true"]
-)
+No bulk setter survives (`MaterialService.set_instance_parameters_bulk` is gone): **iterate**, one
+`call_tool` per switch, and check each reply.
+
 ```
+call_tool MaterialInstanceToolset.SetStaticSwitchParameter {"Instance": {"refPath": "<MI>"}, "Name": "EnableSnow",          "Value": false}
+call_tool MaterialInstanceToolset.SetStaticSwitchParameter {"Instance": {"refPath": "<MI>"}, "Name": "EnableDisplacement",  "Value": true}
+call_tool MaterialInstanceToolset.SetStaticSwitchParameter {"Instance": {"refPath": "<MI>"}, "Name": "EnableRVT",           "Value": true}
+call_tool MaterialInstanceToolset.SetStaticSwitchParameter {"Instance": {"refPath": "<MI>"}, "Name": "EnableDistanceFades", "Value": true}
+
+call_tool AssetToolset.SaveAsset   {"Asset": {"refPath": "<MI>"}}
+call_tool MaterialToolset.Recompile {"MaterialOrFunction": {"refPath": "<MI>"}}
+```
+
+Static switches are compile-time and nothing updates the static permutation for you now — save and
+recompile after the last switch, then read back with
+`MaterialInstanceToolset.GetStaticSwitchParameter`.
 
 ### Biome Naming Convention
 
@@ -50,44 +58,32 @@ A layer function encapsulates all texture sampling logic for a single terrain ty
 
 ### Standard Interface
 
-**Standard inputs** (every layer function should have these):
+`MaterialNodeService.add_function_input` / `add_function_output` are gone. Each pin is now an
+expression you add to the function and then configure — `AddExpression` +
+`ObjectToolset.SetProperties`, both `call_tool`. See `workflows.md` Workflow C for the exact call
+shapes; the interface below is the contract to build.
 
-```python
-# Texture inputs
-unreal.MaterialNodeService.add_function_input(
-    func_path, "BaseColorTexture", "Texture2D", 0,
-    "Albedo/diffuse texture for this terrain type")
-unreal.MaterialNodeService.add_function_input(
-    func_path, "NormalTexture", "Texture2D", 1,
-    "Normal map texture")
-unreal.MaterialNodeService.add_function_input(
-    func_path, "RoughnessTexture", "Texture2D", 2,
-    "Roughness texture (or RMA packed)")
+**Standard inputs** (every layer function should have these) — add a
+`/Script/Engine.MaterialExpressionFunctionInput` per row and set `InputName`, `InputType` and
+`SortPriority`:
 
-# Tiling control
-unreal.MaterialNodeService.add_function_input(
-    func_path, "UVTiling", "Scalar", 3,
-    "UV tiling scale (default 0.01 for landscapes)")
+| `InputName` | `InputType` | `SortPriority` | Description |
+|---|---|---|---|
+| `BaseColorTexture` | `FunctionInput_Texture2D` | 0 | Albedo/diffuse texture for this terrain type |
+| `NormalTexture` | `FunctionInput_Texture2D` | 1 | Normal map texture |
+| `RoughnessTexture` | `FunctionInput_Texture2D` | 2 | Roughness texture (or RMA packed) |
+| `UVTiling` | `FunctionInput_Scalar` | 3 | UV tiling scale (default 0.01 for landscapes) |
+| `DetailBaseColor` | `FunctionInput_Texture2D` | 10 | Close-up detail texture (optional) |
+| `DetailScale` | `FunctionInput_Scalar` | 11 | Detail texture tiling multiplier |
 
-# Optional: detail textures for close-up
-unreal.MaterialNodeService.add_function_input(
-    func_path, "DetailBaseColor", "Texture2D", 10,
-    "Close-up detail texture (optional)")
-unreal.MaterialNodeService.add_function_input(
-    func_path, "DetailScale", "Scalar", 11,
-    "Detail texture tiling multiplier")
-```
+**Standard outputs** — a `/Script/Engine.MaterialExpressionFunctionOutput` per row, with
+`OutputName` and `SortPriority`:
 
-**Standard outputs:**
-
-```python
-unreal.MaterialNodeService.add_function_output(
-    func_path, "BaseColor", 0, "Sampled albedo (RGB)")
-unreal.MaterialNodeService.add_function_output(
-    func_path, "Normal", 1, "Sampled normal (RGB)")
-unreal.MaterialNodeService.add_function_output(
-    func_path, "Roughness", 2, "Sampled roughness (Scalar)")
-```
+| `OutputName` | `SortPriority` | Description |
+|---|---|---|
+| `BaseColor` | 0 | Sampled albedo (RGB) |
+| `Normal` | 1 | Sampled normal (RGB) |
+| `Roughness` | 2 | Sampled roughness (Scalar) |
 
 ### Internal Graph Pattern
 

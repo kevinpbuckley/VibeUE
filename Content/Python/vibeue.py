@@ -1025,7 +1025,7 @@ def dirty_delta(before: set) -> dict:
 
     Example:
         before = vibeue.dirty_snapshot()
-        unreal.BlueprintService.get_graph_summary("/Game/BP_Player", "EventGraph")
+        unreal.BlueprintService.get_timelines("/Game/BP_Player")
         delta = vibeue.dirty_delta(before)
         assert not delta["dirtied"], delta
     """
@@ -1097,15 +1097,16 @@ def viewport_state():
     exposure behind leaves the user a black Lit viewport on every later launch (2026-10-19: a
     script stepped exposure and quit at fixed EV100 12 with FOV 73.8). Wrap every capture that
     changes the camera, FOV or exposure. Restores with ViewportService.restore_viewport_info(info)
-    when the plugin has it, else with ActorService.set_viewport_camera + ViewportService.set_fov +
-    set_exposure(fixed, ev100), which puts both exposure fields back. Yields the snapshot (a ViewportInfo, or None when
+    when the plugin has it, else with the engine's EditorAppToolset.SetCameraTransform plus
+    ViewportService.set_fov + set_exposure(fixed, ev100), which puts both exposure fields back. Yields the snapshot (a ViewportInfo, or None when
     there is no level viewport, in which case nothing is restored).
 
     Example:
         with vibeue.viewport_state() as info:
             unreal.ViewportService.set_exposure(True, 11.5)
-            unreal.ActorService.set_viewport_camera(unreal.Vector(0, 0, 500),
-                                                    unreal.Rotator(roll=0, pitch=-30, yaw=0))
+            vibeue.exec_tool("EditorToolset.EditorAppToolset", "SetCameraTransform",
+                             {"translation": {"x": 0, "y": 0, "z": 500},
+                              "rotation": {"pitch": -30, "yaw": 0, "roll": 0}})
             # ... capture ...
         # camera, FOV and exposure are back as they were
     """
@@ -1133,7 +1134,13 @@ def _restore_viewport(info) -> None:
             unreal.log_warning("vibeue.viewport_state: restore_viewport_info failed ({}); "
                                "restoring field by field".format(exc))
     try:
-        unreal.ActorService.set_viewport_camera(info.location, info.rotation)
+        # ActorService.set_viewport_camera was removed on the 5-9 branch; the engine's
+        # EditorAppToolset.SetCameraTransform is AICallable-only, so it goes through exec_tool.
+        exec_tool("EditorToolset.EditorAppToolset", "SetCameraTransform", {
+            "translation": {"x": info.location.x, "y": info.location.y, "z": info.location.z},
+            "rotation": {"pitch": info.rotation.pitch, "yaw": info.rotation.yaw,
+                         "roll": info.rotation.roll},
+        })
     except Exception as exc:
         unreal.log_warning("vibeue.viewport_state: camera restore failed: {}".format(exc))
     try:
@@ -1141,8 +1148,8 @@ def _restore_viewport(info) -> None:
     except Exception as exc:
         unreal.log_warning("vibeue.viewport_state: FOV restore failed: {}".format(exc))
     try:
-        # One call writes both fields. set_exposure_game_settings() is set_exposure(False, 1.0):
-        # it would reset the saved FixedEV100 to 1.0 when the user was on Game Settings.
+        # One call writes both fields. Do NOT substitute set_exposure(False, 1.0) here: that
+        # resets the saved FixedEV100 to 1.0 when the user was on Game Settings.
         unreal.ViewportService.set_exposure(bool(info.exposure_fixed), info.exposure_ev100)
     except Exception as exc:
         unreal.log_warning("vibeue.viewport_state: exposure restore failed: {}".format(exc))
@@ -1411,9 +1418,9 @@ def set_canvas_slot(widget_bp_path: str, widget_name: str, *, anchor_min=None, a
     bool. Then BlueprintEditorLibrary.compile_blueprint(bp) and EditorAssetLibrary.save_asset(path,
     only_if_is_dirty=False). Returns {"applied": [...], "compiled": bool, "saved": bool, "error"}.
 
-    For a single scalar, WidgetService.set_property already takes the slot aliases "Position X/Y",
-    "Size X/Y", "Anchor Min X/Y", "Anchor Max X/Y", "Alignment X/Y" and any "Slot.<Prop>"; use this
-    helper for whole anchors/offsets at once. It edits `<Asset>:WidgetTree` (the editable source),
+    For a single scalar, go through the engine: ObjectToolset.SetProperties on the slot object
+    (WidgetService.set_property and its "Position X/Y" / "Anchor Min X/Y" slot aliases were removed
+    on the 5-9 branch). Use this helper for whole anchors/offsets at once. It edits `<Asset>:WidgetTree` (the editable source),
     not `<Asset>_C:WidgetTree` (the generated copy).
 
     Example:

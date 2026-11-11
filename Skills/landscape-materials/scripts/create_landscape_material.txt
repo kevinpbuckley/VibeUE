@@ -3,10 +3,12 @@
 # create_landscape_material.txt — Create a landscape material with a layer blend, compile, assign.
 #
 # Sample script for the landscape-materials skill. Run via execute_python.
-# compile_material is slow — keep it in its own block. Always create LayerInfo objects for layers.
+#
+# SPLIT: compiling is Epic's MaterialToolset.Recompile (VibeUE's MaterialService is GONE) and is
+# slow, so it is a SEPARATE call_tool step — never in this block. Always create LayerInfo objects
+# for layers.
 import unreal
 lms = unreal.LandscapeMaterialService
-ms = unreal.MaterialService
 
 r = lms.create_landscape_material("M_Landscape", "/Game/Landscape/")   # LandscapeMaterialCreateResult
 print("create:", r)
@@ -14,9 +16,15 @@ path = r.asset_path if hasattr(r, "asset_path") else None
 
 # Build a LayerBlend node with named layers (Grass, Rock), wire to BaseColor, etc.
 # blend = lms.create_layer_blend_node_with_layers(path, ["Grass", "Rock"], -400, 0)
-# ... connect textures per layer (see workflows.md) ...
+# ... connect textures per layer with lms.setup_layer_textures(...) (see workflows.md) ...
 
 if path:
-    ms.compile_material(path)
     unreal.EditorAssetLibrary.save_asset(path)
-print("done")
+print("done — now run the two engine steps, each as its own call_tool:")
+print('  call_tool MaterialToolset.ConnectToOutput '
+      '{"Expression": {"refPath": "<the LandscapeLayerBlend from GetExpressions>"}, '
+      '"OutputName": "", "MaterialProperty": "MP_BaseColor"}')
+print('  call_tool MaterialToolset.Recompile {"MaterialOrFunction": {"refPath": "%s.%s"}}'
+      % (path, path.rsplit("/", 1)[-1] if path else ""))
+# NOTE: a LandscapeMaterialService node_id is an internal handle — Epic's MaterialToolset takes an
+# object ref ({"refPath": ...}), so cross between them with MaterialToolset.GetExpressions.

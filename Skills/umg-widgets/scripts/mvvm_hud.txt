@@ -1,20 +1,39 @@
 # Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
-# mvvm_hud.txt — Full MVVM HUD: create WBP, build hierarchy, add ViewModel, bind, save.
+# mvvm_hud.txt — Full MVVM HUD: create WBP, build hierarchy, add ViewModel, bind, compile, save.
 #
 # Sample script for the umg-widgets skill. Run via execute_python.
-# Requires a ViewModel class inheriting UMVVMViewModelBase. Set VIEW_MODEL_CLASS to a
-# real class in the project; the property names below must exist on that ViewModel.
+#
+# Split surfaces:
+#   asset creation     -> WidgetBlueprintFactory
+#   hierarchy          -> unreal.WidgetService.add_component           (VibeUE keeps this)
+#   ViewModel+bindings -> unreal.MVVMToolset.*                         (Epic; BlueprintCallable,
+#                                                                       so Python works directly)
+#   removing a VM      -> unreal.WidgetService.remove_view_model       (MVVM cannot remove one)
+#
+# Requires a ViewModel class inheriting UMVVMViewModelBase (or implementing
+# INotifyFieldValueChanged) with the property names used below.
+#
+# KNOWN LIMITATION: AddViewModelToWidget(WidgetBlueprint, ViewModelClass) takes TWO arguments.
+# There is no alias name and no CreationType — the Manual / GlobalViewModelCollection /
+# PropertyPath / Resolver creation types have NO Epic equivalent. For a non-default creation
+# type, add the ViewModel then fix the entry up with ObjectToolset.SetProperties (see mvvm.md).
 import unreal
 
 PACKAGE_PATH = "/Game/UI"
 ASSET_NAME = "WBP_GameHUD"
-VIEW_MODEL_CLASS = "GameHUDViewModel"   # <-- replace with a real ViewModel class name
-VIEW_MODEL_ALIAS = "HudVM"
+# A Blueprint ViewModel's class path ends in "_C"; for a C++ one use "/Script/<Module>.<Class>".
+VIEW_MODEL_CLASS_PATH = "/Game/UI/VM_GameHUD.VM_GameHUD_C"   # <-- replace with a real ViewModel
+BINDINGS = [
+    # (ViewModel property, widget name, widget property)
+    ("HealthPercent",     "HealthBar",  "Percent"),
+    ("HealthDisplayText", "HealthText", "Text"),
+]
 
 asset_path = f"{PACKAGE_PATH}/{ASSET_NAME}"
+MVVM = unreal.MVVMToolset
 
-# Step 1: create the Widget Blueprint.
+# --- Step 1: create the Widget Blueprint -----------------------------------------------------
 if unreal.EditorAssetLibrary.does_asset_exist(asset_path):
     unreal.EditorAssetLibrary.delete_asset(asset_path)
 factory = unreal.WidgetBlueprintFactory()
@@ -22,21 +41,61 @@ factory.set_editor_property("parent_class", unreal.UserWidget)
 unreal.AssetToolsHelpers.get_asset_tools().create_asset(
     ASSET_NAME, PACKAGE_PATH, unreal.WidgetBlueprint, factory)
 
-# Step 2: build the hierarchy.
+# --- Step 2: build the hierarchy (VibeUE; empty parent -> root) -------------------------------
 unreal.WidgetService.add_component(asset_path, "CanvasPanel", "RootCanvas", "", True)
 unreal.WidgetService.add_component(asset_path, "ProgressBar", "HealthBar", "RootCanvas", True)
 unreal.WidgetService.add_component(asset_path, "TextBlock", "HealthText", "RootCanvas", True)
 
-# Step 3: add the ViewModel (must come before bindings).
-unreal.WidgetService.add_view_model(asset_path, VIEW_MODEL_CLASS, VIEW_MODEL_ALIAS, "CreateInstance")
+wbp = unreal.load_asset(asset_path)
+unreal.BlueprintToolset.compile_blueprint(wbp, False)   # bindings resolve against the compiled class
 
-# Step 4: create bindings (ViewModel property -> widget property).
-unreal.WidgetService.add_view_model_binding(
-    asset_path, VIEW_MODEL_ALIAS, "HealthPercent", "HealthBar", "Percent", "OneWayToDestination")
-unreal.WidgetService.add_view_model_binding(
-    asset_path, VIEW_MODEL_ALIAS, "HealthDisplayText", "HealthText", "Text", "OneWayToDestination")
+# --- Step 3: add the ViewModel (must come before bindings) ------------------------------------
+vm_class = unreal.load_class(None, VIEW_MODEL_CLASS_PATH)
+if vm_class is None:
+    raise RuntimeError(f"no ViewModel class at {VIEW_MODEL_CLASS_PATH}")
+MVVM.add_view_model_to_widget(wbp, vm_class)
+print("view models:", [c.get_name() for c in MVVM.list_widget_view_models(wbp)])
 
-# Step 5: save and verify.
+# Discover the bindable field names rather than guessing (paths are CASE-SENSITIVE).
+# AccessorClass gates private/protected visibility — the WBP's own generated class ("..._C").
+hud_class = unreal.load_class(None, f"{asset_path}.{ASSET_NAME}_C")
+print("ViewModel fields:", MVVM.list_class_bindable_fields(vm_class, hud_class))
+
+# --- Step 4: create bindings ------------------------------------------------------------------
+# CreateViewBinding's context arguments decide what each path resolves against:
+#   a UClass  -> one of the WBP's ViewModels
+#   a UWidget -> a widget in the WBP's widget tree
+#   None      -> the Widget Blueprint itself
+for vm_prop, widget_name, widget_prop in BINDINGS:
+    widget = unreal.load_object(
+        None, f"{asset_path}.{ASSET_NAME}:WidgetTree.{widget_name}")
+    guid = MVVM.create_view_binding(
+        wbp,
+        vm_class, vm_prop,        # source
+        widget, widget_prop,      # destination
+        "",                       # ConversionName: "" = infer one only on a type mismatch
+    )
+    if not unreal.KismetGuidLibrary.is_valid_guid(guid):   # FGuid has no .is_valid() in Python
+        raise RuntimeError(f"binding {vm_prop} -> {widget_name}.{widget_prop} was not created")
+    MVVM.set_binding_mode(wbp, guid, unreal.MVVMBindingMode.ONE_WAY_TO_DESTINATION)
+
+# --- Step 5: compile, save, verify ------------------------------------------------------------
+unreal.BlueprintToolset.compile_blueprint(wbp, False)
 unreal.EditorAssetLibrary.save_asset(asset_path)
-for b in unreal.WidgetService.list_view_model_bindings(asset_path):
-    print(f"[{b.binding_index}] {b.source_path} -> {b.destination_path} ({b.binding_mode})")
+
+for b in MVVM.list_widget_view_bindings(wbp):
+    print(f"{b.binding_id} {b.display_name} mode={b.binding_type} "
+          f"enabled={b.b_enabled} compiled={b.b_compile}")
+
+# One call audits the lot — unconnected/misconfigured rows first:
+cmap = unreal.WidgetStaticAnalysisToolset.get_widget_connection_map(wbp, "")
+print(f"connected={cmap.connected_count} unconnected={cmap.unconnected_count} "
+      f"misconfigured={cmap.misconfigured_count}")
+for c in cmap.connections:
+    print(" ", c.kind, c.connection_name, c.widget or c.target_variable, c.status, c.fix)
+
+# Teardown, if you need it: remove each binding BY GUID first (remove_view_model invalidates but
+# does not delete its bindings, leaving dangling entries in the list):
+#   for b in list(MVVM.list_widget_view_bindings(wbp)):
+#       MVVM.remove_widget_view_binding(wbp, b.binding_id)
+#   unreal.WidgetService.remove_view_model(asset_path, "VM_GameHUD_C")

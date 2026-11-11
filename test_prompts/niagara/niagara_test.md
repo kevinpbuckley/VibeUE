@@ -1,6 +1,12 @@
 # Niagara System Test
 
-Natural language prompts to test all NiagaraService and NiagaraEmitterService methods. Run sequentially.
+Natural language prompts for Niagara authoring, stated as goals. Run sequentially.
+
+`NiagaraService` was deleted: systems, emitters and modules are Epic's `NiagaraToolsets`, and VibeUE
+keeps only `NiagaraEmitterService` (three colour-curve tools) and `NiagaraScratchPadService`. The
+prompts below name no tools on purpose — an agent carrying VibeUE's skills should still reach the
+goal with whatever tool now owns the job. A failure here is usually a stale mapping table in a
+skill, not a missing capability.
 
 ---
 

@@ -1,91 +1,125 @@
-# Performance Service Tests
+# Performance Tests
 
-Tests for frame-timing triage, the budget gate, hitch validation (force_hitch), Insights tracing,
-and the shareable HTML report. Run sequentially. Every PerformanceService method returns a JSON
-string — parse it and assert on fields; print the evidence behind each pass/fail.
+Tests for the CPU-vs-GPU triage path, hitch validation (`force_hitch`), trace capture and analysis.
 
-Most of these need a live game world, so the pack starts in-process PIE first.
+**Read this before running the suite:** performance work is now split. Frame timings are Epic's
+(`PerfToolset.StatsToolset.GetFrameTimings` via `call_tool`) and trace start/stop is a console
+command (`ConsoleToolset.RunConsoleCommand "Trace.Start" / "Trace.Stop"`). `PerformanceService` keeps
+exactly seven tools: `force_hitch`, `analyse`, `start_standalone`, `stop_standalone`,
+`get_standalone_status`, `set_background_throttling`, `get_background_throttling` — each returns a
+JSON string, so parse it and assert on fields. `frame_timing`, the budget gate, the trace-control
+tools, the HTML report and PIE start/stop on the performance service are **gone**; a prompt below
+that asks the agent to find the replacement is testing exactly that.
+
+Most of these need a live game world, so the pack starts PIE first. Run sequentially.
 
 ---
 
 ## Setup — live world
 
-Start an in-process PIE session using the performance service (not the editor toolset), then confirm on a following frame that frame timing reports PIE running. (Expected: start_pie succeeds; PIE starts on the next editor tick, so a later frame_timing response has pie_running=true — do not assert on the same frame.)
+Start a PIE session, then confirm on a following frame that it is actually running. (Expected: the
+agent reaches for `EditorAppToolset.StartPIE` — the performance service has no `start_pie` any more —
+and confirms with `IsPIERunning` in a LATER call, because PIE start is asynchronous. An agent that
+asserts on the same frame has failed the prompt, not the engine.)
 
 ---
 
 ## Frame Timing & Verdict
 
-Read the current frame timing. Report the game/render/GPU/RHI thread ms, the frame ms, the bound verdict, and the hint. (Expected: JSON with game_thread_ms, render_thread_ms, gpu_ms, rhi_thread_ms, frame_ms, bound, hint.)
+Read the current frame timing and report the game/render/GPU thread ms, the frame ms, and your
+CPU-bound vs GPU-bound verdict with the reasoning behind it. (Expected: `GetFrameTimings` from
+`PerfToolset.StatsToolset`, and a verdict the agent derives from the numbers itself — nothing returns
+a `bound` field or a `hint` for it now.)
 
 ---
 
-If gpu_ms came back 0, confirm the response explicitly flags that GPU timing is unavailable instead of silently trusting a CPU verdict that GPU could overturn. If gpu_ms is non-zero, state that the flag is absent and why that's correct.
+If GPU timing came back 0 or absent, say so explicitly and refuse to call the frame CPU-bound on that
+evidence. If it is non-zero, state that the comparison is trustworthy and why.
 
 ---
 
 ## Budget Gate
 
-Gate the current frame against a 60 FPS target. Report each thread's headroom against the 16.66 ms budget and whether the overall gate passed. (Expected: a budget block with per-thread headroom/over_budget and a meets_target bool.)
+Gate the current frame against a 60 FPS target: report each thread's headroom against the 16.66 ms
+budget and whether the frame passes. (Expected: the agent computes the headroom itself from
+`GetFrameTimings` — there is no budget-gate tool. The arithmetic and the per-thread verdicts must be
+shown.)
 
 ---
 
-Now gate against an absurd 1000 FPS target and confirm the gate fails, naming which threads blew the 1 ms budget. (Expected: budget.meets_target=false; at least one thread over budget.)
+Now gate the same reading against an absurd 1000 FPS target and confirm it fails, naming which
+threads blew the 1 ms budget.
 
 ---
 
 ## Hitch Validation — CPU paths (self-measured, single response)
 
-Force a 250 ms hitch on the game thread and validate the verdict from that same response. Do NOT follow up with a frame_timing call — the CPU stall blocks the game thread, so a follow-up read reliably lands on a clean frame and misses it. (Expected: observed_peak_game_ms ≈ 250 or more and verdict_matched_expect=true, in the force_hitch response itself.)
+Force a 250 ms hitch on the game thread and validate the verdict from that same response. Do NOT
+follow up with a frame-timing read — the CPU stall blocks the game thread, so a follow-up read
+reliably lands on a clean frame and misses it. (Expected: `observed_peak_game_ms` ≈ 250 or more and
+`verdict_matched_expect=true`, in the `force_hitch` response itself.)
 
 ---
 
-Force a 250 ms hitch on the render thread and validate the same way. (Expected: observed_peak_render_ms ≈ 250 or more, verdict_matched_expect=true.)
+Force a 250 ms hitch on the render thread and validate the same way. (Expected:
+`observed_peak_render_ms` ≈ 250 or more, `verdict_matched_expect=true`.)
 
 ---
 
-Force a 250 ms hitch on game AND render simultaneously and confirm the frame is reported contested rather than declaring a false single winner. (Expected: contested=true.)
+Force a 250 ms hitch on game AND render simultaneously and confirm the frame is reported contested
+rather than declaring a false single winner. (Expected: `contested=true`.)
 
 ---
 
-Try to force a 60000 ms hitch for 600 frames. Confirm the service clamps rather than hanging the editor. (Expected: milliseconds clamped to 5000; total synchronous stall capped around 10 s; the editor stays responsive afterwards.)
+Try to force a 60000 ms hitch for 600 frames. Confirm the service clamps rather than hanging the
+editor. (Expected: milliseconds clamped to 5000; total synchronous stall capped around 10 s; the
+editor stays responsive afterwards.)
 
 ---
 
 ## Hitch Validation — GPU path (async)
 
-Force a GPU hitch, then read frame timing on a following frame and compare the verdict against the expected GPU-bound result. This path is scene-dependent best-effort — if the verdict doesn't flip, report the observed gpu_ms honestly rather than retrying more than once. (Expected: whatever the verdict, r.ScreenPercentage is auto-restored after the configured frames — verify it returned to its prior value.)
+Force a GPU hitch, then read frame timing on a following frame and compare against the expected
+GPU-bound result. This path is scene-dependent best-effort — if the verdict doesn't flip, report the
+observed GPU ms honestly rather than retrying more than once. (Expected: whatever the verdict,
+`r.ScreenPercentage` is auto-restored after the configured frames — verify it returned to its prior
+value.)
 
 ---
 
 ## Trace Capture & Analysis
 
-Start an Insights trace named "perf_pack_capture". Verify it's live. (Expected: get_trace_status reports an active trace and its channels.)
+Start an Unreal Insights trace, drop a bookmark, wrap a forced 100 ms game-thread hitch between a
+region start and end, then stop the trace. (Expected: the agent drives this with
+`ConsoleToolset.RunConsoleCommand` — `Trace.Start`, `Trace.Bookmark`, `Trace.Stop` and friends — since
+`start_trace` / `stop_trace` / `get_trace_status` / the region and bookmark tools no longer exist. It
+should report the trace file path from the command output or the log.)
 
 ---
 
-Drop a bookmark named "PerfPackMark", then wrap a region named "PerfPackRegion" around a forced 100 ms game-thread hitch (region_start → force_hitch → region_end).
+Analyse the capture with source "both". Report the frame stats (avg/p95/worst), the worst frames, and
+any hitches found. (Expected: `unreal.PerformanceService.analyse("both", "")` — still a VibeUE Python
+call — and the forced 100 ms hitch shows up among the worst frames/hitches.)
 
 ---
 
-Stop the trace. Report the trace file path and size. (Expected: a .utrace path; size > 0.)
+## Standalone Capture
+
+Start a standalone capture, confirm it is running, then stop it. (Expected: `start_standalone` /
+`get_standalone_status` / `stop_standalone`; status reports not-running once stopped.)
 
 ---
 
-Analyse the capture with source "both". Report the frame stats (avg/p95/worst), the worst frames, and any hitches found. (Expected: the forced 100 ms hitch shows up among the worst frames/hitches.)
+## Unfocused Full-Rate Verification
 
----
-
-## HTML Report
-
-Generate an HTML performance report titled "Perf Pack Report". (Expected: report() returns an output path under Saved/VibeUE/Performance/.)
-
----
-
-Verify the report from disk — do not just trust the returned path. Read the file and confirm it exists, is non-empty, contains the title "Perf Pack Report", and carries a "fix in this order" section with concrete stat/console commands. (Expected: self-contained HTML — CSS inlined, no external asset references.)
+Disable editor background throttling, confirm the setting read back, then restore it. (Expected:
+`set_background_throttling(False)` → `get_background_throttling()` reports it off →
+`set_background_throttling(True)`. Both return JSON strings; assert on the field, not on truthiness.)
 
 ---
 
 ## Cleanup
 
-Stop PIE via the performance service, then verify nothing is left running: no active trace and no standalone session. (Expected: stop_pie succeeds; get_trace_status inactive; get_standalone_status not running.)
+Stop PIE and verify nothing is left running: no active trace and no standalone session. (Expected:
+`EditorAppToolset.StopPIE`; `get_standalone_status` not running; `Trace.Stop` already issued or
+reported as inactive.)

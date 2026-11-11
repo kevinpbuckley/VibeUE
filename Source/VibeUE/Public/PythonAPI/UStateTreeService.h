@@ -251,7 +251,8 @@ struct FStateTreeInfo
 	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
 	FString SchemaClass;
 
-	/** Context actor class name (empty if not set — call set_context_actor_class to assign one) */
+	/** Context actor class name (empty if not set; assign it via ObjectToolset.SetProperties on the
+	 * schema subobject -- see the class comment) */
 	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
 	FString ContextActorClass;
 
@@ -309,7 +310,8 @@ struct FStateTreePropertyInfo
 {
 	GENERATED_BODY()
 
-	/** Property name as it appears in C++ (case-sensitive, use this in set_task_property_value) */
+	/** Property name as it appears in C++ (case-sensitive; pass it to
+	 * SetTransitionConditionPropertyValue, or to StateTreeToolset.set_node_instance_data) */
 	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
 	FString Name;
 
@@ -328,8 +330,7 @@ struct FStateTreePropertyInfo
 	/**
 	 * Binding source when bound, formatted "<SourceKind>:<SourceStatePath/><SourceNodeName>.<SourcePropertyPath>",
 	 * e.g. "RootParameter:Parameters.IdlingTime". Empty when unbound. A trailing " (output)" marks an output binding:
-	 * the data flows the other way, this (Output) property WRITES the named source. See get_bindings for the
-	 * structured form.
+	 * the data flows the other way, this (Output) property WRITES the named source.
 	 */
 	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
 	FString BoundTo;
@@ -465,11 +466,64 @@ struct FStateTreeTaskPropertySetResult
 };
 
 /**
- * VibeUE service for creating, inspecting, and editing StateTree assets.
- * Exposed to Python as unreal.StateTreeService
+ * StateTree Service - the 45 tools the engine's StateTree surface cannot reach. Python:
+ * unreal.StateTreeService. State paths use "/" from the subtree root, e.g. "Root/Walking/Idle".
  *
- * State paths use "/" separator starting from the subtree root name,
- * e.g. "Root", "Root/Walking", "Root/Walking/Idle"
+ * Cut to the delta on the 5-9 branch, 98 tools down to 45. Use the engine for everything else:
+ *  - states, tasks, enter conditions, considerations, evaluators, global tasks, compiling and the
+ *    UI refresh: Epic's `StateTreeToolset`, a Python toolset reached with call_tool under
+ *    snake_case names (add_child_state / add_sub_tree, add_task / add_blueprint_task,
+ *    add_enter_condition, add_consideration, add_evaluator, add_global_task, each one's move_* and
+ *    remove_* partner, compile, request_ui_refresh).
+ *  - node data: `StateTreeToolset.get/set_node_instance_data` -- the per-node details-panel values,
+ *    and the returned keys ARE the property names. get/set_node_template_data and
+ *    get/set_node_execution_runtime_data reach the template and execution structs instead.
+ *  - reading the tree: `get_editor_data`, then get_root_states / get_all_states / get_children.
+ *  - state properties (Name, Description, Tag, Type, SelectionBehavior, TasksCompletion,
+ *    LinkedSubtree, LinkedAsset, bEnabled, Weight): `ObjectToolset.SetProperties` on the
+ *    UStateTreeState -- they are plain EditDefaultsOnly UPROPERTYs. Two carried-over behaviours:
+ *    Weight is no longer clamped for you (ClampMin is only metadata on the JSON import path), and
+ *    setting Type deliberately cascades (it resets Tasks, forces SelectionBehavior, clears links).
+ *  - transitions: `ObjectToolset.SetProperties` appending one element to, or dropping one from,
+ *    the state's Transitions array, which the engine applies incrementally. Pass a new
+ *    transition's target state in the SAME write or the engine overwrites its Trigger, and never
+ *    rewrite the whole array -- that remints every ID and orphans the bindings keyed on them.
+ *  - the context actor class: `ObjectToolset.GetProperties` on the editor data for Schema's
+ *    refPath, then SetProperties on THAT schema object with ContextActorClass. A nested
+ *    Schema.ContextActorClass key makes the editor data the notify object, so the schema's
+ *    PostEditChangeChainProperty never fires and ContextDataDescs never rebuilds.
+ *  - finding and saving assets: `AssetToolset.FindAssets` / `SaveAsset` (Epic's writes only dirty
+ *    the package: compile first, then save). Schemas: `ObjectToolset.SearchSubclasses` on
+ *    UStateTreeSchema.
+ * Epic's tools open no transaction of their own, so wrap a batch in
+ * unreal.ScopedEditorTransaction if it should undo as one step. The `state-trees` skill carries
+ * the full per-tool migration table.
+ *
+ * What is left is what none of those can reach:
+ *  - all 24 property Bind* / Unbind* tools. Their engine counterpart, UStateTreeEditorData::
+ *    SetBinding / ClearBinding, is PythonCallable native API, not an AI toolset tool.
+ *  - CreateStateTree. Epic deliberately omits asset creation: UStateTreeFactory::SetSchemaClass is
+ *    not a UFUNCTION, and its toolset v1 wraps only existing K2 APIs.
+ *  - node-TYPE discovery: GetAvailableTaskTypes / GetAvailableConditionTypes /
+ *    GetAvailableConsiderationTypes / GetAvailableEvaluatorTypes. Epic's adders take a
+ *    UScriptStruct and nothing in the engine surface enumerates those (SearchSubclasses is
+ *    UClass-only), so this is how you learn what to pass them.
+ *  - theme colours: GetThemeColors / SetStateThemeColor / RenameThemeColor.
+ *    FStateTreeEditorColor::ExportTextItem refuses an ordinary property read, and a state's
+ *    ColorRef is only a GUID that needs GetThemeColors to resolve.
+ *  - root parameters: AddOrUpdateRootParameter / RemoveRootParameter / RenameRootParameter, plus
+ *    SetComponentParameterOverride. FInstancedPropertyBag's schema is C++-mutable only, and the
+ *    override needs property-bag descriptor GUIDs nothing else exposes.
+ *  - the not-path-addressable set: SetTaskEnabled, SetTaskConsideredForCompletion,
+ *    AddTransitionCondition, GetTransitionConditionPropertyNames and
+ *    SetTransitionConditionPropertyValue all live inside an FInstancedStruct or behind an
+ *    Instanced object reference, which ToolsetPropertyPath will not cross; SetStateExpanded
+ *    (bExpanded has neither CPF_Edit nor CPF_BlueprintVisible, so the toolset refuses it both ways
+ *    and ListProperties cannot even see it); SelectState (SelectAssetEditorObjects raises for a
+ *    non-Blueprint editor); and MoveTransition (no toolset emits ArrayMove, so a same-size rewrite
+ *    would never notify the transition ViewModel).
+ *  - GetTransitionEventPayloadPropertyNames, kept pending a live check of the engine's
+ *    GetBindingOptions. Unverified either way; see the note on the function.
  */
 UCLASS(BlueprintType)
 class VIBEUE_API UStateTreeService : public UToolsetDefinition
@@ -502,8 +556,9 @@ public:
 	 * @param AssetPath       Content path including asset name
 	 * @param SchemaClassName Schema class name (default: "StateTreeComponentSchema").
 	 *                        Accepts full names or shorthand like "Component", "AIComponent".
-	 *                        If creation returns False, the schema likely doesn't exist in
-	 *                        this project — call list_state_tree_schemas() to see valid names.
+	 *                        If creation returns False, the schema likely doesn't exist in this
+	 *                        project -- run ObjectToolset.SearchSubclasses on UStateTreeSchema for
+	 *                        the valid names.
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool CreateStateTree(const FString& AssetPath, const FString& SchemaClassName = TEXT("StateTreeComponentSchema"));
@@ -555,7 +610,8 @@ public:
 	/**
 	 * Select a state in the editor tree view (highlights the state in the StateTree editor panel).
 	 * The StateTree asset must already be open in an editor tab.
-	 * Call manage_asset open first if needed, then set_state_expanded to expand parents, then select_state.
+	 * Open it first with EditorAppToolset.OpenEditorForAsset if needed, then set_state_expanded to
+	 * expand the parents, then select_state.
 	 *
 	 * @param AssetPath Content path to the StateTree (e.g. "/Game/AI/ST_Cube")
 	 * @param StatePath Path of the state to select (e.g. "Root/Idle")
@@ -646,7 +702,8 @@ public:
 	 * The parameter type is resolved from the linked StateTree asset — no type argument needed.
 	 * Supports all primitive types: Bool, Int32, Int64, Float, Double, Name, String, Text.
 	 * Value format matches add_or_update_root_parameter: "3.14", "true", "Hello", etc.
-	 * Call save_level (or use unreal.EditorLoadingAndSavingUtils) after setting overrides to persist.
+	 * Save the level after setting overrides to persist them (AssetToolset.SaveAsset, or
+	 * unreal.EditorLoadingAndSavingUtils from Python).
 	 * @param ActorNameOrLabel  Name or label of the actor in the current level
 	 * @param ParameterName     Name of the root parameter to override (must exist in the linked StateTree)
 	 * @param Value             New value as a string (e.g. "3.14", "true", "Hello")
@@ -664,13 +721,16 @@ public:
 	 * Bind an OnDelegate transition to a task's FStateTreeDelegateDispatcher property.
 	 *
 	 * Prerequisites:
-	 *   1. The task must have a variable of type FStateTreeDelegateDispatcher (use add_variable with type "FStateTreeDelegateDispatcher").
-	 *   2. The transition trigger must be "OnDelegate" (set via update_transition first).
+	 *   1. The task must have a variable of type FStateTreeDelegateDispatcher (engine
+	 *      BlueprintTools.add_variable, type_name "FStateTreeDelegateDispatcher").
+	 *   2. The transition's Trigger must already be "OnDelegate" -- set it with
+	 *      ObjectToolset.SetProperties on that element of the state's Transitions array.
 	 *
 	 * After calling this, compile the StateTree — a successful compile confirms the binding is valid.
 	 *
 	 * @param StatePath              Path of the state containing the transition (e.g. "Root/Rotating")
-	 * @param TransitionIndex        Zero-based index of the transition (from get_state_tree_info)
+	 * @param TransitionIndex        Zero-based index into the state's Transitions array
+	 *                               (ObjectToolset.GetProperties on the state, key Transitions)
 	 * @param TaskStructName         Task name: display name, Blueprint name, or struct type (same as other task APIs)
 	 * @param DispatcherPropertyName Name of the FStateTreeDelegateDispatcher variable on the task
 	 * @param TaskMatchIndex         Which matching task to target (-1 = last match)
@@ -832,7 +892,11 @@ public:
 	                                                                           int32 TransitionIndex, const FString& ConditionStructName,
 	                                                                           int32 ConditionMatchIndex = -1);
 
-	/** Get the bindable properties exposed by a transition's required event payload struct. */
+	/**
+	 * Get the bindable properties exposed by a transition's required event payload struct.
+	 * Kept pending a live check of whether the engine's GetBindingOptions covers this; unverified
+	 * either way, so prefer it over assuming an engine equivalent exists.
+	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static TArray<FStateTreePropertyInfo> GetTransitionEventPayloadPropertyNames(const FString& AssetPath, const FString& StatePath,
 	                                                                            int32 TransitionIndex);

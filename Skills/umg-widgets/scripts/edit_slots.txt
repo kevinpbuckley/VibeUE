@@ -1,29 +1,88 @@
 # Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
-# edit_slots.txt — Edit slot layout: canvas z-order, box alignment/padding/size, and reparent.
+# edit_slots.txt — Edit slot layout: canvas anchors/offsets/z-order, box alignment/padding/size,
+#                  and reparent a widget.
 #
 # Sample script for the umg-widgets skill. Run via execute_python.
-# All slot edits go through set_property with string values; reparent_widget moves a widget.
+#
+# Slot layout lives on the widget's Slot OBJECT (UCanvasPanelSlot, UVerticalBoxSlot, ...).
+#   - READ  it from DescribeWidget's slot_properties[]
+#   - WRITE it with the slot's typed Python setters (simplest), or hand slot.get_path_name()
+#     to ObjectToolset.SetProperties. The slot's own object name is auto-generated, so get the
+#     slot from Python rather than constructing a path for it.
+#   - reparent_widget is VibeUE's: nothing in Epic's surface mutates a UWidgetTree.
+import json
 import unreal
-ws = unreal.WidgetService
+import vibeue
 
-PATH = "/Game/UI/WBP_Menu"   # must already exist with the named widgets
+PATH = "/Game/UI/WBP_Menu"    # must already exist with the named widgets
+CANVAS_CHILD = "PlayButton"   # a child of a CanvasPanel
+BOX_CHILD = "HeaderRow"       # a child of a VerticalBox / HorizontalBox / Overlay
+MOVE_WIDGET = "BackgroundImage"
+MOVE_TO_PARENT = "MainContainer"
 
-# Canvas child: z-order (render order) + position
-ws.set_property(PATH, "PlayButton", "ZOrder", "5")
+OT = "EditorToolset.ObjectToolset"
+ASSET = PATH.rsplit("/", 1)[-1]
 
-# Box/Overlay child: alignment + padding + fill rule
-ws.set_property(PATH, "HeaderRow", "Horizontal Alignment", "Fill")   # Fill/Left/Center/Right
-ws.set_property(PATH, "HeaderRow", "Vertical Alignment", "Top")      # Fill/Top/Center/Bottom
-ws.set_property(PATH, "HeaderRow", "Padding", "8")                   # one value, or "(Left=..,Top=..,Right=..,Bottom=..)"
-ws.set_property(PATH, "HeaderRow", "Size Rule", "Fill")              # Fill/Automatic
-ws.set_property(PATH, "HeaderRow", "Size Value", "1.0")
 
-# Move a widget to a new parent panel (preserves the widget object)
-ws.reparent_widget(PATH, "BackgroundImage", "MainContainer")
+def slot_of(name):
+    """The DESIGN-TIME slot of a widget — <Asset>:WidgetTree, not <Asset>_C:WidgetTree.
 
-# Verify
-for s in ws.get_widget_snapshot(PATH):
-    if s.widget_name in ("PlayButton", "HeaderRow", "BackgroundImage"):
-        print(s.widget_name, "parent:", s.parent_widget, "slot:", s.slot_info.slot_type)
+    Writes to the _C copy are discarded by the next compile.
+    """
+    w = unreal.load_object(None, f"{PATH}.{ASSET}:WidgetTree.{name}")
+    return w.slot if w else None
+
+
+# --- Canvas child: anchors + offsets + pivot + z-order ---------------------------------------
+cslot = slot_of(CANVAS_CHILD)
+if isinstance(cslot, unreal.CanvasPanelSlot):
+    # Centre it properly: anchors at 0.5 AND Alignment (the pivot) at 0.5. Anchors alone put the
+    # widget's top-left on the anchor point.
+    cslot.set_anchors(unreal.Anchors(minimum=unreal.Vector2D(0.5, 0.5),
+                                     maximum=unreal.Vector2D(0.5, 0.5)))
+    cslot.set_alignment(unreal.Vector2D(0.5, 0.5))
+    cslot.set_position(unreal.Vector2D(0.0, 0.0))
+    cslot.set_size(unreal.Vector2D(240.0, 56.0))
+    cslot.set_z_order(5)
+    # Same thing through ObjectToolset, when you want JSON instead of setters:
+    vibeue.exec_tool(OT, "SetProperties", {"instance": cslot.get_path_name(),
+                                           "values": json.dumps({"ZOrder": 5})})
+else:
+    print(f"{CANVAS_CHILD} is not on a CanvasPanel (slot={type(cslot).__name__})")
+
+# --- Box / Overlay child: alignment + padding + fill rule ------------------------------------
+bslot = slot_of(BOX_CHILD)
+if bslot is not None and hasattr(bslot, "set_padding"):
+    bslot.set_horizontal_alignment(unreal.HorizontalAlignment.H_ALIGN_FILL)
+    bslot.set_vertical_alignment(unreal.VerticalAlignment.V_ALIGN_TOP)
+    bslot.set_padding(unreal.Margin(left=8.0, top=8.0, right=8.0, bottom=8.0))
+    if hasattr(bslot, "set_size"):   # box slots only; an Overlay slot has no Size
+        bslot.set_size(unreal.SlateChildSize(value=1.0,
+                                             size_rule=unreal.SlateSizeRule.FILL))
+else:
+    print(f"{BOX_CHILD} has no box/overlay slot (slot={type(bslot).__name__})")
+
+# --- Move a widget to a new parent panel (VibeUE; preserves the widget object/GUID) ----------
+# Rejects moving a panel into itself or a descendant; the root cannot be reparented.
+print("reparented:", unreal.WidgetService.reparent_widget(PATH, MOVE_WIDGET, MOVE_TO_PARENT))
+
+wbp = unreal.load_asset(PATH)
+unreal.BlueprintToolset.compile_blueprint(wbp, False)
 unreal.EditorAssetLibrary.save_asset(PATH)
+
+# --- Verify: DescribeWidget carries slot_properties[] per widget ------------------------------
+res = unreal.WidgetStaticAnalysisToolset.describe_widget(wbp, None, -1, "", False)
+watch = {CANVAS_CHILD, BOX_CHILD, MOVE_WIDGET}
+for e in res.widgets:
+    if str(e.widget_name) in watch:
+        parent = e.parent.get_name() if e.parent else "-"
+        print(f"{e.widget_name} parent={parent}")
+        for p in e.slot_properties:
+            print("   ", p.property_name, "=", p.exported_value)
+
+# Shortcut for whole canvas anchors/offsets in one call (it compiles and saves for you):
+#   import vibeue
+#   print(vibeue.set_canvas_slot(PATH, CANVAS_CHILD, anchor_min=(1, 1), anchor_max=(1, 1),
+#                                alignment=(1, 1), offsets=(-40, -40, 200, 48)))
+#   print(vibeue.canvas_slot(PATH, CANVAS_CHILD).get_anchors())

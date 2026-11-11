@@ -25,27 +25,32 @@ unreal.LandscapeMaterialService.add_layer_to_blend_node(mat_path, blend.node_id,
 unreal.LandscapeMaterialService.add_layer_to_blend_node(mat_path, blend.node_id, "Rock", "LB_WeightBlend")
 unreal.LandscapeMaterialService.add_layer_to_blend_node(mat_path, blend.node_id, "Sand", "LB_WeightBlend")
 
-# 4. Connect blend to BaseColor output (engine MaterialTools)
-call_tool(
-    tool_name="connect_to_output",
-    toolset_name="editor_toolset.toolsets.material.MaterialTools",
-    arguments={
-        "expression": blend.node_id,      # LandscapeLayerBlend node id
-        "output_name": "",
-        "material_property": "MP_BaseColor",
-    },
-)
-
-# 5. Save (but do NOT compile here — compile is slow!)
+# 4. Save (but do NOT compile here — compile is slow!)
 unreal.EditorAssetLibrary.save_asset(mat_path)
 print(f"Created: {mat_path}")
 ```
 
-**Block 2 — Compile (slow, run separately):**
-```python
-import unreal
-unreal.MaterialService.compile_material("/Game/Materials/M_Terrain")
-print("Compiled")
+**Step 5 — connect the blend to the BaseColor output.** That is Epic's, so it is `call_tool`, and it
+needs the **expression object**, not `blend.node_id`:
+
+```
+# Find the LandscapeLayerBlend expression (match on its class), then wire it to BaseColor
+call_tool MaterialToolset.GetExpressions  {"MaterialOrFunction": {"refPath": "/Game/Materials/M_Terrain.M_Terrain"}}
+call_tool MaterialToolset.ConnectToOutput {"Expression": {"refPath": "<the LandscapeLayerBlend expression>"},
+                                           "OutputName": "", "MaterialProperty": "MP_BaseColor"}
+```
+
+> ⚠️ **VibeUE node ids and Epic expression refs are different things and do not interoperate.**
+> A `node_id` from `LandscapeMaterialService` is an internal `<Class>_<pointer>` handle: pass it only
+> back to `LandscapeMaterialService`. Epic's `MaterialToolset` takes an object reference
+> (`{"refPath": ...}`). To cross over, list the graph with `MaterialToolset.GetExpressions` and pick
+> the node by its class — there is no id-to-ref converter (`MaterialNodeService.list_expressions` is
+> gone).
+
+**Block 2 — Compile (slow, run separately).** Epic's, via `call_tool` —
+`MaterialService.compile_material` is gone:
+```
+call_tool MaterialToolset.Recompile {"MaterialOrFunction": {"refPath": "/Game/Materials/M_Terrain.M_Terrain"}}
 ```
 
 **Block 3 — Layer info objects and assignment:**
@@ -92,7 +97,9 @@ unreal.LandscapeMaterialService.setup_layer_textures(
     0.01                              # Tiling scale
 )
 
-unreal.MaterialService.compile_material(mat_path)
+# Compile: Epic's MaterialToolset owns this (MaterialService is gone) — run it as its own step:
+#   call_tool MaterialToolset.Recompile {"MaterialOrFunction": {"refPath": "<mat_path>.<MatName>"}}
+# (mid-script equivalent: vibeue.exec_tool("EditorToolset.MaterialToolset", "Recompile", {...}))
 ```
 
 ### Create Layer Info Objects
@@ -136,37 +143,37 @@ if not info.layers:
 
 ### Manual Texture Connection with Layer Coords
 
-```python
-import unreal
+**Prefer `LandscapeMaterialService.setup_layer_textures`** (above): it does the sampler, the coords
+and the layer wiring in one VibeUE call, with no id/ref crossing. Do it by hand only when you need a
+node `setup_layer_textures` does not build.
 
-mat_path = "/Game/Materials/M_Terrain"
+By hand, keep each node on **one** side of the fence (see the warning above):
+`MaterialNodeService.list_expressions` and `set_expression_property` are gone, so the sampler, its
+texture and its connections are all Epic's.
 
-# Create UV coords node (LandscapeMaterialService — survives)
-coords_id = unreal.LandscapeMaterialService.create_layer_coords_node(mat_path, 0.01, -800, 0)
-
-# Create texture sample via engine MaterialTools (returns the engine expression object)
-tex = call_tool(
-    tool_name="add_expression",
-    toolset_name="editor_toolset.toolsets.material.MaterialTools",
-    arguments={"material_or_function": mat_path, "expression_class": "TextureSample", "x": -600, "y": 0},
-)
-
-# Set the texture (set_expression_property survives on MaterialNodeService).
-# Resolve the MaterialNodeService expression id for this node — list_expressions
-# enumerates current expressions so you can grab the TextureSample's id.
-tex_id = unreal.MaterialNodeService.list_expressions(mat_path)[-1].id
-unreal.MaterialNodeService.set_expression_property(mat_path, tex_id, "Texture", "/Game/Textures/T_Grass_D")
-
-# Connect UV coords to the texture's UVs input (engine MaterialTools)
-call_tool(
-    tool_name="connect_expressions",
-    toolset_name="editor_toolset.toolsets.material.MaterialTools",
-    arguments={"from_expression": coords_id, "from_output_name": "", "to_expression": tex_id, "to_input_name": "UVs"},
-)
-
-# Connect texture to blend node layer input (LandscapeMaterialService — survives, takes the node id)
-unreal.LandscapeMaterialService.connect_to_layer_input(mat_path, tex_id, "", blend_node_id, "Grass", "Layer")
 ```
+# UV coords: VibeUE, from execute_python (returns a VibeUE node id)
+#   coords_id = unreal.LandscapeMaterialService.create_layer_coords_node(mat_path, 0.01, -800, 0)
+
+# Texture sample: Epic. AddExpression returns the expression object — keep its refPath.
+call_tool MaterialToolset.AddExpression {"MaterialOrFunction": {"refPath": "/Game/Materials/M_Terrain.M_Terrain"},
+    "ExpressionClass": "/Script/Engine.MaterialExpressionTextureSample", "X": -600, "Y": 0}
+
+# Its texture is just a property (set_expression_property is gone):
+call_tool ObjectToolset.SetProperties {"Object": {"refPath": "<the TextureSample>"},
+    "Properties": {"Texture": {"refPath": "/Game/Textures/T_Grass_D.T_Grass_D"}}}
+
+# Wire sampler -> the LayerBlend's layer input, Epic side, by PIN NAME.
+# GetExpressions finds the LandscapeLayerBlend; GetExpressionInputNames on it gives the exact
+# per-layer pin spelling (e.g. "Layer Grass").
+call_tool MaterialToolset.GetExpressionInputNames {"Expression": {"refPath": "<the LandscapeLayerBlend>"}}
+call_tool MaterialToolset.ConnectExpressions {"FromExpression": {"refPath": "<the TextureSample>"},
+    "FromOutputName": "RGB", "ToExpression": {"refPath": "<the LandscapeLayerBlend>"}, "ToInputName": "<layer pin>"}
+```
+
+`LandscapeMaterialService.connect_to_layer_input(mat_path, node_id, "", blend_node_id, "Grass",
+"Layer")` is still the right call when **both** nodes came from `LandscapeMaterialService` and you
+still hold their ids — e.g. a layer coords node feeding a layer sample node.
 
 ### Using Layer Weight Nodes (Alternative)
 
@@ -211,20 +218,19 @@ grass_sample = unreal.LandscapeMaterialService.create_layer_sample_node(
     mat_path, "Grass", -600, 0
 )
 
-# Use the sample weight to drive blending or masking.
-# Add the Multiply node via engine MaterialTools, then resolve its MaterialNodeService id.
-call_tool(
-    tool_name="add_expression",
-    toolset_name="editor_toolset.toolsets.material.MaterialTools",
-    arguments={"material_or_function": mat_path, "expression_class": "Multiply", "x": -400, "y": 0},
-)
-mult_id = unreal.MaterialNodeService.list_expressions(mat_path)[-1].id
+print("layer sample node id:", grass_sample)
+```
 
-call_tool(
-    tool_name="connect_expressions",
-    toolset_name="editor_toolset.toolsets.material.MaterialTools",
-    arguments={"from_expression": grass_sample, "from_output_name": "", "to_expression": mult_id, "to_input_name": "A"},
-)
+To drive blending or masking with that weight, add the Multiply on Epic's side and wire it there.
+`grass_sample` is a VibeUE node id, so find the LayerSample expression by class to get its ref — the
+id itself is not accepted by `MaterialToolset`:
+
+```
+call_tool MaterialToolset.AddExpression {"MaterialOrFunction": {"refPath": "/Game/Materials/M_Terrain.M_Terrain"},
+    "ExpressionClass": "/Script/Engine.MaterialExpressionMultiply", "X": -400, "Y": 0}
+call_tool MaterialToolset.GetExpressions {"MaterialOrFunction": {"refPath": "<material>"}}   # find the LandscapeLayerSample
+call_tool MaterialToolset.ConnectExpressions {"FromExpression": {"refPath": "<the LandscapeLayerSample>"},
+    "FromOutputName": "", "ToExpression": {"refPath": "<the Multiply>"}, "ToInputName": "A"}
 ```
 
 ### Create Grass Output Node
@@ -247,20 +253,22 @@ grass_id = unreal.LandscapeMaterialService.create_grass_output(
     -200, 400
 )
 
-# Connect layer weights to the grass output inputs (engine MaterialTools).
-# Each grass type gets an input pin matching its name.
-call_tool(
-    tool_name="connect_expressions",
-    toolset_name="editor_toolset.toolsets.material.MaterialTools",
-    arguments={"from_expression": grass_weight_id, "from_output_name": "", "to_expression": grass_id, "to_input_name": "Grass"},
-)
-call_tool(
-    tool_name="connect_expressions",
-    toolset_name="editor_toolset.toolsets.material.MaterialTools",
-    arguments={"from_expression": flower_weight_id, "from_output_name": "", "to_expression": grass_id, "to_input_name": "Flowers"},
-)
+print("grass output node id:", grass_id)
+```
 
-unreal.MaterialService.compile_material(mat_path)
+Connecting the layer weights into it is Epic's (`call_tool`). Each grass type has an input pin named
+after it; both the grass output and the layer-weight nodes came from `LandscapeMaterialService`, so
+look them up by class with `GetExpressions` to get their refs:
+
+```
+call_tool MaterialToolset.GetExpressions {"MaterialOrFunction": {"refPath": "/Game/Materials/M_Terrain.M_Terrain"}}
+call_tool MaterialToolset.ConnectExpressions {"FromExpression": {"refPath": "<Grass layer-weight node>"},
+    "FromOutputName": "", "ToExpression": {"refPath": "<the LandscapeGrassOutput>"}, "ToInputName": "Grass"}
+call_tool MaterialToolset.ConnectExpressions {"FromExpression": {"refPath": "<Flowers layer-weight node>"},
+    "FromOutputName": "", "ToExpression": {"refPath": "<the LandscapeGrassOutput>"}, "ToInputName": "Flowers"}
+
+# Then compile, as its own step:
+call_tool MaterialToolset.Recompile {"MaterialOrFunction": {"refPath": "<material>"}}
 ```
 
 ### Complete End-to-End Workflow
@@ -283,16 +291,18 @@ unreal.LandscapeMaterialService.setup_layer_textures(
 unreal.LandscapeMaterialService.setup_layer_textures(
     mat_path, blend.node_id, "Rock", "/Game/Textures/T_Rock_D", "/Game/Textures/T_Rock_N")
 
-# 4. Connect blend to material output (engine MaterialTools)
-call_tool(
-    tool_name="connect_to_output",
-    toolset_name="editor_toolset.toolsets.material.MaterialTools",
-    arguments={"expression": blend.node_id, "output_name": "", "material_property": "MP_BaseColor"},
-)
-
-# 5. Compile and save
-unreal.MaterialService.compile_material(mat_path)
+# 4. Save the graph so far
 unreal.EditorAssetLibrary.save_asset(mat_path)
+
+# --- STEPS 5 and 6 ARE EPIC'S: two call_tool calls, each its own step, NOT Python ---
+#   a) connect the blend to BaseColor (needs the EXPRESSION, not blend.node_id — find the
+#      LandscapeLayerBlend in MaterialToolset.GetExpressions):
+#        call_tool MaterialToolset.ConnectToOutput
+#            {"Expression": {"refPath": "<LandscapeLayerBlend>"}, "OutputName": "",
+#             "MaterialProperty": "MP_BaseColor"}
+#   b) compile (slow — on its own):
+#        call_tool MaterialToolset.Recompile {"MaterialOrFunction": {"refPath": "<mat_path>.<MatName>"}}
+# Then continue with the Python below.
 
 # 6. Create layer info objects — ALWAYS use .asset_path result
 grass_info = unreal.LandscapeMaterialService.create_layer_info_object("Grass", "/Game/Landscape")

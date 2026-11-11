@@ -1,19 +1,50 @@
 # Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
-# capture_preview.txt — Render an editor-side PNG preview of a Widget Blueprint (no PIE).
+# capture_preview.txt — Screenshot a Widget Blueprint's OPEN DESIGNER.
 #
 # Sample script for the umg-widgets skill. Run via execute_python.
-# capture_preview(widget_path, width=1920, height=1080) takes NO output path — it writes
-# to <project>/Saved/WidgetPreviews/<WidgetName>.png and returns the path in result.output_path.
-# Use this for appearance checks; use pie_inspect.txt only when you need runtime state.
-import unreal
+#
+# ### READ THIS BEFORE PROMISING A PREVIEW ###
+# There is no longer a deterministic offscreen widget render.
+#   * EditorAppToolset.CaptureAssetImage EXPLICITLY REFUSES Widget Blueprints. Its allowlist is
+#     AnimationAsset, Skeleton, StaticMesh, SkeletalMesh, Texture, MaterialInterface; anything
+#     else raises "Asset type does not support image capture".
+#   * What survives is 3 calls, NEEDS THE DESIGNER OPEN, and is a SCREENSHOT OF THAT DESIGNER
+#     cropped to a Slate widget — not an offscreen render at a size you choose. There is no
+#     width/height argument. Tell the user that is what they are getting.
+#
+#       OpenEditorForAsset  ->  Snapshot  ->  Screenshot(ref)
+#
+# None of these toolsets has a Python binding (unreal.EditorAppToolset.* does not exist), so
+# every call goes through vibeue.exec_tool — the in-process form of call_tool.
+import vibeue
 
 WIDGET_PATH = "/Game/Blueprints/TestWidget"
-WIDTH = 1280
-HEIGHT = 720
+WIDGET_REF = ""     # paste a ref from the printed snapshot to crop to it; "" = the active window
 
-result = unreal.WidgetService.capture_preview(WIDGET_PATH, WIDTH, HEIGHT)
-print("success:", result.success)          # field is `success` (not b_success)
-print("output_path:", result.output_path)  # auto-generated under Saved/WidgetPreviews
-if not result.success:
-    print("error:", result.error_message)
+EA = "EditorToolset.EditorAppToolset"
+SI = "SlateInspectorToolset.SlateInspectorToolset"
+
+# 1. The designer must be open — Screenshot fails on a widget in no visible window.
+vibeue.exec_tool(EA, "OpenEditorForAsset", {"assetPath": WIDGET_PATH})
+
+# 2. Snapshot the live Slate tree to find the designer's preview ref.
+#    Each line carries [pos=X,Y size=W,H] in desktop pixels.
+tree = vibeue.exec_tool(SI, "Snapshot", {"ref": "", "maxDepth": 30})
+print(tree)
+print("\n^ find the designer preview ref above, set WIDGET_REF, and re-run for a cropped shot.\n")
+
+# 3. Crop to it. "" captures the active window (falling back to the main editor window).
+#    Returns an FToolsetImage; through the MCP endpoint that is a real image content block.
+img = vibeue.exec_tool(SI, "Screenshot", {"ref": WIDGET_REF})
+print("captured:", type(img).__name__, (list(img.keys()) if isinstance(img, dict) else img))
+
+# --- Cheaper alternatives when you do NOT need the live designer ------------------------------
+# Cached Content Browser thumbnail (no load, no render; empty image when the asset has none).
+# Async, so collect it:
+#   thumbs = vibeue.exec_tool_collect(EA, "GetAssetThumbnails", {"assetPaths": [WIDGET_PATH]})
+# Whole editor window as the user sees it (synchronous):
+#   shot = vibeue.exec_tool(EA, "CaptureEditorImage")
+#
+# For runtime appearance WITH the game HUD, run PIE and use
+# SceneCaptureToolset.CaptureGameViewport instead — see pie_inspect.txt.

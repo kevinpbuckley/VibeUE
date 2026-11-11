@@ -423,83 +423,39 @@ struct FPIEWidgetHandle
 };
 
 /**
- * Widget service exposed directly to Python.
+ * Widget Service - the nine Widget Blueprint operations the engine's toolsets cannot do.
  *
- * Provides 41 widget management actions:
- * - list_widget_blueprints: List all Widget Blueprints in the project
- * - get_hierarchy: Get widget hierarchy tree
- * - get_root_widget: Get the root widget of a Widget Blueprint
- * - list_components: List all widget components in a Widget Blueprint
- * - search_types: Get available widget types (native types + discovered WBPs for reference)
- * - get_component_properties: Get properties for a specific component
- * - add_component: Add a widget component to a Widget Blueprint (native types or custom WBPs by name)
- * - remove_component: Remove a widget component from a Widget Blueprint
- * - rename_widget: Rename a widget component in a Widget Blueprint
- * - validate: Validate widget hierarchy for errors
- * - get_property: Get a specific property value
- * - set_property: Set a specific property value
- * - list_properties: List all editable properties of a component
- * - get_available_events: Get available events for a widget type
- * - bind_event: Bind an event to a function
- * - list_view_models: List all ViewModels registered on a Widget Blueprint
- * - add_view_model: Add a ViewModel to a Widget Blueprint
- * - remove_view_model: Remove a ViewModel from a Widget Blueprint
- * - list_view_model_bindings: List all MVVM bindings on a Widget Blueprint
- * - add_view_model_binding: Create a binding between a ViewModel property and a widget property
- * - remove_view_model_binding: Remove an MVVM binding by index
- * - set_font: Apply a full font configuration to a text widget
- * - get_font: Read a full font configuration from a text widget
- * - set_brush: Apply a brush to a widget brush slot
- * - get_brush: Read a brush from a widget brush slot
- * - list_animations: List all widget animations on a Widget Blueprint
- * - create_animation: Create a new widget animation
- * - remove_animation: Remove a widget animation
- * - add_animation_track: Add a property track to a widget animation
- * - add_keyframe: Add a keyframe to a widget animation track
- * - capture_preview: Render a widget preview to a PNG file
- * - start_pie: Start Play-In-Editor
- * - stop_pie: Stop Play-In-Editor
- * - is_pie_running: Check whether PIE is active
- * - spawn_widget_in_pie: Spawn a widget instance into the PIE viewport
- * - get_live_property: Read a property from a live PIE widget instance
- * - remove_widget_from_pie: Remove a spawned PIE widget instance from the viewport
- * - widget_blueprint_exists: Check if a Widget Blueprint exists
- * - widget_exists: Check if a widget component exists in a Widget Blueprint
+ * Cut to the delta on the 5-9 branch. Nothing in Epic's surface mutates a `UWidgetTree` (its only
+ * WidgetTree symbol is the read-only `WidgetStaticAnalysisToolset.GetWidgetTreeDepth`), which is
+ * why the tree edits below still live here. Use the engine for everything else:
+ *  - read the tree, its properties and its slot layout in one call:
+ *    `WidgetStaticAnalysisToolset.DescribeWidget` (walk-order `Widgets[]`, each with
+ *    `Properties[]` and `SlotProperties[]`; pass bSkipDefaultValues=false to see defaults too).
+ *    Also `GetWidgetConnectionMap` (binding/event audit) and `TraceWidgetPropertyOverrides`
+ *    ("who actually sets this property?")
+ *  - any property read or write, fonts and brushes included -- `FSlateFontInfo` and `FSlateBrush`
+ *    are plain USTRUCTs, so they are ordinary property writes now:
+ *    `EditorToolset.ObjectToolset` (GetProperties / SetProperties / ListProperties /
+ *    GetPropertySchema). Slot layout is a write on the widget's `Slot` object. Native widget
+ *    types: `ObjectToolset.SearchSubclasses` with BaseClass=/Script/UMG.Widget
+ *  - animations: `WidgetAnimationToolset` (CreateWidgetAnimation / ListWidgetAnimations /
+ *    RenameWidgetAnimation / SetWidgetAnimationLength / RemoveWidgetAnimation /
+ *    AddWidgetToAnimation), then the MovieScene*Extensions chain for tracks and keys -- a
+ *    `UWidgetAnimation` is a `UMovieSceneSequence`
+ *  - ViewModels and MVVM bindings: `MVVMToolset` (AddViewModelToWidget / ListWidgetViewModels /
+ *    ListWidgetViewBindings / CreateViewBinding / RemoveWidgetViewBinding / SetBindingMode /
+ *    ListWidgetViewEvents)
+ *  - asset existence, discovery, validation and save: `EditorToolset.AssetToolset`
+ *    (Exists / FindAssets / ValidateAssets / SaveAsset); compile:
+ *    `BlueprintToolsets.BlueprintToolset.CompileBlueprint`
+ *  - PIE lifecycle and the designer: `EditorToolset.EditorAppToolset` (StartPIE -- async --,
+ *    StopPIE, IsPIERunning, OpenEditorForAsset). A live widget's property is
+ *    `SlateInspectorToolset.Snapshot` -> `GetUMGInfo` -> `ObjectToolset.GetProperties`, and the
+ *    only preview capture left is `SlateInspectorToolset.Screenshot` against the open designer
+ *    (`EditorAppToolset.CaptureAssetImage` refuses Widget Blueprints outright)
  *
- * Python Usage:
- *   import unreal
- *
- *   # List all Widget Blueprints
- *   widgets = unreal.WidgetService.list_widget_blueprints()
- *
- *   # Get widget hierarchy
- *   hierarchy = unreal.WidgetService.get_hierarchy("/Game/UI/WBP_MainMenu")
- *
- *   # List components in a widget
- *   components = unreal.WidgetService.list_components("/Game/UI/WBP_MainMenu")
- *
- *   # Add a button component
- *   result = unreal.WidgetService.add_component("/Game/UI/WBP_MainMenu", "Button", "MyButton", "CanvasPanel_0", True)
- *
- *   # Get available widget types
- *   types = unreal.WidgetService.search_types()
- *
- *   # Get property value
- *   value = unreal.WidgetService.get_property("/Game/UI/WBP_MainMenu", "MyButton", "Visibility")
- *
- *   # Set property value
- *   unreal.WidgetService.set_property("/Game/UI/WBP_MainMenu", "MyButton", "Visibility", "Visible")
- *
- *   # List ViewModels
- *   vms = unreal.WidgetService.list_view_models("/Game/UI/WBP_MainMenu")
- *
- *   # Add a ViewModel
- *   unreal.WidgetService.add_view_model("/Game/UI/WBP_MainMenu", "MyHealthViewModel", "HealthVM")
- *
- *   # Add a ViewModel binding
- *   unreal.WidgetService.add_view_model_binding("/Game/UI/WBP_MainMenu", "HealthVM", "CurrentHealth", "HealthBar", "Percent", "OneWayToDestination")
- *
- * @note This replaces the JSON-based manage_umg_widget MCP tool
+ * What is left is the five tree mutations, the event bind, the two PIE-instance calls and the one
+ * MVVM removal that none of those can do.
  */
 UCLASS(BlueprintType)
 class VIBEUE_API UWidgetService : public UToolsetDefinition
@@ -508,25 +464,22 @@ class VIBEUE_API UWidgetService : public UToolsetDefinition
 
 public:
 	// =================================================================
-	// Discovery Methods (list_components, search_types, get_component_properties)
-	// =================================================================
-
-
-
-
-
-
-
-	// =================================================================
-	// Component Management (add_component, remove_component)
+	// Widget tree mutation
 	// =================================================================
 
 	/**
 	 * Add a new widget component to a Widget Blueprint.
-	 * Maps to action="add_component"
 	 * Supports both native widget types (TextBlock, Button, etc.) and custom Widget Blueprints by name.
 	 * Custom WBPs are resolved via the Asset Registry and compiled before use.
 	 * Circular references (a WBP containing itself) are detected and rejected.
+	 *
+	 * An empty ParentName makes the widget the tree's root - that, not bIsVariable, is what makes a
+	 * root. Widget names are unique per Widget Blueprint, not per parent, so reusing a name across
+	 * sibling subtrees lands the component on the wrong parent or no-ops.
+	 *
+	 * Example:
+	 *   unreal.WidgetService.add_component(path, "CanvasPanel", "RootCanvas", "", True)
+	 *   unreal.WidgetService.add_component(path, "Button", "PlayButton", "RootCanvas", False)
 	 *
 	 * @param WidgetPath - Full path to the Widget Blueprint
 	 * @param ComponentType - Type of widget: native type name (e.g. "Button") or WBP asset name (e.g. "WBP_HealthBar")
@@ -549,7 +502,6 @@ public:
 
 	/**
 	 * Move an existing widget component to a new position among its current parent's children.
-	 * Maps to action="reorder_component"
 	 *
 	 * @param WidgetPath - Full path to the Widget Blueprint
 	 * @param ComponentName - Name of the component to move
@@ -564,7 +516,6 @@ public:
 
 	/**
 	 * Remove a widget component from a Widget Blueprint.
-	 * Maps to action="remove_component"
 	 *
 	 * @param WidgetPath - Full path to the Widget Blueprint
 	 * @param ComponentName - Name of the component to remove
@@ -579,7 +530,6 @@ public:
 
 	/**
 	 * Rename a widget component in the Widget Blueprint.
-	 * Maps to action="rename_widget"
 	 *
 	 * @param WidgetPath - Full path to the Widget Blueprint
 	 * @param OldName - Current name of the widget component
@@ -594,7 +544,6 @@ public:
 
 	/**
 	 * Move an existing widget to a new parent panel (re-parent), preserving the widget object.
-	 * Maps to action="reparent_widget".
 	 *
 	 * @param WidgetPath - Full path to the Widget Blueprint
 	 * @param WidgetName - Name of the widget to move
@@ -608,71 +557,36 @@ public:
 		const FString& NewParentName);
 
 	// =================================================================
-	// Validation (validate)
+	// PIE widget instances
 	// =================================================================
-
-
-	// =================================================================
-	// Property Access (get_property, set_property, list_properties)
-	// =================================================================
-
-
-
-
-	// =================================================================
-	// Font and Brush Access
-	// =================================================================
-
-
-
-
-
-	// =================================================================
-	// Animation Authoring
-	// =================================================================
-
-
-
-
-
-
-	// =================================================================
-	// Preview Capture
-	// =================================================================
-
-
-	// =================================================================
-	// PIE Widget Lifecycle
-	// =================================================================
-
-
-
 
 	/**
-	 * Spawn a widget into the PIE viewport.
-	 * Maps to action="spawn_widget_in_pie"
+	 * Construct a widget instance and add it to the PIE viewport.
+	 *
+	 * No engine tool constructs a UUserWidget or calls AddToViewport -- CommonUIToolset.ActivateWidget
+	 * only addresses widgets the game already created. Start PIE first with
+	 * EditorToolset.EditorAppToolset.StartPIE (async: it is not live in the same call), then read the
+	 * live instance through SlateInspectorToolset.Snapshot -> GetUMGInfo -> ObjectToolset.GetProperties.
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets|PIE")
 	static FPIEWidgetHandle SpawnWidgetInPIE(
 		const FString& WidgetPath,
 		int32 ZOrder = 0);
 
-
-	/**
-	 * Remove a widget from the PIE viewport.
-	 * Maps to action="remove_widget_from_pie"
-	 */
+	/** Remove a widget instance spawned by SpawnWidgetInPIE from the PIE viewport. */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets|PIE")
 	static bool RemoveWidgetFromPIE(const FPIEWidgetHandle& Handle);
 
 	// =================================================================
-	// Event Handling (get_available_events, bind_events)
+	// Event binding
 	// =================================================================
-
 
 	/**
 	 * Bind an event to a function in the Widget Blueprint.
-	 * Maps to action="bind_events"
+	 *
+	 * The engine equivalent, BlueprintToolsets.BlueprintToolset.AddComponentBoundEvent, is typed
+	 * UActorComponent* and a UWidget is not one, so this is the only path. Hand-built bound-event
+	 * nodes compile but never fire. Available event names come from MVVMToolset.ListWidgetViewEvents.
 	 *
 	 * @param WidgetPath - Full path to the Widget Blueprint
 	 * @param WidgetName - Name of the widget component that owns the event (e.g., "PlayButton")
@@ -688,14 +602,15 @@ public:
 		const FString& FunctionName);
 
 	// =================================================================
-	// ViewModel Management (MVVM)
+	// MVVM removal
 	// =================================================================
-
-
 
 	/**
 	 * Remove a ViewModel from a Widget Blueprint.
-	 * Maps to action="remove_view_model"
+	 *
+	 * MVVMToolset can add a ViewModel to a widget (AddViewModelToWidget) and list them
+	 * (ListWidgetViewModels) but has no tool that removes one. Individual bindings are a different
+	 * thing and do have one: MVVMToolset.RemoveWidgetViewBinding, which takes a binding GUID.
 	 *
 	 * @param WidgetPath - Full path to the Widget Blueprint
 	 * @param ViewModelName - Name of the ViewModel to remove
@@ -705,21 +620,6 @@ public:
 	static bool RemoveViewModel(
 		const FString& WidgetPath,
 		const FString& ViewModelName);
-
-
-
-
-	// =================================================================
-	// Snapshot API (get_widget_snapshot, get_component_snapshot)
-	// =================================================================
-
-
-
-	// =================================================================
-	// Existence Checks
-	// =================================================================
-
-
 
 private:
 	/** Build slot info by casting Widget->Slot to the concrete slot type */

@@ -173,7 +173,7 @@ call_tool(tool_name="SetProperties", toolset_name=OT, arguments={
 call_tool(tool_name="Recompile", toolset_name=MT, arguments={"materialOrFunction": ref(path)})
 ```
 
-- Internal property names only (`TwoSided`, `BlendMode`, `ShadingModels`, `MaterialDomain`,
+- Internal property names only (`TwoSided`, `BlendMode`, `ShadingModel`, `MaterialDomain`,
   `OpacityMaskClipValue`, `bUsedWithStaticLighting`, `DitheredLODTransition`). The old display-name
   tolerance (`"Two Sided"`, `"Blend Mode"`) went with `MaterialService`.
 - Enum values are the prefixed identifiers: `BLEND_Opaque` / `BLEND_Masked` / `BLEND_Translucent`,

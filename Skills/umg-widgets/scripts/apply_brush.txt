@@ -3,29 +3,60 @@
 # apply_brush.txt — Apply a full brush configuration to an image widget and verify it.
 #
 # Sample script for the umg-widgets skill. Run via execute_python.
-# Uses the dedicated set_brush API (preferred over many set_property calls for full edits).
-# NOTE the slot_name arg: set_brush(widget_path, component_name, slot_name, brush_info).
-# For an Image the brush slot is "Brush"; other widgets expose different slot names.
+# FSlateBrush is a plain USTRUCT(BlueprintType), so a brush is an ORDINARY property write through
+# Epic's ObjectToolset — there is no dedicated brush API, and no slot_name argument, any more.
+#
+# The brush PROPERTY NAME differs per widget: "Brush" on an Image, "Background" on a Border,
+# "WidgetStyle.Normal"/"Hovered"/"Pressed" on a Button. ListProperties finds the real one.
+import json
 import unreal
+import vibeue
 
 WIDGET_PATH = "/Game/Blueprints/TestWidget"
 IMAGE_WIDGET = "BackgroundImage"   # must be an Image that already exists
-SLOT_NAME = "Brush"                # the Image's brush slot
+BRUSH_PROPERTY = "Brush"           # an Image's brush property
 
-brush_info = unreal.WidgetBrushInfo()
-brush_info.resource_path = "/Engine/EngineResources/WhiteSquareTexture.WhiteSquareTexture"
-brush_info.draw_as = "RoundedBox"
-brush_info.tint_color = "(R=0.08,G=0.12,B=0.2,A=1.0)"  # dark blue
-brush_info.image_size = "(X=1920.0,Y=1080.0)"
-brush_info.margin = "(Left=0.2,Top=0.2,Right=0.2,Bottom=0.2)"
-brush_info.corner_radius = "(TopLeft=16.0,TopRight=16.0,BottomRight=16.0,BottomLeft=16.0)"
-unreal.WidgetService.set_brush(WIDGET_PATH, IMAGE_WIDGET, SLOT_NAME, brush_info)
+OT = "EditorToolset.ObjectToolset"
+ASSET = WIDGET_PATH.rsplit("/", 1)[-1]
+IMG = f"{WIDGET_PATH}.{ASSET}:WidgetTree.{IMAGE_WIDGET}"   # the EDITABLE tree, not <Asset>_C
 
+# 1. Find the brush property and read its real shape before composing JSON.
+print("--- brush-ish properties ---")
+print(vibeue.exec_tool(OT, "ListProperties",
+                       {"instance": IMG, "nameFilter": "brush|background|style", "maxDepth": 1}))
+print("--- schema ---")
+print(vibeue.exec_tool(OT, "GetPropertySchema",
+                       {"instance": IMG, "root": BRUSH_PROPERTY, "maxDepth": 2}))
+
+# 2. Write it. TintColor is an FSlateColor (SpecifiedColor + ColorUseRule); rounded-box corner
+#    radii live under OutlineSettings.CornerRadii (a Vector4), not a top-level CornerRadius.
+vibeue.exec_tool(OT, "SetProperties", {"instance": IMG, "values": json.dumps({
+    BRUSH_PROPERTY: {
+        "ResourceObject": "/Engine/EngineResources/WhiteSquareTexture.WhiteSquareTexture",
+        "DrawAs": "RoundedBox",
+        "TintColor": {
+            "SpecifiedColor": {"R": 0.08, "G": 0.12, "B": 0.2, "A": 1.0},   # dark blue, linear
+            "ColorUseRule": "UseColor_Specified",
+        },
+        "ImageSize": {"X": 1920.0, "Y": 1080.0},
+        "Margin": {"Left": 0.2, "Top": 0.2, "Right": 0.2, "Bottom": 0.2},
+        "OutlineSettings": {"CornerRadii": {"X": 16.0, "Y": 16.0, "Z": 16.0, "W": 16.0}},
+    },
+})})
+
+wbp = unreal.load_asset(WIDGET_PATH)
+unreal.BlueprintToolset.compile_blueprint(wbp, False)
 unreal.EditorAssetLibrary.save_asset(WIDGET_PATH)
 
-# Read back to verify.
-applied = unreal.WidgetService.get_brush(WIDGET_PATH, IMAGE_WIDGET, SLOT_NAME)
-print("draw_as:", applied.draw_as)
-print("tint_color:", applied.tint_color)
-print("margin:", applied.margin)
-print("corner_radius:", applied.corner_radius)
+# 3. Read back to verify.
+print("--- readback ---")
+print(vibeue.exec_tool(OT, "GetProperties", {"instance": IMG, "properties": [
+    f"{BRUSH_PROPERTY}.DrawAs",
+    f"{BRUSH_PROPERTY}.TintColor",
+    f"{BRUSH_PROPERTY}.Margin",
+    f"{BRUSH_PROPERTY}.OutlineSettings.CornerRadii",
+]}))
+
+# DrawAs values: Image, Box, Border, RoundedBox, NoDrawType.
+# For "what colour does this actually render as", use DescribeWidget with
+# bIncludeComposedColors=True and read each entry's composed_colors (linear, per interact state).

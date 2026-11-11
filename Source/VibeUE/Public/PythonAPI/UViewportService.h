@@ -129,75 +129,41 @@ struct FSceneCaptureResult
 };
 
 /**
- * Viewport Service - Python API for controlling the Unreal Editor level viewport.
+ * Viewport Service - the level-viewport writes and the off-screen capture the engine lacks.
  *
- * Provides access to all viewport camera options from the perspective dropdown menu:
- * - View type switching (Perspective, Top, Bottom, Left, Right, Front, Back)
- * - Field of View, Near/Far Clip Plane configuration
- * - Exposure settings (Game Settings / fixed EV100)
- * - Game View toggle, Cinematic Control, Camera Shakes
- * - Viewport layout switching (single pane, quad view 2x2, etc.)
- * - Camera location/rotation control
- * - Realtime rendering toggle
+ * Cut to the delta on the 5-9 branch. Use the engine for everything else:
+ *  - the camera pose: `EditorToolset.EditorAppToolset` (GetCameraTransform / SetCameraTransform,
+ *    and FocusOnActors to frame actors instead of guessing coordinates). This service never moves
+ *    the camera, except inside RestoreViewportInfo and for the duration of CaptureWithView's shot.
+ *  - SETTING the view mode: `EditorAppToolset.SetViewportViewMode`, which takes the full
+ *    EViewModeIndex and so reaches modes VibeUE's nine strings never covered.
+ *  - READING the FOV and the projection: `SceneCaptureToolset.GetActiveEditorView`
+ *    (Camera.FOV, Camera.ProjectionMode) or `ListEditorViewports`.
+ *  - show flags, including turning eye adaptation back on: `EditorAppToolset.SetShowFlag`
+ *    ("EyeAdaptation", true). SetExposure(false) does the same from here -- the old
+ *    set_exposure_game_settings was never more than an in-plugin duplicate of that one call.
  *
- * Python Usage:
- *   import unreal
+ * Two pairs are split across the two surfaces on purpose: Epic ships a view-mode writer with no
+ * reader and an FOV reader with no writer, so GetViewMode and SetFOV stay here.
  *
- *   # Get current viewport state
+ * What is left is that, plus view type, clip planes, exposure, game view, cinematic control,
+ * realtime, camera speed, layout, the main editor window state (a minimized window freezes PIE
+ * and makes captures refuse -- SetEditorWindowState("restore") fixes it), and the two capture
+ * paths. CaptureScene is the only capture that works while the editor is backgrounded: it renders
+ * a transient SceneCapture2D synchronously, where Epic's viewport captures return a stale frame
+ * because a backgrounded level viewport pumps no frames.
+ *
+ * WARNING: SetFOV and SetExposure PERSIST. The editor saves the level viewport's FOV and exposure
+ * into EditorPerProjectUserSettings.ini, so a script that changes them and exits leaves the user's
+ * viewport that way on every later launch (a capture's fixed EV100 on a dim map renders the Lit
+ * viewport black). Snapshot and restore, or let CaptureWithView do apply -> capture -> restore in
+ * one call:
+ *
  *   info = unreal.ViewportService.get_viewport_info()
- *   print(f"Type: {info.viewport_type}, FOV: {info.fov}")
- *
- *   # Switch to orthographic views
- *   unreal.ViewportService.set_viewport_type("top")
- *   unreal.ViewportService.set_viewport_type("perspective")
- *
- *   # Adjust camera properties
- *   unreal.ViewportService.set_fov(75.0)
- *   unreal.ViewportService.set_near_clip_plane(10.0)
- *   unreal.ViewportService.set_far_clip_plane(50000.0)
- *
- *   # Exposure control
- *   unreal.ViewportService.set_exposure(True, 1.0)
- *   unreal.ViewportService.set_exposure_game_settings()
- *
- *   # Game View and cinematic
- *   unreal.ViewportService.set_game_view(True)
- *   unreal.ViewportService.set_allow_cinematic_control(True)
- *
- *   # Viewport layout (single vs quad)
- *   unreal.ViewportService.set_viewport_layout("FourPanes2x2")
- *   unreal.ViewportService.set_viewport_layout("OnePane")
- *
- *   # Camera position/rotation is engine-side (this service is read-only for pose):
- *   #   read:  ViewportService.get_viewport_info().location / .rotation
- *   #   write: EditorAppToolset.SetCameraTransform via call_tool, or
- *   #          unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem)
- *   #              .set_level_viewport_camera_info(location, rotation)
- *
- *   # WARNING: set_fov / set_exposure PERSIST. The editor saves the level viewport's FOV and
- *   # exposure to EditorPerProjectUserSettings.ini, so a script that changes them and exits
- *   # leaves the user's viewport that way on every later launch (a fixed EV100 on a dim map
- *   # renders the Lit viewport black). Snapshot first and restore afterwards:
- *   info = unreal.ViewportService.get_viewport_info()
- *   unreal.ViewportService.set_exposure(True, 12.0)
- *   unreal.ViewportService.restore_viewport_info(info)
- *
- *   # Or let one call do apply -> capture -> restore. It restores on every ordinary failure or
- *   # early return; only a crash caught by the Python runner's SEH guard (an access violation
- *   # inside the draw) skips the restore. The snapshot is logged at Display first, so the
- *   # values can be put back by hand:
- *   res = unreal.ViewportService.capture_with_view(loc, rot, 1280, 720, "shot.png", 60.0, True, 10.0)
- *
- *   # Main editor window (a minimized window freezes PIE and makes capture_image refuse):
- *   print(unreal.ViewportService.get_editor_window_state())
- *   unreal.ViewportService.set_editor_window_state("restore")
- *
- * @note ViewportService owns view type, view mode, FOV, clip planes, exposure, game view,
- *       cinematic control, realtime, camera speed, and layout. It does NOT set camera
- *       position/rotation (no set_camera_location / set_camera_rotation) — use the engine
- *       path above. (issue #471) The exceptions are restore_viewport_info(), which puts the
- *       camera pose back as part of restoring a get_viewport_info() snapshot, and
- *       capture_with_view(), which moves the camera only for the duration of its shot.
+ *   try:
+ *       unreal.ViewportService.set_exposure(True, 12.0)
+ *   finally:
+ *       unreal.ViewportService.restore_viewport_info(info)
  */
 UCLASS(BlueprintType)
 class VIBEUE_API UViewportService : public UToolsetDefinition
@@ -265,7 +231,9 @@ public:
 
 
 	/**
-	 * Get the current viewport rendering mode.
+	 * Get the current viewport rendering mode. Reading it stays here because Epic ships the writer
+	 * with no reader; SET it with EditorAppToolset.SetViewportViewMode, whose EViewModeIndex is
+	 * broader than these strings, so a mode set that way may read back outside the list.
 	 *
 	 * @return Current view mode as string (e.g., "lit", "wireframe", "unlit")
 	 */
@@ -277,7 +245,12 @@ public:
 	// =================================================================
 
 	/**
-	 * Set the viewport horizontal field of view (perspective mode only).
+	 * Set the viewport horizontal field of view (perspective mode only; no effect in an ortho view).
+	 * Writing it stays here because Epic ships no FOV writer; READ it back with
+	 * SceneCaptureToolset.GetActiveEditorView (Camera.FOV) or from GetViewportInfo().fov.
+	 *
+	 * WARNING: this PERSISTS to EditorPerProjectUserSettings.ini. Snapshot with GetViewportInfo
+	 * and put it back with RestoreViewportInfo, or the user's viewport keeps this FOV forever.
 	 *
 	 * @param FOVDegrees - Field of view in degrees (typically 60-120, default 90)
 	 * @return True if FOV was set successfully
@@ -313,7 +286,14 @@ public:
 	// =================================================================
 
 	/**
-	 * Set fixed exposure mode with a specific EV100 value.
+	 * Set fixed exposure mode with a specific EV100 value, or hand the viewport back to auto
+	 * eye adaptation. SetExposure(false) is what puts auto exposure back (the removed
+	 * set_exposure_game_settings only duplicated this call); if eye adaptation itself has been
+	 * switched off, re-enable it with EditorAppToolset.SetShowFlag("EyeAdaptation", true).
+	 *
+	 * WARNING: this PERSISTS to EditorPerProjectUserSettings.ini. A capture's fixed EV100 left
+	 * behind on a dim map renders the Lit viewport black on every later launch. Snapshot with
+	 * GetViewportInfo and put it back with RestoreViewportInfo.
 	 *
 	 * @param bFixed - True for fixed exposure, false for auto eye adaptation
 	 * @param EV100 - EV100 exposure compensation value (default 1.0)
@@ -472,8 +452,7 @@ public:
 	 *
 	 * Snapshots GetViewportInfo(), applies the camera pose, the optional FOV and the optional
 	 * fixed exposure to the active level viewport, draws that viewport once (FViewport::Draw +
-	 * ReadPixels, the same path capture_image source='editor' uses) and writes a PNG. Then it
-	 * restores everything from the snapshot. The restore is scoped, so an ordinary failure or an
+	 * ReadPixels) and writes a PNG, then restores everything from the snapshot. The restore is scoped, so an ordinary failure or an
 	 * early return restores too. Caveat: an access violation inside the draw is caught by the
 	 * Python runner's SEH guard, and SEH unwinding runs no destructors, so then the shot's view
 	 * stays in the session (and is saved at the next layout save or exit). The snapshot's pose,
@@ -538,7 +517,7 @@ public:
 	/**
 	 * Read the main editor window's state.
 	 *
-	 * A minimized editor window freezes PIE (world time stays 0) and makes capture_image
+	 * A minimized editor window freezes PIE (world time stays 0) and makes CaptureWithView
 	 * refuse with "window is minimized"; SetEditorWindowState("restore") fixes that.
 	 *
 	 * @return JSON {"success": true, "is_minimized": bool, "is_maximized": bool,

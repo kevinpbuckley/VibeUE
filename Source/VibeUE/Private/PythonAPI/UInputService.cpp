@@ -1504,7 +1504,45 @@ FString UInputService::InjectAction(const FString& ActionPath, float X, float Y,
 	Injected.Add(MakeShared<FJsonValueNumber>(Z));
 	R->SetArrayField(TEXT("injected"), Injected);
 	R->SetNumberField(TEXT("pie_instance"), UsedInstance);
-	R->SetStringField(TEXT("note"), TEXT("Queued for the next input tick and released on the tick after; nothing runs while this call blocks the game thread. Read the result in a later call, two or more frames on. To hold an action use inject_action_for."));
+	R->SetStringField(TEXT("note"), TEXT("Queued for the next input tick and released on the tick after; nothing runs while this call blocks the game thread. Read the result in a later call, two or more frames on. To hold an action for a known time use the engine's InputToolset ApplyInput; to hold it until you say otherwise use start_injection."));
+	return InjectionOkJson(R);
+}
+
+FString UInputService::StartInjection(const FString& ActionPath, float X, float Y, float Z, int32 PieInstance)
+{
+	// An indefinite hold: continuous injection with no release ticker. ApplyInput covers every hold of
+	// known length, so the only thing left to add is one whose end the caller decides later.
+	FString Code, Message;
+	int32 UsedInstance = PieInstance;
+	UEnhancedInputLocalPlayerSubsystem* Subsystem = VibeUEInputInjection::ResolvePieSubsystem(PieInstance, UsedInstance, Code, Message);
+	if (!Subsystem)
+	{
+		return InjectionErrorJson(Code, Message);
+	}
+	const UInputAction* Action = VibeUEInputInjection::LoadActionForPie(ActionPath);
+	if (!Action)
+	{
+		return InjectionErrorJson(TEXT("ACTION_NOT_FOUND"), FString::Printf(TEXT("Input Action not found: %s"), *ActionPath));
+	}
+
+	const FString Id = VibeUEInputInjection::HoldId(Action, UsedInstance);
+	VibeUEInputInjection::ReleaseHeld(Id); // a second call restarts the hold rather than stacking
+
+	Subsystem->StartContinuousInputInjectionForAction(Action, VibeUEInputInjection::MakeValue(Action, X, Y, Z), TArray<UInputModifier*>(), TArray<UInputTrigger*>());
+
+	VibeUEInputInjection::FHeldInjection Held;
+	Held.Subsystem = Subsystem;
+	Held.Action = Action;
+	// Release stays default-constructed: there is no timer. ReleaseHeld checks IsValid() before
+	// removing a ticker, so an untimed hold releases cleanly through the same path.
+	VibeUEInputInjection::GHeldInjections.Add(Id, Held);
+	VibeUEInputInjection::UpdateThrottleScope();
+
+	TSharedRef<FJsonObject> R = MakeShared<FJsonObject>();
+	R->SetStringField(TEXT("action"), Action->GetName());
+	R->SetStringField(TEXT("value_type"), UEnum::GetValueAsString(Action->ValueType));
+	R->SetNumberField(TEXT("pie_instance"), UsedInstance);
+	R->SetStringField(TEXT("note"), TEXT("Held from the next input tick until stop_injection releases it. Read game state in later calls. Ending PIE drops the hold."));
 	return InjectionOkJson(R);
 }
 

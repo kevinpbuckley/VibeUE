@@ -3,27 +3,75 @@
 # create_animation.txt — Author a widget animation with a track and keyframes, then verify.
 #
 # Sample script for the umg-widgets skill. Run via execute_python.
-# Order matters: create animation -> add track on a REAL property -> add keyframes.
+#
+# UWidgetAnimation EXTENDS UMovieSceneSequence. That is the whole design:
+#   - WidgetAnimationToolset owns the UMG lifecycle + bindings
+#   - SequencerScripting's MovieScene*Extensions own tracks, sections and keys, unmodified
+# Both are BlueprintCallable, so unreal.* works directly here (no exec_tool needed).
+#
+# Order matters:
+#   CreateWidgetAnimation -> AddWidgetToAnimation -> AddTrack -> SetPropertyNameAndPath
+#   -> AddSection -> GetNumericChannels -> AddFloatKey
 import unreal
 
 WIDGET_PATH = "/Game/Blueprints/TestWidget"
 ANIM_NAME = "IntroFade"
 TARGET_WIDGET = "HeaderTitle"
-TARGET_PROPERTY = "RenderOpacity"  # real property / slot alias (e.g. RenderOpacity, Position X)
-KEYFRAMES = [(0.0, "0.0"), (0.35, "1.0")]  # (time_seconds, value_string)
+TARGET_PROPERTY = "RenderOpacity"          # a real float UPROPERTY on the widget
+TRACK_TYPE = unreal.MovieSceneFloatTrack   # float property -> float track
+LENGTH_SECONDS = 0.5
+KEYFRAMES = [(0, 0.0), (15, 1.0)]          # (display-rate FRAME, value) — frames, not seconds
 
-unreal.WidgetService.create_animation(WIDGET_PATH, ANIM_NAME)
-unreal.WidgetService.add_animation_track(WIDGET_PATH, ANIM_NAME, TARGET_WIDGET, TARGET_PROPERTY)
+WAT = unreal.WidgetAnimationToolset
+ASSET = WIDGET_PATH.rsplit("/", 1)[-1]
 
-for t, v in KEYFRAMES:
-    key = unreal.WidgetAnimKeyframe()
-    key.time = t
-    key.value = v
-    key.interpolation = "Linear"
-    unreal.WidgetService.add_keyframe(WIDGET_PATH, ANIM_NAME, TARGET_WIDGET, TARGET_PROPERTY, key)
+wbp = unreal.load_asset(WIDGET_PATH)
+target = unreal.load_object(None, f"{WIDGET_PATH}.{ASSET}:WidgetTree.{TARGET_WIDGET}")
+if wbp is None or target is None:
+    raise RuntimeError(f"missing {WIDGET_PATH} or its widget {TARGET_WIDGET}")
 
+# 1. The animation. Failure is an EMPTY info (animation is None), not an exception.
+info = WAT.create_widget_animation(wbp, ANIM_NAME, LENGTH_SECONDS)
+if info.animation is None:
+    raise RuntimeError(f"CreateWidgetAnimation('{ANIM_NAME}') failed — name collision?")
+
+# 2. Bind the widget. ObjectToBind may also be a UPanelSlot with non-null Content,
+#    which is how you animate slot properties (padding, anchors, ...).
+binding = WAT.add_widget_to_animation(wbp, info.animation, target)
+
+# 3. Track + the property it drives.
+track = unreal.MovieSceneBindingExtensions.add_track(binding, TRACK_TYPE)
+unreal.MovieScenePropertyTrackExtensions.set_property_name_and_path(
+    track, TARGET_PROPERTY, TARGET_PROPERTY)
+
+# 4. A section, then keys on its channel.
+section = unreal.MovieSceneTrackExtensions.add_section(track)
+channels = unreal.MovieSceneSectionExtensions.get_numeric_channels(section)
+if not channels:
+    raise RuntimeError("the new section has no numeric channel to key")
+
+for frame, value in KEYFRAMES:
+    unreal.MovieSceneSectionExtensions.add_float_key(
+        channels[0],
+        unreal.FrameNumber(frame),
+        value,
+        0.0,                                      # SubFrame
+        unreal.MovieSceneTimeUnit.DISPLAY_RATE,   # pass TICK_RESOLUTION for tick frames
+        unreal.MovieSceneKeyInterpolation.LINEAR,
+    )
+
+unreal.BlueprintToolset.compile_blueprint(wbp, False)
 unreal.EditorAssetLibrary.save_asset(WIDGET_PATH)
 
-# Verify the animation exists with at least one track.
-for anim in unreal.WidgetService.list_animations(WIDGET_PATH):
-    print(anim.animation_name, "duration:", anim.duration, "tracks:", anim.track_count)
+# 5. Verify: the animation exists with at least one binding, and the keys landed.
+for a in WAT.list_widget_animations(wbp):
+    print(a.animation_name, "len:", a.length_seconds, "bindings:", a.binding_count)
+print("channels:", unreal.MovieSceneSectionExtensions.get_channel_names(section))
+print("keys:", unreal.MovieSceneSectionExtensions.get_channel_keys(section, ""))
+
+# Other lifecycle tools on WidgetAnimationToolset:
+#   find_widget_animation / rename_widget_animation / set_widget_animation_display_label
+#   set_widget_animation_length / remove_widget_animation
+#   get_widget_animation_bindings / remove_widget_binding(animation, guid)
+# Bool channels take add_bool_key(section, channel_name, frame, value) — section + channel NAME.
+# Double-precision channels take add_double_key(channel, frame, value, ...).

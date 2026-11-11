@@ -118,13 +118,27 @@ struct FNiagaraScratchConnectionInfo
 };
 
 /**
- * Niagara Scratch Pad Service - Python API for authoring scratch-pad module graphs.
+ * Niagara Scratch Pad Service - the inside of a scratch-pad module's node graph.
  *
- * The existing NiagaraEmitterService can add/list/configure stack *modules*, but it cannot
- * reach inside a scratch-pad module to build node-based logic or set Custom HLSL. This service
- * fills that gap: it resolves a stack module to its underlying scratch UNiagaraScript, then
- * lets you create nodes, set Custom HLSL, add typed pins, and wire pins together - the same
- * operations MaterialNodeService provides for material graphs.
+ * Cut to the delta on the 5-9 branch. Use the engine's `NiagaraToolsets` for everything else:
+ *  - systems, emitters, stack modules, renderers: CreateNiagaraSystem / AddEmitter / RemoveEmitter /
+ *    AddModule / RemoveModule / SetModuleEnabled / AddRenderer / RemoveRenderer
+ *  - module and stack input VALUES, colours on InitializeParticle or Scale Color included:
+ *    GetStackInputData / SetStackInputData / GetStackInputSchema / GetModuleSchema
+ *  - emitter and system data, sim target, user variables: GetEmitterData / SetEmitterData /
+ *    GetSystemData / SetSystemData / AddUserVariables / GetUserVariables
+ *  - compile state, stack issues and their fixes: GetSystemCompileState / GetStackIssues /
+ *    ApplyStackIssueFix
+ *  - ColorFromCurve KEYFRAMES, which the stack-input API cannot reach either, live on VibeUE's
+ *    `NiagaraEmitterService` (get_color_curve_keys / set_color_curve_keys / shift_color_hue)
+ *
+ * What is left is the one thing none of those can do: the engine's stack API sets a module's
+ * inputs, it does not reach into the module's own node graph. This resolves a stack module to its
+ * scratch UNiagaraScript and then creates nodes, sets Custom HLSL, declares typed pins and module
+ * inputs/outputs, and wires pins together -- what MaterialNodeService does for material graphs.
+ *
+ * Every mutation writes the scratch script asset directly, with no open editor. Call apply_changes()
+ * once at the end to notify the editor, recompile and save.
  *
  * Typical workflow (build a Custom-HLSL splat module):
  *   import unreal
@@ -143,10 +157,6 @@ struct FNiagaraScratchConnectionInfo
  *   unreal.NiagaraScratchPadService.connect_pins(S, E, mod, mapget_id, "Module.TireRadius", hlsl.node_id, "TireRadius")
  *   # 5. Apply + compile
  *   unreal.NiagaraScratchPadService.apply_changes(S)
- *
- * All graph mutations operate on the scratch script asset directly (no open editor required).
- * Call apply_changes() once at the end to notify the editor, recompile, and save.
- * Discover method signatures with discover_python_class('unreal.NiagaraScratchPadService').
  */
 UCLASS(BlueprintType)
 class VIBEUE_API UNiagaraScratchPadService : public UToolsetDefinition

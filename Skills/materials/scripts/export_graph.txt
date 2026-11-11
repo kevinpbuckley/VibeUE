@@ -1,22 +1,69 @@
 # Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
-# export_graph.txt — Export and inspect a material's node graph (read before modifying).
+# export_graph.txt — Dump and inspect a material's node graph (read before modifying).
 #
 # Sample script for the materials skill. Run via execute_python.
-# ALWAYS export+review an existing material before adding/reconnecting nodes.
-import unreal, json
-ms, mns = unreal.MaterialService, unreal.MaterialNodeService
+# ALWAYS dump + review an existing material before adding or reconnecting nodes.
+#
+# UE 5.9: export_material_graph is GONE along with the rest of MaterialNodeService's graph API.
+# The equivalent is three Epic reads — GetExpressions, GetExpressionInputs, GetPropertyInput —
+# plus ObjectToolset.GetProperties for node fields. The result is live {refPath} handles instead
+# of JSON ids, which is better: you can wire with them directly.
+#
+# From an MCP client these are call_tool(tool_name=..., toolset_name=..., arguments=...);
+# inside execute_python they are vibeue.exec_tool(toolset, tool, args).
+import json, unreal, vibeue
+
+MT = "EditorToolset.MaterialToolset"
+OT = "EditorToolset.ObjectToolset"
 
 PATH = "/Game/Materials/M_Character"
+OUTPUTS = ["MP_BaseColor", "MP_Metallic", "MP_Specular", "MP_Roughness", "MP_EmissiveColor",
+           "MP_Normal", "MP_Opacity", "MP_OpacityMask", "MP_WorldPositionOffset",
+           "MP_AmbientOcclusion"]
 
-info = ms.get_material_info(PATH)
-print(f"blend={info.blend_mode} shading={info.shading_model}")
 
-graph = json.loads(mns.export_material_graph(PATH))
-print(f"expressions={len(graph['expressions'])} connections={len(graph['connections'])} "
-      f"outputs={len(graph['output_connections'])}")
-for e in graph["expressions"]:
-    label = e.get("parameter_name") or e["class"]
-    print(f"  [{e['id']}] {e['class']} ({e['pos_x']},{e['pos_y']}) {label}")
-for oc in graph["output_connections"]:
-    print(f"  output '{oc['property']}' <- {oc['expression_id']}")
+def ref(p):
+    tail = p.rsplit("/", 1)[-1]
+    return {"refPath": p if "." in tail else "{}.{}".format(p, tail)}
+
+
+mat = ref(PATH)
+
+# Material-level render state.
+print("material:", vibeue.exec_tool(OT, "GetProperties", {
+    "instance": mat,
+    "properties": ["BlendMode", "ShadingModel", "TwoSided", "MaterialDomain",
+                   "OpacityMaskClipValue"]}))
+
+# Every node. The class is visible in the refPath tail (".../M_X.M_X:MaterialExpressionAdd_0").
+exprs = vibeue.exec_tool(MT, "GetExpressions", {"materialOrFunction": mat})
+print("expressions:", len(exprs))
+
+for e in exprs:
+    label = e["refPath"].rsplit(":", 1)[-1]
+    props = vibeue.exec_tool(OT, "GetProperties", {
+        "instance": e, "properties": ["ParameterName", "Group", "MaterialExpressionEditorX",
+                                      "MaterialExpressionEditorY"]})
+    if isinstance(props, str):
+        props = json.loads(props)
+    # Live wiring, one entry per input pin. "expression" is null for an unwired pin, and the pin
+    # names here are exactly what ConnectExpressions accepts as toInputName.
+    wiring = vibeue.exec_tool(MT, "GetExpressionInputs",
+                              {"materialOrFunction": mat, "expression": e})
+    wired = [(w["inputName"], (w["expression"] or {}).get("refPath", "").rsplit(":", 1)[-1])
+             for w in wiring if w.get("expression")]
+    print("  {} {} inputs={} wired={}".format(label, props,
+                                              [w["inputName"] for w in wiring], wired))
+
+# What drives each material output today — read this before overwriting one.
+for prop in OUTPUTS:
+    src = vibeue.exec_tool(MT, "GetPropertyInput", {"material": mat, "materialProperty": prop})
+    if src and src.get("expression"):
+        print("  output {} <- {} ({})".format(prop,
+                                              src["expression"]["refPath"].rsplit(":", 1)[-1],
+                                              src.get("outputName") or "<default>"))
+
+# Post-compile truth: a texturing material whose num_pixel_texture_samples is 0 is broken.
+print("groups:", vibeue.exec_tool(MT, "ListParameterGroups", {"materialOrFunction": mat}))
+print("stats:", vibeue.exec_tool(MT, "GetStatistics", {"material": mat}))

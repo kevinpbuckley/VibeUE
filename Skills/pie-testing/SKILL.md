@@ -12,6 +12,11 @@ unreal_classes:
   - FRequestPlaySessionParams
 engine_toolsets:
   - EditorToolset.EditorAppToolset
+  - AutomationTestToolset
+  - ConsoleToolset
+  - InputToolset
+  - SceneCaptureToolset
+  - SlateInspectorToolset
 keywords:
   - pie
   - play in editor
@@ -56,88 +61,70 @@ call_tool(toolset="EditorToolset.EditorAppToolset", tool="StopPIE")
 
 ## Standard Test Loop
 
-For repeatable multi-step verification, prefer `WorkflowService.run_scenario()` over hand-composing
-the loop. It queues a state machine on editor ticks, waits for actual PIE readiness, scopes log
-assertions to the scenario start, uses VibeUE's focus-free input injection, captures evidence, and
-always tears PIE down on pass, failure, or cancellation. Poll `get_scenario(id)` until its `status`
-is `passed`, `failed`, `cancelled`, `smoke_passed`, or `stale`:
+**`WorkflowService.run_scenario` / `get_scenario` / `cancel_scenario` are gone**, and with them the
+declarative scenario spec: the preflight block, the step list, the assertion steps, the dependency
+hashing and the `stale` / `verifiedCurrent` freshness verdicts. Nothing replaces the spec. **You
+compose the loop yourself** from the calls below, which means you now own what the scenario engine
+used to guarantee for you:
 
-```python
-import json, unreal
-spec = {
-  "name": "secondary fire consumes ammo",
-  "preflight": {"save_dirty_assets": True, "compile_blueprints": ["/Game/Weapons/BP_Rifle"]},
-  "steps": [
-    {"action":"start_pie"},
-    {"action":"wait_for_pie", "timeout_seconds":30},
-    {"action":"inject_action", "path":"/Game/Input/IA_Fire_Secondary"},
-    {"action":"wait", "seconds":0.25},
-    {"action":"assert_log", "contains":"SecondaryFire"},
-    {"action":"capture_game", "name":"after-secondary-fire"}
-  ],
-  "teardown": {"stop_pie": True}
-}
-queued = json.loads(unreal.WorkflowService.run_scenario(json.dumps(spec)))
-# Poll in separate tool calls; do not block the editor game thread with time.sleep.
-```
+- wait for **real** PIE readiness (poll `IsPIERunning` from a *later* call — start is async),
+- scope log reads to this run yourself (nothing marks where your run began any more),
+- declare and actually evaluate at least one assertion — input + wait + screenshot steps verify
+  **nothing**; say what you expected, what you read, and in what unit,
+- tear PIE down on every path, including failure and abandonment,
+- and treat a pass as describing only the build you just ran: nothing hashes your inputs or tells
+  you a previous pass went stale. Save and compile first, and re-run after every edit.
 
-Use the lower-level primitives below for interactive investigation, one-off probes, or actions not in
-the scenario schema. Never spin/sleep inside one editor Python call while waiting for a scenario.
+There are two shapes, and they are not interchangeable.
 
-### Assertions and evidence freshness
+### 1. An authored automation test — run / poll / cancel is engine-native
 
-A normal scenario must declare at least one `assert_log`, `python_assert`, or
-`python_assert_number` step. Completing input/wait/capture steps alone does not verify gameplay.
-For a deliberate boot-only check, set `"smoke": true`: an assertion-free run finishes with
-`status="smoke_passed"` and `passed=false`. Pollers must treat `smoke_passed` and `stale` as terminal
-alongside `passed`, `failed`, and `cancelled`.
+If the check lives in a C++ or Python automation test, Epic's **`AutomationTestToolset`** owns the
+async run/poll/cancel shape that `run_scenario` / `get_scenario` / `cancel_scenario` used to provide.
+All of it is `call_tool`:
 
-`python_assert` compares the Python result with a required string `expected`.
-`python_assert_number` evaluates an expression and requires a finite numeric result:
+| Need | Call |
+|---|---|
+| Discover the test list — **required once** before `ListTests`/`RunTests`, and it takes seconds | `AutomationTestToolset.DiscoverTests` |
+| Find tests by name or tag | `AutomationTestToolset.ListTests` |
+| Start a run (async; `RunTestsByFilter` for a large batch) | `AutomationTestToolset.RunTests` |
+| Poll it — the `get_scenario` equivalent | `AutomationTestToolset.GetTestStatus` |
+| Read per-test results once it finishes | `AutomationTestToolset.GetTestResults` |
+| Cancel — the `cancel_scenario` equivalent | `AutomationTestToolset.StopTests` |
 
-```json
-{"action":"python_assert_number", "expression":"0.1 + 0.2",
- "operator":"eq", "expected":0.3, "tolerance":0.00001}
-```
+Poll `GetTestStatus` in **separate** tool calls. Never spin or `time.sleep()` on the game thread
+waiting for a run: the editor does not tick inside your call, so the status can never change.
 
-Operators are `eq`, `lt`, `le`, `gt`, and `ge`; nonnegative `tolerance` is supported only for `eq`
-and defaults to zero. For gameplay, use an expression reading a live actor/property instead of
-the arithmetic example. Expected/actual values are recorded per assertion; an expression error,
-nonnumeric result, or unmet comparison fails the scenario. Do not cache PIE objects in globals.
-If an `assert_log` supplies both `contains` and `not_contains`, both conditions must hold.
-Log assertions use the active log (including `-abslog` overrides); unavailable or truncated logs
-fail the assertion, including negative checks.
-Reports include `assertionsDeclared` and `assertionsEvaluated`, including failed assertions.
+### 2. An ad-hoc runtime check — hand-compose it
 
-To detect stale evidence, add a top-level `dependencies` array of actual file paths relative to the
-project directory (or absolute paths), for example `Content/Ships/BP_Ship.uasset` and relevant
-source/config files. Dependencies must exist. VibeUE hashes their contents after preflight,
-records the scenario hash and engine version, and automatically tracks its plugin DLL when
-dependencies are provided. It does not persist the submitted Python source as provenance.
+Each old scenario step maps to a call you now make yourself. Note the style column: Epic's toolsets
+are `call_tool`; VibeUE services are `unreal.<Service>.<method>()` inside `execute_python`.
 
-`get_scenario()` checks those hashes again for completed reports, including reports loaded from
-disk. A changed/missing file or changed engine version produces `validity="stale"`; a historical
-pass then returns `status="stale"`, `passed=false`, and `historicalPassed=true`.
-`verifiedCurrent=true` requires passing assertions and unchanged tracked inputs. Without
-dependencies, `validity="untracked"` and `verifiedCurrent=false`, even if assertions passed.
-Freshness covers only explicitly listed files plus the plugin DLL: it does not infer transitive
-asset dependencies, detect unsaved edits, or prove a newly changed project binary is loaded.
-Save and compile first, list all relevant inputs, and rerun after changes. Hashes are freshness
-checks, not tamper-proof attestations. Large dependency sets increase polling cost.
+| Old scenario step | What to call now |
+|---|---|
+| `start_pie` / `stop_pie` / `wait_for_pie` | `call_tool` → `EditorAppToolset.StartPIE` / `StopPIE` / `IsPIERunning` (poll `IsPIERunning` from a later call) |
+| `inject_action` / `inject_key` | `call_tool` → `InputToolset.ApplyInput` (`Entries` + `DurationSeconds`). VibeUE keeps `unreal.InputService.inject_action(...)` / `stop_injection(...)` in `execute_python` for an **indefinite** hold released later |
+| `wait` | a later tool call, or a top-level `await asyncio.sleep(...)` in one `execute_python` script |
+| `assert_log` | `call_tool` → `ConsoleToolset.LogsToolset.GetLogEntries` (it requires a `pattern`). Read the log before the run and compare, since nothing scopes it to your run now |
+| `capture_game` | `call_tool` → `SceneCaptureToolset.CaptureGameViewport` |
+| `console_command` | `call_tool` → `ConsoleToolset.RunConsoleCommand`, or `unreal.PIEActorService.console_command(selector, cmd)` when it must run in one specific PIE world |
+| `python_assert` / `python_assert_number` | your own comparison inside Epic's `execute_python`: read the live value, compare it, and print expected *and* actual as the evidence |
+| `preflight: {save_dirty_assets, compile_blueprints}` | `unreal.EditorLoadingAndSavingUtils.save_dirty_packages(True, True)` and `unreal.BlueprintService.compile_blueprint(path)` **before** you start PIE |
+| `dependencies` freshness hashing | nothing — no tool hashes inputs or reports `stale`. Save, compile, re-run after changes |
+| the run report under `Saved/VibeUE` | write your own: `FileSystemToolset.WriteTextFile` / `ReadTextFile` (it mounts `/Saved`), plus `UndoHistoryToolset.GetRecentTransactions` / `GetTransactionDetails` for which assets the run actually touched |
 
-These verification improvements were inspired by
-[PageMastr/Gatekeeper](https://github.com/PageMastr/Gatekeeper), particularly its assertion coverage
-and source-bound verdicts. The VibeUE implementation is independently written for Unreal.
+The loop itself, in separate calls:
 
 ```
 # 1. Make sure you're starting from a clean state
 call_tool(toolset="EditorToolset.EditorAppToolset", tool="StopPIE")   # no-op if not running
 
-# 2. Start the session (uses the editor's current PIE settings — default map, viewport)
+# 2. Save + compile what you are about to test (execute_python), THEN start the session
+#    (StartPIE uses the editor's current PIE settings — default map, viewport)
 call_tool(toolset="EditorToolset.EditorAppToolset", tool="StartPIE")
 
-# 3. Let the test run / inspect log output (LogsToolset) / interact via other services
-# 4. Stop when done
+# 3. A LATER call: confirm IsPIERunning, then drive input / read logs / capture / assert
+# 4. Stop when done — on failure too
 call_tool(toolset="EditorToolset.EditorAppToolset", tool="StopPIE")
 ```
 
@@ -173,8 +160,8 @@ assert unreal.EngineSettingsService.get_pie_settings().net_mode == "Client"
 
 ## Validating widgets in PIE — `WidgetService`
 
-VibeUE keeps a small set of widget-in-PIE helpers on `unreal.WidgetService` (run them via
-`execute_python`). These spawn and inspect live widget instances once PIE is running:
+VibeUE keeps two widget-in-PIE helpers on `unreal.WidgetService` (run them via `execute_python`).
+They spawn and tear down a live widget instance once PIE is running:
 
 ```python
 import unreal
@@ -182,15 +169,21 @@ import unreal
 # After StartPIE, spawn a widget instance into the running viewport
 handle = unreal.WidgetService.spawn_widget_in_pie("/Game/UI/WBP_HUD", 0)
 
-# Read a live property off the running instance
-val = unreal.WidgetService.get_live_property(handle, "HealthText", "Text")
-
 # Tear it down before stopping PIE
 unreal.WidgetService.remove_widget_from_pie(handle)
 ```
 
-`unreal.WidgetService.is_pie_running()` also still exists and is handy from inside Python; for
-tool-level control prefer the engine `EditorAppToolset` actions above.
+**Reading a live widget property is engine-native now.** `WidgetService.get_live_property` was
+removed; walk Slate → UMG → properties with `call_tool` instead:
+
+1. `SlateInspectorToolset.Snapshot(ref)` — the live Slate tree under that ref, to find the widget.
+2. `SlateInspectorToolset.GetUMGInfo(ref)` — the UMG `UWidget` behind that Slate ref, plus a live
+   handle to it.
+3. `ObjectToolset.GetProperties` on that handle — the actual property values (`Text`, `Visibility`,
+   whatever you need).
+
+`WidgetService.is_pie_running` / `start_pie` / `stop_pie` are also gone: PIE state and control are
+`EditorAppToolset.IsPIERunning` / `StartPIE` / `StopPIE` via `call_tool`, as above.
 
 ## Spawning test actors in PIE — `PIEActorService`
 
@@ -355,18 +348,22 @@ inject input directly; no OS window focus needed:
 ```python
 import unreal
 
-# Fire an Enhanced Input action once: QUEUED for the next input tick, released on the tick after.
-# X/Y/Z map onto the action's value type; Boolean uses X != 0.
+# VibeUE keeps exactly two of these, for an INDEFINITE hold you release later:
+# hold an Enhanced Input action down (QUEUED for the next input tick; X/Y/Z map onto the action's
+# value type, Boolean uses X != 0) ...
 print(unreal.InputService.inject_action("/Game/Input/IA_Fire_Secondary"))
+# ... and release it, in a LATER call, whenever the test says to:
+print(unreal.InputService.stop_injection("/Game/Input/IA_Fire_Secondary"))
+```
 
-# Hold it for 1.5 s of real time, then release (returns at once; stop_injection releases early).
-# inject_action_for is gone: use Epic InputToolset.ApplyInput (entries + DurationSeconds)
-# call_tool ApplyInput {"Entries": [{"Action": <IA path>, "Value": [1,0,0]}], "DurationSeconds": 1.0}
+**Every bounded press or hold is Epic's now** — `inject_action_for` and `inject_key` are gone. Use
+`InputToolset.ApplyInput` via `call_tool`, which takes `Entries` plus a `DurationSeconds`
+(`0` = a tap: down then up; `> 0` = held for that long, then released):
 
-# Or send a raw key to the game viewport through Slate ("tap" = down+up; also "down"/"up",
-# and "hold" with a duration: ApplyInput with DurationSeconds > 0
-# inject_key is no longer a tool: Epic InputToolset.ApplyInput takes a legacy Key entry
-# call_tool ApplyInput {"Entries": [{"Key": "SpaceBar", "Value": [1,0,0]}], "DurationSeconds": 0}
+```
+call_tool ApplyInput {"Entries": [{"Action": "/Game/Input/IA_Block", "Value": [1,0,0]}],
+                      "DurationSeconds": 1.5}
+call_tool ApplyInput {"Entries": [{"Key": "SpaceBar", "Value": [1,0,0]}], "DurationSeconds": 0}
 ```
 
 A Python call blocks the game thread, so PIE does not tick while it runs: inject in one call and
@@ -465,7 +462,7 @@ unreal.PerformanceService.set_background_throttling(True)    # after
 - A two-client run is Standalone by default: both worlds read `ROLE_AUTHORITY`, so confirm `get_editor_property("role")` (or `vibeue.role(actor)`) before claiming a host/client result. Read and set the PIE net mode with `get_pie_settings`/`set_pie_settings` (dedicated server = PlayNetMode 2).
 - A Server RPC invoked from Python runs LOCALLY and is silently dropped; never Start/StopFire a client world's weapon from Python (it crashes the editor). Move a client pawn through its server copy; control rotation is client-owned.
 - `slomo 0.1` stretches a 2 s timer to 20 s of wall time so a transient state survives between calls; restore `slomo 1` after. PIE time restarts each run.
-- Never leave an automation test run queued before starting PIE — it wakes on PIE activity and tears the session down.
+- Never leave an automation test run queued before starting PIE — it wakes on PIE activity and tears the session down. That includes a run started with `AutomationTestToolset.RunTests`: `StopTests` it (and confirm with `GetTestStatus`) before you drive your own PIE session.
 - Don't hand-roll waits with `time.sleep()` or your own post-tick callback. `vibeue.wait_for(pred, timeout_s)` and `vibeue.wait_for_players(n)` poll between calls against a wall-clock deadline (PIE world time restarts each session), and `vibeue.cancel_all_waits()` purges their handles. `with vibeue.gate_session(clients=3, net_mode="ListenServer"):` turns background throttling off, sets the PIE settings and restores both afterwards. See the `vibeue` skill.
 - Globals in the `execute_python` script namespace persist across calls (it is a separate dict from `sys.modules["__main__"]`, so `import __main__` does not see them): use them to collect async tool results (`vibeue.exec_tool_async`/`collect_tool_result`), and release PIE object references (`vibeue.release_globals`) before `StopPIE`.
 

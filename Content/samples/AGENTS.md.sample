@@ -13,11 +13,28 @@ into the engine's `ToolsetRegistry` and are reachable through the MCP tools you 
 - C++ work is not complete without `lastBuild.status == "succeeded"` from a real build. A skipped,
   missing, running, failed, or stale result is not verification. Use the plugin's
   `BuildAndLaunchGame.ps1`/`.sh` when Live Coding is unsafe.
-- Wrap unattended mutations with `start_run(name, metadata)` and `finish_run(run_id, outcome,
-  summary)`. Attach scenario, build, and bulk-report artifacts; affected UObject packages are
-  deduplicated automatically while the run is active.
-- Use `run_scenario(spec_json)` for repeatable PIE input/assert/evidence loops and poll
-  `get_scenario(id)` from separate calls. Use the `bulk-maintenance` skill for dry-run-first batches.
+  `get_environment()` is the **only** `WorkflowService` tool left — nothing in Epic's toolsets
+  reports engine version, build configuration, toolchain location or build staleness.
+- **The run journal is gone** (`start_run`, `add_run_note`, `attach_run_artifact`, `finish_run`,
+  `get_run`, `list_runs`, `delete_run`). Keep your own record of an unattended run with
+  `FileSystemToolset.WriteTextFile` / `ReadTextFile` / `EditTextByAnchor` / `ListDirectory` /
+  `DeleteFile` (it mounts `/Saved`), and get affected-asset provenance from
+  `UndoHistoryToolset.GetRecentTransactions` / `GetTransactionDetails` /
+  `GetTransactionRecencyIndex` / `SearchTransactions`. Nothing deduplicates touched packages for you.
+- **PIE scenarios are gone** (`run_scenario`, `get_scenario`, `cancel_scenario`). For an authored
+  automation test, the async run/poll/cancel shape is `AutomationTestToolset.DiscoverTests` →
+  `RunTests` → `GetTestStatus` → `GetTestResults` / `StopTests`. For an ad-hoc runtime check, compose
+  the loop yourself (`EditorAppToolset` for PIE, `InputToolset.ApplyInput` for input,
+  `ConsoleToolset.LogsToolset.GetLogEntries` for logs, `SceneCaptureToolset.CaptureGameViewport` for
+  evidence, your own asserts in `execute_python`) — see the `pie-testing` skill.
+- **Bulk maintenance is gone** (`run_bulk_maintenance`, and the `bulk-maintenance` skill with it).
+  The operations are engine-native — `BlueprintToolset.AddInterface` / `RemoveInterface` /
+  `CompileBlueprint` / `SetVariableTooltip` / `SetVariableCategory` / `SetVariableInstanceEditable` /
+  `SetVariableReadOnly`, and `AssetToolset.Move` / `FixUpRedirectors` / `GetReferencers` /
+  `GetDependencies` / `FindAssets` — but the batching, dry run, path scoping and rollback were
+  VibeUE's and are **now your job**: iterate one target at a time, check each with
+  `GetReferencers`/`GetDependencies`/`Exists` *before* writing, never feed a search result straight
+  into a mutation, and log as you go. Nothing resumes or rolls back a half-finished batch.
 
 ---
 
@@ -86,11 +103,20 @@ renders. `CaptureActiveEditorView` / `CaptureEditorViewport` capture the scene w
 gone — 5.9 covers every source it had, including the UMG HUD it was built for.
 
 **VibeUE services (call from Python inside `execute_python`):** `unreal.<Name>Service.<method>()`
-— Blueprint, BlueprintGraph (via BlueprintService), Material(+Node), Widget, Skeleton, AnimSequence,
-AnimMontage, AnimGraph, Landscape(+Material), Foliage, SoundCue, Niagara(+Emitter, +ScratchPad),
-StateTree, Input, UVMapping, RuntimeVirtualTexture, MapBlockout, CustomizableObject,
-Engine/ProjectSettings, **Performance** (`unreal.PerformanceService.frame_timing()`), **PIEActor**
+— StateTree, AnimSequence, Landscape(+Material), AnimMontage, AnimGraph, SoundCue, Input, Skeleton,
+UVMapping, NiagaraScratchPad, Blueprint (+BlueprintGraph via BlueprintService), MapBlockout,
+CustomizableObject, Viewport, Foliage, Widget, Transaction, RuntimeVirtualTexture, Actor,
+NiagaraEmitter, AssetDiscovery, Blackboard, EnvQuery, GameplayTag, MaterialNode, PythonTools,
+BehaviorTree, Workflow (`get_environment` only), **Performance** (`force_hitch`, `analyse`,
+standalone capture, background throttling), **PIEActor**
 (`unreal.PIEActorService.spawn_actor(...)` -- spawn/destroy transient actors in a running PIE world).
+
+**Deleted services — do not call them, and do not expect a VibeUE equivalent:** `MaterialService`
+(→ Epic `MaterialToolset` / `MaterialInstanceToolset` / `ObjectToolset` / `AssetToolset`),
+`ProjectSettingsService` and `EngineSettingsService` (→ Epic `ConfigSettingsToolset`; only the
+Python-only `get_pie_settings` / `set_pie_settings` helpers remain), `FabService`, `NiagaraService`
+(→ Epic `NiagaraToolsets`), `MetaSoundService` (→ Epic `MetaSoundToolset`) and `EnumStructService`
+(→ Epic `UserDefinedEnumToolset` / `UserDefinedStructToolset`).
 
 Several services are now **one or two tools each**, because 5.9 absorbed the rest. Reach for the
 engine toolset first and use these only for the named delta:
@@ -105,6 +131,8 @@ engine toolset first and use these only for the named delta:
 | `TransactionService` | undo/redo stepping only | `UndoHistoryToolset` + `unreal.ScopedEditorTransaction` |
 | `GameplayTagService` | `request_tag`, `request_tag_container` | `GameplayTagsToolset` |
 | `NiagaraEmitterService` | the three colour-curve tools | `NiagaraToolsets` (57 tools) |
+| `MaterialNodeService` | `create_function_call`, `create_collection_parameter` | `MaterialToolset` / `MaterialInstanceToolset` / `ObjectToolset` (`MaterialService` is deleted) |
+| `WorkflowService` | `get_environment` — engine version, build config, toolchain, build staleness | nothing: Epic reports none of it. `run_scenario` → `AutomationTestToolset`; the run journal → `FileSystemToolset` + `UndoHistoryToolset`; `run_bulk_maintenance` → `BlueprintToolset` / `AssetToolset`, batched by you |
 
 These trimmed services keep only what the engine lacks -- for plain asset/actor/blueprint
 basics the engine's own tools may be simpler (below).
@@ -150,7 +178,7 @@ is ready.
 
 ## 3. Skills — native `AgentSkill` (lazy domain knowledge)
 
-VibeUE's 35 skill packs are **Markdown agent skills discovered natively by UE 5.9**
+VibeUE's 32 skill packs are **Markdown agent skills discovered natively by UE 5.9**
 (`ToolsetRegistry` MarkdownAgentSkills reads `<Plugin>/Skills/**/SKILL.md`) and served by the
 engine's `AgentSkillToolset` alongside the engine's own skills. Skills tell you **what to do and
 why**; they do **not** replace discovery of exact signatures.
@@ -257,15 +285,23 @@ and finish with `unreal.ViewportService.restore_viewport_info(info)`, or use
 
 ## 7. Diagnose performance
 
-`PerformanceService` is VibeUE's net-new capability (the engine has no perf tooling). **STEP 0 is
-always CPU-bound vs GPU-bound** — optimising the GPU does nothing on a CPU-bound frame:
-```python
-import unreal, json
-print(unreal.PerformanceService.frame_timing())            # game/render/gpu ms + bound verdict — RUN FIRST
-unreal.PerformanceService.start_trace("cap", "")           # Unreal Insights trace
+Performance work is now **split** between Epic and VibeUE, and the frame-timing read has moved:
+`PerformanceService.frame_timing`, the budget gate, the trace-control tools and the HTML report are
+**gone**. **STEP 0 is still CPU-bound vs GPU-bound** — optimising the GPU does nothing on a
+CPU-bound frame:
+```
+# RUN FIRST: game/render/GPU ms. Epic's, via call_tool — judge the bound yourself from the numbers.
+call_tool PerfToolset.StatsToolset.GetFrameTimings
+# Trace control is console commands now (start_trace / stop_trace are gone):
+call_tool ConsoleToolset.RunConsoleCommand {"Command": "Trace.Start cpu,gpu,frame"}
 # … reproduce the workload (ideally under PIE / standalone) …
-unreal.PerformanceService.stop_trace()
+call_tool ConsoleToolset.RunConsoleCommand {"Command": "Trace.Stop"}
+```
+```python
+import unreal
+# Still VibeUE's: analysing a capture, forcing a hitch to validate a verdict, standalone capture.
 print(unreal.PerformanceService.analyse("both", ""))       # frame stats + worst frames + log hitches
+print(unreal.PerformanceService.force_hitch("game", 250.0, 1))
 ```
 Load the `profiling` and `frame-rate` skills for the full drill-down.
 
@@ -277,16 +313,22 @@ unreal.PerformanceService.set_background_throttling(False)   # full rate while u
 # ... run your PIE verification ...
 unreal.PerformanceService.set_background_throttling(True)    # restore when done
 ```
-To drive gameplay in PIE without OS focus or input-asset remapping:
+To drive gameplay in PIE without OS focus or input-asset remapping, **every bounded press or hold is
+Epic's** (`inject_action_for` and `inject_key` are gone):
+```
+call_tool InputToolset.ApplyInput {"Entries": [{"Action": "/Game/Input/IA_Block", "Value": [1,0,0]}],
+                                   "DurationSeconds": 1.5}       # 0 = a tap (down then up)
+call_tool InputToolset.ApplyInput {"Entries": [{"Key": "SpaceBar", "Value": [1,0,0]}], "DurationSeconds": 0}
+```
+VibeUE keeps exactly two input-injection calls, for an **indefinite** hold released later:
 `unreal.InputService.inject_action("/Game/Input/IA_Fire")` (Enhanced Input, queued for the next input
-tick: read the result in a later call), `inject_action_for("/Game/Input/IA_Block", 1.5)` to hold an
-action (`stop_injection` releases early), and `unreal.InputService.inject_key("SpaceBar")` (raw key via
-Slate; `"hold"` with a duration holds it). Holds keep the editor off its background frame rate and end
-with PIE. The action calls take `pie_instance` to pick the PIE world (-1 = the first PIE world with a
-local player). Use them instead of a slate-tick loop around `inject_input_vector_for_action`.
+tick: read the result in a later call) and `unreal.InputService.stop_injection("/Game/Input/IA_Fire")`.
+Holds keep the editor off its background frame rate and end with PIE. Both take `pie_instance` to
+pick the PIE world (-1 = the first PIE world with a local player). Never hand-roll a slate-tick loop
+around `inject_input_vector_for_action`.
 PIE net mode and client count: `unreal.EngineSettingsService.set_pie_settings("ListenServer", 3, True)`
 (net mode, clients 1-10, run under one process; it is saved to the user's ini), read back with
-`get_pie_settings()`.
+`get_pie_settings()` — these two are **Python-only helpers**, not MCP tools.
 
 For gate harnesses, `import vibeue` adds `wait_for` / `wait_for_players` (non-blocking waits: never
 `time.sleep()` on the game thread, it freezes every PIE net driver), `gate_session` (throttling + PIE

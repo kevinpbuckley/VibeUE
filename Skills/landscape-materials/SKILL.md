@@ -4,8 +4,11 @@ display_name: Landscape Material System
 description: Create landscape materials with layer blending, texture setup, and layer info objects (LandscapeMaterialService). Use when the user asks to build a landscape/terrain material, set up paint layers (grass/rock/dirt), create layer info objects, add a grass output, or assign a material to a landscape. For production master-material+RVT systems, load landscape-auto-material.
 vibeue_classes:
   - LandscapeMaterialService
-  - MaterialService
   - MaterialNodeService
+engine_toolsets:
+  - EditorToolset.MaterialToolset
+  - EditorToolset.ObjectToolset
+  - EditorToolset.AssetToolset
 unreal_classes:
   - MaterialExpressionLandscapeLayerBlend
   - MaterialExpressionLandscapeLayerWeight
@@ -42,33 +45,45 @@ If you need material functions, Runtime Virtual Textures, or the master-material
 
 Before modifying an **existing** landscape material, you **MUST** export and review its current graph:
 
-```python
-import unreal, json
+Both reads are Epic's now — `MaterialService.get_material_info` and
+`MaterialNodeService.export_material_graph` are gone, and there is no single JSON graph dump. Walk it
+with `call_tool` (`refPath` is the full object path, `/Game/Materials/M_Terrain.M_Terrain`):
 
-path = "/Game/Materials/M_Terrain"
+```
+# Step 1: the material's own properties (blend mode, shading model, two-sided, ...)
+call_tool ObjectToolset.GetProperties {"Object": {"refPath": "/Game/Materials/M_Terrain.M_Terrain"}}
 
-# Step 1: Get material info
-info = unreal.MaterialService.get_material_info(path)
-print(f"Blend: {info.blend_mode}, Shading: {info.shading_model}")
+# Step 2: every expression that already exists — look for LandscapeLayerBlend / LayerCoords /
+#         TextureSample before you add anything
+call_tool MaterialToolset.GetExpressions {"MaterialOrFunction": {"refPath": "<material>"}}
 
-# Step 2: Export full graph to see what nodes and connections already exist
-graph = json.loads(unreal.MaterialNodeService.export_material_graph(path))
-for expr in graph['expressions']:
-    name = expr.get('parameter_name') or expr.get('class')
-    print(f"  [{expr['id']}] {expr['class']} - {name}")
-    if expr.get('landscape_layers'):
-        for layer in expr['landscape_layers']:
-            print(f"      Layer: {layer}")
-for oc in graph['output_connections']:
-    print(f"  Output '{oc['property']}' ← expr {oc['expression_id']}")
+# Step 3: the layers on a LayerBlend node, and any other expression field
+call_tool ObjectToolset.GetProperties {"Object": {"refPath": "<the LayerBlend expression>"}}
+#   ... or, VibeUE's landscape-aware read of the same node:
+#   unreal.LandscapeMaterialService.get_layer_blend_info(mat_path, node_id)   # execute_python
+
+# Step 4: what is wired where — per expression, and per material output
+call_tool MaterialToolset.GetExpressionInputs {"MaterialOrFunction": {"refPath": "<material>"},
+                                               "Expression": {"refPath": "<expression>"}}
+call_tool MaterialToolset.GetPropertyInput    {"Material": {"refPath": "<material>"},
+                                               "MaterialProperty": "MP_BaseColor"}
 ```
 
 **Why:** Landscape materials often already have LayerBlend nodes, texture samplers, and connected outputs. Adding duplicate nodes without reviewing first creates orphaned expressions and broken connections. Always export → review → plan → modify.
 
-### Two Services Work Together
+### One VibeUE Service + Epic's Material Toolsets
 
-- **LandscapeMaterialService** - Landscape-specific nodes (LayerBlend, LayerCoords, LayerInfo)
-- **MaterialService + MaterialNodeService** - Standard material operations (create, compile, save, connect other nodes)
+- **LandscapeMaterialService** (`unreal.LandscapeMaterialService.*` via `execute_python`) —
+  landscape-specific nodes: LayerBlend, LayerWeight, LayerCoords, LayerSample, grass output,
+  LayerInfo assets, material assignment.
+- **`MaterialToolset`** (via `call_tool`) — everything generic: `CreateMaterial`, `AddExpression`,
+  `ConnectExpressions`, `ConnectToOutput`, `GetExpressions`, `GetExpressionInputs`, `Recompile`.
+  Plus `ObjectToolset.GetProperties`/`SetProperties` for any material or expression property, and
+  `AssetToolset.SaveAsset`/`Exists`.
+- **MaterialNodeService** (`execute_python`) — exactly two tools left: `create_function_call` and
+  `create_collection_parameter`.
+- **`MaterialService` is deleted.** Every call that used to go there is now one of the two rows
+  above — mind the style: VibeUE is Python, Epic is `call_tool`.
 
 ### Layer Blend Types
 
@@ -92,18 +107,23 @@ If `layer_info_paths` contains wrong paths, `assign_material_to_landscape` may r
 
 ### Compile + Save After Changes
 
-```python
-unreal.MaterialService.compile_material(mat_path)
-unreal.EditorAssetLibrary.save_asset(mat_path)
+Compiling is Epic's (`MaterialService.compile_material` is gone):
+
+```
+call_tool MaterialToolset.Recompile {"MaterialOrFunction": {"refPath": "/Game/Materials/M_Terrain.M_Terrain"}}
+call_tool AssetToolset.SaveAsset    {"Asset": {"refPath": "/Game/Materials/M_Terrain.M_Terrain"}}
 ```
 
-### ⚠️ compile_material Is Slow — Use Separate Code Blocks
+(`unreal.EditorAssetLibrary.save_asset(mat_path)` from `execute_python` still saves, if you are
+already mid-script.)
 
-`compile_material()` can take **minutes** for landscape materials with blend nodes. **NEVER** put create + compile in the same code block — it will exceed the Python execution timeout.
+### ⚠️ Recompiling Is Slow — Use Separate Code Blocks
+
+`MaterialToolset.Recompile` can take **minutes** for landscape materials with blend nodes. **NEVER** put create + compile in the same code block — it will exceed the Python execution timeout.
 
 Split into separate steps:
 1. **Block 1**: Create material, add blend nodes, add layers, connect outputs, save
-2. **Block 2**: `compile_material(mat_path)` alone
+2. **Block 2**: `MaterialToolset.Recompile` alone
 3. **Block 3**: Create layer info objects, assign to landscape
 
 ### Texture Tiling
@@ -131,8 +151,9 @@ Split into separate steps:
 - **`satellite.md`** — satellite-image-guided material creation and slope/height painting.
 
 ## Verification
-`compile_material` (slow — keep it in its own code block) then save. Inspect the graph with
-`MaterialNodeService.export_material_graph` before modifying an existing landscape material.
+`MaterialToolset.Recompile` (slow — keep it in its own code block) then `AssetToolset.SaveAsset`.
+Inspect the graph with `MaterialToolset.GetExpressions` + `GetExpressionInputs` before modifying an
+existing landscape material.
 
 ## Sample scripts (run via `execute_python`)
 

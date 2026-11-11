@@ -207,66 +207,37 @@ struct FInputTypeDiscoveryResult
 };
 
 /**
- * Input service exposed directly to Python (Enhanced Input System).
+ * Input Service - Enhanced Input ASSET authoring, plus action injection into PIE.
  *
- * Python method names (use THESE with discover_python_class method_filter —
- * the snake_case names below are the real Python API):
+ * Nothing in UE 5.9 authors Enhanced Input assets, so that whole surface stays here: Input Actions
+ * and Mapping Contexts (create / list / info / configure / exists), key mappings, and the modifiers
+ * and triggers on them -- addressed by INDEX on the mapping, so read with get_mappings /
+ * get_modifiers / get_triggers before adding or removing. The reflection calls (discover_types,
+ * get_available_keys, get_available_modifier_types, get_available_trigger_types) return the only
+ * strings these calls accept; `search_symbols` / `get_symbol` give the live signatures.
  *
- * Reflection:
- * - discover_types: Discover available value types, modifier types, and trigger types
+ * Use the engine for everything else:
+ *  - pressing an action OR a raw key in a running session, for any duration: `InputToolset`
+ *    (ApplyInput takes Entries -- each entry one Action or one Key, with its value -- and
+ *    DurationSeconds; IsInputApplied reads back whether they are applied). This is what replaced
+ *    VibeUE's held-action and raw-key injection.
+ *  - any property on an input asset these calls do not reach: `EditorToolset.ObjectToolset`
+ *    (GetProperties / SetProperties / ListProperties)
+ *  - finding, saving and validating the assets: `EditorToolset.AssetToolset`
+ *    (FindAssets / SaveAsset / ValidateAssets)
  *
- * Action Management:
- * - create_action: Create a new Input Action asset
- * - list_input_actions: List all Input Action assets
- * - get_input_action_info: Get properties of an Input Action
- * - configure_action: Configure Input Action properties (consume input, description, ...)
- * - input_action_exists: Check whether an Input Action asset exists
- *
- * Mapping Context Management:
- * - create_mapping_context: Create a new Input Mapping Context
- * - list_mapping_contexts: List all Mapping Contexts
- * - get_mapping_context_info: Get properties of a Mapping Context
- * - get_mappings: Get all key mappings in a context
- * - add_key_mapping: Add a key mapping to a context
- * - remove_mapping: Remove a key mapping from a context
- * - get_available_keys: Get list of available input keys
- * - mapping_context_exists / key_mapping_exists: Existence checks
- *
- * Modifier Management:
- * - add_modifier: Add a modifier to a key mapping
- * - remove_modifier: Remove a modifier from a key mapping
- * - get_modifiers: Get modifiers on a key mapping
- * - get_available_modifier_types: Get available modifier types
- *
- * Trigger Management:
- * - add_trigger: Add a trigger to a key mapping, optionally with its settings
- * - add_action_trigger: Add a trigger to an Input Action itself, optionally with its settings
- * - remove_trigger: Remove a trigger from a key mapping
- * - get_triggers: Get triggers on a key mapping
- * - get_available_trigger_types: Get available trigger types
- *
- * PIE Input Injection (issue #550):
- * - inject_action: Queue an Enhanced Input action value for the next input tick of the running PIE session
- * - inject_action_for: Hold an Enhanced Input action value for a number of seconds, then release it
- * - stop_injection: Release an action that inject_action_for is holding
- * - inject_key: Send a key press to the PIE game viewport via Slate (no OS focus needed)
+ * On the PIE side what is left is inject_action: one Enhanced Input action value QUEUED onto the
+ * next input tick of a PIE world's local player, with no OS focus and no remapping of game assets.
+ * stop_injection is still a tool, but with the hold calls gone it has nothing of its own to release.
  *
  * Python Usage:
  *   import unreal
  *
- *   # Discover available types
- *   types = unreal.InputService.discover_types()
- *
- *   # Create an input action
+ *   types  = unreal.InputService.discover_types()
  *   result = unreal.InputService.create_action("IA_Jump", "/Game/Input", "Axis1D")
- *
- *   # Create a mapping context
  *   result = unreal.InputService.create_mapping_context("IMC_Default", "/Game/Input")
- *
- *   # Add key mapping
  *   unreal.InputService.add_key_mapping("/Game/Input/IMC_Default", "/Game/Input/IA_Jump", "SpaceBar")
- *
- * @note This replaces the JSON-based manage_enhanced_input MCP tool
+ *   unreal.InputService.inject_action("/Game/Input/IA_Fire")
  */
 UCLASS(BlueprintType)
 class VIBEUE_API UInputService : public UToolsetDefinition
@@ -626,8 +597,9 @@ public:
 	 *
 	 * The value is QUEUED: it applies on the next input tick and is released on the tick after, so a
 	 * press fires Started and Completed almost at once. The world does not tick while a Python call runs,
-	 * so read the result in a LATER call, two or more frames on. To hold an action (a guard, a charge,
-	 * a Hold trigger) use inject_action_for. X/Y/Z map onto the action's value type (Boolean uses X != 0).
+	 * so read the result in a LATER call, two or more frames on. To HOLD an action (a guard, a charge,
+	 * a Hold trigger) use the engine's `InputToolset` ApplyInput with a DurationSeconds -- holding is no
+	 * longer done here. X/Y/Z map onto the action's value type (Boolean uses X != 0).
 	 *
 	 * @param ActionPath - Input Action asset path (/Game/Input/IA_Fire or full object path)
 	 * @param PieInstance - Which PIE world (its PIE instance number); -1 = the first PIE world with a local
@@ -644,21 +616,53 @@ public:
 	static FString InjectAction(const FString& ActionPath, float X = 1.0f, float Y = 0.0f, float Z = 0.0f, int32 PieInstance = -1);
 
 	/**
-	 * Release an action that inject_action_for is holding, before its time is up. The hold is found by
-	 * the action it names and the PIE world, so /Game/Input/IA_X and /Game/Input/IA_X.IA_X are the same hold.
+	 * Start holding an action INDEFINITELY, until stop_injection releases it or PIE ends. No duration.
+	 *
+	 * This is the one input hold the engine cannot express. `InputToolset.ApplyInput` takes a
+	 * DurationSeconds and returns an async result that completes only once the hold has ended, so the
+	 * hold and the agent's turn are the same span: you cannot hold an input and then do anything else
+	 * while it is held. Use ApplyInput for any hold of known length (it also presses several
+	 * actions/keys together, which this does not) and use this when the release depends on something
+	 * you have to observe first -- hold forward, read where the character got to, then release.
+	 *
+	 * Calling it twice for the same action and PIE world restarts the hold rather than stacking.
+	 * The hold registers in this service's table, so shutdown_injection_hooks and the EndPIE hook
+	 * both drop it; a hold can never outlive its PIE session.
+	 *
+	 * @param ActionPath - Input Action asset path (/Game/Input/IA_MoveForward or full object path)
+	 * @param X,Y,Z - The held value; maps onto the action's value type (Boolean uses X != 0)
+	 * @param PieInstance - Which PIE world, as for inject_action; -1 = the first PIE world with a local player
+	 * @return JSON: {success, action, pie_instance (the instance used)} or
+	 *         {success:false, error_code, error_message}; same error codes as inject_action.
+	 *
+	 * Example:
+	 *   unreal.InputService.start_injection("/Game/Input/IA_MoveForward")   # walk
+	 *   # ... other tool calls; read the pawn's location ...
+	 *   unreal.InputService.stop_injection("/Game/Input/IA_MoveForward")    # stop walking
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Input|PIE")
+	static FString StartInjection(const FString& ActionPath, float X = 1.0f, float Y = 0.0f, float Z = 0.0f, int32 PieInstance = -1);
+
+	/**
+	 * Release an action hold filed by start_injection. The hold is found by the action it names and the
+	 * PIE world, so /Game/Input/IA_X and /Game/Input/IA_X.IA_X are the same hold.
+	 *
+	 * A hold started with the engine's `InputToolset` ApplyInput is Epic's own, is not visible here,
+	 * and ends on its own DurationSeconds.
 	 *
 	 * @param ActionPath - Input Action asset path
 	 * @param PieInstance - Which PIE world, as for inject_action; -1 = the first PIE world with a local player
 	 * @return JSON: {success, action, was_active, pie_instance (the instance used)} or
-	 *         {success:false, error_code, error_message}. was_active is false once PIE has ended.
+	 *         {success:false, error_code, error_message}. was_active is false if nothing was held
+	 *         under that action, and once PIE has ended.
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Input|PIE")
 	static FString StopInjection(const FString& ActionPath, int32 PieInstance = -1);
 
 
 	/**
-	 * End every hold inject_action_for / inject_key started (injections stopped, pending releases and the
-	 * release grace cancelled; no key-up is sent) and unhook the FEditorDelegates::EndPIE handler and the
+	 * End every action and key hold this service still has filed (injections stopped, pending releases and
+	 * the release grace cancelled; no key-up is sent) and unhook the FEditorDelegates::EndPIE handler and the
 	 * GEditor->ShouldDisableCPUThrottlingDelegates entry the holds registered. Called from the module's
 	 * OnPreExit (while GEditor still exists) and ShutdownModule. Both callbacks, and the hold tickers, are
 	 * code INTO THIS DLL, so they must not outlive an unload (plugin reload / Live Coding) — the same

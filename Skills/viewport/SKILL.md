@@ -63,12 +63,22 @@ half the other lacks. The table in "What moved to the engine" says which is whic
 
 ---
 
-> 🔀 **Camera get/set moved to the engine.** `ViewportService` no longer has
-> `set_camera_location` / `set_camera_rotation`. Reading and positioning the viewport camera is
-> now Unreal 5.8's native **`EditorAppToolset`** (`GetCameraTransform` / `SetCameraTransform`, plus
-> `FocusOnActors` to frame actors) — reach it with `call_tool` (run `describe_toolset` on
-> `EditorAppToolset` for exact action names/params). `ViewportService` still owns view type, view
-> mode, FOV, clip planes, exposure, game view, layout, realtime, and camera speed.
+## What moved to the engine (4 more `ViewportService` tools removed in 5.9)
+
+| Was (removed) | Use instead | Style |
+|---|---|---|
+| `get_viewport_type()` | `SceneCaptureToolset.ListEditorViewports` (each entry's `DisplayName` is built from that client's viewport type) or `SceneCaptureToolset.GetActiveEditorView` → `Camera.ProjectionMode` | `call_tool` |
+| `get_fov()` | `SceneCaptureToolset.GetActiveEditorView` → `Camera.FOV`. **Asymmetric on purpose:** the *getter* is Epic's, while the *setter* `set_fov` stays VibeUE's — Epic ships no FOV writer. | `call_tool` to read, `execute_python` to write |
+| `set_view_mode(mode)` | `EditorAppToolset.SetViewportViewMode` — takes the full `EViewModeIndex`, so it is strictly broader than VibeUE's 9 strings. **Asymmetric the other way:** `get_view_mode()` stays VibeUE's because Epic ships the setter with no reader. | `call_tool` to write, `execute_python` to read |
+| `set_exposure_game_settings()` | It was only an in-plugin duplicate of `set_exposure(False)`. Use that, or `EditorAppToolset.SetShowFlag("EyeAdaptation", true)` to put auto exposure back. | `execute_python` / `call_tool` |
+
+Earlier moves still in force: `ViewportService` has no `set_camera_location` /
+`set_camera_rotation`. Reading and positioning the viewport camera is Epic's **`EditorAppToolset`**
+(`GetCameraTransform` / `SetCameraTransform`, plus `FocusOnActors` to frame actors).
+
+`ViewportService` still owns: viewport type (set), view mode (get), FOV (set), clip planes,
+exposure, game view, cinematic control, realtime, camera speed, layout get/set, both capture paths,
+and the editor window state.
 
 ## Critical Rules
 
@@ -113,8 +123,10 @@ res = unreal.ViewportService.capture_with_view(
 print(res.success, res.output_path, res.error_message)
 ```
 
-If a viewport is already stuck on a fixed exposure, `set_exposure_game_settings()` puts it back on
-game settings. `capture_with_view` refuses (and touches nothing) during PIE, in an orthographic
+If a viewport is already stuck on a fixed exposure, `set_exposure(False)` puts it back on game
+settings (`set_exposure_game_settings` was removed — it only duplicated that call); if eye
+adaptation itself is off, `call_tool SetShowFlag {"ShowFlag": "EyeAdaptation", "Enabled": true}`
+re-enables it. `capture_with_view` refuses (and touches nothing) during PIE, in an orthographic
 viewport, while the viewport pilots an actor or is locked to a Sequencer camera (moving the camera
 would move that actor, and its FOV would override yours), and while the editor window is
 minimized — `set_editor_window_state("restore")` fixes the last one.
@@ -179,7 +191,20 @@ unreal.ViewportService.set_viewport_type("ortho")
 unreal.ViewportService.set_viewport_type("iso")
 ```
 
-### ⚠️ Valid View Modes for `set_view_mode`
+### ⚠️ View modes — Epic sets, VibeUE reads
+
+Setting the view mode is `EditorAppToolset.SetViewportViewMode` via `call_tool`
+(`set_view_mode` was removed). It takes the engine's full `EViewModeIndex`, so it reaches modes
+VibeUE's 9 strings never covered — run `describe_toolset` on `EditorAppToolset` for the live enum
+names.
+
+```
+call_tool SetViewportViewMode {"ViewMode": "VMI_Wireframe"}
+call_tool SetViewportViewMode {"ViewMode": "VMI_Lit"}
+```
+
+Reading it back is still VibeUE's `get_view_mode()`, which returns one of these strings (Epic ships
+no reader):
 
 | String | Rendering Mode |
 |--------|----------------|
@@ -192,6 +217,9 @@ unreal.ViewportService.set_viewport_type("iso")
 | `"shadercomplexity"` | Shader complexity heatmap |
 | `"pathtracing"` | Path tracing |
 | `"clay"` | Clay rendering |
+
+A mode set through the broader engine enum may read back as something outside this list — treat
+`get_view_mode()` as a label, not a round-trip guarantee.
 
 ### ⚠️ Valid Layout Names for `set_viewport_layout`
 
@@ -217,8 +245,11 @@ Setting FOV has no effect in orthographic views. Always switch to perspective fi
 
 ```python
 unreal.ViewportService.set_viewport_type("perspective")
-unreal.ViewportService.set_fov(75.0)
+unreal.ViewportService.set_fov(75.0)   # ⚠️ persists — snapshot/restore (see Critical Rules)
 ```
+
+To read the FOV back, use Epic's `call_tool GetActiveEditorView {}` → `Camera.FOV` (`get_fov` was
+removed), or `get_viewport_info().fov`, which still carries it.
 
 ### 🚨 Realtime Mode vs On-Demand
 
@@ -232,8 +263,9 @@ When `set_realtime(False)`, the viewport only repaints on interaction. All Viewp
 
 ### 📸 Capture that works while backgrounded
 
-`CaptureViewport` / `CaptureEditorImage` (and `HighResShot`) return a **stale frame** when the
-MCP-driven editor is minimised or backgrounded — the level viewport does not pump frames. The
+Epic's viewport captures (`SceneCaptureToolset.CaptureEditorViewport`, called `CaptureViewport` in
+5.8) and `CaptureEditorImage` — and `HighResShot` — return a **stale frame** when the MCP-driven
+editor is minimised or backgrounded, because the level viewport does not pump frames. The
 reliable path is **`ViewportService.capture_scene(...)`**: it spawns a transient `ASceneCapture2D`,
 renders one frame synchronously with `CaptureScene()`, reads the pixels back and writes the PNG
 in-call. No viewport pumping, no `editor_invalidate_viewports()` + sleep dance.
@@ -360,13 +392,17 @@ unreal.ViewportService.set_realtime(True)
 
 ### Wireframe Debugging
 
+Setting the mode is a `call_tool`, reading it back is Python:
+
+```
+call_tool SetViewportViewMode {"ViewMode": "VMI_Wireframe"}
+# ... inspect mesh topology ...
+call_tool SetViewportViewMode {"ViewMode": "VMI_Lit"}
+```
+
 ```python
 import unreal
-# Switch to wireframe to inspect mesh topology
-unreal.ViewportService.set_view_mode("wireframe")
-
-# Return to normal lit view
-unreal.ViewportService.set_view_mode("lit")
+print(unreal.ViewportService.get_view_mode())   # confirm where you ended up
 ```
 
 ### Position Camera at Specific Location
@@ -415,8 +451,8 @@ unreal.ViewportService.set_exposure(True, 1.0)
 unreal.ViewportService.set_exposure(True, -2.0)  # Darker
 unreal.ViewportService.set_exposure(True, 4.0)   # Brighter
 
-# Return to auto exposure (game settings)
-unreal.ViewportService.set_exposure_game_settings()
+# Return to auto exposure (game settings) — set_exposure_game_settings was removed as a duplicate
+unreal.ViewportService.set_exposure(False)
 
 # Or put back exactly what the user had (fixed or game settings, EV100, FOV, camera)
 unreal.ViewportService.restore_viewport_info(info)
@@ -428,10 +464,11 @@ unreal.ViewportService.restore_viewport_info(info)
 
 ## Additional gotchas
 
-- `CaptureViewport` through `call_tool` needs BOTH optional params present (`{"captureTransform":{}, "annotations":{}}`); `captureTransform` is ignored (it always frames the world origin), and the ~1 MB base64 result must be decoded to a file before it can be viewed.
-- Outside PIE the MCP-driven viewport does not pump frames, so captures are stale — static actors render but dynamic FX are absent and `HighResShot` never fires. Call `PerformanceService.set_background_throttling(False)` first; asset thumbnails still render fine while backgrounded.
+- ⚠️ **UNVERIFIED AGAINST 5.9:** this pack used to state that Epic's `CaptureViewport` needed BOTH optional params present (`{"captureTransform":{}, "annotations":{}}`) and that `captureTransform` was ignored (always framing the world origin). That was **measured against the 5.8 tool name**. In 5.9 the action is `SceneCaptureToolset.CaptureEditorViewport(CaptureTransform, ...)` and it is *documented* to honour the transform and to restore camera and show flags on return. Treat the old claim as stale, not as current fact. VibeUE's `capture_with_view` is kept pending a live re-check of whether 5.9 actually honours `CaptureTransform`; until someone runs that check, prefer `capture_with_view` when the shot must come from a specific camera.
+- The ~1 MB base64 result of an engine capture still has to be decoded to a file before it can be viewed.
+- Outside PIE the MCP-driven viewport does not pump frames, so captures are stale — static actors render but dynamic FX are absent and `HighResShot` never fires. Call `PerformanceService.set_background_throttling(False)` first (still a VibeUE tool, and the only thing that defeats background throttling); asset thumbnails still render fine while backgrounded.
 - `CaptureEditorImage` returns the previous frame unless you call `editor_invalidate_viewports()` and wait briefly first.
-- Use `capture_scene` for a real off-screen render instead of hand-building a `SceneCapture2D`; a backgrounded editor has no converged eye adaptation, so fix the exposure (`AEM_MANUAL`, bias ~10-14) or the shot comes out black.
+- Use `capture_scene` for a real off-screen render instead of hand-building a `SceneCapture2D`; a backgrounded editor has no converged eye adaptation, so pass a fixed `manual_ev100` (negative = brighter, around `-6`; see the measured table above) or the shot comes out black.
 - Never A/B a capture against one taken earlier in the session — streaming, LOD and lighting drift between moments; after a material change, recompile and discard one warm-up capture or the thumbnail shows the default checker.
 
 ## Reference pages

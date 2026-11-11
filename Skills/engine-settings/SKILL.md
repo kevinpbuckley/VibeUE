@@ -127,7 +127,10 @@ where Epic's toolsets are unreachable:
 ```python
 import unreal
 s = unreal.EngineSettingsService.get_pie_settings()
-unreal.EngineSettingsService.set_pie_settings(num_players=2, net_mode="PlayAsListenServer")
+# set_pie_settings(net_mode, num_clients, run_under_one_process) — three positional args.
+# net_mode is one of "Standalone", "ListenServer", "Client" (alias "DedicatedServer");
+# anything else is refused. num_clients must be 1-10.
+unreal.EngineSettingsService.set_pie_settings("ListenServer", 2, True)
 ```
 
 They exist for that gate. For ordinary PIE configuration, use `ConfigSettingsToolset`.

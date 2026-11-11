@@ -64,10 +64,10 @@ struct FBlueprintGraphInfo
 };
 
 /**
- * Fixed-size overview of a single graph — the cheap first read before deciding
- * whether a full get_nodes_in_graph dump is needed. Payload size is independent
- * of graph size (the histogram/entry lists are one line per distinct type/event,
- * not per node).
+ * Fixed-size overview of a single graph — the cheap first read before deciding whether a full
+ * node dump (BlueprintToolset.FindNodes + GetNodeInfos, or BlueprintDslToolset.Read) is needed.
+ * Payload size is independent of graph size (the histogram/entry lists are one line per distinct
+ * type/event, not per node).
  */
 USTRUCT(BlueprintType)
 struct FBlueprintGraphSummary
@@ -247,8 +247,10 @@ struct FBlueprintTimelineInfo
 };
 
 /**
- * Information about a function that can be overridden in a blueprint.
- * Returned by list_overridable_functions — one entry per overridable parent function.
+ * Information about a function that can be overridden in a blueprint — one entry per overridable
+ * parent function. No tool on this service returns it any more; overridable members come from
+ * BlueprintToolsets.BlueprintToolset.ListFunctions / ListEvents, which include the inheritable
+ * ones from the parent chain and from implemented interfaces.
  */
 USTRUCT(BlueprintType)
 struct FOverridableFunctionInfo
@@ -275,7 +277,8 @@ struct FOverridableFunctionInfo
 	 * True if this override should be created as an event node in the EventGraph
 	 * (void/latent functions with FUNC_Event flag — e.g. EnterState, StateCompleted, Tick).
 	 * False if it should be a function graph with a return node (e.g. GetDescription).
-	 * override_function() uses this automatically — no need to check manually.
+	 * It selects which engine tool takes the override: BlueprintToolset.AddEvent for the first,
+	 * BlueprintToolset.AddFunctionGraph for the second.
 	 */
 	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
 	bool bIsEventStyle = false;
@@ -436,7 +439,9 @@ struct FBlueprintComponentInfo
 
 	/** True if this component comes from a parent C++ class and cannot be removed via Python APIs.
 	 *  These are the "grayed out" components shown in the Blueprint Editor Components panel.
-	 *  To replace an inherited root (e.g. DefaultSceneRoot), call set_root_component() instead. */
+	 *  To replace an inherited root (e.g. DefaultSceneRoot), hand the new component to
+	 *  EditorToolset.ActorToolset.SetParentComponent as the root's parent — that promotes it to the
+	 *  scene root, and Unreal drops a DefaultSceneRoot automatically. */
 	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
 	bool bIsInherited = false;
 
@@ -651,14 +656,10 @@ struct FBlueprintNodeInfo
 };
 
 /**
- * Snapshot of the graph the user is currently looking at — VibeUE's equivalent of
- * Epic's FAIAssistantDockContext, expressed in the string-path conventions the rest
- * of this service uses so the result feeds straight into get_nodes_in_graph /
- * build_graph (for Blueprints) without translation. Covers the Blueprint family
- * (Blueprint / Widget / AnimBlueprint editors) and the Material editor.
- *
- * Returned by GetFocusedGraphContext(). bFound is false when no supported graph
- * editor is open and focused.
+ * Snapshot of the graph the user is currently looking at, in the string-path conventions the rest
+ * of this service uses. No tool on this service returns it any more — the editor's own selection
+ * comes from EditorToolset.EditorAppToolset.GetAssetEditorSelection, which reports the focused
+ * graph and the selected nodes/widgets/objects as live object references.
  */
 USTRUCT(BlueprintType)
 struct FBlueprintFocusContext
@@ -693,7 +694,7 @@ struct FBlueprintFocusContext
 	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
 	int32 GraphNodeCount = 0;
 
-	/** The nodes currently selected in that graph (same shape as get_selected_nodes). */
+	/** The nodes currently selected in that graph. */
 	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
 	TArray<FBlueprintNodeInfo> SelectedNodes;
 };
@@ -941,12 +942,16 @@ struct FBlueprintDetailedInfo
 
 // ============================================================================
 // BATCH GRAPH BUILDER TYPES
+//
+// Legacy descriptor types. The batch graph builder they fed is gone; author graphs with
+// BlueprintToolsets.BlueprintDslToolset (Read / Write / Edit) or node-by-node with
+// BlueprintToolsets.BlueprintToolset (CreateNode / ConnectPins / SetPinValue). Kept because the
+// node-creation helper inside this service still takes FGraphNodeDesc.
 // ============================================================================
 
 /**
- * Describes a single node to create in a batch graph operation.
- * Each node has a local ref (for wiring) and a type that maps to an
- * existing UBlueprintService creation method.
+ * Describes a single node to create.
+ * Each node has a local ref (for wiring) and a type that selects a creation path.
  */
 USTRUCT(BlueprintType)
 struct FGraphNodeDesc
@@ -966,29 +971,27 @@ struct FGraphNodeDesc
 	 *
 	 * The pre-existing function terminals are addressed as EXISTING nodes rather than
 	 * created: type "function_entry" (ref "entry") and "function_result" (ref "result",
-	 * "result_2", ...), each carrying params["existing"]="true". GetGraphDefinition emits
-	 * them so a dumped function graph round-trips with its parameter/return wiring; BuildGraph
-	 * binds them to the graph's own entry/result nodes instead of spawning new ones.
+	 * "result_2", ...), each carrying params["existing"]="true", so a descriptor set for a
+	 * function graph can carry its parameter/return wiring without respawning the terminals.
 	 */
 	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
 	FString Type;
 
 	/**
 	 * Type-specific parameters (e.g. "class":"KismetMathLibrary", "function":"Clamp").
-	 * Any node type also accepts an optional "group":"<title>" layout hint — after
-	 * BuildGraph's auto-layout phase, each distinct title becomes a comment box
-	 * wrapping its member nodes (GUID returned in RefToNodeId under "group:<title>").
-	 * "existing":"true" marks a descriptor that BuildGraph resolves to a node already in
-	 * the graph (used for function_entry/function_result) rather than creating a new one.
+	 * Any node type also accepts an optional "group":"<title>" layout hint — each distinct title
+	 * becomes a comment box wrapping its member nodes.
+	 * "existing":"true" marks a descriptor that resolves to a node already in the graph
+	 * (used for function_entry/function_result) rather than creating a new one.
 	 */
 	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
 	TMap<FString, FString> Params;
 };
 
 /**
- * Describes a connection between two node pins in a batch graph.
- * Format: "NodeRef.PinName" where NodeRef is either a local ref from the
- * Nodes array or an existing node's GUID string (32-char hex) already in the graph.
+ * Describes a connection between two node pins.
+ * Format: "NodeRef.PinName" where NodeRef is either a local ref from a node descriptor set
+ * or an existing node's GUID string (32-char hex) already in the graph.
  */
 USTRUCT(BlueprintType)
 struct FGraphConnectionDesc
@@ -1005,7 +1008,7 @@ struct FGraphConnectionDesc
 };
 
 /**
- * Describes a pin default value to set in a batch graph.
+ * Describes a pin default value to set.
  */
 USTRUCT(BlueprintType)
 struct FGraphPinDefaultDesc
@@ -1026,7 +1029,7 @@ struct FGraphPinDefaultDesc
 };
 
 /**
- * Result of a BuildGraph operation — full audit of what was created.
+ * Result of a batch graph build — full audit of what was created.
  */
 USTRUCT(BlueprintType)
 struct FBuildGraphResult
@@ -1080,29 +1083,42 @@ struct FBuildGraphResult
 };
 
 /**
- * Blueprint service exposed directly to Python.
+ * Blueprint Service - Timelines, macro graphs, a layout audit and an editor refresh. That is all
+ * that is left; the engine's toolsets own the rest of the Blueprint surface.
  *
- * This service provides blueprint introspection and analysis with native
- * Unreal Engine types.
+ * Cut to the delta on the 5-9 branch. Use the engine for everything else:
+ *  - whole-graph authoring (VibeUE's own batch graph builder is gone):
+ *    `BlueprintToolsets.BlueprintDslToolset` (Read / Write / Edit / Docs / Schema / Diff /
+ *    FindNodeReferences) -- a graph is canonical text, applied transactionally against the
+ *    revision token the previous Read returned
+ *  - per-node graph work and graph reads: `BlueprintToolsets.BlueprintToolset`
+ *    (ListGraphs / GetGraph / FindNodes / GetNodeInfos / GetConnectedSubgraph / FindNodeTypes /
+ *    CreateNode / DeleteNode / ConnectPins / DisconnectPins / SetPinValue / SetNodePosition /
+ *    ArrangeGraphLayered / ArrangeNodes / AddCommentBox / DiffGraphs / CompileBlueprint)
+ *  - the class itself, same toolset: Create, GetParent / SetParent, GetDefaultObject,
+ *    ListVariables / AddVariable / RemoveVariable (+ the per-variable flag getters and setters),
+ *    ListFunctions / ListEvents, AddFunctionGraph / AddEvent -- either one, named after an
+ *    inherited member, *is* the override, so it covers both listing and taking an override --
+ *    AddEventDispatcher / ListEventDispatchers, AddInterface / ListInterfaces
+ *  - components on a Blueprint: `EditorToolset.ActorToolset`. AddComponent takes the Blueprint
+ *    asset itself as Owner; GetComponents enumerates the SCS when handed the Blueprint's CDO
+ *    (from BlueprintToolset.GetDefaultObject); RemoveComponent; and SetParentComponent promotes a
+ *    component to the scene root, replacing the current one
+ *  - what the user is looking at right now: `EditorToolset.EditorAppToolset`
+ *    (GetAssetEditorSelection -> focused graph + selected nodes, OpenEditorForAsset)
+ *  - any property on any object, Timeline component settings included:
+ *    `EditorToolset.ObjectToolset` (GetProperties / SetProperties / ListProperties /
+ *    GetPropertySchema)
+ *  - find, save and validate assets: `EditorToolset.AssetToolset`
+ *    (FindAssets / Exists / SaveAsset / ValidateAssets)
  *
- * Python Usage:
- *   import unreal
+ * What is left is what none of those can do: Timelines (no engine tool touches a
+ * UTimelineTemplate), macro-graph creation, a read-only measurement of a graph's layout quality,
+ * and forcing an open Blueprint editor to redraw.
  *
- *   # Get blueprint info (returns BlueprintDetailedInfo or None)
- *   info = unreal.BlueprintService.get_blueprint_info("/Game/Blueprints/BP_Player_Test")
- *   if info:
- *       print(f"Parent: {info.parent_class}")
- *       for var in info.variables:
- *           print(f"  {var.variable_name}: {var.variable_type}")
- *
- *   # List variables
- *   variables = unreal.BlueprintService.list_variables("/Game/BP_Player_Test")
- *
- *   # List components
- *   components = unreal.BlueprintService.list_components("/Game/BP_Player_Test")
- *
- * @note All methods are static and thread-safe
- * @note C++ out parameters become Python return values
+ * Every BlueprintPath parameter below also accepts a map/world path and resolves it to that
+ * level's Level Blueprint. Every entry point refuses while a Play-In-Editor session is running
+ * (logged with a "PIE_ACTIVE:" prefix) -- stop PIE before editing a Blueprint.
  */
 UCLASS(BlueprintType)
 class VIBEUE_API UBlueprintService : public UToolsetDefinition
@@ -1110,55 +1126,19 @@ class VIBEUE_API UBlueprintService : public UToolsetDefinition
 	GENERATED_BODY()
 
 public:
-
-
-
-
-
-
-
 	// ============================================================================
-	// COMPONENT MANAGEMENT (manage_blueprint_component actions)
-	// ============================================================================
-
-
-
-
-
-
-
-
-
-
-
-
-	// ============================================================================
-	// VARIABLE MANAGEMENT (Phase 1)
-	// ============================================================================
-
-
-
-
-
-
-
-	// ============================================================================
-	// EVENT DISPATCHER MANAGEMENT
-	// ============================================================================
-
-
-
-
-
-	// ============================================================================
-	// FUNCTION MANAGEMENT (Phase 2)
+	// MACRO GRAPHS
 	// ============================================================================
 
 	/**
 	 * Add a macro graph to a Blueprint (typically a Macro Library Blueprint).
 	 *
-	 * Macro graphs are referenced by K2Node_MacroInstance nodes via add_macro_instance_node.
-	 * Use this to create the macro graph, then reference it with the full path format:
+	 * The engine has no tool for this: BlueprintToolset.AddFunctionGraph makes function graphs, and
+	 * BlueprintDslToolset refuses a macro library outright ("macro graphs have no Graph DSL
+	 * representation"). Placing an *instance* of a macro is the DSL's job, by owner path --
+	 * (`/Game/MyMacroLib.MyMacroName`) or (`self.MyMacroName`).
+	 *
+	 * Create the macro graph here, then reference it with the full path format:
 	 *   "/Game/MyMacroLib.MyMacroLib:MyMacroName"
 	 *
 	 * To create a Macro Library Blueprint from Python:
@@ -1167,7 +1147,8 @@ public:
 	 *   tools = unreal.AssetToolsHelpers.get_asset_tools()
 	 *   tools.create_asset("BPMacroLib", "/Game/Macros", unreal.Blueprint, factory)
 	 *
-	 * Note: do NOT use create_function() on a Macro Library — it asserts in the K2 schema.
+	 * Note: a Macro Library holds macro graphs only — adding a *function* graph to one asserts in
+	 * the K2 schema.
 	 *
 	 * @param BlueprintPath - Full path to the target Blueprint
 	 * @param MacroName     - Name for the new macro graph
@@ -1179,32 +1160,13 @@ public:
 		const FString& MacroName
 	);
 
-
-
-
-
-
-
-
-
 	// ============================================================================
-	// NODE MANAGEMENT (Phase 3)
+	// TIMELINES
+	//
+	// No engine toolset tool touches a UTimelineTemplate, so the whole timeline surface stays here.
+	// Component-level settings on the spawned UTimelineComponent are still ordinary properties:
+	// EditorToolset.ObjectToolset.SetProperties.
 	// ============================================================================
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-	// ── Timelines ──
 
 	/**
 	 * Add a Timeline node to a graph (and the backing UTimelineTemplate on the blueprint).
@@ -1529,71 +1491,9 @@ public:
 		const FString& TrackName
 	);
 
-
 	// ============================================================================
-	// ADVANCED NODE OPERATIONS (Phase 4)
+	// GRAPH LAYOUT AUDIT
 	// ============================================================================
-
-
-
-
-
-
-
-
-
-
-
-	// ============================================================================
-	// LIFECYCLE & PROPERTY MANAGEMENT (Missing manage_blueprint Actions)
-	// ============================================================================
-
-
-
-
-	// ============================================================================
-	// NODE MANAGEMENT - Advanced Operations (manage_blueprint_node actions)
-	// ============================================================================
-
-
-
-
-
-
-
-
-
-	// ============================================================================
-	// COMPONENT OPERATIONS - Extended API
-	// ============================================================================
-
-
-
-
-	// ============================================================================
-	// EXISTENCE CHECKS - Fast boolean checks before creation (Idempotency)
-	// ============================================================================
-
-
-
-
-
-
-
-
-	// ============================================================================
-	// FUNCTION OVERRIDES
-	// ============================================================================
-
-
-
-	// ================================================================
-	// BATCH GRAPH BUILDER
-	// ================================================================
-
-
-
-
 
 	/**
 	 * Measure the visual quality of a graph's current layout WITHOUT changing it.
@@ -1604,9 +1504,12 @@ public:
 	 * clean), and per-node bounding boxes {id, title, x, y, width, height} so an
 	 * agent can audit and correct placement.
 	 *
-	 * Intended loop: build_graph(auto_layout=True) → analyze_graph_layout → if
-	 * "issues" is non-empty, fix (auto_layout_selected_nodes / set_node_position)
-	 * and re-check. Comment boxes are ignored (decoration, not structure).
+	 * The engine's layout tools (BlueprintToolset.ArrangeGraphLayered / ArrangeNodes) only write a
+	 * layout; nothing there reads one back, which is why this measurement is still here. Intended
+	 * loop: author or arrange the graph (BlueprintDslToolset.Write, or
+	 * BlueprintToolset.ArrangeGraphLayered) → analyze_graph_layout → if "issues" is non-empty, fix
+	 * (BlueprintToolset.ArrangeNodes on the offenders, or SetNodePosition) and re-check. Comment
+	 * boxes are ignored (decoration, not structure).
 	 *
 	 * Python Usage (bool return is folded away — the two out-strings come back as a tuple):
 	 *   report, err = unreal.BlueprintService.analyze_graph_layout("/Game/BP_Player", "EventGraph")

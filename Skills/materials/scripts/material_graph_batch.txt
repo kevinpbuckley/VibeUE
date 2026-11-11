@@ -1,44 +1,83 @@
 # Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
-# material_graph_batch.txt — Build a small graph with batch create + connect (one transaction each).
+# material_graph_batch.txt — Build a graph node by node, driven from a table.
 #
 # Sample script for the materials skill. Run via execute_python.
-# create_parameter, batch_connect_expressions, connect_expression_to_output and disconnect_output are
-# VibeUE MaterialNodeService calls — batch ops are much faster than per-node. Arrays must be equal length.
 #
-# Generic single-node creation (add_expression) is still CUT from MaterialNodeService — the CANONICAL
-# MCP path for a generic node is the engine MaterialTools toolset:
-#   MT = "editor_toolset.toolsets.material.MaterialTools"
-#   mult = call_tool(tool_name="add_expression", toolset_name=MT,
-#                    arguments={"material_or_function": PATH, "expression_class": "Multiply",
-#                               "x": -300, "y": 50})
-# Output wiring, however, now HAS a service call (connect_expression_to_output) — no need to drop to
-# MaterialEditingLibrary just to reach a material output. This script is pure Python (no call_tool),
-# so it creates the generic node with the native MaterialEditingLibrary, then resolves that node's
-# MaterialNodeService id (via list_expressions) for batch_connect_expressions and the output wiring.
-import unreal
-ms, mns = unreal.MaterialService, unreal.MaterialNodeService
-mel = unreal.MaterialEditingLibrary
+# UE 5.9: there is NO batch API any more. batch_create_expressions, batch_create_specialized,
+# batch_connect_expressions and batch_set_properties were all removed with the rest of
+# MaterialNodeService's graph API. Epic's AddExpression / ConnectExpressions / SetProperties are
+# one node and one wire per call — so drive them from a table and the graph is still one block.
+#
+# Two calls survive on unreal.MaterialNodeService, and this script uses one of them:
+# create_function_call. Epic's AddExpression + SetProperties({"MaterialFunction": ...}) produces a
+# node with NO PINS, because a MaterialFunctionCall's pins are built by SetMaterialFunctionEx ->
+# UpdateFromFunctionResource inside PostEditChangeProperty, which the generic property writer
+# never calls. Same story for create_collection_parameter (its ParameterId GUID is derived there).
+# Those two go through execute_python; everything else is the engine toolsets.
+import json, unreal, vibeue
+
+MT = "EditorToolset.MaterialToolset"
+OT = "EditorToolset.ObjectToolset"
+AT = "EditorToolset.AssetToolset"
+E  = "/Script/Engine."
 
 PATH = "/Game/Materials/M_Character"   # must already exist
-mat = unreal.load_asset(PATH)
 
-# Create TintColor (Vector) * Intensity (Scalar) -> BaseColor.
-tint = mns.create_parameter(PATH, "Vector", "TintColor", "Surface", "1,1,1,1", -600, 0)
-inten = mns.create_parameter(PATH, "Scalar", "Intensity", "Surface", "1.0", -600, 150)
-# Generic node natively (engine MaterialTools.add_expression is the canonical MCP path).
-mult = mel.create_material_expression(mat, unreal.MaterialExpressionMultiply, -300, 50)
-mult_id = next(e.id for e in mns.list_expressions(PATH) if e.class_name.endswith("Multiply"))
 
-mns.batch_connect_expressions(
-    PATH,
-    [tint.id, inten.id],     # source ids
-    ["", ""],                # source output names ("" = first)
-    [mult_id, mult_id],      # target ids
-    ["A", "B"],              # target input names
-)
-# Wire the Multiply output into BaseColor with the VibeUE service (output "" = output 0).
-mns.connect_expression_to_output(PATH, mult_id, "", "BaseColor")
-ms.compile_material(PATH)
-unreal.EditorAssetLibrary.save_asset(PATH)
-print("diag:", mns.get_material_diagnostics(PATH).is_compiled_ok)
+def ref(p):
+    tail = p.rsplit("/", 1)[-1]
+    return {"refPath": p if "." in tail else "{}.{}".format(p, tail)}
+
+
+def add(cls, x, y):
+    return vibeue.exec_tool(MT, "AddExpression", {
+        "materialOrFunction": ref(PATH), "expressionClass": {"refPath": E + cls},
+        "x": x, "y": y})
+
+
+def set_props(obj, values):
+    return vibeue.exec_tool(OT, "SetProperties", {"instance": obj, "values": json.dumps(values)})
+
+
+if not vibeue.exec_tool(AT, "Exists", {"path": PATH}):
+    raise RuntimeError("material missing: " + PATH)
+
+# TintColor (Vector) * Intensity (Scalar) -> BaseColor, plus a function call on Normal.
+tint = add("MaterialExpressionVectorParameter", -600, 0)
+set_props(tint, {"ParameterName": "TintColor", "Group": "Surface",
+                 "DefaultValue": {"r": 1.0, "g": 1.0, "b": 1.0, "a": 1.0}})
+
+inten = add("MaterialExpressionScalarParameter", -600, 150)
+set_props(inten, {"ParameterName": "Intensity", "Group": "Surface", "DefaultValue": 1.0})
+
+mult = add("MaterialExpressionMultiply", -300, 50)
+
+# GetExpressionInputNames returns exactly the names ConnectExpressions accepts — no display
+# labels, no type suffixes. A connect that does not land RAISES instead of wiring nothing.
+print("Multiply inputs:", vibeue.exec_tool(MT, "GetExpressionInputNames", {"expression": mult}))
+
+for src, pin in ((tint, "A"), (inten, "B")):
+    vibeue.exec_tool(MT, "ConnectExpressions", {
+        "fromExpression": src, "fromOutputName": "", "toExpression": mult, "toInputName": pin})
+
+vibeue.exec_tool(MT, "ConnectToOutput", {"expression": mult, "outputName": "",
+                                         "materialProperty": "MP_BaseColor"})
+
+# The VibeUE survivor: a function call node with real pins.
+fn = unreal.MaterialNodeService.create_function_call(
+    PATH, "/Engine/Functions/Engine_MaterialFunctions02/Utility/BlendAngleCorrectedNormals",
+    -600, 350)
+fn_ref = {"refPath": fn.object_path}      # .object_path is durable; .id is session-only
+print("function call pins:", list(fn.input_names), "->", list(fn.output_names))
+vibeue.exec_tool(MT, "ConnectToOutput", {"expression": fn_ref, "outputName": "",
+                                         "materialProperty": "MP_Normal"})
+
+vibeue.exec_tool(MT, "LayoutExpressions", {"materialOrFunction": ref(PATH)})
+vibeue.exec_tool(MT, "Recompile", {"materialOrFunction": ref(PATH)})   # raises on a compile error
+vibeue.exec_tool(AT, "SaveAsset", {"assetPath": PATH})
+
+stats = vibeue.exec_tool(MT, "GetStatistics", {"material": ref(PATH)})
+print("samplers:", stats["num_samplers"],
+      "pixel texture samples:", stats["num_pixel_texture_samples"],
+      "pixel instructions:", stats["num_pixel_shader_instructions"])

@@ -58,43 +58,38 @@ This ensures weights always sum to ~1.0 without explicit normalization.
 
 ### Creating the Slope Blend Function
 
-```python
-import unreal
+Material-function authoring is Epic's: `MaterialNodeService.create_material_function` /
+`add_function_input` / `add_function_output` are gone. Create the asset, then add one
+`FunctionInput` / `FunctionOutput` expression per pin and set its fields with
+`ObjectToolset.SetProperties` (full call shapes in `workflows.md`, Workflow C). All `call_tool`:
 
-func = unreal.MaterialNodeService.create_material_function(
-    "MF_Slope_Blend", "/Game/Materials/Functions",
-    "Generates a slope mask from world normal", True, ["Landscape"])
-
-unreal.MaterialNodeService.add_function_input(
-    func.asset_path, "SlopeThreshold", "Scalar", 0, "Dot product threshold (0.7 ≈ 45°)")
-unreal.MaterialNodeService.add_function_input(
-    func.asset_path, "BlendWidth", "Scalar", 1, "Transition smoothness")
-
-unreal.MaterialNodeService.add_function_output(
-    func.asset_path, "SlopeMask", 0, "0=flat, 1=steep")
-
-unreal.EditorAssetLibrary.save_asset(func.asset_path)
 ```
+call_tool MaterialToolset.CreateFunction {"FolderPath": "/Game/Materials/Functions", "AssetName": "MF_Slope_Blend"}
+call_tool ObjectToolset.SetProperties    {"Object": {"refPath": "<MF>"},
+    "Properties": {"Description": "Generates a slope mask from world normal",
+                   "bExposeToLibrary": true, "LibraryCategoriesText": ["Landscape"]}}
+```
+
+| Pin | Class | Fields |
+|---|---|---|
+| in `SlopeThreshold` | `MaterialExpressionFunctionInput` | `InputType: FunctionInput_Scalar`, `SortPriority: 0` — dot-product threshold (0.7 ≈ 45°) |
+| in `BlendWidth` | `MaterialExpressionFunctionInput` | `InputType: FunctionInput_Scalar`, `SortPriority: 1` — transition smoothness |
+| out `SlopeMask` | `MaterialExpressionFunctionOutput` | `SortPriority: 0` — 0=flat, 1=steep |
+
+Then `call_tool AssetToolset.SaveAsset {"Asset": {"refPath": "<MF>"}}`.
 
 ### Creating the Altitude Blend Function
 
-```python
-import unreal
+Same shape — `MaterialToolset.CreateFunction` for `MF_Altitude_Blend` ("Generates a height mask from
+world position Z", exposed, category `Landscape`), then:
 
-func = unreal.MaterialNodeService.create_material_function(
-    "MF_Altitude_Blend", "/Game/Materials/Functions",
-    "Generates a height mask from world position Z", True, ["Landscape"])
+| Pin | Class | Fields |
+|---|---|---|
+| in `HeightThreshold` | `MaterialExpressionFunctionInput` | `InputType: FunctionInput_Scalar`, `SortPriority: 0` — world Z height to start blending |
+| in `BlendHeight` | `MaterialExpressionFunctionInput` | `InputType: FunctionInput_Scalar`, `SortPriority: 1` — height range for transition |
+| out `HeightMask` | `MaterialExpressionFunctionOutput` | `SortPriority: 0` — 0=below threshold, 1=above |
 
-unreal.MaterialNodeService.add_function_input(
-    func.asset_path, "HeightThreshold", "Scalar", 0, "World Z height to start blending")
-unreal.MaterialNodeService.add_function_input(
-    func.asset_path, "BlendHeight", "Scalar", 1, "Height range for transition")
-
-unreal.MaterialNodeService.add_function_output(
-    func.asset_path, "HeightMask", 0, "0=below threshold, 1=above")
-
-unreal.EditorAssetLibrary.save_asset(func.asset_path)
-```
+Save with `AssetToolset.SaveAsset` before any material calls the function.
 
 ### Extending the Auto-Layer System
 

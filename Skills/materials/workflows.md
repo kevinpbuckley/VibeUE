@@ -1,6 +1,6 @@
 ---
 name: materials/workflows
-description: Step-by-step material authoring workflows — create a material, material instance, texture/math/function-call/custom-HLSL/collection/static-switch nodes, set material properties, and batch create/connect/set node operations.
+description: Step-by-step material authoring workflows for UE 5.9 — create a material, material instance, texture/math/function-call/custom-HLSL/collection/static-switch nodes, set material and expression properties, and build a graph node by node with Epic's MaterialToolset.
 ---
 
 # Material Workflows
@@ -15,196 +15,254 @@ description: Step-by-step material authoring workflows — create a material, ma
 - Custom HLSL expression
 - Collection parameter
 - Static switch / texture object parameter
-- Batch create / connect / set
+- Build a graph
+- Tidy and verify
 
-VibeUE is an extension on Unreal's native MCP endpoint. **Material/function BASICS** (create
-material, add expression, connect, set instance parameters) go through the **engine** material
-toolsets via `call_tool(...)` — `editor_toolset.toolsets.material.MaterialTools` for
-materials/functions, `editor_toolset.toolsets.material_instance.MaterialInstanceTools` for
-instances. The **graph/parameter authoring DELTA** (`create_parameter`, `create_function_call`,
-`create_custom_expression`, `batch_*`, diagnostics, export) stays on
-`unreal.MaterialNodeService` via `execute_python`.
+In UE 5.9 material authoring is **Epic's**, via `call_tool`:
+`EditorToolset.MaterialToolset` (materials and functions), `EditorToolset.MaterialInstanceToolset`
+(instances), `EditorToolset.ObjectToolset` (every property), `EditorToolset.AssetToolset` (exists /
+save / duplicate / delete / referencers). `UMaterialService` is gone; `unreal.MaterialNodeService`
+keeps exactly two calls — `create_function_call` and `create_collection_parameter` — run through
+`execute_python`, not `call_tool`.
 
-Surviving create calls return result objects — read `.id` (MaterialExpressionInfo from
-`create_parameter`/`create_function_call`), never the raw object. Compile after graph changes.
-Runnable examples in `scripts/`.
+Every object/class argument is a `{"refPath": "/Game/Dir/Asset.Asset"}` handle; arg names are
+lowerCamelCase; `materialProperty` is the `EMaterialProperty` name (`"MP_BaseColor"`). All examples
+below assume this preamble. Runnable versions in `scripts/`.
+
+```python
+import json
+MT  = "EditorToolset.MaterialToolset"
+MIT = "EditorToolset.MaterialInstanceToolset"
+OT  = "EditorToolset.ObjectToolset"
+AT  = "EditorToolset.AssetToolset"
+E   = "/Script/Engine."                      # expression class prefix
+
+def ref(p):
+    tail = p.rsplit("/", 1)[-1]
+    return {"refPath": p if "." in tail else f"{p}.{tail}"}
+
+def add(path, cls, x, y):
+    return call_tool(tool_name="AddExpression", toolset_name=MT,
+                     arguments={"materialOrFunction": ref(path), "expressionClass": {"refPath": E + cls},
+                                "x": x, "y": y})["returnValue"]
+
+def set_props(obj, values):
+    return call_tool(tool_name="SetProperties", toolset_name=OT,
+                     arguments={"instance": obj, "values": json.dumps(values)})
+```
 
 ## Create a basic material
 
 ```python
-import unreal
-ms, mns = unreal.MaterialService, unreal.MaterialNodeService
-
-# Engine: create the material asset (returns the Material object, no .asset_path).
-call_tool(
-    tool_name="create_material",
-    toolset_name="editor_toolset.toolsets.material.MaterialTools",
-    arguments={"folder_path": "/Game/Materials/", "asset_name": "M_Character"},
-)
 path = "/Game/Materials/M_Character"
+call_tool(tool_name="CreateMaterial", toolset_name=MT,
+          arguments={"folderPath": "/Game/Materials/", "assetName": "M_Character"})
 
-# VibeUE delta: parameter authoring stays on MaterialNodeService.
-color = mns.create_parameter(path, "Vector", "BaseColor", "Surface", "0.8,0.2,0.2,1.0", -500, 0)
-# Engine: connect an expression output to a material property.
-call_tool(
-    tool_name="connect_to_output",
-    toolset_name="editor_toolset.toolsets.material.MaterialTools",
-    arguments={"expression": color.id, "output_name": "", "material_property": "MP_BaseColor"},
-)
-rough = mns.create_parameter(path, "Scalar", "Roughness", "Surface", "0.5", -500, 100)
-call_tool(
-    tool_name="connect_to_output",
-    toolset_name="editor_toolset.toolsets.material.MaterialTools",
-    arguments={"expression": rough.id, "output_name": "", "material_property": "MP_Roughness"},
-)
-ms.compile_material(path)
-unreal.EditorAssetLibrary.save_asset(path)
-# NOTE: there is no layout_expressions API — position nodes at creation time via the
-# editor_x/editor_y args (as above); MaterialNodeService has no graph-wide auto-arrange.
+color = add(path, "MaterialExpressionVectorParameter", -500, 0)
+set_props(color, {"ParameterName": "BaseColor", "Group": "Surface",
+                  "DefaultValue": {"r": 0.8, "g": 0.2, "b": 0.2, "a": 1.0}})
+call_tool(tool_name="ConnectToOutput", toolset_name=MT,
+          arguments={"expression": color, "outputName": "", "materialProperty": "MP_BaseColor"})
+
+rough = add(path, "MaterialExpressionScalarParameter", -500, 150)
+set_props(rough, {"ParameterName": "Roughness", "Group": "Surface", "DefaultValue": 0.5})
+call_tool(tool_name="ConnectToOutput", toolset_name=MT,
+          arguments={"expression": rough, "outputName": "", "materialProperty": "MP_Roughness"})
+
+call_tool(tool_name="LayoutExpressions", toolset_name=MT, arguments={"materialOrFunction": ref(path)})
+call_tool(tool_name="Recompile", toolset_name=MT, arguments={"materialOrFunction": ref(path)})
+call_tool(tool_name="SaveAsset", toolset_name=AT, arguments={"assetPath": path})
 ```
+
+`CreateMaterial` returns the new material as a `{refPath}` handle, so you can use its return value
+directly instead of `ref(path)`. Each new **material** costs shader compile time — prefer a material
+*instance* of an existing master wherever the difference is only parameter values.
+
 Runnable: `scripts/create_material.txt`.
 
 ## Create a material instance
 
 ```python
-import unreal
-ms = unreal.MaterialService
-
-# Engine: create the instance, then set its overrides — all via MaterialInstanceTools.
-call_tool(
-    tool_name="create_material_instance",
-    toolset_name="editor_toolset.toolsets.material_instance.MaterialInstanceTools",
-    arguments={"parent_material": "/Game/Materials/M_Character",
-               "asset_name": "MI_PlayerRed", "folder_path": "/Game/Materials/"},
-)
 ip = "/Game/Materials/MI_PlayerRed"
-call_tool(
-    tool_name="set_vector_parameter",
-    toolset_name="editor_toolset.toolsets.material_instance.MaterialInstanceTools",
-    arguments={"instance_path": ip, "parameter_name": "BaseColor", "r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0},
-)
-call_tool(
-    tool_name="set_scalar_parameter",
-    toolset_name="editor_toolset.toolsets.material_instance.MaterialInstanceTools",
-    arguments={"instance_path": ip, "parameter_name": "Roughness", "value": 0.3},
-)
-unreal.EditorAssetLibrary.save_asset(ip)
+# Arg order is folderPath, assetName, parent — not the old (parent, name, folder).
+mi = call_tool(tool_name="Create", toolset_name=MIT,
+               arguments={"folderPath": "/Game/Materials/", "assetName": "MI_PlayerRed",
+                          "parent": ref("/Game/Materials/M_Character")})["returnValue"]
+
+call_tool(tool_name="SetVectorParameter", toolset_name=MIT,
+          arguments={"instance": mi, "name": "BaseColor",
+                     "value": {"r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0}})
+call_tool(tool_name="SetScalarParameter", toolset_name=MIT,
+          arguments={"instance": mi, "name": "Roughness", "value": 0.3})
+call_tool(tool_name="SaveAsset", toolset_name=AT, arguments={"assetPath": ip})
 ```
-Runnable: `scripts/create_instance.txt`. (For per-actor tiling on Megascans surfaces, prefer a child MI
-with the `Tiling` scalar overridden — see SKILL.md Critical Rules.) For setting many instance
-parameters at once, VibeUE keeps `ms.set_instance_parameters_bulk(...)`.
+
+- `ListParameters` on the **parent** tells you what you may override, each entry with a `name` and a
+  `type` (`Scalar` / `Vector` / `Texture` / `StaticSwitch`). Setting a name that is not a parameter of
+  that type raises.
+- Getters return the **effective** value, inheriting from the parent when not overridden. Use
+  `SetParameterOverride(instance, name, bOverride)` to toggle an override without changing the value,
+  `ClearParameters` to revert everything, and `SetParent` to re-point the instance.
+- Overriding a **StaticSwitch** triggers a shader recompile; the other three types do not.
+
+Runnable: `scripts/create_instance.txt`. (For per-actor tiling on Megascans surfaces, prefer a child
+MI with the `Tiling` scalar overridden — see SKILL.md Critical Rules.)
 
 ## Add a texture parameter
 
 ```python
-tex = mns.create_parameter(path, "Texture", "DiffuseMap", "Textures", "", -500, 0)
-# Engine: connect the parameter output to a material property.
-call_tool(
-    tool_name="connect_to_output",
-    toolset_name="editor_toolset.toolsets.material.MaterialTools",
-    arguments={"expression": tex.id, "output_name": "", "material_property": "MP_BaseColor"},
-)
-ms.compile_material(path)
+tex = add(path, "MaterialExpressionTextureSampleParameter2D", -500, 0)
+set_props(tex, {"ParameterName": "DiffuseMap", "Group": "Textures",
+                "Texture": ref("/Game/Textures/T_Diffuse"),
+                "SamplerType": "SAMPLERTYPE_Color"})        # ← data/ORM maps need SAMPLERTYPE_Masks
+call_tool(tool_name="ConnectToOutput", toolset_name=MT,
+          arguments={"expression": tex, "outputName": "", "materialProperty": "MP_BaseColor"})
+call_tool(tool_name="Recompile", toolset_name=MT, arguments={"materialOrFunction": ref(path)})
 ```
+
+`SamplerType` must match the texture's content or `Recompile` raises. `SAMPLERTYPE_Color` for sRGB
+albedo, `SAMPLERTYPE_Normal` for tangent normals, `SAMPLERTYPE_Masks` or `SAMPLERTYPE_LinearColor`
+for ORM / packed data, `SAMPLERTYPE_LinearGrayscale` for a single linear channel.
 
 ## Create a math expression
 
 ```python
-color = mns.create_parameter(path, "Vector", "TintColor", "Surface", "", -600, 0)
-inten = mns.create_parameter(path, "Scalar", "Intensity", "Surface", "1.0", -600, 100)
-MT = "editor_toolset.toolsets.material.MaterialTools"
-# Engine: add a generic expression node, then wire it.
-mult = call_tool(tool_name="add_expression", toolset_name=MT,
-                 arguments={"material_or_function": path, "expression_class": "Multiply",
-                            "x": -300, "y": 0})
-mult_id = mult.id
-call_tool(tool_name="connect_expressions", toolset_name=MT,
-          arguments={"from_expression": color.id, "from_output_name": "",
-                     "to_expression": mult_id, "to_input_name": "A"})
-call_tool(tool_name="connect_expressions", toolset_name=MT,
-          arguments={"from_expression": inten.id, "from_output_name": "",
-                     "to_expression": mult_id, "to_input_name": "B"})
-call_tool(tool_name="connect_to_output", toolset_name=MT,
-          arguments={"expression": mult_id, "output_name": "", "material_property": "MP_BaseColor"})
-ms.compile_material(path)
+color = add(path, "MaterialExpressionVectorParameter", -600, 0)
+set_props(color, {"ParameterName": "TintColor", "Group": "Surface"})
+inten = add(path, "MaterialExpressionScalarParameter", -600, 150)
+set_props(inten, {"ParameterName": "Intensity", "Group": "Surface", "DefaultValue": 1.0})
+
+mult = add(path, "MaterialExpressionMultiply", -300, 50)
+for src, pin in ((color, "A"), (inten, "B")):
+    call_tool(tool_name="ConnectExpressions", toolset_name=MT,
+              arguments={"fromExpression": src, "fromOutputName": "",
+                         "toExpression": mult, "toInputName": pin})
+call_tool(tool_name="ConnectToOutput", toolset_name=MT,
+          arguments={"expression": mult, "outputName": "", "materialProperty": "MP_BaseColor"})
+call_tool(tool_name="Recompile", toolset_name=MT, arguments={"materialOrFunction": ref(path)})
 ```
+
+Unsure of a pin name? `GetExpressionInputNames(expression)` returns exactly the names
+`ConnectExpressions` accepts, and a connect that does not land raises rather than wiring nothing.
+Unsure of a class path? `ListExpressionClasses(materialOrFunction, search="Multiply")`.
 
 ## Set material properties
 
 ```python
-ms.set_property(path, "BlendMode", "BLEND_Translucent")  # display "Blend Mode" also works
-ms.set_property(path, "ShadingModel", "MSM_DefaultLit")
-ms.set_property(path, "TwoSided", "true")
-ms.compile_material(path)
+set_props(ref(path), {"BlendMode": "BLEND_Translucent", "ShadingModel": "MSM_DefaultLit",
+                      "TwoSided": True})
+call_tool(tool_name="Recompile", toolset_name=MT, arguments={"materialOrFunction": ref(path)})
 ```
+
+Internal names only — the display-name tolerance went with `MaterialService`. Find a property with
+`ObjectToolset.ListProperties` (`{"instance": ref(path), "nameFilter": "Blend", "maxDepth": 0}`) and
+read its type and legal values with `GetPropertySchema`.
 
 ## Function call node (MaterialFunction)
 
+**VibeUE, through `execute_python`.** Epic's `AddExpression` + `SetProperties({"MaterialFunction": ...})`
+produces a node with **no pins**, because the pins are built by `SetMaterialFunctionEx` →
+`UpdateFromFunctionResource` inside `PostEditChangeProperty`, which the generic property writer never
+calls. `create_function_call` is the only working path.
+
 ```python
-fn = mns.create_function_call(path,
+fn = unreal.MaterialNodeService.create_function_call(path,
     "/Engine/Functions/Engine_MaterialFunctions02/Utility/BlendAngleCorrectedNormals", -600, 0)
-call_tool(
-    tool_name="connect_to_output",
-    toolset_name="editor_toolset.toolsets.material.MaterialTools",
-    arguments={"expression": fn.id, "output_name": "", "material_property": "MP_Normal"},
-)
-ms.compile_material(path)
+fn_ref = {"refPath": fn.object_path}      # hand the node to Epic calls as a refPath
+
+call_tool(tool_name="ConnectToOutput", toolset_name=MT,
+          arguments={"expression": fn_ref, "outputName": "", "materialProperty": "MP_Normal"})
+call_tool(tool_name="Recompile", toolset_name=MT, arguments={"materialOrFunction": ref(path)})
 ```
-Input names for function calls are the **bare** names from `get_function_info(func_path).inputs`
-(never the display labels with type suffixes like `"TextureObject (T2d)"`).
+
+The node's pin names are on the returned struct (`fn.input_names` / `fn.output_names`), and
+`GetExpressionInputNames(fn_ref)` reports the same bare names — which is what `toInputName` takes.
 
 ## Custom HLSL expression
 
+Epic's generic path, because a Custom node's pins come from its own `Inputs` array:
+
 ```python
-custom = mns.create_custom_expression(path, "return sin(Time * Speed);", "SineWave",
-    "Float1", "Time,Speed", -500, 0)   # OutputType: Float1..Float4, MaterialAttributes
-call_tool(
-    tool_name="connect_to_output",
-    toolset_name="editor_toolset.toolsets.material.MaterialTools",
-    arguments={"expression": custom.id, "output_name": "", "material_property": "MP_EmissiveColor"},
-)
-ms.compile_material(path)
+custom = add(path, "MaterialExpressionCustom", -500, 0)
+set_props(custom, {"Code": "return sin(Time * Speed);", "Description": "SineWave",
+                   "OutputType": "CMOT_Float1",     # CMOT_Float1..4, CMOT_MaterialAttributes
+                   "Inputs": [{"InputName": "Time"}, {"InputName": "Speed"}]})
+call_tool(tool_name="ConnectToOutput", toolset_name=MT,
+          arguments={"expression": custom, "outputName": "", "materialProperty": "MP_EmissiveColor"})
+call_tool(tool_name="Recompile", toolset_name=MT, arguments={"materialOrFunction": ref(path)})
 ```
+
+`Inputs` is a container: set the **whole array** to add or remove pins. Extra outputs go in
+`AdditionalOutputs` (`[{"OutputName": "Mask", "OutputType": "CMOT_Float3"}]`); reach them by name as
+`fromOutputName`.
 
 ## Collection parameter
 
+**VibeUE, through `execute_python`** — same reason as the function call: the node's `ParameterId`
+GUID is looked up in the collection inside `PostEditChangeProperty`, and without it the material
+compiles to `"CollectionParameter has invalid parameter"`.
+
 ```python
-coll = mns.create_collection_parameter(path, "/Game/Materials/MPC_GlobalParams", "WindStrength", -500, 0)
-# Engine: wire the collection-parameter output into another node's input.
-call_tool(
-    tool_name="connect_expressions",
-    toolset_name="editor_toolset.toolsets.material.MaterialTools",
-    arguments={"from_expression": coll.id, "from_output_name": "",
-               "to_expression": some_mult_id, "to_input_name": "B"},
-)
+coll = unreal.MaterialNodeService.create_collection_parameter(
+    path, "/Game/Materials/MPC_GlobalParams", "WindStrength", -500, 0)
+call_tool(tool_name="ConnectExpressions", toolset_name=MT,
+          arguments={"fromExpression": {"refPath": coll.object_path}, "fromOutputName": "",
+                     "toExpression": mult, "toInputName": "B"})
 ```
+
+Need the collection asset itself? `MaterialToolset.CreateParameterCollection(folderPath, assetName)`,
+then `ObjectToolset.SetProperties` for its `ScalarParameters` / `VectorParameters` arrays.
 
 ## Static switch / texture object parameter
 
 ```python
-sw = mns.create_parameter(path, "StaticSwitch", "UseDetailTexture", "Features", "true", -600, 0)
-to = mns.create_parameter(path, "TextureObject", "DetailMap", "Textures", "/Game/Textures/T_Detail.T_Detail", -500, 0)
+sw = add(path, "MaterialExpressionStaticSwitchParameter", -600, 0)
+set_props(sw, {"ParameterName": "UseDetailTexture", "Group": "Features", "DefaultValue": True})
+# its input pins are named True and False
+
+to = add(path, "MaterialExpressionTextureObjectParameter", -500, 0)
+set_props(to, {"ParameterName": "DetailMap", "Group": "Textures",
+               "Texture": ref("/Game/Textures/T_Detail"), "SamplerType": "SAMPLERTYPE_Color"})
 ```
 
-## Batch create / connect / set
+Use a `TextureObjectParameter` (not a `TextureSampleParameter2D`) to feed a function's
+`TextureObject` input — the function brings its own sampler.
 
-Each batch call applies in one transaction (much faster than per-node). Arrays must be equal length.
+## Build a graph
+
+There is no batch API any more: `AddExpression` and `ConnectExpressions` are one node and one wire
+per call. Drive them from a table so a graph is still one block of code, and keep the handles the
+calls return — they are the `{refPath}` you wire with.
 
 ```python
-types = ["Multiply", "Add", "Lerp", "OneMinus"]
-names = ["Mult1", "Add1", "Lerp1", "Invert1"]   # "" to skip
-xs, ys = [-400, -400, -200, -600], [0, 200, 100, 0]
-created = mns.batch_create_expressions(path, types, names, xs, ys)
+specs = [("MaterialExpressionMultiply", -400, 0), ("MaterialExpressionAdd", -400, 200),
+         ("MaterialExpressionLinearInterpolate", -200, 100), ("MaterialExpressionOneMinus", -600, 0)]
+nodes = [add(path, cls, x, y) for cls, x, y in specs]
 
-mns.batch_connect_expressions(path, source_ids, output_names, target_ids, input_names)
-mns.batch_set_properties(path, node_ids, property_names, property_values)
-
-# Wire a node into a material output with the VibeUE service (output_name="" = output 0;
-# property accepts "BaseColor" or "MP_BaseColor"). Returns True only after a read-back.
-mns.connect_expression_to_output(path, created[0].id, "", "BaseColor")
-# mns.disconnect_output(path, "BaseColor")   # clear it again
-
-# created[0].id is session-specific; created[0].object_path is durable and also accepted.
-# (The engine MaterialTools.connect_to_output call_tool path is interchangeable.)
+wires = [(nodes[0], "", nodes[2], "A"), (nodes[1], "", nodes[2], "B"), (nodes[3], "", nodes[0], "A")]
+for src, out, dst, pin in wires:
+    call_tool(tool_name="ConnectExpressions", toolset_name=MT,
+              arguments={"fromExpression": src, "fromOutputName": out,
+                         "toExpression": dst, "toInputName": pin})
+call_tool(tool_name="ConnectToOutput", toolset_name=MT,
+          arguments={"expression": nodes[2], "outputName": "", "materialProperty": "MP_BaseColor"})
 ```
+
 Runnable: `scripts/material_graph_batch.txt`.
+
+## Tidy and verify
+
+```python
+call_tool(tool_name="DeleteUnusedExpressions", toolset_name=MT, arguments={"material": ref(path)})
+call_tool(tool_name="LayoutExpressions", toolset_name=MT, arguments={"materialOrFunction": ref(path)})
+call_tool(tool_name="Recompile", toolset_name=MT, arguments={"materialOrFunction": ref(path)})
+stats = call_tool(tool_name="GetStatistics", toolset_name=MT,
+                  arguments={"material": ref(path)})["returnValue"]
+print(stats["num_pixel_texture_samples"], stats["num_samplers"],
+      stats["num_pixel_shader_instructions"])
+call_tool(tool_name="SaveAsset", toolset_name=AT, arguments={"assetPath": path})
+```
+
+`DeleteUnusedExpressions` does not recompile — always `Recompile` after it. `Recompile` raises with
+the failing node's object path on a compile error; a clean compile returns quietly.
+`LayoutExpressions` auto-arranges the whole graph, so approximate `x`/`y` at creation is fine.

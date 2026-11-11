@@ -3,7 +3,6 @@ name: landscape-auto-material
 display_name: Landscape Auto-Material System
 description: Create production-quality landscape materials with the master-material + material-function + material-instance paradigm, RVT, and auto-layering. Use when the user asks for an auto/procedural landscape material, slope/altitude/distance-based layer blending, Runtime Virtual Textures, biome configuration via instances, or layer material functions. For basic layer-blend materials load landscape-materials.
 vibeue_classes:
-  - MaterialService
   - MaterialNodeService
   - LandscapeMaterialService
   - RuntimeVirtualTextureService
@@ -87,47 +86,68 @@ Material Instance (MI_Landscape_Biome_01)
 
 Before modifying an **existing** master material or material function, **MUST** export and review its current state:
 
-```python
-import unreal, json
+Graph export/introspection is **Epic's** now — `MaterialNodeService.export_material_graph`,
+`get_function_info` and `export_function_graph` are gone. `MaterialToolset` reads both materials and
+material functions through the same `MaterialOrFunction` parameter, so one pattern covers both
+(`call_tool`; `refPath` is the full object path):
 
-# For materials:
-graph = json.loads(unreal.MaterialNodeService.export_material_graph("/Game/Materials/M_Landscape_Master"))
-print(f"Expressions: {len(graph['expressions'])}, Connections: {len(graph['connections'])}")
-for expr in graph['expressions']:
-    name = expr.get('parameter_name') or expr.get('function_path') or expr.get('class')
-    print(f"  [{expr['id']}] {expr['class']} - {name}")
-
-# For material functions:
-func_info = unreal.MaterialNodeService.get_function_info("/Game/Functions/MF_AutoLayer")
-func_graph = json.loads(unreal.MaterialNodeService.export_function_graph("/Game/Functions/MF_AutoLayer"))
 ```
+# Every expression in the graph (a material OR a material function):
+call_tool MaterialToolset.GetExpressions   {"MaterialOrFunction": {"refPath": "/Game/Materials/M_Landscape_Master.M_Landscape_Master"}}
+call_tool MaterialToolset.GetExpressions   {"MaterialOrFunction": {"refPath": "/Game/Functions/MF_AutoLayer.MF_AutoLayer"}}
+
+# What feeds each expression, and what feeds the material outputs:
+call_tool MaterialToolset.GetExpressionInputs {"MaterialOrFunction": {...}, "Expression": {"refPath": "<expression from GetExpressions>"}}
+call_tool MaterialToolset.GetPropertyInput    {"Material": {...}, "MaterialProperty": "MP_BaseColor"}
+
+# Any property of any expression (parameter names, defaults, function input type/sort priority):
+call_tool ObjectToolset.GetProperties {"Object": {"refPath": "<expression>"}}
+```
+
+There is no single JSON blob any more: `GetExpressions` gives you the nodes and
+`GetExpressionInputs` the wiring, one expression at a time — so walk it, and keep a note of what you
+saw rather than re-reading the whole graph for every edit.
 
 **Why:** Auto-material master graphs can have 50+ expressions and complex function call chains. Adding nodes without reviewing first creates duplicates, broken connections, and compilation failures. Always export → review → plan → modify.
 
-### Four Services Work Together
+### Two VibeUE Services + Epic's Material Toolsets Work Together
 
-| Service | Role |
+VibeUE keeps the landscape-specific halves; everything generic about materials is Epic's, reached
+with `call_tool`. **`MaterialService` is deleted**, and `MaterialNodeService` is down to exactly two
+tools.
+
+| Where | Role |
 |---------|------|
-| **MaterialNodeService** | Material function creation/introspection, expression graphs |
-| **MaterialService** | Material/instance creation, properties, bulk parameters |
-| **LandscapeMaterialService** | `CreateAutoMaterial`, `FindLandscapeTextures`, layer infos |
-| **RuntimeVirtualTextureService** | RVT assets, volumes, landscape assignment |
+| **LandscapeMaterialService** (`execute_python`) | `create_auto_material`, `find_landscape_textures`, layer blend/weight/coords/sample nodes, layer infos, landscape assignment |
+| **RuntimeVirtualTextureService** (`execute_python`) | RVT assets, volumes, landscape assignment |
+| **MaterialNodeService** (`execute_python`) | exactly two tools left: `create_function_call` and `create_collection_parameter` |
+| **`MaterialToolset`** (`call_tool`) | `CreateMaterial`, `CreateFunction`, `AddExpression`, `ConnectExpressions`, `ConnectToOutput`, `GetExpressions`, `GetExpressionInputs`, `LayoutExpressions`, `Recompile`, `GetStatistics` |
+| **`MaterialInstanceToolset`** (`call_tool`) | `Create`, `SetParent`, `ListParameters`, `SetScalarParameter` / `SetVectorParameter` / `SetTextureParameter` / `SetStaticSwitchParameter` |
+| **`ObjectToolset`** (`call_tool`) | `GetProperties` / `SetProperties` for **any** material or expression property |
+| **`AssetToolset`** (`call_tool`) | `SaveAsset`, `Exists`, `Duplicate` |
 
-### ⚠️ compile_material Is Slow — Use Separate Code Blocks
+### ⚠️ Recompiling Is Slow — Use Separate Code Blocks
 
 Master materials with many function calls are **very slow** to compile. NEVER create + compile in the same block.
 
 Split into steps:
 1. **Block 1**: Create material, add functions, connect graph, save
-2. **Block 2**: `compile_material()` alone (may take minutes)
+2. **Block 2**: `call_tool MaterialToolset.Recompile {"MaterialOrFunction": {"refPath": "<mat>"}}`
+   alone (may take minutes). For a material **function**, `Recompile` also recompiles every material
+   that references it — so it is slower still.
 3. **Block 3**: Create instances, set parameters, assign to landscape
 
 ### ⚠️ Enable Virtual Texturing on Material
 
-If using RVT, you MUST set `bUsedWithVirtualTexturing = true` on the master material:
-```python
-unreal.MaterialService.set_property(mat_path, "bUsedWithVirtualTexturing", "true")
+If using RVT, you MUST set `bUsedWithVirtualTexturing = true` on the master material. Material
+properties are Epic's `ObjectToolset` now (`MaterialService.set_property` is gone):
+
 ```
+call_tool ObjectToolset.SetProperties {"Object": {"refPath": "/Game/Materials/M_Terrain.M_Terrain"},
+                                       "Properties": {"bUsedWithVirtualTexturing": true}}
+```
+
+Set it **before** the recompile, then read it back with `ObjectToolset.GetProperties`.
 
 ### ⚠️ Material Functions Must Be Saved Before Use
 
@@ -138,12 +158,19 @@ unreal.EditorAssetLibrary.save_asset(func_path)
 
 ### ⚠️ Function Inputs/Outputs Need Sort Priority
 
-Set `SortPriority` to control pin ordering. Lower values appear first:
-```python
-unreal.MaterialNodeService.add_function_input(func_path, "BaseColor", "Vector3", 0)
-unreal.MaterialNodeService.add_function_input(func_path, "Normal", "Vector3", 1)
-unreal.MaterialNodeService.add_function_input(func_path, "Roughness", "Scalar", 2)
+`MaterialNodeService.add_function_input` / `add_function_output` are gone. A function input is now an
+expression you add to the function and then configure — two `call_tool` calls per pin:
+
 ```
+call_tool MaterialToolset.AddExpression {"MaterialOrFunction": {"refPath": "<MF path>"},
+          "ExpressionClass": "/Script/Engine.MaterialExpressionFunctionInput", "X": -600, "Y": 0}
+call_tool ObjectToolset.SetProperties   {"Object": {"refPath": "<the expression returned above>"},
+          "Properties": {"InputName": "BaseColor", "InputType": "FunctionInput_Vector3", "SortPriority": 0}}
+```
+
+`SortPriority` controls pin ordering — lower values appear first, so give `BaseColor` 0, `Normal` 1,
+`Roughness` 2. Outputs are the same with `MaterialExpressionFunctionOutput` and `OutputName`.
+`ListExpressionClasses` on the function finds the exact class path if the one above is rejected.
 
 ---
 
@@ -183,11 +210,18 @@ Material function created but doesn't appear in the material editor's function l
 ### 6. Compiling in Same Block as Creation
 Master materials with many function calls take minutes to compile. Putting create + compile in one code block causes timeout.
 
-### 7. Wrong Bulk Parameter Types
-`set_instance_parameters_bulk` requires exact type strings: `"Scalar"`, `"Vector"`, `"Texture"`, `"StaticSwitch"`. Typos silently skip parameters.
+### 7. Reaching for a Bulk Parameter Setter
+`MaterialService.set_instance_parameters_bulk` is gone, and nothing batches instance parameters any
+more: **you iterate**. One `call_tool` per parameter, each typed —
+`MaterialInstanceToolset.SetScalarParameter` / `SetVectorParameter` / `SetTextureParameter` /
+`SetStaticSwitchParameter` — so pick the call from the parameter's real type (`ListParameters` on the
+parent tells you) and check each reply instead of trusting a count. A typo no longer "silently
+skips": the wrong typed call fails on that one parameter, leaving the rest of the biome applied.
 
-### 8. Static Switch Parameters Need UpdateStaticPermutation
-Static switches are compile-time. After setting via bulk set, the instance needs a static permutation update (handled internally by `set_instance_parameters_bulk`).
+### 8. Static Switch Parameters Need a Recompile
+Static switches are compile-time, and nothing updates the static permutation for you now. After
+`MaterialInstanceToolset.SetStaticSwitchParameter`, `AssetToolset.SaveAsset` the instance and
+`MaterialToolset.Recompile` it, then confirm with `MaterialInstanceToolset.GetStaticSwitchParameter`.
 
 ### 9. Auto Layer Has Zero Weights
 Landscape looks unpainted or auto-blend never appears when all layer weights are 0. Verify with `get_weights_in_region` and fill/paint the base auto layer at least once.

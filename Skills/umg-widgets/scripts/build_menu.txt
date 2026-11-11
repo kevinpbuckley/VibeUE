@@ -3,25 +3,53 @@
 # build_menu.txt — Build a vertical-menu hierarchy inside an existing Widget Blueprint.
 #
 # Sample script for the umg-widgets skill. Run via execute_python.
-# Assumes WIDGET_PATH already exists (see create_widget.txt). Sets root canvas,
-# a VerticalBox, and one Button + child TextBlock per entry, then saves.
+# Assumes WIDGET_PATH already exists (see create_widget.txt).
+#
+# TWO call styles in one script:
+#   - the hierarchy is VibeUE's              -> unreal.WidgetService.add_component(...)
+#   - the label text is Epic's ObjectToolset -> vibeue.exec_tool("EditorToolset.ObjectToolset", ...)
+#     (ObjectToolset has NO Python binding: unreal.ObjectToolset.set_properties() does not exist)
+import json
 import unreal
+import vibeue
 
 WIDGET_PATH = "/Game/Blueprints/TestWidget"
 BUTTONS = [("PlayButton", "PLAY"), ("OptionsButton", "OPTIONS"), ("QuitButton", "QUIT")]
 
-# Root first (set_as_root=True), then container, then children.
+OT = "EditorToolset.ObjectToolset"
+ASSET = WIDGET_PATH.rsplit("/", 1)[-1]
+
+
+def widget_obj(name):
+    """Object path of a widget in the EDITABLE tree.
+
+    Note `<Asset>:WidgetTree.<name>`, not `<Asset>_C:WidgetTree...` — the _C copy is rebuilt by
+    compile, so writes there are silently discarded.
+    """
+    return f"{WIDGET_PATH}.{ASSET}:WidgetTree.{name}"
+
+
+# Root first (empty parent name -> becomes the root), then the container, then children.
 unreal.WidgetService.add_component(WIDGET_PATH, "CanvasPanel", "Root", "", True)
 unreal.WidgetService.add_component(WIDGET_PATH, "VerticalBox", "ButtonList", "Root", False)
 
 for btn_name, label in BUTTONS:
+    # Widget names are unique PER BLUEPRINT, not per parent — hence the per-button suffix.
     unreal.WidgetService.add_component(WIDGET_PATH, "Button", btn_name, "ButtonList", False)
     text_name = f"{btn_name}Text"
     unreal.WidgetService.add_component(WIDGET_PATH, "TextBlock", text_name, btn_name, False)
-    unreal.WidgetService.set_property(WIDGET_PATH, text_name, "Text", label)  # value is a string
+    vibeue.exec_tool(OT, "SetProperties", {
+        "instance": widget_obj(text_name),
+        "values": json.dumps({"Text": label}),   # `values` is a JSON *string*
+    })
 
+wbp = unreal.load_asset(WIDGET_PATH)
+unreal.BlueprintToolset.compile_blueprint(wbp, False)
 unreal.EditorAssetLibrary.save_asset(WIDGET_PATH)
 
-# Verify before claiming success.
-for s in unreal.WidgetService.get_widget_snapshot(WIDGET_PATH):
-    print(f"{s.widget_name} ({s.widget_class}) parent={s.parent_widget}")
+# Verify before claiming success: DescribeWidget replaces every old VibeUE read.
+res = unreal.WidgetStaticAnalysisToolset.describe_widget(wbp, None, -1, "", False)
+print(res.available_widget_count, "widget(s)")
+for e in res.widgets:
+    parent = e.parent.get_name() if e.parent else "-"
+    print(f"{'  ' * e.depth}{e.widget_name} ({e.widget_class_path}) parent={parent}")

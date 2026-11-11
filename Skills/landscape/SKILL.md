@@ -314,12 +314,17 @@ factory = unreal.LandscapeGrassTypeFactory()
 new_asset = asset_tools.create_asset("LGT_MyGrass", "/Game/Grass", unreal.LandscapeGrassType, factory)
 ```
 
-### ⚠️ Use LandscapeMaterialService for Landscape Materials - NOT MaterialService
+### ⚠️ Use LandscapeMaterialService for Landscape Materials - NOT the generic material path
 
 - **CORRECT**: `unreal.LandscapeMaterialService.create_landscape_material("M_Terrain", "/Game/Mats")`
-- **WRONG**: `unreal.MaterialService.create_material("M_Terrain", "/Game/Mats")` → causes `TypeError: Nativize: Cannot nativize 'MaterialCreateResult' as 'String'`
+  — VibeUE service, so `execute_python`. Returns `LandscapeMaterialCreateResult`; use `.asset_path`.
+- **WRONG**: `call_tool` → `MaterialToolset.CreateMaterial("/Game/Mats", "M_Terrain")` — Epic's
+  generic material create. It gives you a bare material with none of the landscape scaffolding
+  (layer blend, layer coords, grass output), and the layer work then has nothing to attach to.
 
-`MaterialService` is for generic materials. Landscape materials MUST use `LandscapeMaterialService`.
+VibeUE's old `MaterialService` is **deleted**: generic materials are Epic's
+`EditorToolset.MaterialToolset` / `MaterialInstanceToolset` via `call_tool`. Landscape materials
+MUST still use `LandscapeMaterialService`.
 
 ### Layer Info Objects Required
 
@@ -332,14 +337,21 @@ Every paint layer needs a `ULandscapeLayerInfoObject` asset:
 ### Material Must Be Compiled First
 
 After creating/changing a landscape material, compile it before assigning to the landscape.
+Compiling is **Epic's** now — `MaterialService.compile_material` is gone:
+
+```
+call_tool MaterialToolset.Recompile {"MaterialOrFunction": {"refPath": "/Game/Mats/M_Terrain.M_Terrain"}}
+```
+
+(inside `execute_python`: `vibeue.exec_tool("EditorToolset.MaterialToolset", "Recompile", {...})`.)
 
 ### ⚠️ Split Material Operations Into Separate Code Blocks
 
-`compile_material()` can take minutes for complex landscape materials. **NEVER** combine material creation + compile + layer info creation in one code block — it WILL timeout.
+`Recompile` can take minutes for complex landscape materials. **NEVER** combine material creation + compile + layer info creation in one code block — it WILL timeout.
 
 Do this in separate steps:
 1. **Block 1**: Create material, add blend nodes, add layers, connect, save
-2. **Block 2**: `compile_material()` (this is slow)
+2. **Block 2**: `MaterialToolset.Recompile` (this is slow — on its own)
 3. **Block 3**: Create layer info objects, assign to landscape
 
 ---
@@ -353,7 +365,7 @@ Do this in separate steps:
 | `info.success` | Check `info.actor_label` (no success field on info) |
 | `info.num_sections` | `info.num_subsections` |
 | `info.quads_per_section` | `info.subsection_size_quads` |
-| `MaterialService.create_material()` for landscapes | `LandscapeMaterialService.create_landscape_material()` |
+| `MaterialToolset.CreateMaterial` for landscapes (and `MaterialService.*`, which is deleted) | `LandscapeMaterialService.create_landscape_material()` |
 | Guessing layer info path `Grass_LayerInfo` | Use `create_layer_info_object().asset_path` → `LI_Grass` |
 | `segment.start_control_point_index` | `segment.start_point_index` (spline segment) |
 | `segment.end_control_point_index` | `segment.end_point_index` (spline segment) |
