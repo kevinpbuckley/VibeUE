@@ -1,6 +1,6 @@
 ---
 name: blueprint-tasks
-description: Create and edit STT_* StateTree Blueprint Tasks - discover parent class, create via the engine BlueprintFactory, ReceiveLatentTick / ReceiveLatentEnterState event functions, registered task type names, and extended FStateTree* info fields
+description: Create and edit STT_* StateTree Blueprint Tasks - discover parent class, create via the engine BlueprintFactory, ReceiveLatentTick / ReceiveLatentEnterState event functions, registered task type names, Epic's add_blueprint_* tools for Blueprint nodes, and where to read tree structure now that get_state_tree_info is gone
 ---
 
 This sub-doc continues from skill.md → "Creating & Editing StateTree Blueprint Tasks".
@@ -64,26 +64,28 @@ signature and cause compile errors.
 | On state exit | `ReceiveExitState` | — |
 | On state completed | `ReceiveStateCompleted` | — |
 
-```python
-import unreal
+`BlueprintService.add_event_node` was removed; events are `BlueprintToolsets.BlueprintToolset.AddEvent`.
+The event *names* below are the part that matters and they have not changed.
 
-bp_path = "/Game/StateTree/STT_MyTask"
-
-# Add Tick event — MUST use ReceiveLatentTick, NOT ReceiveTick
-tick_id = unreal.BlueprintService.add_event_node(bp_path, "EventGraph", "ReceiveLatentTick", 0, 0)
-print(f"Tick node: {tick_id}")
-
-# Add Enter State event
-enter_id = unreal.BlueprintService.add_event_node(bp_path, "EventGraph", "ReceiveLatentEnterState", 0, 200)
-print(f"Enter node: {enter_id}")
-
-# Add Exit State event
-exit_id = unreal.BlueprintService.add_event_node(bp_path, "EventGraph", "ReceiveExitState", 0, 400)
-print(f"Exit node: {exit_id}")
-
-unreal.BlueprintEditorLibrary.compile_blueprint(unreal.EditorAssetLibrary.load_asset(bp_path))
-unreal.EditorAssetLibrary.save_asset(bp_path)
 ```
+# bp_path = "/Game/StateTree/STT_MyTask"
+
+# Tick — MUST be ReceiveLatentTick, NOT the deprecated ReceiveTick
+call_tool AddEvent {"blueprint": {"refPath": "<bp_path>"}, "eventName": "ReceiveLatentTick"}
+
+# Enter State — the latent form, not ReceiveEnterState
+call_tool AddEvent {"blueprint": {"refPath": "<bp_path>"}, "eventName": "ReceiveLatentEnterState"}
+
+# Exit State
+call_tool AddEvent {"blueprint": {"refPath": "<bp_path>"}, "eventName": "ReceiveExitState"}
+
+call_tool CompileBlueprint {"blueprint": {"refPath": "<bp_path>"}}
+call_tool SaveAsset        {"asset": {"refPath": "<bp_path>"}}        # EditorToolset.AssetToolset
+```
+
+`ListCompatibleEventFunctions` lists what a given Blueprint will accept, which beats typing an
+event name from memory. Run `describe_toolset BlueprintToolsets.BlueprintToolset` for AddEvent's
+exact argument names and whether it takes a position.
 
 The `ReceiveLatentTick` node pins:
 - **DeltaTime** (float, output) — elapsed frame time
@@ -93,47 +95,60 @@ The `ReceiveLatentEnterState` node pins:
 
 ### After Creation: Find the Registered Task Type Name
 
-Blueprint tasks register under a `_C`-suffixed name. Use `get_available_task_types()` to find it:
+Blueprint tasks register under a `_C`-suffixed name. `get_available_task_types()` — a VibeUE
+survivor — returns plain strings:
 
 ```python
-types = unreal.StateTreeService.get_available_task_types()
-for t in types:
-    if "MyTask" in t.type_name:
-        print(t.type_name)  # e.g. "STT_MyTask_C"
+for t in unreal.StateTreeService.get_available_task_types():
+    if "MyTask" in t:
+        print(t)  # e.g. "STT_MyTask_C"
 ```
 
-### Blueprint Task Add Rule (No Wrapper-First Guidance)
+### ⚠️ Use Epic's Blueprint Variant, Not the Struct One
 
-- Prefer adding blueprint tasks by their registered type name (for example, `STT_Rotate_C`) via `StateTreeService.add_task`.
-- Compile the Blueprint first: `add_task`/`add_global_task`/`add_evaluator` refuse a Blueprint that is edited but not compiled, or has compile errors. A copied `SKEL_<Name>_C` skeleton name resolves to the compiled `<Name>_C` class; other internal names (`REINST_`, `TRASHCLASS_`) are refused.
-- Do not present `StateTreeBlueprintTaskWrapper` as the user-level task outcome when a named blueprint task type exists.
-- If wrapper internals are used by the service implementation, keep that internal and report the added task as the blueprint task name.
+Adding a node is Epic's job now, and Epic ships a **dedicated Blueprint variant for every node
+kind.** For an `STT_*` / `STE_*` / `STC_*` Blueprint node use these, through `call_tool`:
 
-### Extended Info Available in get_state_tree_info
+| Blueprint node | Epic tool | NOT the struct variant |
+|---|---|---|
+| `STT_*` state task | `add_blueprint_task` | ~~`add_task`~~ |
+| `STT_*` global task | `add_blueprint_global_task` | ~~`add_global_task`~~ |
+| `STE_*` evaluator | `add_blueprint_evaluator` | ~~`add_evaluator`~~ |
+| `STC_*` enter condition | `add_blueprint_enter_condition` | ~~`add_enter_condition`~~ |
+| Blueprint consideration | `add_blueprint_consideration` | ~~`add_consideration`~~ |
 
-`FStateTreeInfo` now includes `root_parameters` (list of `FStateTreeParameterInfo`).
+The struct variants take a `UScriptStruct`, so they cannot express a Blueprint class. They all live
+on `toolset_name="state_tree_toolset.state_tree.StateTreeToolset"`; run `describe_toolset` on it for
+what each `add_blueprint_*` expects rather than guessing an argument list.
 
-`FStateTreeStateInfo` now includes:
-- `tag` (str) — gameplay tag string, empty if none
-- `description` (str) — editor description
-- `weight` (float) — utility weight
-- `tasks_completion` (str) — "Any" or "All"
-- `b_has_custom_tick_rate` (bool)
-- `custom_tick_rate` (float)
-- `required_event_tag` (str) — required event tag to enter, empty if none
-- `enter_condition_operands` (list of str) — "Copy", "And", or "Or" per enter condition
-- `considerations` (list of `FStateTreeNodeInfo`) — utility AI considerations; each node's `struct_type` is the full struct name (e.g. `"StateTreeConstantConsideration"`)
+Two things that have not changed:
 
-`FStateTreeNodeInfo` now includes:
-- `considered_for_completion` (bool) — whether task contributes to state completion (tasks only)
-- `operand` (str) — "Copy", "And", or "Or" (conditions only)
+- **Compile the Blueprint first.** A Blueprint that is edited but not compiled, or that has compile
+  errors, is not a usable node class. A copied `SKEL_<Name>_C` skeleton name resolves to the
+  compiled `<Name>_C` class; other internal names (`REINST_`, `TRASHCLASS_`) are not usable.
+- **Never pass `StateTreeBlueprintTaskWrapper` to an adder,** and never report it as the user-level
+  outcome. It is the internal wrapper struct. Report the Blueprint task's own name.
 
-`FStateTreeTransitionInfo` now includes:
-- `index` (int) — zero-based index within the state's transitions array
-- `delay_transition` (bool); read-back also exposes `enabled` (bool)
-- `delay_duration` (float)
-- `delay_random_variance` (float)
-- `required_event_tag` (str)
-- `event_payload_struct` (str) — payload struct type name (e.g. "FStartChasingPayload"), empty if none
-- `conditions` (list of `FStateTreeNodeInfo`)
-- `condition_operands` (list of str)
+(VibeUE's binding tools, by contrast, accept the wrapper name as one of several aliases for an
+existing node — see `api-reference.md`.)
+
+### Reading a Tree's Structure and Node Fields
+
+`get_state_tree_info` is gone, and with it the `FStateTreeInfo` / `FStateTreeStateInfo` /
+`FStateTreeNodeInfo` / `FStateTreeTransitionInfo` payloads — no surviving VibeUE tool returns them.
+Read the same facts from the engine instead:
+
+| What you used to read off the info structs | Where it comes from now |
+|---|---|
+| The state hierarchy (`all_states`, `child_paths`) | Epic `get_root_states`, `get_all_states`, `get_children` |
+| A node's display text (`name`) | Epic `get_node_description` |
+| A node's property values, and the task/condition/consideration/evaluator fields | Epic `get_node_instance_data` — the returned keys *are* the property names |
+| A state's `tag`, `description`, `weight`, `tasks_completion`, `state_type`, `selection_behavior`, `enabled` | `ObjectToolset.GetProperties` on the `UStateTreeState` (keys `Tag`, `Description`, `Weight`, `TasksCompletion`, `Type`, `SelectionBehavior`, `bEnabled`) |
+| A state's transitions and their conditions / operands | `ObjectToolset.GetProperties` on the state, key `Transitions` |
+| `root_parameters` | `ObjectToolset.GetProperties` on the editor data, key `RootParameters` |
+| The context actor class | `ObjectToolset.GetProperties` on the editor data for `Schema`, then on that schema object |
+| A transition's event payload fields | VibeUE `get_transition_event_payload_property_names` (still a VibeUE tool) |
+| A transition condition's properties | VibeUE `get_transition_condition_property_names` (still a VibeUE tool) |
+
+`b_expanded` has no read path at all any more: `bExpanded` is invisible to the toolset, and VibeUE's
+`set_state_expanded` is write-only.

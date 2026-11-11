@@ -1,14 +1,48 @@
 # Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
-# build_state_tree.txt — Create a StateTree, add states + a task + a transition, compile.
+# build_state_tree.txt — Build a StateTree end to end on UE 5.9: create the asset, add states and a
+# task, add a transition, compile, save, then add a root parameter and bind the task to it.
 #
-# Sample script for the state-trees skill. Run via execute_python.
-# State paths are "/"-separated from the subtree name. Create Root with an EMPTY parent_path.
-# add_transition(asset, state_path, trigger, transition_type, target_path).
+# This is a MIXED recipe. Two call styles, and they are not interchangeable:
 #
-# If create_state_tree returns False, the schema isn't registered in this project — the warning
-# log lists available schemas. "StateTreeComponentSchema" needs the gameplay StateTree module
-# enabled; some projects only expose test/CameraDirector schemas.
+#   * Epic's StateTreeToolset  -> call_tool ONLY, snake_case names (add_child_state, compile, ...).
+#     It is a Python toolset, but it is NOT a `unreal.*` API: `unreal.StateTreeToolset` does not
+#     exist. Same for ObjectToolset / AssetToolset (PascalCase: GetProperties, SaveAsset).
+#   * VibeUE's 45 surviving tools -> `unreal.StateTreeService.<snake_case>()` inside execute_python.
+#     Never a call_tool tool.
+#
+# The tool NAMES below are verified. Argument names are shown as {...} on purpose: run
+# describe_toolset before relying on an exact parameter list, and do not invent an argument spelling
+# to go with a real tool name — a confidently wrong argument list is worse than a placeholder.
+#
+# ---------------------------------------------------------------------------------------------
+# STEP 0 — the three toolset names, and their exact parameter lists (do this first, once)
+# ---------------------------------------------------------------------------------------------
+# ST      = "state_tree_toolset.state_tree.StateTreeToolset"   # Epic's StateTree toolset (Python)
+# OBJ     = "EditorToolset.ObjectToolset"                      # C++
+# ASSETTS = "EditorToolset.AssetToolset"                       # C++
+#
+# A C++ toolset's registered name is <Module>.<ClassName>. A Python toolset's is its script package
+# plus module plus class — hence the "state_tree." segment that is so easy to drop. SKILL.md has the
+# derivation rule.
+#
+# Enable the StateTreeToolset plugin if list_toolsets() does not show ST, then:
+#   describe_toolset(ST)       -> exact args for add_sub_tree / add_child_state / add_task /
+#                                 get_node_instance_data / set_node_instance_data / compile
+#   describe_toolset(OBJ)      -> exact args for GetProperties / SetProperties
+#   describe_toolset(ASSETTS)  -> exact args for SaveAsset
+
+
+# ---------------------------------------------------------------------------------------------
+# STEP 1 — create the asset: VibeUE, via execute_python
+# ---------------------------------------------------------------------------------------------
+# Epic deliberately has NO asset creation (no K2 path for creating a StateTree with a schema in
+# head), so this one is VibeUE's.
+#
+# If create_state_tree returns False the SCHEMA is almost always the problem, not the path:
+# "StateTreeComponentSchema" comes from the GameplayStateTree plugin. List what this project really
+# has with ObjectToolset.SearchSubclasses on UStateTreeSchema and pass one of those instead.
+
 import unreal
 sts = unreal.StateTreeService
 
@@ -18,18 +52,101 @@ if unreal.EditorAssetLibrary.does_asset_exist(ASSET):
 
 print("create:", sts.create_state_tree(ASSET, "StateTreeComponentSchema"))
 
-# Build hierarchy: empty parent_path = new top-level subtree
-print("Root:", sts.add_state(ASSET, "", "Root"))
-print("Patrol:", sts.add_state(ASSET, "Root", "Patrol"))
-print("Chase:", sts.add_state(ASSET, "Root", "Chase"))
 
-# Add a task to a state (task struct name; see api-reference.md for available tasks)
-print("task:", sts.add_task(ASSET, "Root/Patrol", "FStateTreeDelayTask"))
+# ---------------------------------------------------------------------------------------------
+# STEP 2 — hierarchy: Epic, via call_tool
+# ---------------------------------------------------------------------------------------------
+# add_sub_tree makes a new TOP-LEVEL subtree (this is what "Root" is).
+# add_child_state makes a child OF AN EXISTING STATE. They are different tools — a tree needs its
+# root subtree before it can have children.
+#
+# Epic's tools address the state OBJECT, not a "Root/Patrol" path. Keep the objects these calls and
+# get_root_states / get_all_states / get_children hand back; VibeUE's tools (step 6) still take
+# "/"-separated paths.
 
-# Transition Patrol -> Chase on completion
-print("transition:", sts.add_transition(ASSET, "Root/Patrol", "OnStateCompleted", "GotoState", "Root/Chase"))
+# call_tool(tool_name="add_sub_tree",    toolset_name=ST, arguments={...})   # "Root"
+# call_tool(tool_name="add_child_state", toolset_name=ST, arguments={...})   # "Patrol" under Root
+# call_tool(tool_name="add_child_state", toolset_name=ST, arguments={...})   # "Chase"  under Root
 
-# Compile is REQUIRED after structural changes
-r = sts.compile_state_tree(ASSET)
-print("compile:", r.success if hasattr(r, "success") else r)
-sts.save_state_tree(ASSET)
+
+# ---------------------------------------------------------------------------------------------
+# STEP 3 — a task on Patrol: Epic, via call_tool
+# ---------------------------------------------------------------------------------------------
+# add_task takes a struct task (name carries its "F": FStateTreeDelayTask).
+# For an STT_* Blueprint task use add_blueprint_task instead — NOT add_task, and never
+# "StateTreeBlueprintTaskWrapper".
+#
+# Nothing in the engine surface enumerates node structs, so get the exact type name from VibeUE:
+#   print([t for t in sts.get_available_task_types() if "Delay" in t])
+
+# call_tool(tool_name="add_task", toolset_name=ST, arguments={...})          # FStateTreeDelayTask
+
+# Task property values are Epic's too. The keys get_node_instance_data returns ARE the property
+# names — read them, then write, then read back. Do not invent a key.
+# call_tool(tool_name="get_node_instance_data", toolset_name=ST, arguments={...})
+# call_tool(tool_name="set_node_instance_data", toolset_name=ST, arguments={...})
+
+
+# ---------------------------------------------------------------------------------------------
+# STEP 4 — transition Patrol -> Chase on completion: Epic ObjectToolset, via call_tool
+# ---------------------------------------------------------------------------------------------
+# A transition is an element of the state's `Transitions` array, so adding one is ONE
+# ObjectToolset.SetProperties that appends ONE element.
+#
+# *** APPEND THE FULL ELEMENT IN A SINGLE WRITE: trigger ("OnStateCompleted"), type ("GotoState")
+# *** AND the target state, together.
+# The engine mints the new Transition.ID on the ArrayAdd notification, and in that same handler, if
+# the new element's State.ID is invalid it OVERWRITES Trigger to OnStateCompleted, retargets State
+# to the root state, and trips an ensureMsgf:
+#     "Set transition trigger but did not set target state. Trigger will be overwritten."
+# HandleArrayAdds converts the inserted element's JSON in the same call, which is why one write
+# works and two do not. NEVER add an empty transition and then fill it in.
+#
+# And NEVER rewrite the whole Transitions array (to reorder it, or to "clean it up"): add and
+# remove are safe only because the engine applies them incrementally, so existing element IDs
+# survive. EditorBindings is keyed on those IDs — a clear-then-re-add regenerates every ID and
+# silently orphans every binding on the state. To reorder, use VibeUE's move_transition (step 6).
+
+# call_tool(tool_name="SetProperties", toolset_name=OBJ, arguments={...})    # append to Transitions
+
+# Read it back before compiling:
+# call_tool(tool_name="GetProperties", toolset_name=OBJ, arguments={...})    # key "Transitions"
+
+
+# ---------------------------------------------------------------------------------------------
+# STEP 5 — compile, then save: Epic, via call_tool
+# ---------------------------------------------------------------------------------------------
+# Compile is REQUIRED after structural changes, and Epic's writes only mark the package dirty —
+# saving without compiling persists an UNCOMPILED tree. Check the compile result before saving.
+#
+# Epic's wrappers also do not open undo scopes of their own (VibeUE's removed tools each opened an
+# FScopedTransaction). If steps 2-4 should undo as ONE user action, wrap them in your own
+# unreal.ScopedEditorTransaction.
+
+# call_tool(tool_name="compile",   toolset_name=ST,    arguments={...})
+# call_tool(tool_name="SaveAsset", toolset_name=ASSETTS, arguments={...})
+
+
+# ---------------------------------------------------------------------------------------------
+# STEP 6 — parameters, bindings, and showing the user: VibeUE, via execute_python
+# ---------------------------------------------------------------------------------------------
+# Root parameters (FInstancedPropertyBag's schema is C++-mutable only) and all 24 bind_*/unbind_*
+# tools stayed with VibeUE. These take "/"-separated state paths.
+
+print("param:", sts.add_or_update_root_parameter(ASSET, "IdlingTime", "Float", "2.0"))
+
+print("bind:", sts.bind_task_property_to_root_parameter(
+    ASSET,                    # asset path
+    "Root/Patrol",            # state path
+    "FStateTreeDelayTask",    # task struct name (or "STT_Rotate_C" / "STT Rotate" for a Blueprint)
+    "Duration",               # task property to bind
+    "IdlingTime"))            # root parameter name
+
+# Reorder a transition — the one transition edit that is still VibeUE's:
+#   sts.move_transition(ASSET, "Root/Patrol", 1, 0)
+
+# Select what you just edited so the user can see it (the asset must already be open in a tab):
+print("expand:", sts.set_state_expanded(ASSET, "Root", True))
+print("select:", sts.select_state(ASSET, "Root/Patrol"))
+
+# Bindings are written to the asset, so compile + save again (step 5) after step 6.

@@ -1,11 +1,57 @@
 ---
 name: changelog
-description: New StateTreeService methods added in Phase 1 and Phase 2 - state properties, root parameters, per-instance overrides, transition editing, extended task management, utility considerations, conditions, evaluator/global task management, and extended FStateTreeInfo/StateInfo/NodeInfo/TransitionInfo fields
+description: HISTORICAL record of VibeUE StateTree development - Phase 1 and Phase 2 methods for state properties, root parameters, per-instance overrides, transition editing, task management, utility considerations, conditions and evaluator/global task management. The 5-9 branch removed 53 of the tools described here; SKILL.md is the authority on what exists now
+---
+
+> # ⚠️ HISTORICAL RECORD — NOT the current API
+>
+> **Everything below this banner is history**: a record of VibeUE's StateTree development as it
+> happened. The `5-9` branch **removed 53 of `StateTreeService`'s 98 StateTree tools**, and many of
+> the methods announced below are among them. These entries are kept because the history is useful,
+> not because the calls still work.
+>
+> **`SKILL.md` is the authority on what exists now.** Its "Migration: the 53 removed VibeUE tools"
+> table maps every removed tool to its replacement, and `api-reference.md` holds the full inventory
+> of the 45 survivors. If a call below is not in those, it does not exist any more.
+
+## 2026-11-10 — 5.9 tool cut: 98 → 45 StateTree tools
+
+Every VibeUE AI tool was audited against UE 5.9's own AI editor toolsets, and anything that directly
+duplicates an engine toolset tool was removed. `StateTreeService` went from **98 AI tools to 45**.
+
+Where the work went:
+
+- **Epic's `StateTreeToolset`** — a *Python* toolset, so `call_tool` only, snake_case names — now
+  owns structural authoring: states, tasks, enter conditions, considerations, evaluators, global
+  tasks, node data (`get`/`set_node_instance_data` and friends) and `compile`. It ships a dedicated
+  `add_blueprint_*` variant for `STT_*` Blueprint nodes.
+- **Epic's `ObjectToolset` / `AssetToolset`** own state properties (`Name`, `Description`, `Tag`,
+  `Type`, `SelectionBehavior`, `TasksCompletion`, `LinkedSubtree`, `LinkedAsset`, `bEnabled`,
+  `Weight`), the `Transitions` array, asset and schema discovery, and saving.
+- **VibeUE kept the 45** the engine surface cannot reach: asset creation, all 24 `bind_*` /
+  `unbind_*` tools, node-*type* discovery, theme colors, root parameters, per-instance parameter
+  overrides, `move_transition`, the transition-condition tools, `set_task_enabled` /
+  `set_task_considered_for_completion`, `select_state` and `set_state_expanded`.
+
+Two consequences worth internalising before editing a transition on the engine path:
+
+1. **A new transition must carry its target state in the same write.** The engine mints the new
+   `Transition.ID` on the `ArrayAdd` notification, and in that same handler an invalid `State.ID`
+   makes it overwrite `Trigger` to `OnStateCompleted` and retarget the transition at the root state.
+2. **Never rewrite the whole `Transitions` array.** Add and remove are applied incrementally so
+   existing IDs survive; a clear-then-re-add regenerates every ID and silently orphans every
+   binding on the state. Reordering is what `move_transition` survived for.
+
+Also worth knowing: Epic's wrappers do not open undo scopes of their own, and their writes dirty the
+package without compiling — finish with `compile`, then `AssetToolset.SaveAsset`.
+
+Full mapping: the five migration groups in `SKILL.md`, repeated at the end of `api-reference.md`.
+
 ---
 
 This sub-doc continues from skill.md → "New Methods (Phase 1 & 2)".
 
-## New Methods (Phase 1 & 2)
+## New Methods (Phase 1 & 2) — historical, see the banner above
 
 ### State Properties
 
