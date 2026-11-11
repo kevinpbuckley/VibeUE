@@ -24,7 +24,8 @@ Unreal's native `AgentSkill` system. Any MCP-capable agent (Claude Code, Cursor,
 your editor through Unreal's standard MCP endpoint.
 
 > ⚠️ **VibeUE requires Unreal's native MCP to be set up first** — enable the **Unreal MCP** plugin
-> (which auto-enables **Toolset Registry**) and the **Editor Tools** plugin, then start the MCP server.
+> (which auto-enables **Toolset Registry**), then start the MCP server. Enabling VibeUE pulls in
+> **Editor Tools** and the other engine toolsets its skills use.
 > Follow Epic's guide: **[Unreal MCP in the Unreal Editor](https://dev.epicgames.com/documentation/unreal-engine/unreal-mcp-in-unreal-editor)**.
 > VibeUE then expands that endpoint — **no separate server and no in-editor chat.** A free API key
 > (set in **Editor Preferences → Plugins → VibeUE**) unlocks the real-world **terrain** tools; everything
@@ -136,8 +137,11 @@ multi-step task into one round-trip and reaches every VibeUE service plus the fu
 VibeUE is an **expansion** of Unreal's built-in MCP support, so enable that first. Full details in
 Epic's guide: **[Unreal MCP in the Unreal Editor](https://dev.epicgames.com/documentation/unreal-engine/unreal-mcp-in-unreal-editor)**.
 
-1. **Edit → Plugins** → enable **Unreal MCP** (this auto-enables **Toolset Registry**) and **Editor
-   Tools** (the engine's own AI toolsets, so agents get both). These are Experimental. Restart when prompted.
+1. **Edit → Plugins** → enable **Unreal MCP** (this auto-enables **Toolset Registry**). It is
+   Experimental. Restart when prompted. You do **not** need to hunt down **Editor Tools** or the other
+   engine toolsets by hand: VibeUE declares the eighteen its skills route to, so enabling VibeUE in
+   Step 2 switches them on. None of them is enabled by default on a stock engine, which is exactly
+   why VibeUE declares them.
 2. **Edit → Editor Preferences → General → Model Context Protocol** → enable **Auto Start Server**
    (or run the console command `ModelContextProtocol.StartServer`). Default endpoint
    `http://127.0.0.1:8000/mcp` (port/path configurable). Enabling **Tool Search** keeps an agent's
@@ -221,14 +225,31 @@ for exact signatures before writing code.
 |--------|---------|
 | **Unreal MCP** (`ModelContextProtocol`) | The native MCP server endpoint |
 | **Toolset Registry** (`ToolsetRegistry`) | Native AI toolset + `AgentSkill` registration (auto-enabled by Unreal MCP) |
-| **Editor Tools** (`EditorToolset`) | The engine's own AI toolsets — VibeUE complements these |
 
-**Enabled automatically by VibeUE:** `PythonScriptPlugin` (the `unreal.*` API),
-`EditorScriptingUtilities`, and the domain plugins its services need — `Niagara`,
-`EnhancedInput`, `ModelViewViewModel`, `StateTree`, `MeshModelingToolset`,
-`GameplayTagsEditor`, `EnvironmentQueryEditor`. (VibeUE also depends on
-`ToolsetRegistry` + `ModelContextProtocol`, so enabling VibeUE pulls them in — but you still enable
-**Editor Tools** and start the server per Step 1.)
+**Enabled automatically by VibeUE.** Enabling VibeUE pulls in `ToolsetRegistry` and
+`ModelContextProtocol`, `PythonScriptPlugin` (the `unreal.*` API), `EditorScriptingUtilities`, the
+domain plugins its services need (`Niagara`, `EnhancedInput`, `ModelViewViewModel`, `StateTree`,
+`MeshModelingToolset`, `GameplayTagsEditor`, `EnvironmentQueryEditor`), **and the engine toolsets
+VibeUE's skills route to**:
+
+`EditorToolset` · `BlueprintToolsets` · `ConsoleToolset` · `ConfigSettingsToolset` ·
+`FileSystemToolset` · `StateTreeToolset` · `AIModuleToolset` · `NiagaraToolsets` · `MVVMToolset` ·
+`WidgetStaticAnalysisToolset` · `WidgetAnimationToolset` · `SlateInspectorToolset` ·
+`SceneCaptureToolset` · `PerfToolset` · `InputToolset` · `GameplayTagsToolset` ·
+`AutomationTestToolset` · `GASToolsets`
+
+> Those eighteen matter more than they look. **None of Epic's toolset plugins is enabled by
+> default** — `FPlugin::IsEnabledByDefault` disables an engine plugin whose `EnabledByDefault` is
+> absent, not just one that sets it to `false` — and VibeUE's skills now deliberately send you to
+> them for everything the engine does better. Without them enabled, those calls just are not there.
+> They are declared `Optional`, so a future engine version renaming or dropping an experimental
+> toolset cannot stop VibeUE loading; if one is missing you simply lose that domain's engine tools.
+>
+> A handful of toolsets the skills mention only in passing (`RewindDebuggerToolset`,
+> `CommonUIToolset`, `NavMeshToolset`, `PCGToolset`, `PluginToolset`, `GameFeaturesToolset`,
+> `MediaToolset`, `ChaosClothAssetToolset`, `LiveCodingToolset`) are **not** declared, to avoid
+> switching on a pile of experimental plugins nobody asked for. Enable those yourself if you want
+> them.
 
 ---
 
