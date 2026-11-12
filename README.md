@@ -1,3 +1,8 @@
+> [!WARNING]
+> **Unreal Engine 5.9 build: not fully tested yet.** This `5-9` branch builds and loads in UE 5.9, and
+> its tool surface was verified against the live 5.9 registry, but it has not been tested end to end.
+> Expect rough edges and report problems as issues. For production work, use the stable `master` branch.
+
 <div align="center">
 
 # VibeUE — AI-Powered Unreal Engine Development
