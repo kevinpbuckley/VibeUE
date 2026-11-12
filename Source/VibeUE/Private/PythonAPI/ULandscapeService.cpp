@@ -3261,7 +3261,19 @@ bool ULandscapeService::SetLandscapeMaterial(
 
 	Landscape->Modify();
 	Landscape->LandscapeMaterial = Material;
-	Landscape->PostEditChange();
+
+	// Name the changed property (as ALandscapeProxy::EditorSetLandscapeMaterial does) so
+	// ALandscape::PostEditChangeProperty rebuilds materials and propagates the change to
+	// World Partition streaming proxies; a bare PostEditChange() does not reach them.
+	if (FProperty* MaterialProperty = FindFProperty<FProperty>(ALandscapeProxy::StaticClass(), GET_MEMBER_NAME_CHECKED(ALandscapeProxy, LandscapeMaterial)))
+	{
+		FPropertyChangedEvent PropertyChangedEvent(MaterialProperty);
+		Landscape->PostEditChangeProperty(PropertyChangedEvent);
+	}
+	else
+	{
+		Landscape->PostEditChange();
+	}
 
 	// Refresh components
 	for (ULandscapeComponent* Component : Landscape->LandscapeComponents)
@@ -3336,60 +3348,9 @@ FString ULandscapeService::GetLandscapeProperty(
 	return Value;
 }
 
-bool ULandscapeService::SetLandscapeProperty(
-	const FString& LandscapeNameOrLabel,
-	const FString& PropertyName,
-	const FString& Value)
-{
-	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel);
-	if (!Landscape)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::SetLandscapeProperty: Landscape identifier '%s' could not be resolved"), *LandscapeNameOrLabel);
-		return false;
-	}
-
-	FProperty* Property = Landscape->GetClass()->FindPropertyByName(FName(*PropertyName));
-	if (!Property)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::SetLandscapeProperty: Property '%s' not found"), *PropertyName);
-		return false;
-	}
-
-	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "SetProperty", "Set Landscape Property"));
-	Landscape->Modify();
-
-	const TCHAR* ValuePtr = *Value;
-	if (!Property->ImportText_Direct(ValuePtr, Property->ContainerPtrToValuePtr<void>(Landscape), Landscape, PPF_None))
-	{
-		UE_LOG(LogTemp, Error, TEXT("ULandscapeService::SetLandscapeProperty: Failed to parse value '%s' for property '%s'"), *Value, *PropertyName);
-		return false;
-	}
-	Landscape->PostEditChange();
-
-	return true;
-}
-
 // =================================================================
-// Visibility & Collision
+// Collision
 // =================================================================
-
-bool ULandscapeService::SetLandscapeVisibility(
-	const FString& LandscapeNameOrLabel,
-	bool bVisible)
-{
-	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel);
-	if (!Landscape)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::SetLandscapeVisibility: Landscape identifier '%s' could not be resolved"), *LandscapeNameOrLabel);
-		return false;
-	}
-
-	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "SetVisibility", "Set Landscape Visibility"));
-	Landscape->Modify();
-	Landscape->SetIsTemporarilyHiddenInEditor(!bVisible);
-
-	return true;
-}
 
 bool ULandscapeService::SetLandscapeCollision(
 	const FString& LandscapeNameOrLabel,

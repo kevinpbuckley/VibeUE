@@ -619,13 +619,13 @@ struct FLineTraceHit
  * - get_hole_at_location: Check if there is a hole at a world position
  *
  * Properties:
- * - set_landscape_material: Assign material to landscape
  * - get_landscape_property: Get a property value
- * - set_landscape_property: Set a property value
+ *   (set a property / the material: EditorToolset.ObjectToolset.SetProperties;
+ *    set_landscape_material is Python-only, kept for resize_landscape)
  *
- * Visibility:
- * - set_landscape_visibility: Show/hide landscape
+ * Visibility & Collision:
  * - set_landscape_collision: Enable/disable collision
+ *   (show/hide: EditorToolset.LevelToolset.SetActorHidden)
  *
  * Existence:
  * - landscape_exists: Check if landscape exists
@@ -1344,13 +1344,13 @@ public:
 
 	/**
 	 * Set the material on a landscape.
-	 * Maps to action="set_landscape_material"
+	 * Demoted (not an AI tool): use EditorToolset.ObjectToolset.SetProperties ({"LandscapeMaterial": ...}) instead; kept because ResizeLandscape calls it.
 	 *
 	 * @param LandscapeNameOrLabel - Name or label of the landscape
 	 * @param MaterialPath - Full path to the material asset
 	 * @return True if material was assigned
 	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
+	UFUNCTION(BlueprintCallable, Category ="VibeUE|Landscape")
 	static bool SetLandscapeMaterial(
 		const FString& LandscapeNameOrLabel,
 		const FString& MaterialPath);
@@ -1368,37 +1368,11 @@ public:
 		const FString& LandscapeNameOrLabel,
 		const FString& PropertyName);
 
-	/**
-	 * Set a landscape property value.
-	 * Maps to action="set_landscape_property"
-	 *
-	 * @param LandscapeNameOrLabel - Name or label of the landscape
-	 * @param PropertyName - Property name
-	 * @param Value - Value as string
-	 * @return True if property was set
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
-	static bool SetLandscapeProperty(
-		const FString& LandscapeNameOrLabel,
-		const FString& PropertyName,
-		const FString& Value);
-
 	// =================================================================
-	// Visibility & Collision
+	// Collision
+	// (set_landscape_property and set_landscape_visibility were cut: use
+	//  EditorToolset.ObjectToolset.SetProperties and EditorToolset.LevelToolset.SetActorHidden)
 	// =================================================================
-
-	/**
-	 * Set visibility of a landscape.
-	 * Maps to action="set_landscape_visibility"
-	 *
-	 * @param LandscapeNameOrLabel - Name or label of the landscape
-	 * @param bVisible - Whether the landscape should be visible
-	 * @return True if visibility was set
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
-	static bool SetLandscapeVisibility(
-		const FString& LandscapeNameOrLabel,
-		bool bVisible);
 
 	/**
 	 * Enable or disable collision on a landscape.

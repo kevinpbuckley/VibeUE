@@ -1434,101 +1434,6 @@ FFoliageTypeCreateResult UFoliageService::CreateFoliageType(
 	return Result;
 }
 
-namespace
-{
-	// Resolves a property path like "CullDistance" or "CullDistance.Max" to the
-	// leaf property and its value address. Intermediate segments must be struct
-	// properties; returns nullptr if any segment is missing or not a struct.
-	FProperty* ResolveFoliageTypePropertyPath(UFoliageType* FoliageType, const FString& PropertyPath, void*& OutValueAddr)
-	{
-		TArray<FString> Segments;
-		PropertyPath.ParseIntoArray(Segments, TEXT("."));
-
-		UStruct* OwnerType = FoliageType->GetClass();
-		void* Container = FoliageType;
-
-		for (int32 i = 0; i < Segments.Num(); i++)
-		{
-			FProperty* Property = OwnerType->FindPropertyByName(FName(*Segments[i]));
-			if (!Property)
-			{
-				return nullptr;
-			}
-
-			void* ValueAddr = Property->ContainerPtrToValuePtr<void>(Container);
-			if (i == Segments.Num() - 1)
-			{
-				OutValueAddr = ValueAddr;
-				return Property;
-			}
-
-			FStructProperty* StructProperty = CastField<FStructProperty>(Property);
-			if (!StructProperty)
-			{
-				return nullptr;
-			}
-			OwnerType = StructProperty->Struct;
-			Container = ValueAddr;
-		}
-
-		return nullptr;
-	}
-}
-
-bool UFoliageService::SetFoliageTypeProperty(
-	const FString& FoliageTypePath,
-	const FString& PropertyName,
-	const FString& Value)
-{
-	UFoliageType* FoliageType = LoadObject<UFoliageType>(nullptr, *FoliageTypePath);
-	if (!FoliageType)
-	{
-		UE_LOG(LogTemp, Error, TEXT("UFoliageService::SetFoliageTypeProperty: Could not load '%s'"), *FoliageTypePath);
-		return false;
-	}
-
-	void* PropertyAddr = nullptr;
-	FProperty* Property = ResolveFoliageTypePropertyPath(FoliageType, PropertyName, PropertyAddr);
-	if (!Property)
-	{
-		UE_LOG(LogTemp, Error, TEXT("UFoliageService::SetFoliageTypeProperty: Property path '%s' not found on UFoliageType (nested struct members use dots, e.g. 'CullDistance.Max')"), *PropertyName);
-		return false;
-	}
-
-	if (!Property->ImportText_Direct(*Value, PropertyAddr, FoliageType, PPF_None))
-	{
-		UE_LOG(LogTemp, Error, TEXT("UFoliageService::SetFoliageTypeProperty: Failed to set '%s' to '%s'"), *PropertyName, *Value);
-		return false;
-	}
-
-	FoliageType->MarkPackageDirty();
-	return true;
-}
-
-FString UFoliageService::GetFoliageTypeProperty(
-	const FString& FoliageTypePath,
-	const FString& PropertyName)
-{
-	UFoliageType* FoliageType = LoadObject<UFoliageType>(nullptr, *FoliageTypePath);
-	if (!FoliageType)
-	{
-		UE_LOG(LogTemp, Error, TEXT("UFoliageService::GetFoliageTypeProperty: Could not load '%s'"), *FoliageTypePath);
-		return FString();
-	}
-
-	void* PropertyAddr = nullptr;
-	FProperty* Property = ResolveFoliageTypePropertyPath(FoliageType, PropertyName, PropertyAddr);
-	if (!Property)
-	{
-		UE_LOG(LogTemp, Error, TEXT("UFoliageService::GetFoliageTypeProperty: Property path '%s' not found (nested struct members use dots, e.g. 'CullDistance.Max')"), *PropertyName);
-		return FString();
-	}
-
-	FString Result;
-	Property->ExportTextItem_Direct(Result, PropertyAddr, nullptr, FoliageType, PPF_None);
-	return Result;
-}
-
 // =================================================================
 // Placement
 // =================================================================
@@ -2211,16 +2116,6 @@ FFoliageQueryResult UFoliageService::GetFoliageInRadius(
 // =================================================================
 // Existence Checks
 // =================================================================
-
-bool UFoliageService::FoliageTypeExists(const FString& AssetPath)
-{
-	UObject* Asset = StaticLoadObject(UObject::StaticClass(), nullptr, *AssetPath);
-	if (!Asset)
-	{
-		return false;
-	}
-	return Cast<UFoliageType>(Asset) != nullptr || Cast<UStaticMesh>(Asset) != nullptr;
-}
 
 bool UFoliageService::HasFoliageInstances(const FString& MeshOrFoliageTypePath)
 {

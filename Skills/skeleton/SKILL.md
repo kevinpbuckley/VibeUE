@@ -84,7 +84,8 @@ call_tool(toolset_name="EditorToolset.SkeletalMeshToolset",
 
 ### ⚠️ Bone Modification Requires Commit
 
-Bone modifications (add, remove, rename, reparent) use a transaction system. Changes are NOT applied until you call `commit_bone_changes()`:
+Bone modifications (add, remove, rename, transform) use a transaction system — reparenting is not
+reliable, see the warning below. Changes are NOT applied until you call `commit_bone_changes()`:
 
 ```python
 import unreal

@@ -83,6 +83,13 @@ Also note: `UMGToolSet` and `SemanticSearchToolset` (both named in the 5.8 doc) 
 
 ## 2. What is still VibeUE-only in 5.9 (verified)
 
+> **Corrected by §7.** The "verified" below was a grep for domain-named tools only, made before §6
+> found how many ways a toolset can be declared. Re-run with the full method, Epic still has no
+> landscape, foliage, terrain, water, RVT, SoundCue-graph, Mutable, scratch-pad or AnimSequence-keyframe
+> toolset — but every service listed here except `UVMappingService` and `MapBlockoutService` carried
+> tools that duplicate a *generic* Epic tool (`ObjectToolset`, `AssetToolset`, `EditorAppToolset`,
+> `BlueprintToolset.CreateNode`, `NiagaraToolsets` stack input data). Those were cut in §7.
+
 A grep for `AICallable`/`AIRuntimeCallable` across **all** of `Engine/Plugins` returns **no**
 landscape, foliage or terrain tools. These keep their 5.8 "crown jewel" status:
 
@@ -216,7 +223,7 @@ it.
 | `MetaSoundService` | 20 | **deleted** | `MetaSoundToolset` (42) covers it and more: builder/preset lifecycle, graph pages, variables, interfaces, `DescribeGraph`/`DescribeNode`, `DiffPages`, node-class discovery. Also dropped the `MetasoundEngine`/`Frontend`/`GraphCore`/`Editor` module deps and the `MetaSound` plugin dependency |
 | `EnumStructService` | 20 | **deleted** | `UserDefinedStructToolset` (14) + `UserDefinedEnumToolset` (8) cover every method and add move/reorder, bitflags, tooltips, editable-on-instance and savegame flags |
 | `NiagaraService` | 6 | **deleted** | `NiagaraToolsets` (57): stack input data replaces rapid-iteration params, `GetEmitterData` replaces lifecycle, `GetStackIssues` + `GetSystemCompileState` replace `DebugActivation`, schema tools + EditorToolset `diff` replace `CompareSystems` |
-| `NiagaraEmitterService` | 6 | **3** | cut `SetSimTarget` (-> `SetEmitterData`), `GetRapidIterationParameters` (-> `GetStackInputData`) and `SetColorTint` (-> `SetStackInputData` on Scale Color). Kept `GetColorCurveKeys` / `SetColorCurveKeys` / `ShiftColorHue`: a ColorFromCurve module stores keyframe **data**, not an input value, so no stack-input write reaches it — the skill's own live-verified note says curve keys "CANNOT be modified via rapid iteration parameters". Dead `ListModules`/`AddModule` and two orphaned USTRUCTs went with `SetColorTint`, their only caller |
+| `NiagaraEmitterService` | 6 | **3** | cut `SetSimTarget` (-> `SetEmitterData`), `GetRapidIterationParameters` (-> `GetStackInputData`) and `SetColorTint` (-> `SetStackInputData` on Scale Color). Kept `GetColorCurveKeys` / `SetColorCurveKeys` / `ShiftColorHue`: a ColorFromCurve module stores keyframe **data**, not an input value, so no stack-input write reaches it — the skill's own live-verified note says curve keys "CANNOT be modified via rapid iteration parameters". Dead `ListModules`/`AddModule` and two orphaned USTRUCTs went with `SetColorTint`, their only caller. **Corrected in §7:** the skill's note was about rapid-iteration parameters; Epic's *DataInterface* stack-input payload does reach the curve keys (live-verified), so the get/set pair was cut and only `ShiftColorHue` remains |
 | `GameplayTagService` | 6 | **2** | cut `HasTag`, `GetTagInfo`, `GetChildren`, `AddTags` -> `GameplayTagsToolset` (11), which also adds sources, referencers, rename and move |
 
 **The GameplayTagService correction is worth recording.** It was first deleted outright on the
@@ -248,9 +255,12 @@ what 5.9's native skill discovery rewrites (see §4).
 | `GetHistory`, `GetState` | `EditorToolset.UndoHistoryToolset.GetRecentTransactions` |
 | `GetUndoDescription`, `GetRedoDescription` | `GetTransactionDetails` + `GetTransactionRecencyIndex` |
 
-**Kept, because stepping the buffer is exposed nowhere:** `Undo`, `Redo`, `UndoMultiple`,
+**Kept, because no Epic tool steps the buffer with a result:** `Undo`, `Redo`, `UndoMultiple`,
 `RedoMultiple`, `CanUndo`, `CanRedo`, `ResetBuffer`. `PyEditor.cpp` binds no undo/redo and `GEditor`
-is not scriptable, so an agent has no other way to press Ctrl+Z. The two orphaned USTRUCTs
+is not scriptable. *(Refined in §7: `ConsoleToolset.RunConsoleCommand("TRANSACTION UNDO")` does reach
+`UndoTransaction()` through `GEditor->Exec`, but it discards the success flag and has no can-undo,
+count or reset, so it is an escape hatch, not a duplicate. The keep stands; the old wording
+"exposed nowhere" was too strong.)* The two orphaned USTRUCTs
 (`FTransactionState`, `FTransactionHistoryEntry`) and the dead `GActiveTransactionIndex` went with
 the cut half. No skill referenced any of the removed tools.
 
@@ -379,17 +389,17 @@ invalidated one already-committed cut (see §5's ActorService correction).
 | `FabService` | 7 | 0 | **done** — service deleted |
 | `StateTreeService` | 53 | 45 | **done** — resolved, see below |
 | `MaterialService` + `MaterialNodeService` | 50 | 2 | **done** |
-| `WidgetService` | 34 | 9 | **done** |
+| `WidgetService` | 34, then 5 more in §7 | 9, now 4 | **done** — §7 corrects the rationale |
 | `EngineSettings` + `ProjectSettings` | 27 + 2 demoted | 0 | **done** |
 | `ViewportService` | 4 | 18 | **done** |
 | `PerformanceService` | 10 + 2 demoted | 7 | **done** |
 | `WorkflowService` | 11 | 1 | **done** |
-| `InputService` | 3, then 1 restored | 26 | **done** — see below |
+| `InputService` | 3, then 1 restored, then 6 more in §7 | 26, now 21 | **done** — see below and §7 |
 | `PIEActorService` | 0 | 7 | nothing to do |
-| `PythonTools` | 0 | 2 | nothing to do |
+| `PythonTools` | 0 | 2 | nothing to do — but see §7: not a toolset class, so these were never MCP tools |
 
-All twelve are executed. 1000 AI tools at the branch point, 620 now; 397 UFUNCTIONs deleted
-outright and 4 demoted to Python-only. DLL 18.93 MB -> 9.58 MB.
+All twelve are executed. 1000 AI tools at the branch point, 620 after this section; 397 UFUNCTIONs
+deleted outright and 4 demoted to Python-only. DLL 18.93 MB -> 9.58 MB. §7 takes the count further.
 
 ### InputService: one cut partly reversed
 
@@ -528,52 +538,163 @@ dropped experimental toolset cannot stop VibeUE loading.
 This is the part of an audit like this that is easy to skip: deciding a capability belongs to
 Epic is only half of it, and the other half is making sure Epic's version is actually there.
 
-### Known-stale items the pending cuts must fix
+### Known-stale items and the old "not yet done" list (all resolved)
 
-- `set_engine_ini_value` / `set_ini_value` **never reach disk today**: they call `GConfig->SetString`
-  + `Flush` on a NoSave path and return `bSuccess=true` regardless. `Skills/frame-rate`'s
-  workflow depends on them, so its caps 3-5 need repointing at
-  `ConfigSettingsToolset.SetSectionProperties`.
-- `Skills/materials/workflows.md` still claims "there is no layout_expressions API"; 5.9 ships
+Recorded so a reader of an older copy knows where each went:
+
+- `set_engine_ini_value` / `set_ini_value` (never reached disk) — gone with the settings services
+  (be0eb33). `Skills/frame-rate` and `Skills/engine-settings` now call `ConfigSettingsToolset` /
+  `ConsoleToolset` through `call_tool`, with the schema's real parameter names (`containerName`,
+  `categoryName`, `sectionName`, `propertyNames`, `propertiesJson`, `query`; `SearchCVars` takes `name`).
+- `Skills/materials` "no layout_expressions API" — fixed (735e374); it routes to
   `MaterialToolset.LayoutExpressions`.
-- Epic's `ConsoleToolset` / `ConfigSettingsToolset` / `ObjectToolset` / `FileSystemToolset`
-  UFUNCTIONs carry **no** `PythonCallable`, so skills that reach settings from `execute_python` must
-  be rewritten to `call_tool`. This is also why `GetPIESettings`/`SetPIESettings` demote rather than
-  delete: `vibeue.py`'s `GateSession` calls them from Python.
-- `ReparentBone` survives the Epic rule but `Skills/skeleton/SKILL.md` records it as live-broken in
-  UE 5.7 ("fails with a hierarchy-mismatch validation error and can leave the commit stalled"). It
-  should go on broken-functionality grounds, which is a separate decision from duplication.
+- Skills reaching toolsets through nonexistent `unreal.*Toolset` Python methods — fixed. The last live
+  break was `Skills/gas`, which called `unreal.ToolsetRegistry.execute_tool` directly; 5.9's
+  `execute_python` runner rejects any script that does, so it now uses `await call_tool(...)`.
+  A parameter-name sweep against the live registry also corrected ~25 pages that passed PascalCase or
+  wrong keys to `ObjectToolset` (`instance` + `values` as a JSON *string*), `AssetToolset.SaveAsset`
+  (`assetPath`), `BlueprintToolset.AddStructVariable`, `EditorAppToolset` camera/show-flag tools and the
+  Material toolsets.
+- `ReparentBone` — still AICallable; `Skills/skeleton` now says reparenting is not reliable. Its
+  implementation removes and re-adds the subtree rather than using a SkeletonModifier reparent, so the
+  5.7 "broken" note may describe older code. **Demoted in §7** (Python-only, not an AI tool): a
+  broken-functionality call, not a duplication one.
+- InputService "deferred" injection cut — done in 8c8b336 (`InjectActionFor`, `InjectKey` cut);
+  `StartInjection` was then restored for the indefinite hold, so the docs now say
+  `start_injection` + `stop_injection` is the hold and `inject_action` is a one-tick tap.
+- The §3 trims — all landed: 16302fc (Actor, AssetDiscovery), 0e3ca51 (BT, Blackboard, EQS), d8b8c2b
+  (Skeleton), fda7c91 (Blueprint), be0eb33 (settings), 94375e0 (Material, Widget, Workflow,
+  Performance, Viewport), 735e374 (StateTree).
+- `PythonToolsTests` re-add — the C++ form is moot (225c7be removed the C++ tests; `test_prompts/` is
+  the test surface). The gap is closed: `test_prompts/python/execute_python_tests.md` now covers
+  `get_resident_maps`, `get_dirty_packages` + `vibeue.dirty_snapshot`/`dirty_delta`, and
+  `vibeue.safe_load_level` refusing a missing map, a non-package path and an empty path (all three
+  run and passed live).
+- `Scripts/check_skills_consistency.py` still pointed at `Content/Skills`; fixed to `Skills/`
+  (reports 31 routed slugs = 31 packs).
+- Optional, unchanged: converting backticked sub-doc prose mentions into inline links.
 
-### Not yet done
+## 7. Re-verifying the "VibeUE-only" services, and deferring to Epic everywhere
 
-**`InputService` injection — verdict verified, edit deliberately deferred.** 5.9's `InputToolset`
-(`ApplyInput(entries, durationSeconds)` / `IsInputApplied(entries)`) is runtime injection on a local
-player, and it covers **`InjectActionFor`** (same duration-hold semantics) and **`InjectKey`** (it
-takes legacy `FKey` entries, with zero duration meaning a one-tick tap) — and does both for several
-inputs at once, which VibeUE cannot. It does **not** cover `InjectAction` + `StopInjection`: it
-always self-releases after the duration, so an indefinite hold released by a later call has no
-equivalent. So: cut 2, keep 2.
+### Why this pass
 
-This was implemented and then reverted on purpose. `InputInjectionTests.cpp` exercises the cut and
-kept tools in the same three automation-test bodies (interleaved assertions, not separable blocks),
-so removing the two tools means roughly ten surgical edits inside tests that also cover the survivors.
-That deserves a focused pass rather than a hurried one; the headers and implementations are unchanged,
-and the verdict above is what to execute.
+§2 called fourteen services "still VibeUE-only (verified)". That check was a grep for domain-named
+tools, and it ran before §6 worked out how many ways a toolset can be declared. So it never compared
+these services against Epic's **generic** tools. The owner also set a stricter standing rule for this
+branch: *if Epic has a better way of doing something, remove VibeUE's way and defer to it.* That rule
+works inside §6's scoping rule, not against it:
+- A direct Epic AI tool, or a composition of at most two Epic calls that fully reproduces the tool
+  (the `MaterialNodeService` precedent), is a duplicate.
+- Partial coverage is not a duplicate.
+- A tool that a kept tool or a Python caller depends on is **demoted** instead of deleted.
 
-**The §3 trims** are still open, and they are where most of the remaining tool count sits:
-Blueprint (110 vs `UBlueprintToolset` 74 + `UBlueprintDslToolset` 7 + EditorToolset's graph DSL),
-StateTree (99 vs `StateTreeToolset` 49/32-write + the engine binding API), Widget (43 vs
-WidgetAnimation 10 + CommonUI 15 + MVVM 31 + WidgetStaticAnalysis 5), Skeleton (39 vs
-`USkeletalMeshToolset` 22), EnvQuery (24 vs 14), BehaviorTree + Blackboard (34 vs
-`UBehaviorTreeToolset` 25), the Material pair (52 vs Material 25 + MaterialInstance 14 + CurveAtlas
-13), EngineSettings + ProjectSettings (29 vs ConfigSettings 12 + Console 5 + Logs 4), Performance
-(17 vs PerfToolset 10 + RewindDebugger 10), Viewport (22 vs `UEditorAppToolset` 42 + SceneCapture 14),
-Actor (11 vs `UActorToolset` 21 + `ULevelToolset` 36) and AssetDiscovery (7 vs `UAssetToolset` 24 +
-FileSystem 9).
+### Method
 
-Each needs the same treatment the finished ones got: diff at tool level, check the skills for a
-documented capability the tool names do not reveal (the `GameplayTagService` lesson), cut, sweep the
-skills, build. Do not cut on name overlap alone.
+1. **Live index.** A dump of every Epic tool registered in this editor, through
+   `vibeue.get_toolset_schema`: **1911 tools in 116 toolsets**, each with its parameter names. Every
+   replacement named below was checked against it, so the parameter names in the skills match the
+   live schema.
+2. **Engine source.** A grep of `AICallable` / `AIRuntimeCallable` and Python `tool_call` across all
+   of `Engine/`, including plugins this project has not enabled. That catches duplicates that would
+   only appear once someone turns the plugin on.
+3. **Four parallel audits**, one each for animation; landscape, foliage and RVT; audio, VFX and
+   Mutable; and UV plus Transaction plus the stale items.
+4. **A recommend → cut → review loop:**
+   - Opus recommends. Lane A judged the borderline keeps; lane B re-swept the §6 services.
+   - Sonnet executes the cuts.
+   - Opus reviews each diff for compile safety, verdict correctness and skill coverage.
+   - Sonnet applies the review's fixes.
 
-- Converting the remaining backticked sub-doc *prose* mentions into inline links (optional; the
-  Reference pages section already makes every page reachable).
+   It ran two rounds and stopped when a final pass over the whole remaining surface found nothing
+   new. Every round got an adversarial review. The first review covered the uncommitted work of the
+   four audits.
+
+### Live checks that decided verdicts
+
+- **Niagara colour curves.** Set-up on a scratch system: a Color module on a Fountain emitter, its
+  `Color` input driven by `/Niagara/DynamicInputs/ValueFromCurve/ColorFromCurve`.
+  - `NiagaraToolset_System.GetStackInputData` on `inputNameStack ["Color","ColorCurve"]` returns a
+    `NiagaraExt_StackInputData_DataInterface` whose `propertyValues` JSON holds
+    `RedCurve`/`GreenCurve`/`BlueCurve`/`AlphaCurve` keys, with interpolation and tangents.
+  - `SetStackInputData` rewrote values and added a key with its own interpolation mode. VibeUE's
+    reader saw the change, and `GetSystemCompileState` reported UpToDate with no errors.
+  - Stage A's reason for keeping the curve pair was therefore wrong for 5.9 (§5, corrected there).
+- **Blueprint basics through `call_tool`.** `AddVariable` takes `typeName`, not `type_name`.
+  `CompileBlueprint` returns nothing on success and raises with every error node's message on
+  failure (`BlueprintToolset.cpp:639-670`).
+
+### Results
+
+| Service | AI tools before → after | Cut (→ Epic replacement) | Demoted (still `unreal.*`) |
+|---|---|---|---|
+| `AnimSequenceService` | 92 → 76 | `OpenAnimationEditor` (→ `EditorAppToolset.OpenEditorForAsset`); `GetAnimationSkeleton`, `Get/SetRateScale`, `Get/SetAdditiveAnimType`, `Get/SetAdditiveBasePose`, `Get/SetEnableRootMotion`, `Get/SetRootMotionRootLock`, `Get/SetForceRootLock`, `SetCompressionScheme`, `GetAnimationLength` (→ `ObjectToolset.Get/SetProperties`: `Skeleton`, `RateScale`, `AdditiveAnimType`, `RefPoseType`+`RefPoseSeq`, `bEnableRootMotion`, `RootMotionRootLock`, `bForceRootLock`, `BoneCompressionSettings`, `SequenceLength`) | — |
+| `AnimMontageService` | 62 → 54 | `DuplicateMontage` (→ `AssetToolset.Duplicate`); `GetMontageSkeleton`, `SetBlendIn`, `SetBlendOut`, `GetBlendSettings`, `SetBlendOutTriggerTime`, `GetMontageLength` (→ `ObjectToolset`: `BlendIn`/`BlendOut`/`BlendOutTriggerTime`/`SequenceLength`) | `OpenMontageEditor` (internal callers) |
+| `AnimGraphService` | 48 → 40 | `GetParentClass` (→ `BlueprintToolset.GetParent`) | `AddBlendByBool`, `AddBlendByInt`, `AddLayeredBlend`, `AddTwoBoneIKNode`, `AddUseCachedPose`, `AddSaveCachedPose` (→ `BlueprintToolset.CreateNode` with the `Animation|…` type ids), `GetOutputPoseNodeId` (→ `FindNodes`). Kept because Epic's node info carries no GUID and the kept connect tools are keyed on one |
+| `SoundCueService` | 38 → 26 | `SaveSoundCue`, `DuplicateSoundCue`, `DeleteSoundCue` (→ `AssetToolset`); `ImportSoundWave` (→ `SoundWaveToolset.ImportFile`); `SetVolumeMultiplier`, `SetPitchMultiplier`, `SetSoundClass`, `Get/SetAttenuation`, `Get/SetConcurrency`, `SetSoundWaveProperty` (→ `ObjectToolset`) | — |
+| `NiagaraScratchPadService` | 20 → 18 | `GetScratchScriptPath` (→ `GetModuleTopology`'s `moduleScript`) | `GetCompileMessages` (→ `GetSystemCompileState`; the `scripts/tests` regression calls it synchronously) |
+| `NiagaraEmitterService` | 3 → 1 | `GetColorCurveKeys`, `SetColorCurveKeys` (→ `Get/SetStackInputData` on the `ColorCurve` DI input) | — (`ShiftColorHue` kept: the HSV rotation is VibeUE's) |
+| `CustomizableObjectService` | 18 → 17 | `ListCustomizableObjects` (→ `AssetToolset.FindAssets`) | — |
+| `LandscapeService` | 75 → 72 | `SetLandscapeVisibility` (→ `LevelToolset.SetActorHidden`), `SetLandscapeProperty` (→ `ObjectToolset.SetProperties`) | `SetLandscapeMaterial` (→ `ObjectToolset`; `ResizeLandscape` calls it) |
+| `LandscapeMaterialService` | 22 → 13 | `LayerInfoExists`, `LandscapeMaterialExists` (→ `AssetToolset.Exists`/`FindAssets`), `GetLayerInfoDetails` (→ `ObjectToolset.GetProperties`) | `CreateLandscapeMaterial` (→ `MaterialToolset.CreateMaterial`; `CreateAutoMaterial` calls it), `CreateLayerBlendNode`, `CreateLayerCoordsNode`, `CreateLayerSampleNode`, `CreateLayerWeightNode`, `CreateGrassOutput` (→ `MaterialToolset.AddExpression` + `ObjectToolset`; kept for the node ids `ConnectToLayerInput` and the blend tools consume) |
+| `FoliageService` | 15 → 12 | `SetFoliageTypeProperty`, `GetFoliageTypeProperty` (→ `ObjectToolset`, nested JSON not dotted paths), `FoliageTypeExists` (→ `AssetToolset.Exists` + `GetAssetClass`) | — |
+| `RuntimeVirtualTextureService` | 4 → 3 | `AssignRVTToLandscape` (→ `ObjectToolset.SetProperties` `RuntimeVirtualTextures`) | — |
+| `WidgetService` | 9 → 4 | `AddComponent`, `RemoveComponent`, `ReparentWidget`, `ReorderComponent`, `RenameWidget` (→ `UMGEditor.WidgetBlueprintEditorSubsystem`: `CreateAndAddWidget`, `RemoveWidget`, `MoveWidget`, `RenameWidget`, `ToggleWidgetAsVariable`) | — |
+| `InputService` | 27 → 21 | `InputActionExists`, `MappingContextExists`, `ListInputActions`, `ListMappingContexts`, `GetInputActionInfo`, `ConfigureAction` (→ `AssetToolset.Exists`/`FindAssets`, `ObjectToolset`) | — |
+| `SkeletonService` | 26 → 25 | — | `ReparentBone`: not a duplicate. Demoted because reparenting is unreliable (it removes and re-adds the subtree; see the `skeleton` skill) |
+| `UVMappingService`, `MapBlockoutService`, `TransactionService`, `PIEActorService`, and the rest of §6 | unchanged | — | — |
+
+**Totals:**
+- **620 → 543** AI-callable UFUNCTIONs in source: 60 deleted, 17 demoted.
+- Two of the 543 are `PythonTools.GetResidentMaps` / `GetDirtyPackages`. `UPythonTools` derives from
+  plain `UObject`, not `UToolsetDefinition`, so its `AICallable` tag was never registered as an MCP
+  tool. Both were always Python-only (`unreal.PythonTools.*`), which is how every guide uses them.
+- Live MCP surface: **541** VibeUE tools.
+
+### What turned out wrong, and why it matters
+
+- **"Nothing in Epic's surface mutates a `UWidgetTree`" was false.**
+  `UMGEditor.WidgetBlueprintEditorSubsystem` has 22 AI tools, including widget-tree add, move,
+  remove and rename, and `CreateWidgetBlueprint`. It is an `IToolsetProvider` subsystem, the same
+  shape §6 method flaw 4 describes, and the widget audit missed it the same way. `BindEvent` stays,
+  because `BindToEventProperty` does not cover every case, but its recorded "only
+  `AddComponentBoundEvent` exists" reason is outdated.
+- **Epic's route is often the more correct one.** It names the changed property, so
+  `PostEditChangeChainProperty` fires the engine's own fixups:
+  - The landscape setters now reach World Partition streaming proxies. The demoted
+    `SetLandscapeMaterial` was changed to a property-named `PostEditChangeProperty` so
+    `ResizeLandscape` gets that too.
+  - The additive-type and compression changes on AnimSequences now recompress.
+- **"Undo is exposed nowhere" was too strong.** `ConsoleToolset.RunConsoleCommand("TRANSACTION UNDO")`
+  steps the buffer. The keep stands, because that route returns no result, no count and no
+  can-undo/reset.
+
+### Bugs fixed on the way
+
+- **`CreateRVTVolume`** spawned a plain `AActor` at scale 1, so the volume never covered the landscape.
+  It now spawns `ARuntimeVirtualTextureVolume`, sets the virtual texture and `BoundsAlignActor`, and
+  sizes it from `ALandscape::GetCompleteBounds()` with the same math as the engine's
+  `RuntimeVirtualTexture::SetBounds`. That function is not called directly because it lives in
+  `VirtualTexturingEditor`, a module VibeUE does not depend on. Texel snapping is not reproduced.
+- **`AddBlendByInt`** ignored `NumPoses`. It now adds pose pins with
+  `UAnimGraphNode_BlendListByInt::AddPinToBlendList()` up to `NumPoses`, clamped to 2–64.
+- **Wrong parameter names.** About 25 skill pages passed parameter names the live schema rejects. One
+  skill (`gas`) called `unreal.ToolsetRegistry.execute_tool` directly, which 5.9's runner refuses.
+  The `vibeue` index skill also had 39 double-encoded characters.
+
+### What remains VibeUE-only (re-verified with the full method)
+
+- Landscape sculpt, heightmaps, layers, splines and auto-materials; foliage painting; map blockout;
+  real-world terrain.
+- SoundCue node graphs.
+- Niagara scratch-pad HLSL modules and hue rotation.
+- Mutable / Customizable Objects.
+- AnimSequence keyframes, curves, notifies and sync markers.
+- Montage sections, slots and branching points.
+- AnimBP state machines and GUID-keyed graph wiring.
+- StateTree bindings, schema, theme and parameter tools (§6).
+- Enhanced Input asset authoring and indefinite input holds.
+- UV channel editing.
+- Undo/redo stepping.
+- PIE-world actor spawning and RPC routing.
+- Trace analysis.
+- `deep_research` and `terrain_data`.

@@ -27,8 +27,8 @@ print("PIE requested; running now:", vibeue.exec_tool(APP, "IsPIERunning"),
 #   - a widget:  unreal.WidgetService.spawn_widget_in_pie(...), then
 #                SlateInspectorToolset.Snapshot -> GetUMGInfo -> ObjectToolset.GetProperties
 #                (get_live_property is gone)
-#   - input:     call_tool InputToolset.ApplyInput (Entries + DurationSeconds), or
-#                unreal.InputService.inject_action(...) / stop_injection(...) for a held action
+#   - input:     call_tool InputToolset.ApplyInput (entries + durationSeconds), or
+#                unreal.InputService.start_injection(...) / stop_injection(...) for an open-ended hold
 #   - a picture: call_tool SceneCaptureToolset.CaptureGameViewport
 # Assert on what you read and print expected vs actual — a completed step is not a verification.
 

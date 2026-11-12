@@ -1,7 +1,7 @@
 ---
 name: umg-widgets
 display_name: UMG Widget Blueprints
-description: Create and modify UMG Widget Blueprints (UI). Structural edits to the widget tree (add/remove/rename/reorder/reparent), widget event binding, and spawning a widget into PIE are VibeUE's `unreal.WidgetService.*`; everything else — reading the tree, properties, fonts, brushes, slots, animations, MVVM ViewModels, PIE lifecycle, screenshots — is Epic's engine toolsets via `call_tool`. Use when the user asks to create a UI/HUD/menu, add or arrange widgets (Button, TextBlock, Image, panels), style or animate a widget, audit a widget's bindings, or set up data bindings in a Widget Blueprint (WBP).
+description: Create and modify UMG Widget Blueprints (UI). Widget event binding, spawning a widget into PIE and removing a ViewModel are VibeUE's `unreal.WidgetService.*`; everything else — tree edits (add/remove/rename/reorder/reparent via `UMGEditor.WidgetBlueprintEditorSubsystem`), reading the tree, properties, fonts, brushes, slots, animations, MVVM ViewModels, PIE lifecycle, screenshots — is Epic's engine toolsets via `call_tool`. Use when the user asks to create a UI/HUD/menu, add or arrange widgets (Button, TextBlock, Image, panels), style or animate a widget, audit a widget's bindings, or set up data bindings in a Widget Blueprint (WBP).
 vibeue_classes:
   - WidgetService
 unreal_classes:
@@ -45,26 +45,25 @@ from the Task Index and load the matching workflow doc and/or run the matching s
 
 ## Which surface owns what
 
-`UWidgetService` is down to **9 methods**. They are the ones Epic's toolsets cannot do:
+`UWidgetService` is down to **4 methods**. They are the ones Epic's toolsets cannot do:
 
 | VibeUE keeps | Why nothing in Epic's surface replaces it |
 |---|---|
-| `add_component`, `remove_component`, `rename_widget`, `reorder_component`, `reparent_widget` | **Nothing in Epic's surface mutates a `UWidgetTree`.** Its only WidgetTree symbol is the read-only `WidgetStaticAnalysisToolset.GetWidgetTreeDepth`. |
 | `bind_event` | Epic's `BlueprintToolset.AddComponentBoundEvent` is typed `UActorComponent*`, and a `UWidget` is not one. |
 | `spawn_widget_in_pie`, `remove_widget_from_pie` | No Epic tool constructs a `UUserWidget` or calls `AddToViewport`. `CommonUIToolset.ActivateWidget` only addresses widgets the game already created. |
 | `remove_view_model` | `MVVMToolset` can add a ViewModel to a widget but never remove one. |
 
-**Everything else is Epic's.** Reading the tree, every property read/write (fonts and brushes
+**Everything else is Epic's.** Editing the tree (`UMGEditor.WidgetBlueprintEditorSubsystem`: `CreateAndAddWidget`, `MoveWidget`, `RemoveWidget`, `RenameWidget`, `ToggleWidgetAsVariable`), reading the tree, every property read/write (fonts and brushes
 included), slots, animations, MVVM, PIE lifecycle, asset discovery, validation and screenshots.
-See the removal table at the bottom for the exact 34 → replacement mapping.
+See the removal table at the bottom for the exact 39 → replacement mapping.
 
 ## Call styles — get this right or every call fails
 
-**1. VibeUE's 9 survivors are Python**, inside `execute_python`:
+**1. VibeUE's 4 survivors are Python**, inside `execute_python`:
 
 ```python
 import unreal
-unreal.WidgetService.add_component(path, "Button", "PlayButton", "RootCanvas", False)
+unreal.WidgetService.bind_event(path, "PlayButton", "OnClicked", "HandlePlay")
 ```
 
 **2. Epic's toolsets are `call_tool`** — one tool per MCP round-trip:
@@ -120,9 +119,10 @@ For exact JSON key names on any tool, read its schema rather than guessing:
 
 ## Critical Rules
 
-### 🚨 Creating Widget Blueprints — only one pattern works
+### 🚨 Creating Widget Blueprints
 
-No tool creates the asset. Create it with the factory, then populate it:
+Epic's `UMGEditor.WidgetBlueprintEditorSubsystem.CreateWidgetBlueprint(folderPath, assetName, parentClass)`
+creates the asset; in Python the factory does the same. Then populate it:
 
 ```python
 import unreal
@@ -137,15 +137,26 @@ Do **not** call `BlueprintEditorLibrary.get_blueprint_class()` or `unreal.create
 
 ### 🚨 Hierarchy: set the root first, parents before children
 
+Tree edits are Epic's `UMGEditor.WidgetBlueprintEditorSubsystem` (reach it with `vibeue.exec_tool`):
+
 ```python
-unreal.WidgetService.add_component(path, "CanvasPanel", "RootCanvas", "", True)   # empty parent -> becomes root
-unreal.WidgetService.add_component(path, "Button", "PlayButton", "RootCanvas", False)
+import vibeue
+WS = "UMGEditor.WidgetBlueprintEditorSubsystem"
+WBP = "/Game/UI/WBP_Menu.WBP_Menu"
+TREE = "/Game/UI/WBP_Menu.WBP_Menu:WidgetTree."
+# no parentWidget + empty tree -> the new widget becomes the root
+vibeue.exec_tool(WS, "CreateAndAddWidget", {"widgetBlueprint": WBP, "widgetClass": "/Script/UMG.CanvasPanel",
+                                            "widgetDisplayName": "RootCanvas"})
+vibeue.exec_tool(WS, "CreateAndAddWidget", {"widgetBlueprint": WBP, "widgetClass": "/Script/UMG.Button",
+                                            "widgetDisplayName": "PlayButton",
+                                            "parentWidget": TREE + "RootCanvas", "childIndex": -1})
 ```
 
-That 5th argument is `is_variable`, **not** `set_as_root` — a widget becomes the root because its
-parent name is empty, not because of that flag. A 6th argument, `child_index`, inserts at a position
-instead of appending; `reorder_component` moves an existing widget within its parent. See
-`reference.md` ▸ Child order.
+`widgetClass` is a class path (`/Script/UMG.<Type>` for native, `/Game/UI/WBP_X.WBP_X_C` for a custom
+WBP), not a short name. Pass the parent panel explicitly: only an **empty tree** makes the first widget
+the root. `childIndex` inserts at a position; `-1` appends. The new widget is not compiled, and
+whether it is a Blueprint variable is not set here -- call `ToggleWidgetAsVariable(widgetBlueprint,
+widget, bIsVariable)` when you need `BindWidget` or a graph reference. See `reference.md` ▸ Child order.
 
 > ⚠️ **Widget names are unique per-blueprint, NOT per-parent.** UMG enforces one name across the
 > whole Widget Blueprint, so you can't add an `ItemLabel`/`ItemButton` under each of `Item1`,
@@ -366,10 +377,11 @@ call. Start it in one step (or `await vibeue.exec_tool_await`), then spawn/read 
 
 ### 🚨 Custom WBPs as components — discover first, pass the asset name
 
-`add_component` takes either a native widget type name (`"Button"`) or a **WBP asset name**
-(`"WBP_HealthBar"`, not the full package path) as `component_type`. Find existing WBPs with
-`AssetToolset.FindAssets` (filter `assetType` = `/Script/UMGEditor.WidgetBlueprint`). The child WBP
-must already exist; circular references are rejected; the parent recompiles automatically.
+`CreateAndAddWidget` takes a **class path** as `widgetClass`: `/Script/UMG.Button` for a native widget,
+or the generated class of a custom WBP (`/Game/UI/WBP_HealthBar.WBP_HealthBar_C`). Find existing WBPs
+with `AssetToolset.FindAssets` (filter `assetType` = `/Script/UMGEditor.WidgetBlueprint`) and append
+`_C` to the object path. The child WBP must already exist and be compiled; circular references are
+rejected by Epic's tool too. Compile the parent afterwards (`BlueprintToolset.CompileBlueprint`).
 
 For **native** widget types, `ObjectToolset.SearchSubclasses(BaseClass=/Script/UMG.Widget)` lists
 them (optional `ClassName` substring filter).
@@ -439,7 +451,7 @@ Load these only when the task needs them — read the sibling file directly unde
 exposes this skill; there is no `vibeue-skills-manager` tool):
 
 - **`workflows.md`** — step-by-step task workflows with copy-paste Python for every task above.
-- **`reference.md`** — the 9 surviving `WidgetService` signatures and their return-struct fields,
+- **`reference.md`** — the 4 surviving `WidgetService` signatures and their return-struct fields,
   the Epic toolset/tool index with toolset names, common widget properties, and event names.
 - **`mvvm.md`** — MVVM on `MVVMToolset`: rules, binding modes, GUID-keyed bindings, the
   creation-type limitation, and full add/bind/list/remove workflows.
@@ -457,7 +469,7 @@ Never report a widget as created/configured until it appears in a fresh `Describ
 
 ## Additional gotchas
 
-- A fresh WBP has no root: the first `add_component(path, type, name, parent_name="")` becomes it.
+- A fresh WBP has no root: the first `CreateAndAddWidget` with no `parentWidget` becomes it.
   `BindWidget` binds only when the tree widget is `bIsVariable=True`; reading a bound member from
   Python is blocked, so enumerate `ObjectIterator(unreal.TextBlock)` filtered by the instance path.
 - `bind_event` is only provably bound on the `GameInstance_*`-outered PIE instance (asset/preview
@@ -475,13 +487,17 @@ Never report a widget as created/configured until it appears in a fresh `Describ
 
 ---
 
-## The 34 removed `WidgetService` tools → what to call now
+## The 39 removed `WidgetService` tools → what to call now
 
 Every name in the left column is **removed from `UWidgetService`**. Calling one fails.
 
 | Removed | Use instead |
 |---|---|
 | `get_hierarchy`, `get_root_widget`, `list_components`, `get_component_properties`, `get_widget_snapshot`, `get_component_snapshot`, `widget_exists` | `WidgetStaticAnalysisToolset.DescribeWidget` (one call: walk-order tree + `Properties[]` + `SlotProperties[]`) |
+| `add_component` | `UMGEditor.WidgetBlueprintEditorSubsystem.CreateAndAddWidget(widgetBlueprint, widgetClass, widgetDisplayName, parentWidget, childIndex)`, then `ToggleWidgetAsVariable(widgetBlueprint, widget, bIsVariable)` only if the flag must change. `widgetClass` is a class path, `parentWidget` is explicit |
+| `reparent_widget`, `reorder_component` | `WidgetBlueprintEditorSubsystem.MoveWidget(widgetBlueprint, widget, newParent, childIndex)`. To reorder, pass the widget's current parent; moving **forward** within the same parent to final position N needs `childIndex = N+1` (designer drop-position semantics). Carries the old slot's layout properties across |
+| `remove_component` | `WidgetBlueprintEditorSubsystem.RemoveWidget(widgetBlueprint, widget)` — removes the widget **and its children** (keep children: `MoveWidget` them first, or `ReplaceWidgetWithChild` for a single-child panel) |
+| `rename_widget` | `WidgetBlueprintEditorSubsystem.RenameWidget(widgetBlueprint, widget, newDisplayName)` — validates the name and updates variable/graph/binding/animation references |
 | `validate` | `AssetToolset.ValidateAssets` |
 | `widget_blueprint_exists` | `AssetToolset.Exists` |
 | `list_widget_blueprints` | `AssetToolset.FindAssets` (`assetType` = WidgetBlueprint) |
@@ -507,7 +523,7 @@ none of them.
 Open these with the paths below; UE rewrites them to absolute paths when it serves this skill.
 
 - [mvvm](mvvm.md) - MVVM ViewModel support on Epic's MVVMToolset — rules, binding modes, GUID-keyed bindings, the creation-type limitation, and full workflows.
-- [reference](reference.md) - The 9 surviving WidgetService signatures and return-struct fields, the Epic toolset/tool index with exact toolset names, common widget properties and event names.
+- [reference](reference.md) - The 4 surviving WidgetService signatures and return-struct fields, the Epic toolset/tool index with exact toolset names, common widget properties and event names.
 - [workflows](workflows.md) - Step-by-step UMG widget task workflows — create a WBP, build a menu, position on canvas, inspect, style fonts/brushes, animate, bind events, edit the hierarchy, screenshot the designer, and run PIE checks.
 - [scripts/apply_brush.txt](scripts/apply_brush.txt) - runnable sample
 - [scripts/apply_font.txt](scripts/apply_font.txt) - runnable sample

@@ -1,29 +1,40 @@
 ---
 name: niagara-emitters/color
-description: Niagara emitter colour editing — ColorFromCurve detection and semantics, hue-shift vs. multiplicative tint, reading and writing curve keyframes, and where the engine NiagaraToolsets take over.
+description: Niagara emitter colour editing — ColorFromCurve detection and semantics, hue-shift vs. multiplicative tint, reading and writing curve keyframes with Epic's GetStackInputData / SetStackInputData, and VibeUE's shift_color_hue.
 ---
 
 # Niagara emitter colour editing
 
 ## ColorFromCurve overrides everything else
 
-Many stock VFX emitters animate colour over particle lifetime with a **ColorFromCurve** module. That
-module **overrides** Scale Color and `InitializeParticle` colour — so writing those inputs (through
-Epic's `SetStackInputData`) changes nothing you can see.
+Many stock VFX emitters animate colour over particle lifetime with a **ColorFromCurve** dynamic
+input (typically on the `Color` module's `Color` input in `ParticleUpdateScript`). It **overrides**
+Scale Color and `InitializeParticle` colour — so writing those inputs changes nothing you can see.
 
-ColorFromCurve stores **keyframe data**, not an input value. No stack-input write reaches inside it.
-That is why VibeUE still ships three curve tools and nothing else for colour.
+The curve's keyframes live in a `ColorCurve` **data-interface input** inside that dynamic input.
+Epic's stack-input API reaches it: address it with an `inputNameStack` that walks into the dynamic
+input (`["Color", "ColorCurve"]`) and read/write it with `GetStackInputData` / `SetStackInputData`.
+VibeUE keeps exactly one colour tool, `shift_color_hue`, because Epic has no HSV rotation.
+
+All calls below run inside `execute_python` with the injected `await call_tool(...)`.
 
 ### Detect first
 
 ```python
-import unreal
+NS  = "NiagaraToolsets.NiagaraToolset_System"
+sys = {"refPath": "/Game/VFX/NS_Fire.NS_Fire"}
+color_input = {"system": sys, "emitterName": "Flames", "scriptName": "ParticleUpdateScript",
+               "moduleName": "Color", "inputNameStack": ["Color"]}
 
-keys = unreal.NiagaraEmitterService.get_color_curve_keys(system_path, emitter_name)
-if keys:
-    print(f"ColorFromCurve with {len(keys)} keys -> use shift_color_hue / set_color_curve_keys")
-else:
-    print("value-driven -> use Epic SetStackInputData on Scale Color / InitializeParticle")
+# Structure of the whole emitter (modules + inputs, no values): find the colour module first.
+topo = await call_tool(f"{NS}.GetEmitterTopology",
+                       emitterRef={"system": sys, "emitterName": "Flames"})
+
+# The Color input's dynamic-input chain: a ColorFromCurve entry with a ColorCurve
+# data-interface input means curve-driven. GetDynamicInputChain errors if the input is not Dynamic
+# (i.e. value-driven -> set the colour with SetStackInputData on Scale Color / InitializeParticle).
+chain = await call_tool(f"{NS}.GetDynamicInputChain", stackInputRef=color_input)
+chain
 ```
 
 ## Hue-shift, not multiply
@@ -34,13 +45,13 @@ authored. Rotating hue preserves it.
 
 | Goal | Do this | Keeps artistic detail |
 |---|---|---|
-| Recolour a curve-driven emitter | `shift_color_hue(...)` | ✅ yes |
-| Arbitrary recolour of a curve | read keys → mutate → `set_color_curve_keys(...)` | ✅ yes, you control it |
+| Recolour a curve-driven emitter | VibeUE `shift_color_hue(...)` | ✅ yes |
+| Arbitrary edit of the curve keys | Epic `GetStackInputData` → mutate → `SetStackInputData` | ✅ yes, you control it |
 | Brighten/dim a value-driven emitter | Epic `SetStackInputData` on Scale Color, equal RGB | ✅ yes |
 | Tint a value-driven emitter | Epic `SetStackInputData` on Scale Color, non-equal RGB | ⚠️ partial |
 | Multiply a curve-driven emitter by zeros | — | ❌ don't |
 
-### shift_color_hue
+### shift_color_hue (VibeUE)
 
 ```python
 import unreal
@@ -50,47 +61,53 @@ unreal.NiagaraEmitterService.shift_color_hue(system_path, emitter_name, 120.0)
 ```
 
 It reads every ColorFromCurve keyframe, converts RGB → HSV, rotates the hue, converts back, and
-writes the keys again. Gradients, saturation, intensity variation and alpha all survive.
+writes the keys again. Gradients, saturation, intensity variation, timing and alpha all survive.
+It returns `False` when the emitter has no colour curve. An optional `module_name` (default
+`"ColorFromCurve"`) picks a differently named curve function on the emitter graph.
 
-Across several emitters — list the emitter names with Epic's Niagara toolset, then:
+Across several emitters — list the emitter names with Epic's `GetSystemSummary`, then call
+`shift_color_hue` per emitter and keep the ones that returned `True`.
 
-```python
-for name in emitter_names:
-    if unreal.NiagaraEmitterService.get_color_curve_keys(system_path, name):
-        unreal.NiagaraEmitterService.shift_color_hue(system_path, name, 120.0)
-```
-
-### Reading and writing keys directly
+### Reading and writing keys directly (Epic)
 
 ```python
-import unreal
+import json
+NS  = "NiagaraToolsets.NiagaraToolset_System"
+ref = {"system": {"refPath": "/Game/VFX/NS_Fire.NS_Fire"}, "emitterName": "Flames",
+       "scriptName": "ParticleUpdateScript", "moduleName": "Color",
+       "inputNameStack": ["Color", "ColorCurve"]}
 
-keys = unreal.NiagaraEmitterService.get_color_curve_keys(system_path, emitter_name)
-for key in keys:
-    print(f"t={key.time:.2f}  R={key.r:.2f} G={key.g:.2f} B={key.b:.2f} A={key.a:.2f}")
+data = await call_tool(f"{NS}.GetStackInputData", stackInputRef=ref)
+# data is an instanced NiagaraExt_StackInputData_DataInterface; its propertyValues is a JSON STRING
+pv = json.loads(data["value"]["propertyValues"])
+# pv["RedCurve"/"GreenCurve"/"BlueCurve"/"AlphaCurve"]["keys"] = [{"time", "value", "interpMode", "tangentMode", ...}]
 
 # Example: invert the colour ramp, leaving alpha and timing untouched
-for key in keys:
-    key.r = 1.0 - key.r
-    key.g = 1.0 - key.g
-    key.b = 1.0 - key.b
+for ch in ("RedCurve", "GreenCurve", "BlueCurve"):
+    for k in pv[ch]["keys"]:
+        k["value"] = 1.0 - k["value"]
 
-unreal.NiagaraEmitterService.set_color_curve_keys(system_path, emitter_name, keys)
+await call_tool(f"{NS}.SetStackInputData", stackInputRef=ref, inputData={
+    "struct": {"refPath": "/Script/NiagaraEditor.NiagaraExt_StackInputData_DataInterface"},
+    "value": {"propertyValues": json.dumps(pv)},
+})
 ```
 
-`key.time` is normally 0.0–1.0 across particle lifetime; `r`/`g`/`b` may exceed 1.0 for HDR.
-All three tools accept an optional `module_name` (default `"ColorFromCurve"`) when an emitter has a
-differently named curve module.
+Adding a key is appending a `{time, value, ...}` entry to a channel's `keys` (copy an existing key
+for the tangent fields). `time` is normally 0.0–1.0 across particle lifetime; values may exceed 1.0
+for HDR. Each channel is its own curve — keys need not share times across channels.
 
 ## Then compile and save
 
 ```python
-# Compile through Epic's Niagara toolset (call_tool), then:
-unreal.EditorAssetLibrary.save_asset(system_path)
+state = await call_tool("NiagaraToolsets.NiagaraToolset_System.GetSystemCompileState",
+                        system={"refPath": "/Game/VFX/NS_Fire.NS_Fire"})
+# expect no errors (aggregateStatus UpToDate / bHasErrors false)
+await call_tool("EditorToolset.AssetToolset.SaveAsset", assetPath="/Game/VFX/NS_Fire")
 ```
 
 ## Everything else is the engine's
 
-Adding or removing a ColorFromCurve module, Scale Color values, spawn rates, sim target, renderers,
-emitters, user parameters, compile state and stack issues are all `NiagaraToolsets` via `call_tool`.
-Run `describe_toolset` on the Niagara toolsets for exact action names.
+Adding or removing a ColorFromCurve dynamic input, Scale Color values, spawn rates, sim target,
+renderers, emitters, user parameters, compile state and stack issues are all `NiagaraToolsets`.
+Use `search_symbols` / `get_symbol` on the Niagara toolsets for exact tool and parameter names.

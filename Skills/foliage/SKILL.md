@@ -4,6 +4,9 @@ display_name: Foliage & Vegetation
 description: Create foliage types and place/scatter foliage instances on landscapes and meshes (FoliageService). Use when the user asks to add trees/grass/bushes/rocks as foliage, create a foliage type from a mesh, scatter or paint foliage instances, or query/remove foliage on a surface.
 vibeue_classes:
   - FoliageService
+engine_toolsets:
+  - EditorToolset.ObjectToolset
+  - EditorToolset.AssetToolset
 unreal_classes:
   - InstancedFoliageActor
   - FoliageType
@@ -80,7 +83,7 @@ If you get `instances_added=0` with `instances_rejected ≈ 4× requested`, ever
 | Forgetting to check `instances_rejected` | Always check — tells you how many failed surface trace or layer filter |
 | Expecting `get_instance_count()` == -1 after removing all instances | -1 means the type was **never** in the level. Once registered, the count is 0 after removal — the foliage type entry persists |
 | Expecting `list_foliage_types()` to shrink after `clear_all_foliage()` | Clearing removes **instances**, not type registrations — 0-instance entries remain listed. Filter on `ft.instance_count > 0` |
-| `set_foliage_type_property(path, "CullDistance", "30000")` | Whole structs need UE import text: `"(Min=0,Max=30000)"`. Simpler: set the member via a dotted path — `set_foliage_type_property(path, "CullDistance.Max", "30000")` |
+| `FoliageService.set_foliage_type_property` / `get_foliage_type_property` / `foliage_type_exists` (gone) | Epic's `ObjectToolset.SetProperties` / `GetProperties` on the foliage type, with nested structs as nested JSON — `{"CullDistance": {"Max": 30000}}`, not a dotted path or UE import text; `AssetToolset.Exists` + `GetAssetClass` for existence (see Edit a Foliage Type below) |
 | Scattering "around the landscape at (0,0)" centered on (0,0) | Landscapes are corner-anchored: created at (0,0) the terrain spans +X/+Y only. Center the scatter on the landscape's actual center (`location + (resolution-1)*scale/2`) or most candidates miss the surface |
 | `AssetDiscoveryService.list_assets(path)` for cleanup | Both that and `list_assets_in_path` are gone, as is `manage_asset`. Use Epic's `EditorToolset.AssetToolset.FindAssets` (filter by class path, e.g. `/Script/Foliage.FoliageType_InstancedStaticMesh`), or `unreal.EditorAssetLibrary.list_assets(path)` from `execute_python` |
 
@@ -306,17 +309,40 @@ result = unreal.FoliageService.clear_all_foliage()
 print(f"Cleared {result.instances_removed} total instances")
 ```
 
+### Edit a Foliage Type (Epic `ObjectToolset`)
+
+Foliage type properties are plain asset properties, so they go through Epic's `ObjectToolset`.
+Nested structs are nested JSON objects (only the fields you name change):
+
+```python
+import json
+OT = "EditorToolset.ObjectToolset"
+ft = {"refPath": "/Game/Foliage/FT_PineTree.FT_PineTree"}   # full object path
+
+ok = await call_tool(f"{OT}.SetProperties", instance=ft, values=json.dumps({
+    "CullDistance": {"Max": 30000},
+    "AlignMaxAngle": 30.0,
+    "RandomYaw": True,
+}))
+cur = await call_tool(f"{OT}.GetProperties", instance=ft, properties=["CullDistance", "AlignMaxAngle"])
+await call_tool("EditorToolset.AssetToolset.SaveAsset", assetPath="/Game/Foliage/FT_PineTree")
+{"ok": ok, "now": cur}
+```
+
 ### Check Existence
 
 ```python
 import unreal
 
-# Does the mesh/foliage type exist as an asset?
-if unreal.FoliageService.foliage_type_exists("/Game/Meshes/SM_Tree_01"):
-    print("Asset exists")
+# Does the mesh/foliage type exist as an asset, and which kind is it?
+AT = "EditorToolset.AssetToolset"
+path = "/Game/Meshes/SM_Tree_01"
+if await call_tool(f"{AT}.Exists", path=path):
+    cls = await call_tool(f"{AT}.GetAssetClass", assetPath=path)   # "StaticMesh", "FoliageType_InstancedStaticMesh", ...
+    print("Asset exists:", cls)
 
 # Are there any instances of this type in the level?
-if unreal.FoliageService.has_foliage_instances("/Game/Meshes/SM_Tree_01"):
+if unreal.FoliageService.has_foliage_instances(path):
     print("Instances exist in level")
 ```
 

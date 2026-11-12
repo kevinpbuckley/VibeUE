@@ -468,18 +468,6 @@ public:
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Utility")
 	static bool IsAnimBlueprint(const FString& AssetPath);
 
-	/**
-	 * Get the parent class of an Animation Blueprint.
-	 *
-	 * @param AnimBlueprintPath - Full path to the Animation Blueprint
-	 * @return Name of the parent class (e.g., "AnimInstance")
-	 *
-	 * Example:
-	 *   parent = unreal.AnimGraphService.get_parent_class("/Game/ABP_Character")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Utility")
-	static FString GetParentClass(const FString& AnimBlueprintPath);
-
 	// ============================================================================
 	// ANIMGRAPH NODE CREATION
 	// ============================================================================
@@ -556,13 +544,15 @@ public:
 	/**
 	 * Add a Blend By Bool node to a graph.
 	 *
+	 * Demoted (not an AI tool): use BlueprintToolsets.BlueprintToolset.CreateNode (type id `Animation|Blends|BlendPosesbybool`) instead; kept because it returns the node GUID the kept ConnectAnimNodes / DisconnectAnimNode tools take, and Epic's node info carries no GUID.
+	 *
 	 * @param AnimBlueprintPath - Full path to the Animation Blueprint
 	 * @param GraphName - Name of the graph
 	 * @param PosX - X position
 	 * @param PosY - Y position
 	 * @return Node GUID if successful
 	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Creation")
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Creation")
 	static FString AddBlendByBool(
 		const FString& AnimBlueprintPath,
 		const FString& GraphName,
@@ -572,6 +562,8 @@ public:
 	/**
 	 * Add a Blend By Int node to a graph.
 	 *
+	 * Demoted (not an AI tool): use BlueprintToolsets.BlueprintToolset.CreateNode (type id `Animation|Blends|BlendPosesbyint`) instead; kept because it returns the node GUID the kept ConnectAnimNodes / DisconnectAnimNode tools take, and Epic's node info carries no GUID.
+	 *
 	 * @param AnimBlueprintPath - Full path to the Animation Blueprint
 	 * @param GraphName - Name of the graph
 	 * @param NumPoses - Number of pose inputs (default 2)
@@ -579,7 +571,7 @@ public:
 	 * @param PosY - Y position
 	 * @return Node GUID if successful
 	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Creation")
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Creation")
 	static FString AddBlendByInt(
 		const FString& AnimBlueprintPath,
 		const FString& GraphName,
@@ -590,13 +582,15 @@ public:
 	/**
 	 * Add a Layered Blend Per Bone node to a graph.
 	 *
+	 * Demoted (not an AI tool): use BlueprintToolsets.BlueprintToolset.CreateNode (type id `Animation|Blends|Layeredblendperbone`) instead; kept because it returns the node GUID the kept ConnectAnimNodes / DisconnectAnimNode tools take, and Epic's node info carries no GUID.
+	 *
 	 * @param AnimBlueprintPath - Full path to the Animation Blueprint
 	 * @param GraphName - Name of the graph
 	 * @param PosX - X position
 	 * @param PosY - Y position
 	 * @return Node GUID if successful
 	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Creation")
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Creation")
 	static FString AddLayeredBlend(
 		const FString& AnimBlueprintPath,
 		const FString& GraphName,
@@ -624,6 +618,8 @@ public:
 	/**
 	 * Add a Save Cached Pose node to a graph.
 	 *
+	 * Demoted (not an AI tool): use BlueprintToolsets.BlueprintToolset.CreateNode (type id `Animation|CachedPoses|NewSavecachedpose...`) + EditorToolset.ObjectToolset.SetProperties (CacheName) instead; kept because it returns the node GUID the kept ConnectAnimNodes / DisconnectAnimNode tools take, and Epic's node info carries no GUID.
+	 *
 	 * @param AnimBlueprintPath - Full path to the Animation Blueprint
 	 * @param GraphName - Name of the graph
 	 * @param CacheName - Name for the cached pose
@@ -631,7 +627,7 @@ public:
 	 * @param PosY - Y position
 	 * @return Node GUID if successful
 	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Creation")
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Creation")
 	static FString AddSaveCachedPose(
 		const FString& AnimBlueprintPath,
 		const FString& GraphName,
@@ -642,6 +638,8 @@ public:
 	/**
 	 * Add a Use Cached Pose node to a graph.
 	 *
+	 * Demoted (not an AI tool): use BlueprintToolsets.BlueprintToolset.CreateNode (type id `Animation|CachedPoses|Usecachedpose'<CacheName>'`) instead; kept because it returns the node GUID the kept ConnectAnimNodes / DisconnectAnimNode tools take, and Epic's node info carries no GUID.
+	 *
 	 * @param AnimBlueprintPath - Full path to the Animation Blueprint
 	 * @param GraphName - Name of the graph
 	 * @param CacheName - Name of the cached pose to use
@@ -649,7 +647,7 @@ public:
 	 * @param PosY - Y position
 	 * @return Node GUID if successful
 	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Creation")
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Creation")
 	static FString AddUseCachedPose(
 		const FString& AnimBlueprintPath,
 		const FString& GraphName,
@@ -1089,11 +1087,13 @@ public:
 	 * Get the Output Pose (result) node ID for a graph.
 	 * Useful for connecting to the final output.
 	 *
+	 * Demoted (not an AI tool): use BlueprintToolsets.BlueprintToolset.FindNodes (nodeClass AnimGraphNode_Root) instead; kept because ConnectToOutputPose calls it.
+	 *
 	 * @param AnimBlueprintPath - Full path to the Animation Blueprint
 	 * @param GraphName - Name of the graph
 	 * @return Node GUID of the output pose node, or empty string
 	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Connections")
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Connections")
 	static FString GetOutputPoseNodeId(
 		const FString& AnimBlueprintPath,
 		const FString& GraphName);
@@ -1163,13 +1163,15 @@ public:
 	/**
 	 * Add a Two Bone IK node to a graph.
 	 *
+	 * Demoted (not an AI tool): use BlueprintToolsets.BlueprintToolset.CreateNode (type id `Animation|SkeletalControls|TwoBoneIK`) instead; kept because it returns the node GUID the kept ConnectAnimNodes / DisconnectAnimNode tools take, and Epic's node info carries no GUID.
+	 *
 	 * @param AnimBlueprintPath - Full path to the Animation Blueprint
 	 * @param GraphName - Name of the graph
 	 * @param PosX - X position
 	 * @param PosY - Y position
 	 * @return Node GUID if successful
 	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Creation")
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Creation")
 	static FString AddTwoBoneIKNode(
 		const FString& AnimBlueprintPath,
 		const FString& GraphName,

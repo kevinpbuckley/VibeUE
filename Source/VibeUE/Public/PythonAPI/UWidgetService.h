@@ -92,54 +92,6 @@ struct FWidgetSlotInfo
 
 
 
-/**
- * Result of adding a component
- */
-USTRUCT(BlueprintType)
-struct FWidgetAddComponentResult
-{
-	GENERATED_BODY()
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	bool bSuccess = false;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	FString ComponentName;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	FString ComponentType;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	FString ParentName;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	bool bIsVariable = false;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	FString ErrorMessage;
-};
-
-/**
- * Result of removing a component
- */
-USTRUCT(BlueprintType)
-struct FWidgetRemoveComponentResult
-{
-	GENERATED_BODY()
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	bool bSuccess = false;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	TArray<FString> RemovedComponents;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	TArray<FString> OrphanedChildren;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	FString ErrorMessage;
-};
-
 
 
 /**
@@ -201,11 +153,15 @@ struct FPIEWidgetHandle
 };
 
 /**
- * Widget Service - the nine Widget Blueprint operations the engine's toolsets cannot do.
+ * Widget Service - the four Widget Blueprint operations the engine's toolsets cannot do.
  *
- * Cut to the delta on the 5-9 branch. Nothing in Epic's surface mutates a `UWidgetTree` (its only
- * WidgetTree symbol is the read-only `WidgetStaticAnalysisToolset.GetWidgetTreeDepth`), which is
- * why the tree edits below still live here. Use the engine for everything else:
+ * Cut to the delta on the 5-9 branch. The tree mutations are Epic's: `UMGEditor.WidgetBlueprintEditorSubsystem`
+ * (an IToolsetProvider in the always-on UMGEditor module) has `CreateAndAddWidget` (widgetBlueprint,
+ * widgetClass as a class path, widgetDisplayName, parentWidget, childIndex), `ToggleWidgetAsVariable`
+ * (widgetBlueprint, widget, bIsVariable), `MoveWidget` (widgetBlueprint, widget, newParent, childIndex --
+ * reparent, and reorder by passing the current parent; to land at final position N moving forward pass
+ * N+1), `RemoveWidget` (widgetBlueprint, widget) and `RenameWidget` (widgetBlueprint, widget,
+ * newDisplayName). Use the engine for everything else:
  *  - read the tree, its properties and its slot layout in one call:
  *    `WidgetStaticAnalysisToolset.DescribeWidget` (walk-order `Widgets[]`, each with
  *    `Properties[]` and `SlotProperties[]`; pass bSkipDefaultValues=false to see defaults too).
@@ -232,7 +188,7 @@ struct FPIEWidgetHandle
  *    only preview capture left is `SlateInspectorToolset.Screenshot` against the open designer
  *    (`EditorAppToolset.CaptureAssetImage` refuses Widget Blueprints outright)
  *
- * What is left is the five tree mutations, the event bind, the two PIE-instance calls and the one
+ * What is left is the event bind, the two PIE-instance calls and the one
  * MVVM removal that none of those can do.
  */
 UCLASS(BlueprintType)
@@ -241,99 +197,6 @@ class VIBEUE_API UWidgetService : public UToolsetDefinition
 	GENERATED_BODY()
 
 public:
-	// =================================================================
-	// Widget tree mutation
-	// =================================================================
-
-	/**
-	 * Add a new widget component to a Widget Blueprint.
-	 * Supports both native widget types (TextBlock, Button, etc.) and custom Widget Blueprints by name.
-	 * Custom WBPs are resolved via the Asset Registry and compiled before use.
-	 * Circular references (a WBP containing itself) are detected and rejected.
-	 *
-	 * An empty ParentName makes the widget the tree's root - that, not bIsVariable, is what makes a
-	 * root. Widget names are unique per Widget Blueprint, not per parent, so reusing a name across
-	 * sibling subtrees lands the component on the wrong parent or no-ops.
-	 *
-	 * Example:
-	 *   unreal.WidgetService.add_component(path, "CanvasPanel", "RootCanvas", "", True)
-	 *   unreal.WidgetService.add_component(path, "Button", "PlayButton", "RootCanvas", False)
-	 *
-	 * @param WidgetPath - Full path to the Widget Blueprint
-	 * @param ComponentType - Type of widget: native type name (e.g. "Button") or WBP asset name (e.g. "WBP_HealthBar")
-	 * @param ComponentName - Name for the new component
-	 * @param ParentName - Name of parent panel (empty for root)
-	 * @param bIsVariable - Whether to expose as a variable
-	 * @param ChildIndex - Position among the parent's children to insert at (0-based). -1 (default) appends at
-	 *        the end. Any other value must be within [0, parent's current child count] or the call fails with
-	 *        an error - it does not silently fall back to append
-	 * @return Result with success status and details
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets")
-	static FWidgetAddComponentResult AddComponent(
-		const FString& WidgetPath,
-		const FString& ComponentType,
-		const FString& ComponentName,
-		const FString& ParentName = TEXT(""),
-		bool bIsVariable = true,
-		int32 ChildIndex = -1);
-
-	/**
-	 * Move an existing widget component to a new position among its current parent's children.
-	 *
-	 * @param WidgetPath - Full path to the Widget Blueprint
-	 * @param ComponentName - Name of the component to move
-	 * @param NewIndex - New 0-based position among the parent's children
-	 * @return True if the widget was found, has a panel parent, and was moved
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets")
-	static bool ReorderComponent(
-		const FString& WidgetPath,
-		const FString& ComponentName,
-		int32 NewIndex);
-
-	/**
-	 * Remove a widget component from a Widget Blueprint.
-	 *
-	 * @param WidgetPath - Full path to the Widget Blueprint
-	 * @param ComponentName - Name of the component to remove
-	 * @param bRemoveChildren - Whether to also remove child widgets
-	 * @return Result with removed components and orphaned children
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets")
-	static FWidgetRemoveComponentResult RemoveComponent(
-		const FString& WidgetPath,
-		const FString& ComponentName,
-		bool bRemoveChildren = false);
-
-	/**
-	 * Rename a widget component in the Widget Blueprint.
-	 *
-	 * @param WidgetPath - Full path to the Widget Blueprint
-	 * @param OldName - Current name of the widget component
-	 * @param NewName - New name for the widget component
-	 * @return True if the rename was successful
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets")
-	static bool RenameWidget(
-		const FString& WidgetPath,
-		const FString& OldName,
-		const FString& NewName);
-
-	/**
-	 * Move an existing widget to a new parent panel (re-parent), preserving the widget object.
-	 *
-	 * @param WidgetPath - Full path to the Widget Blueprint
-	 * @param WidgetName - Name of the widget to move
-	 * @param NewParentName - Name of the destination panel widget (must be a UPanelWidget)
-	 * @return True if the widget was re-slotted under the new parent
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets")
-	static bool ReparentWidget(
-		const FString& WidgetPath,
-		const FString& WidgetName,
-		const FString& NewParentName);
-
 	// =================================================================
 	// PIE widget instances
 	// =================================================================
@@ -412,9 +275,6 @@ private:
 	/** Helper to find a widget component by name */
 	static class UWidget* FindWidgetByName(class UWidgetBlueprint* WidgetBP, const FString& ComponentName);
 	
-	/** Helper to create a widget class from type name */
-	static TSubclassOf<class UWidget> FindWidgetClass(const FString& TypeName);
-
 	/** Helper to find a ViewModel class by name (C++ or Blueprint ViewModel) */
 	static UClass* FindViewModelClass(const FString& ClassName);
 

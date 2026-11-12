@@ -26,13 +26,13 @@ No bulk setter survives (`MaterialService.set_instance_parameters_bulk` is gone)
 `call_tool` per switch, and check each reply.
 
 ```
-call_tool MaterialInstanceToolset.SetStaticSwitchParameter {"Instance": {"refPath": "<MI>"}, "Name": "EnableSnow",          "Value": false}
-call_tool MaterialInstanceToolset.SetStaticSwitchParameter {"Instance": {"refPath": "<MI>"}, "Name": "EnableDisplacement",  "Value": true}
-call_tool MaterialInstanceToolset.SetStaticSwitchParameter {"Instance": {"refPath": "<MI>"}, "Name": "EnableRVT",           "Value": true}
-call_tool MaterialInstanceToolset.SetStaticSwitchParameter {"Instance": {"refPath": "<MI>"}, "Name": "EnableDistanceFades", "Value": true}
+call_tool MaterialInstanceToolset.SetStaticSwitchParameter {"instance": {"refPath": "<MI>"}, "name": "EnableSnow",          "value": false}
+call_tool MaterialInstanceToolset.SetStaticSwitchParameter {"instance": {"refPath": "<MI>"}, "name": "EnableDisplacement",  "value": true}
+call_tool MaterialInstanceToolset.SetStaticSwitchParameter {"instance": {"refPath": "<MI>"}, "name": "EnableRVT",           "value": true}
+call_tool MaterialInstanceToolset.SetStaticSwitchParameter {"instance": {"refPath": "<MI>"}, "name": "EnableDistanceFades", "value": true}
 
-call_tool AssetToolset.SaveAsset   {"Asset": {"refPath": "<MI>"}}
-call_tool MaterialToolset.Recompile {"MaterialOrFunction": {"refPath": "<MI>"}}
+call_tool AssetToolset.SaveAsset   {"assetPath": "<MI path>"}
+call_tool MaterialToolset.Recompile {"materialOrFunction": {"refPath": "<MI>"}}
 ```
 
 Static switches are compile-time and nothing updates the static permutation for you now — save and

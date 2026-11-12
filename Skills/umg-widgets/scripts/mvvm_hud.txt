@@ -6,7 +6,7 @@
 #
 # Split surfaces:
 #   asset creation     -> WidgetBlueprintFactory
-#   hierarchy          -> unreal.WidgetService.add_component           (VibeUE keeps this)
+#   hierarchy          -> UMGEditor.WidgetBlueprintEditorSubsystem     (Epic; vibeue.exec_tool)
 #   ViewModel+bindings -> unreal.MVVMToolset.*                         (Epic; BlueprintCallable,
 #                                                                       so Python works directly)
 #   removing a VM      -> unreal.WidgetService.remove_view_model       (MVVM cannot remove one)
@@ -41,10 +41,26 @@ factory.set_editor_property("parent_class", unreal.UserWidget)
 unreal.AssetToolsHelpers.get_asset_tools().create_asset(
     ASSET_NAME, PACKAGE_PATH, unreal.WidgetBlueprint, factory)
 
-# --- Step 2: build the hierarchy (VibeUE; empty parent -> root) -------------------------------
-unreal.WidgetService.add_component(asset_path, "CanvasPanel", "RootCanvas", "", True)
-unreal.WidgetService.add_component(asset_path, "ProgressBar", "HealthBar", "RootCanvas", True)
-unreal.WidgetService.add_component(asset_path, "TextBlock", "HealthText", "RootCanvas", True)
+# --- Step 2: build the hierarchy (Epic; no parent on an empty tree -> root) -------------------------------
+import vibeue
+WS = "UMGEditor.WidgetBlueprintEditorSubsystem"
+WBP_OBJ = f"{asset_path}.{ASSET_NAME}"
+
+
+def add(widget_class, name, parent=None, as_variable=False):
+    args = {"widgetBlueprint": WBP_OBJ, "widgetClass": widget_class, "widgetDisplayName": name}
+    if parent:
+        args["parentWidget"] = f"{WBP_OBJ}:WidgetTree.{parent}"   # no parent on an empty tree -> root
+    info = vibeue.exec_tool(WS, "CreateAndAddWidget", args)
+    if as_variable:   # MVVM bindings and BindWidget need a Blueprint variable
+        vibeue.exec_tool(WS, "ToggleWidgetAsVariable", {
+            "widgetBlueprint": WBP_OBJ, "widget": f"{WBP_OBJ}:WidgetTree.{name}", "bIsVariable": True})
+    return info
+
+
+add("/Script/UMG.CanvasPanel", "RootCanvas", as_variable=True)
+add("/Script/UMG.ProgressBar", "HealthBar", "RootCanvas", as_variable=True)
+add("/Script/UMG.TextBlock", "HealthText", "RootCanvas", as_variable=True)
 
 wbp = unreal.load_asset(asset_path)
 unreal.BlueprintToolset.compile_blueprint(wbp, False)   # bindings resolve against the compiled class

@@ -633,7 +633,7 @@ call_tool GetComponents     {"actor": {"refPath": "<the CDO refPath>"}}   # Edit
 
 # 2. Write StateTreeRef -- NOT StateTree -- on that component.
 #    Run GetPropertySchema first: StateTreeRef is an FStateTreeReference struct, not a bare path.
-call_tool GetPropertySchema {"instance": {"refPath": "<component refPath>"}, "property": "StateTreeRef"}
+call_tool GetPropertySchema {"instance": {"refPath": "<component refPath>"}, "root": "StateTreeRef"}
 call_tool SetProperties     {"instance": {"refPath": "<component refPath>"}, "values": "{...}"}
 ```
 

@@ -4,6 +4,7 @@
 #
 # Sample script for the animation-editing skill. Run via execute_python.
 # Always specify bone space ("local" for user intent). Cancel if validation fails.
+import json
 import unreal
 ass = unreal.AnimSequenceService
 sks = unreal.SkeletonService
@@ -14,7 +15,11 @@ DELTA = unreal.Rotator(0, 45, 0)   # Euler (Roll, Pitch, Yaw); raise arm
 SPACE = "local"
 FRAME = 0
 
-skeleton = ass.get_animation_skeleton(ANIM)
+# The skeleton is a plain asset property: Epic's ObjectToolset reads it (needs the object path).
+props = json.loads(await call_tool("EditorToolset.ObjectToolset.GetProperties",
+                                   instance={"refPath": ANIM + "." + ANIM.rsplit("/", 1)[-1]},
+                                   properties=["Skeleton"]))
+skeleton = props["Skeleton"]["refPath"]
 sks.create_skeleton_profile(skeleton)   # constraints come from the profile
 
 r = ass.preview_bone_rotation(ANIM, BONE, DELTA, SPACE, FRAME)

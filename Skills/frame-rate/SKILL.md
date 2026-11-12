@@ -59,21 +59,21 @@ These are `call_tool` steps, **not** `execute_python`: Epic's `ConsoleToolset` a
 
 ```
 # 1 + 2: the cvar caps
-call_tool GetCVarValue {"Name": "t.MaxFPS"}
-call_tool GetCVarValue {"Name": "r.VSync"}
+call_tool GetCVarValue {"name": "t.MaxFPS"}
+call_tool GetCVarValue {"name": "r.VSync"}
 
 # 3 + 4: the project caps — UEngine lives at Project / Engine / General
-call_tool GetSectionPropertyValues {"Container": "Project", "Category": "Engine", "Section": "General",
-                                    "Properties": ["bUseFixedFrameRate", "FixedFrameRate",
+call_tool GetSectionPropertyValues {"containerName": "Project", "categoryName": "Engine", "sectionName": "General",
+                                    "propertyNames": ["bUseFixedFrameRate", "FixedFrameRate",
                                                    "bSmoothFrameRate", "SmoothedFrameRateRange"]}
 
 # 5: the editor cap — Editor Preferences -> Performance
-call_tool GetSectionPropertyValues {"Container": "Editor", "Category": "General", "Section": "Performance",
-                                    "Properties": ["bThrottleCPUWhenNotForeground"]}
+call_tool GetSectionPropertyValues {"containerName": "Editor", "categoryName": "General", "sectionName": "Performance",
+                                    "propertyNames": ["bThrottleCPUWhenNotForeground"]}
 ```
 
 If a section coordinate above does not resolve, find it with
-`call_tool SearchSettings {"Search": "Smooth Frame Rate"}` rather than guessing.
+`call_tool SearchSettings {"query": "Smooth Frame Rate"}` rather than guessing.
 
 ## Workflow — uncap FPS
 
@@ -85,19 +85,19 @@ require an editor restart.
 
 ```
 # 1 + 2: runtime cvars (immediate — a cvar is not config, there is nothing to save)
-call_tool SetCVarValue {"Name": "t.MaxFPS", "Value": "0"}        # or "240" to cap high
-call_tool SetCVarValue {"Name": "r.VSync",  "Value": "0"}
+call_tool SetCVarValue {"name": "t.MaxFPS", "value": "0"}        # or "240" to cap high
+call_tool SetCVarValue {"name": "r.VSync",  "value": "0"}
 
 # 3 + 4: disable the fixed and smoothed frame-rate caps (the setter persists it correctly)
-call_tool SetSectionProperties {"Container": "Project", "Category": "Engine", "Section": "General",
-                                "Values": "{\"bSmoothFrameRate\": false, \"bUseFixedFrameRate\": false}"}
+call_tool SetSectionProperties {"containerName": "Project", "categoryName": "Engine", "sectionName": "General",
+                                "propertiesJson": "{\"bSmoothFrameRate\": false, \"bUseFixedFrameRate\": false}"}
 
 # 5: don't throttle when the editor loses focus
-call_tool SetSectionProperties {"Container": "Editor", "Category": "General", "Section": "Performance",
-                                "Values": "{\"bThrottleCPUWhenNotForeground\": false}"}
+call_tool SetSectionProperties {"containerName": "Editor", "categoryName": "General", "sectionName": "Performance",
+                                "propertiesJson": "{\"bThrottleCPUWhenNotForeground\": false}"}
 
 # Verify
-call_tool GetCVarValue {"Name": "t.MaxFPS"}
+call_tool GetCVarValue {"name": "t.MaxFPS"}
 ```
 
 > ⚠️ `bThrottleCPUWhenNotForeground = false` is **not enough for a minimized editor**.

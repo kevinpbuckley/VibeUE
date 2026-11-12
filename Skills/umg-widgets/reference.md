@@ -1,6 +1,6 @@
 ---
 name: umg-widgets/reference
-description: UMG reference — the 9 surviving WidgetService signatures and their return-struct field names, the Epic toolset index with exact toolset_name strings and tool signatures, child-order rules, common widget properties, and event names.
+description: UMG reference — the 4 surviving WidgetService signatures and their return-struct field names, the Epic toolset index with exact toolset_name strings and tool signatures, child-order rules, common widget properties, and event names.
 ---
 
 # UMG Widget Reference
@@ -8,8 +8,8 @@ description: UMG reference — the 9 surviving WidgetService signatures and thei
 Two surfaces, two call styles. See SKILL.md ▸ "Call styles" before using either.
 
 ## Contents
-- VibeUE `WidgetService` — the 9 survivors
-- Return structs (the only 3 still reachable)
+- VibeUE `WidgetService` — the 4 survivors
+- Return structs (the only one still reachable)
 - Child order
 - Epic toolset index (`toolset_name` strings + signatures)
 - `DescribeWidget` result shape
@@ -18,17 +18,12 @@ Two surfaces, two call styles. See SKILL.md ▸ "Call styles" before using eithe
 
 ---
 
-## VibeUE `WidgetService` — the 9 survivors
+## VibeUE `WidgetService` — the 4 survivors
 
 Python, inside `execute_python`. Python names are the snake_case of the C++ method.
 
 | Method | Signature | Returns |
 |---|---|---|
-| `add_component` | `(widget_path, component_type, component_name, parent_name="", is_variable=True, child_index=-1)` | `WidgetAddComponentResult` |
-| `reorder_component` | `(widget_path, component_name, new_index)` | `bool` |
-| `remove_component` | `(widget_path, component_name, remove_children=False)` | `WidgetRemoveComponentResult` |
-| `rename_widget` | `(widget_path, old_name, new_name)` | `bool` |
-| `reparent_widget` | `(widget_path, widget_name, new_parent_name)` | `bool` |
 | `bind_event` | `(widget_path, widget_name, event_name, function_name)` | `bool` |
 | `spawn_widget_in_pie` | `(widget_path, z_order=0)` | `PIEWidgetHandle` |
 | `remove_widget_from_pie` | `(handle)` | `bool` |
@@ -36,42 +31,11 @@ Python, inside `execute_python`. Python names are the snake_case of the C++ meth
 
 Notes:
 
-- `add_component` takes a native widget type name (`"Button"`, `"CanvasPanel"`) **or** a custom WBP
-  asset name (`"WBP_HealthBar"` — the asset name, not the package path). Custom WBPs are resolved
-  through the Asset Registry and compiled before use; a circular reference (a WBP containing itself)
-  is detected and rejected; the parent recompiles automatically.
-- `is_variable` defaults to **`True`**. An empty `parent_name` makes the widget the **root** — that
-  is what makes it the root, not the `is_variable` flag.
-- `remove_component` with `remove_children=False` reports the widgets it orphaned in
-  `orphaned_children`.
-- `reparent_widget` preserves the widget object/GUID. It rejects moving a panel into itself or a
-  descendant, and the root cannot be reparented.
-- `rename_widget` preserves the GUID.
 - `remove_view_model` **invalidates but does not delete** that ViewModel's bindings — see `mvvm.md`.
 
-## Return structs (the only 3 still reachable)
+## Return structs (the only one still reachable)
 
 Python field names drop the `b` prefix from C++ bools.
-
-**`WidgetAddComponentResult`** — from `add_component`:
-
-| Field | Type | Note |
-|---|---|---|
-| `success` | bool | **not** `b_success` |
-| `component_name` | str | |
-| `component_type` | str | |
-| `parent_name` | str | |
-| `is_variable` | bool | |
-| `error_message` | str | populated when `success` is false |
-
-**`WidgetRemoveComponentResult`** — from `remove_component`:
-
-| Field | Type | Note |
-|---|---|---|
-| `success` | bool | |
-| `removed_components` | list[str] | every widget actually removed |
-| `orphaned_children` | list[str] | children left without a parent when `remove_children=False` |
-| `error_message` | str | |
 
 **`PIEWidgetHandle`** — from `spawn_widget_in_pie`. Pass the **whole handle object** to
 `remove_widget_from_pie`, not `handle.instance_id`:
@@ -82,7 +46,7 @@ Python field names drop the `b` prefix from C++ bools.
 | `instance_id` | str | informational |
 | `error_message` | str | e.g. "PIE is not running." |
 
-> The `FWidget*` result structs that the removed tools returned (`FWidgetInfo`,
+> The `FWidget*` result structs that the removed tools returned (`FWidgetAddComponentResult`, `FWidgetRemoveComponentResult`, `FWidgetInfo`,
 > `FWidgetComponentSnapshot`, `FWidgetBrushInfo`, `FWidgetAnimInfo`, `FWidgetAnimKeyframe`,
 > `FWidgetPreviewResult`, `FWidgetEventInfo`, `FWidgetValidationResult`, `FWidgetViewModelInfo`,
 > `FWidgetViewModelBindingInfo`) have been **deleted** from `UWidgetService.h` — they were
@@ -93,25 +57,27 @@ Python field names drop the `b` prefix from C++ bools.
 ## Child order
 
 Panels keep their children in an ordered list, and that order is what a VerticalBox, HorizontalBox
-or Overlay actually lays out. Two ways to control it:
+or Overlay actually lays out. Both controls are on `UMGEditor.WidgetBlueprintEditorSubsystem`:
 
-- `add_component(..., child_index=N)` — insert the new widget at position `N` instead of appending.
-  `child_index` defaults to `-1` (append). Valid values are `0` to the parent's current child count;
-  anything else **fails with an error rather than silently appending**, so check `success`.
-- `reorder_component(widget_path, component_name, new_index)` — move a widget that already exists to
-  another position **under its current parent**. Valid range is `0` to `child_count - 1`. Returns
-  `False` (with the reason in the log) for an unknown widget, a widget with no panel parent (i.e.
-  the root), or an out-of-range index. To move a widget to a *different* parent, use
-  `reparent_widget`.
+- `CreateAndAddWidget(..., childIndex=N)` — insert the new widget at position `N` instead of
+  appending. `childIndex` defaults to `-1` (append).
+- `MoveWidget(widgetBlueprint, widget, newParent, childIndex)` — move an existing widget. To
+  **reorder** under its current parent, pass that parent as `newParent`. It uses designer
+  drop-position semantics: moving to the front is `0`; moving **forward** to final position `N`
+  within the same parent needs `N+1`. To move to a *different* parent, pass the new parent; the old
+  slot's layout properties are carried across.
 
 ```python
+WS = "UMGEditor.WidgetBlueprintEditorSubsystem"
+WBP = "/Game/UI/WBP_Menu.WBP_Menu"
+LIST = WBP + ":WidgetTree.ButtonList"
 # Insert a banner above everything already in the list
-unreal.WidgetService.add_component(path, "TextBlock", "Banner", "ButtonList", False, 0)
+vibeue.exec_tool(WS, "CreateAndAddWidget", {"widgetBlueprint": WBP, "widgetClass": "/Script/UMG.TextBlock",
+                                            "widgetDisplayName": "Banner", "parentWidget": LIST, "childIndex": 0})
 # ...or move an existing widget to the front
-unreal.WidgetService.reorder_component(path, "PlayButton", 0)
+vibeue.exec_tool(WS, "MoveWidget", {"widgetBlueprint": WBP, "widget": WBP + ":WidgetTree.PlayButton",
+                                    "newParent": LIST, "childIndex": 0})
 ```
-
-`child_index` is positional argument 6 — `is_variable` comes before it, so pass both when inserting.
 
 ---
 
@@ -124,6 +90,7 @@ schema (`describe_tools`, or `vibeue.get_toolset_schema(name)`) when in doubt in
 | Toolset | `toolset_name` | Python-callable? |
 |---|---|---|
 | Widget static analysis | `WidgetStaticAnalysisToolset.WidgetStaticAnalysisToolset` | ✅ `unreal.WidgetStaticAnalysisToolset.*` |
+| Widget tree edits | `UMGEditor.WidgetBlueprintEditorSubsystem` | use `vibeue.exec_tool` (`CreateAndAddWidget`, `MoveWidget`, `RemoveWidget`, `RenameWidget`, `ToggleWidgetAsVariable`) |
 | Widget animations | `WidgetAnimationToolset.WidgetAnimationToolset` | ✅ `unreal.WidgetAnimationToolset.*` |
 | MVVM | `MVVMToolset.MVVMToolset` | ✅ `unreal.MVVMToolset.*` |
 | Properties | `EditorToolset.ObjectToolset` | ❌ `call_tool` / `exec_tool` only |

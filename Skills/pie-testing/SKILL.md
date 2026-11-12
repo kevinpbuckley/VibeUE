@@ -103,7 +103,7 @@ are `call_tool`; VibeUE services are `unreal.<Service>.<method>()` inside `execu
 | Old scenario step | What to call now |
 |---|---|
 | `start_pie` / `stop_pie` / `wait_for_pie` | `call_tool` → `EditorAppToolset.StartPIE` / `StopPIE` / `IsPIERunning` (poll `IsPIERunning` from a later call) |
-| `inject_action` / `inject_key` | `call_tool` → `InputToolset.ApplyInput` (`Entries` + `DurationSeconds`). VibeUE keeps `unreal.InputService.inject_action(...)` / `stop_injection(...)` in `execute_python` for an **indefinite** hold released later |
+| `inject_action_for` / `inject_key` | `call_tool` → `InputToolset.ApplyInput` (`entries` + `durationSeconds`). VibeUE keeps `unreal.InputService.start_injection(...)` / `stop_injection(...)` in `execute_python` for an **indefinite** hold released later, and `inject_action(...)` for a one-tick queued tap |
 | `wait` | a later tool call, or a top-level `await asyncio.sleep(...)` in one `execute_python` script |
 | `assert_log` | `call_tool` → `ConsoleToolset.LogsToolset.GetLogEntries` (it requires a `pattern`). Read the log before the run and compare, since nothing scopes it to your run now |
 | `capture_game` | `call_tool` → `SceneCaptureToolset.CaptureGameViewport` |
@@ -348,22 +348,24 @@ inject input directly; no OS window focus needed:
 ```python
 import unreal
 
-# VibeUE keeps exactly two of these, for an INDEFINITE hold you release later:
-# hold an Enhanced Input action down (QUEUED for the next input tick; X/Y/Z map onto the action's
-# value type, Boolean uses X != 0) ...
-print(unreal.InputService.inject_action("/Game/Input/IA_Fire_Secondary"))
+# VibeUE keeps two of these for an INDEFINITE hold you release later (X/Y/Z map onto the
+# action's value type, Boolean uses X != 0): hold an Enhanced Input action down ...
+print(unreal.InputService.start_injection("/Game/Input/IA_Fire_Secondary"))
 # ... and release it, in a LATER call, whenever the test says to:
 print(unreal.InputService.stop_injection("/Game/Input/IA_Fire_Secondary"))
+# inject_action(...) is different: a single press QUEUED for the next input tick and released on
+# the one after.
 ```
 
 **Every bounded press or hold is Epic's now** — `inject_action_for` and `inject_key` are gone. Use
-`InputToolset.ApplyInput` via `call_tool`, which takes `Entries` plus a `DurationSeconds`
+`InputToolset.ApplyInput` via `call_tool`, which takes `entries` plus a `durationSeconds`
 (`0` = a tap: down then up; `> 0` = held for that long, then released):
 
 ```
-call_tool ApplyInput {"Entries": [{"Action": "/Game/Input/IA_Block", "Value": [1,0,0]}],
-                      "DurationSeconds": 1.5}
-call_tool ApplyInput {"Entries": [{"Key": "SpaceBar", "Value": [1,0,0]}], "DurationSeconds": 0}
+call_tool InputToolset.ApplyInput {"entries": [{"action": {"refPath": "/Game/Input/IA_Block.IA_Block"},
+                                               "value": {"x": 1, "y": 0, "z": 0}}], "durationSeconds": 1.5}
+call_tool InputToolset.ApplyInput {"entries": [{"key": {"keyName": "SpaceBar"}, "value": {"x": 1, "y": 0, "z": 0}}],
+                                   "durationSeconds": 0}
 ```
 
 A Python call blocks the game thread, so PIE does not tick while it runs: inject in one call and
@@ -373,7 +375,7 @@ off its background frame rate, so an unfocused editor does not starve the hold. 
 take `pie_instance` to pick a PIE world: -1, the default, is the first PIE world with a local player
 (the lowest instance number — the listen server's window, or client 1 under a dedicated server), and
 replies report the instance actually used. A hold is one hold per action and PIE world whatever the
-path spelling; holding a held key again extends it; `StopPIE` drops every hold, so nothing from an
+path spelling; starting a held action again restarts it; `StopPIE` drops every hold, so nothing from an
 ended session is released into the editor or reported active in the next one.
 
 All return JSON with `success` and an `error_code` naming the problem (PIE not running,
@@ -399,8 +401,8 @@ automatically (the editor's current game viewport).
 
 ```
 call_tool ListWorlds            → the PIE/Game worlds available
-call_tool CaptureGameViewport   {"World": {"refPath": "<world from ListWorlds>"}}
-call_tool CaptureGameViewport   {"MaxResolution": 1600}   # longest edge, aspect preserved
+call_tool CaptureGameViewport   {"world": {"refPath": "<world from ListWorlds>"}}
+call_tool CaptureGameViewport   {"maxResolution": 1600}   # longest edge, aspect preserved
 ```
 
 `MaxResolution` is capped by the toolset's configured maximum (reported in `Warnings`). A

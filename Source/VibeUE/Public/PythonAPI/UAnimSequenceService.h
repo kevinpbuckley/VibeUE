@@ -501,7 +501,9 @@ struct FAnimationPreviewState
  *
  * This service provides comprehensive CRUD operations for Animation Sequence assets
  * including keyframe access, curve editing, notify management, sync markers,
- * root motion configuration, and animation data extraction.
+ * and animation data extraction. Plain asset properties (rate scale, additive type and
+ * base pose, root motion flags, compression settings, skeleton) belong to Epic's
+ * EditorToolset.ObjectToolset.GetProperties / SetProperties.
  *
  * IMPORTANT: All anim_path parameters require the FULL asset path (package_name from AssetData),
  * NOT the folder path (package_path). For example:
@@ -684,15 +686,6 @@ public:
 	// ============================================================================
 
 	/**
-	 * Get animation duration in seconds.
-	 *
-	 * @param AnimPath - Path to the animation asset
-	 * @return Duration in seconds, or -1 if not found
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Properties")
-	static float GetAnimationLength(const FString& AnimPath);
-
-	/**
 	 * Get animation frame rate.
 	 *
 	 * @param AnimPath - Path to the animation asset
@@ -719,34 +712,6 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Properties")
 	static bool SetAnimationFrameRate(const FString& AnimPath, float NewFrameRate);
-
-	/**
-	 * Get the skeleton asset path used by this animation.
-	 *
-	 * @param AnimPath - Path to the animation asset
-	 * @return Skeleton asset path, or empty if not found
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Properties")
-	static FString GetAnimationSkeleton(const FString& AnimPath);
-
-	/**
-	 * Get animation rate scale (playback speed multiplier).
-	 *
-	 * @param AnimPath - Path to the animation asset
-	 * @return Rate scale, or -1 if not found
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Properties")
-	static float GetRateScale(const FString& AnimPath);
-
-	/**
-	 * Set animation rate scale (playback speed multiplier).
-	 *
-	 * @param AnimPath - Path to the animation asset
-	 * @param RateScale - New rate scale value
-	 * @return True if successful
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Properties")
-	static bool SetRateScale(const FString& AnimPath, float RateScale);
 
 	// ============================================================================
 	// BONE TRACK DATA
@@ -1324,110 +1289,11 @@ public:
 		float CurrentTime,
 		float NewTime);
 
-	// ============================================================================
-	// ADDITIVE ANIMATION
-	// ============================================================================
-
-	/**
-	 * Get the additive animation type.
-	 *
-	 * @param AnimPath - Path to the animation asset
-	 * @return Additive type as string ("None", "LocalSpace", "MeshSpace")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Additive")
-	static FString GetAdditiveAnimType(const FString& AnimPath);
-
-	/**
-	 * Set the additive animation type.
-	 *
-	 * @param AnimPath - Path to the animation asset
-	 * @param Type - Type as string ("None", "LocalSpace", "MeshSpace")
-	 * @return True if successful
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Additive")
-	static bool SetAdditiveAnimType(const FString& AnimPath, const FString& Type);
-
-	/**
-	 * Get the base pose animation for additive.
-	 *
-	 * @param AnimPath - Path to the animation asset
-	 * @return Path to the base pose animation, or empty if none
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Additive")
-	static FString GetAdditiveBasePose(const FString& AnimPath);
-
-	/**
-	 * Set the base pose animation for additive.
-	 *
-	 * @param AnimPath - Path to the animation asset
-	 * @param BasePoseAnimPath - Path to the base pose animation
-	 * @return True if successful
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Additive")
-	static bool SetAdditiveBasePose(
-		const FString& AnimPath,
-		const FString& BasePoseAnimPath);
-
-	// ============================================================================
-	// ROOT MOTION
-	// ============================================================================
-
-	/**
-	 * Check if root motion is enabled.
-	 *
-	 * @param AnimPath - Path to the animation asset
-	 * @return True if root motion is enabled
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|RootMotion")
-	static bool GetEnableRootMotion(const FString& AnimPath);
-
-	/**
-	 * Enable or disable root motion.
-	 *
-	 * @param AnimPath - Path to the animation asset
-	 * @param bEnable - Whether to enable root motion
-	 * @return True if successful
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|RootMotion")
-	static bool SetEnableRootMotion(const FString& AnimPath, bool bEnable);
-
-	/**
-	 * Get root motion root lock type.
-	 *
-	 * @param AnimPath - Path to the animation asset
-	 * @return Root lock type as string
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|RootMotion")
-	static FString GetRootMotionRootLock(const FString& AnimPath);
-
-	/**
-	 * Set root motion root lock type.
-	 *
-	 * @param AnimPath - Path to the animation asset
-	 * @param LockType - Lock type as string ("RefPose", "AnimFirstFrame", "Zero")
-	 * @return True if successful
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|RootMotion")
-	static bool SetRootMotionRootLock(const FString& AnimPath, const FString& LockType);
-
-	/**
-	 * Check if force root lock is enabled.
-	 *
-	 * @param AnimPath - Path to the animation asset
-	 * @return True if force root lock is enabled
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|RootMotion")
-	static bool GetForceRootLock(const FString& AnimPath);
-
-	/**
-	 * Enable or disable force root lock.
-	 *
-	 * @param AnimPath - Path to the animation asset
-	 * @param bForce - Whether to force root lock
-	 * @return True if successful
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|RootMotion")
-	static bool SetForceRootLock(const FString& AnimPath, bool bForce);
+	// Skeleton, RateScale, AdditiveAnimType, RefPoseSeq/RefPoseType, bEnableRootMotion,
+	// RootMotionRootLock, bForceRootLock and BoneCompressionSettings are plain UAnimSequence
+	// properties: read/write them with EditorToolset.ObjectToolset.GetProperties / SetProperties
+	// (which run PostEditChangeProperty so the engine's fixups fire). Open the editor with
+	// EditorToolset.EditorAppToolset.OpenEditorForAsset.
 
 	// ============================================================================
 	// COMPRESSION
@@ -1444,18 +1310,6 @@ public:
 	static bool GetCompressionInfo(
 		const FString& AnimPath,
 		FAnimCompressionInfo& OutInfo);
-
-	/**
-	 * Set compression scheme for an animation.
-	 *
-	 * @param AnimPath - Path to the animation asset
-	 * @param CompressionSchemePath - Path to the compression settings asset
-	 * @return True if successful
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Compression")
-	static bool SetCompressionScheme(
-		const FString& AnimPath,
-		const FString& CompressionSchemePath);
 
 	/**
 	 * Compress/recompress an animation.
@@ -1491,15 +1345,6 @@ public:
 	// ============================================================================
 	// EDITOR NAVIGATION
 	// ============================================================================
-
-	/**
-	 * Open the animation in the Animation Editor.
-	 *
-	 * @param AnimPath - Path to the animation asset
-	 * @return True if successful
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Editor")
-	static bool OpenAnimationEditor(const FString& AnimPath);
 
 	/**
 	 * Set preview playback time in the Animation Editor.
@@ -2007,15 +1852,6 @@ private:
 
 	/** Convert additive type enum to string */
 	static FString AdditiveTypeToString(int32 Type);
-
-	/** Convert string to additive type enum */
-	static int32 StringToAdditiveType(const FString& TypeString);
-
-	/** Convert root lock enum to string */
-	static FString RootLockToString(int32 LockType);
-
-	/** Convert string to root lock enum */
-	static int32 StringToRootLock(const FString& LockString);
 
 	/** Convert interpolation mode to string */
 	static FString InterpModeToString(int32 Mode);

@@ -13,9 +13,11 @@ description: Landscape material workflows — create a complete landscape materi
 ```python
 import unreal
 
-# 1. Create material
-mat = unreal.LandscapeMaterialService.create_landscape_material("M_Terrain", "/Game/Materials")
-mat_path = mat.asset_path
+# 1. Create material — Epic's MaterialToolset (returns a {refPath} handle). A landscape material
+#    starts as a plain surface material; the landscape nodes come from LandscapeMaterialService.
+await call_tool("EditorToolset.MaterialToolset.CreateMaterial",
+                folderPath="/Game/Materials", assetName="M_Terrain")
+mat_path = "/Game/Materials/M_Terrain"
 
 # 2. Create layer blend node
 blend = unreal.LandscapeMaterialService.create_layer_blend_node(mat_path, -400, 0)
@@ -35,9 +37,9 @@ needs the **expression object**, not `blend.node_id`:
 
 ```
 # Find the LandscapeLayerBlend expression (match on its class), then wire it to BaseColor
-call_tool MaterialToolset.GetExpressions  {"MaterialOrFunction": {"refPath": "/Game/Materials/M_Terrain.M_Terrain"}}
-call_tool MaterialToolset.ConnectToOutput {"Expression": {"refPath": "<the LandscapeLayerBlend expression>"},
-                                           "OutputName": "", "MaterialProperty": "MP_BaseColor"}
+call_tool MaterialToolset.GetExpressions  {"materialOrFunction": {"refPath": "/Game/Materials/M_Terrain.M_Terrain"}}
+call_tool MaterialToolset.ConnectToOutput {"expression": {"refPath": "<the LandscapeLayerBlend expression>"},
+                                           "outputName": "", "materialProperty": "MP_BaseColor"}
 ```
 
 > ⚠️ **VibeUE node ids and Epic expression refs are different things and do not interoperate.**
@@ -50,7 +52,7 @@ call_tool MaterialToolset.ConnectToOutput {"Expression": {"refPath": "<the Lands
 **Block 2 — Compile (slow, run separately).** Epic's, via `call_tool` —
 `MaterialService.compile_material` is gone:
 ```
-call_tool MaterialToolset.Recompile {"MaterialOrFunction": {"refPath": "/Game/Materials/M_Terrain.M_Terrain"}}
+call_tool MaterialToolset.Recompile {"materialOrFunction": {"refPath": "/Game/Materials/M_Terrain.M_Terrain"}}
 ```
 
 **Block 3 — Layer info objects and assignment:**
@@ -98,7 +100,7 @@ unreal.LandscapeMaterialService.setup_layer_textures(
 )
 
 # Compile: Epic's MaterialToolset owns this (MaterialService is gone) — run it as its own step:
-#   call_tool MaterialToolset.Recompile {"MaterialOrFunction": {"refPath": "<mat_path>.<MatName>"}}
+#   call_tool MaterialToolset.Recompile {"materialOrFunction": {"refPath": "<mat_path>.<MatName>"}}
 # (mid-script equivalent: vibeue.exec_tool("EditorToolset.MaterialToolset", "Recompile", {...}))
 ```
 
@@ -156,19 +158,20 @@ texture and its connections are all Epic's.
 #   coords_id = unreal.LandscapeMaterialService.create_layer_coords_node(mat_path, 0.01, -800, 0)
 
 # Texture sample: Epic. AddExpression returns the expression object — keep its refPath.
-call_tool MaterialToolset.AddExpression {"MaterialOrFunction": {"refPath": "/Game/Materials/M_Terrain.M_Terrain"},
-    "ExpressionClass": "/Script/Engine.MaterialExpressionTextureSample", "X": -600, "Y": 0}
+call_tool MaterialToolset.AddExpression {"materialOrFunction": {"refPath": "/Game/Materials/M_Terrain.M_Terrain"},
+    "expressionClass": "/Script/Engine.MaterialExpressionTextureSample", "x": -600, "y": 0}
 
 # Its texture is just a property (set_expression_property is gone):
-call_tool ObjectToolset.SetProperties {"Object": {"refPath": "<the TextureSample>"},
-    "Properties": {"Texture": {"refPath": "/Game/Textures/T_Grass_D.T_Grass_D"}}}
+call_tool ObjectToolset.SetProperties {"instance": {"refPath": "<the TextureSample>"},
+    "values": "{\"Texture\": {\"refPath\": \"/Game/Textures/T_Grass_D.T_Grass_D\"}}"}
+# `values` is a JSON string, not an object.
 
 # Wire sampler -> the LayerBlend's layer input, Epic side, by PIN NAME.
 # GetExpressions finds the LandscapeLayerBlend; GetExpressionInputNames on it gives the exact
 # per-layer pin spelling (e.g. "Layer Grass").
-call_tool MaterialToolset.GetExpressionInputNames {"Expression": {"refPath": "<the LandscapeLayerBlend>"}}
-call_tool MaterialToolset.ConnectExpressions {"FromExpression": {"refPath": "<the TextureSample>"},
-    "FromOutputName": "RGB", "ToExpression": {"refPath": "<the LandscapeLayerBlend>"}, "ToInputName": "<layer pin>"}
+call_tool MaterialToolset.GetExpressionInputNames {"expression": {"refPath": "<the LandscapeLayerBlend>"}}
+call_tool MaterialToolset.ConnectExpressions {"fromExpression": {"refPath": "<the TextureSample>"},
+    "fromOutputName": "RGB", "toExpression": {"refPath": "<the LandscapeLayerBlend>"}, "toInputName": "<layer pin>"}
 ```
 
 `LandscapeMaterialService.connect_to_layer_input(mat_path, node_id, "", blend_node_id, "Grass",
@@ -191,16 +194,30 @@ rock_weight = unreal.LandscapeMaterialService.create_layer_weight_node(mat_path,
 # (more manual but more flexible than LayerBlend)
 ```
 
-### Check Existence
+### Check Existence / Inspect a Layer Info
+
+Existence checks and property reads are Epic's `AssetToolset` / `ObjectToolset`:
 
 ```python
 import unreal
 
-if not unreal.LandscapeMaterialService.landscape_material_exists("/Game/Materials/M_Terrain"):
-    unreal.LandscapeMaterialService.create_landscape_material("M_Terrain", "/Game/Materials")
+AT = "EditorToolset.AssetToolset"
+if not await call_tool(f"{AT}.Exists", path="/Game/Materials/M_Terrain"):
+    await call_tool("EditorToolset.MaterialToolset.CreateMaterial",
+                    folderPath="/Game/Materials", assetName="M_Terrain")
 
-if not unreal.LandscapeMaterialService.layer_info_exists("/Game/Landscape/LI_Grass"):
+if not await call_tool(f"{AT}.Exists", path="/Game/Landscape/LI_Grass"):
     unreal.LandscapeMaterialService.create_layer_info_object("Grass", "/Game/Landscape")
+
+# Only a bare asset name? Search for it (FindAssets sees saved assets only):
+hits = await call_tool(f"{AT}.FindAssets", filter={
+    "name": "M_Terrain", "assetType": {"refPath": "/Script/Engine.Material"}})
+
+# A layer info's layer name and blend method (BlendMethod None = not weight-blended):
+info = await call_tool("EditorToolset.ObjectToolset.GetProperties",
+                       instance={"refPath": "/Game/Landscape/LI_Grass.LI_Grass"},
+                       properties=["LayerName", "BlendMethod"])
+{"hits": hits, "LI_Grass": info}
 ```
 
 ### Create Layer Sample Node
@@ -226,11 +243,11 @@ To drive blending or masking with that weight, add the Multiply on Epic's side a
 id itself is not accepted by `MaterialToolset`:
 
 ```
-call_tool MaterialToolset.AddExpression {"MaterialOrFunction": {"refPath": "/Game/Materials/M_Terrain.M_Terrain"},
-    "ExpressionClass": "/Script/Engine.MaterialExpressionMultiply", "X": -400, "Y": 0}
-call_tool MaterialToolset.GetExpressions {"MaterialOrFunction": {"refPath": "<material>"}}   # find the LandscapeLayerSample
-call_tool MaterialToolset.ConnectExpressions {"FromExpression": {"refPath": "<the LandscapeLayerSample>"},
-    "FromOutputName": "", "ToExpression": {"refPath": "<the Multiply>"}, "ToInputName": "A"}
+call_tool MaterialToolset.AddExpression {"materialOrFunction": {"refPath": "/Game/Materials/M_Terrain.M_Terrain"},
+    "expressionClass": "/Script/Engine.MaterialExpressionMultiply", "x": -400, "y": 0}
+call_tool MaterialToolset.GetExpressions {"materialOrFunction": {"refPath": "<material>"}}   # find the LandscapeLayerSample
+call_tool MaterialToolset.ConnectExpressions {"fromExpression": {"refPath": "<the LandscapeLayerSample>"},
+    "fromOutputName": "", "toExpression": {"refPath": "<the Multiply>"}, "toInputName": "A"}
 ```
 
 ### Create Grass Output Node
@@ -261,14 +278,14 @@ after it; both the grass output and the layer-weight nodes came from `LandscapeM
 look them up by class with `GetExpressions` to get their refs:
 
 ```
-call_tool MaterialToolset.GetExpressions {"MaterialOrFunction": {"refPath": "/Game/Materials/M_Terrain.M_Terrain"}}
-call_tool MaterialToolset.ConnectExpressions {"FromExpression": {"refPath": "<Grass layer-weight node>"},
-    "FromOutputName": "", "ToExpression": {"refPath": "<the LandscapeGrassOutput>"}, "ToInputName": "Grass"}
-call_tool MaterialToolset.ConnectExpressions {"FromExpression": {"refPath": "<Flowers layer-weight node>"},
-    "FromOutputName": "", "ToExpression": {"refPath": "<the LandscapeGrassOutput>"}, "ToInputName": "Flowers"}
+call_tool MaterialToolset.GetExpressions {"materialOrFunction": {"refPath": "/Game/Materials/M_Terrain.M_Terrain"}}
+call_tool MaterialToolset.ConnectExpressions {"fromExpression": {"refPath": "<Grass layer-weight node>"},
+    "fromOutputName": "", "toExpression": {"refPath": "<the LandscapeGrassOutput>"}, "toInputName": "Grass"}
+call_tool MaterialToolset.ConnectExpressions {"fromExpression": {"refPath": "<Flowers layer-weight node>"},
+    "fromOutputName": "", "toExpression": {"refPath": "<the LandscapeGrassOutput>"}, "toInputName": "Flowers"}
 
 # Then compile, as its own step:
-call_tool MaterialToolset.Recompile {"MaterialOrFunction": {"refPath": "<material>"}}
+call_tool MaterialToolset.Recompile {"materialOrFunction": {"refPath": "<material>"}}
 ```
 
 ### Complete End-to-End Workflow
@@ -276,9 +293,10 @@ call_tool MaterialToolset.Recompile {"MaterialOrFunction": {"refPath": "<materia
 ```python
 import unreal
 
-# 1. Create landscape material
-mat = unreal.LandscapeMaterialService.create_landscape_material("M_Terrain", "/Game/Materials")
-mat_path = mat.asset_path
+# 1. Create the material (Epic) — LandscapeMaterialService adds the landscape nodes below
+await call_tool("EditorToolset.MaterialToolset.CreateMaterial",
+                folderPath="/Game/Materials", assetName="M_Terrain")
+mat_path = "/Game/Materials/M_Terrain"
 
 # 2. Create blend node and add layers
 blend = unreal.LandscapeMaterialService.create_layer_blend_node(mat_path)
@@ -298,10 +316,10 @@ unreal.EditorAssetLibrary.save_asset(mat_path)
 #   a) connect the blend to BaseColor (needs the EXPRESSION, not blend.node_id — find the
 #      LandscapeLayerBlend in MaterialToolset.GetExpressions):
 #        call_tool MaterialToolset.ConnectToOutput
-#            {"Expression": {"refPath": "<LandscapeLayerBlend>"}, "OutputName": "",
-#             "MaterialProperty": "MP_BaseColor"}
+#            {"expression": {"refPath": "<LandscapeLayerBlend>"}, "outputName": "",
+#             "materialProperty": "MP_BaseColor"}
 #   b) compile (slow — on its own):
-#        call_tool MaterialToolset.Recompile {"MaterialOrFunction": {"refPath": "<mat_path>.<MatName>"}}
+#        call_tool MaterialToolset.Recompile {"materialOrFunction": {"refPath": "<mat_path>.<MatName>"}}
 # Then continue with the Python below.
 
 # 6. Create layer info objects — ALWAYS use .asset_path result

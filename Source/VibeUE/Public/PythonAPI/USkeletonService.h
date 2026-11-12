@@ -482,6 +482,8 @@ public:
 	 * share, which can ask for user confirmation -- give the mesh its own skeleton first with the
 	 * engine's `EditorToolset.AssetToolset` Duplicate.
 	 *
+	 * Demoted (not an AI tool): reparenting is not reliable (see the skeleton skill); kept for Python callers.
+	 *
 	 * @param SkeletalMeshPath - Path to the Skeletal Mesh
 	 * @param BoneName - Name of the bone to reparent
 	 * @param NewParentName - Name of the new parent bone
@@ -491,7 +493,7 @@ public:
 	 *   unreal.SkeletonService.reparent_bone("/Game/SKM_Mannequin", "weapon_bone", "hand_r")
 	 *   unreal.SkeletonService.commit_bone_changes("/Game/SKM_Mannequin")
 	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Modification")
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Modification")
 	static bool ReparentBone(
 		const FString& SkeletalMeshPath,
 		const FString& BoneName,

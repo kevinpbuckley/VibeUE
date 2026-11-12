@@ -129,8 +129,11 @@ struct FNiagaraScratchConnectionInfo
  *    GetSystemData / SetSystemData / AddUserVariables / GetUserVariables
  *  - compile state, stack issues and their fixes: GetSystemCompileState / GetStackIssues /
  *    ApplyStackIssueFix
- *  - ColorFromCurve KEYFRAMES, which the stack-input API cannot reach either, live on VibeUE's
- *    `NiagaraEmitterService` (get_color_curve_keys / set_color_curve_keys / shift_color_hue)
+ *  - ColorFromCurve KEYFRAMES: GetStackInputData / SetStackInputData on the curve's data-interface
+ *    input (inputNameStack ["Color", "ColorCurve"]); only a whole-curve hue rotation is VibeUE's
+ *    (`NiagaraEmitterService.shift_color_hue`)
+ *  - a stack module's script object path, scratch modules included: GetModuleTopology
+ *    (`moduleScript`); create_scratch_module below also returns it as script_path
  *
  * What is left is the one thing none of those can do: the engine's stack API sets a module's
  * inputs, it does not reach into the module's own node graph. This resolves a stack module to its
@@ -189,21 +192,6 @@ public:
 		const FString& EmitterName,
 		const FString& Stage,
 		const FString& DesiredName = TEXT("ScratchModule"));
-
-	/**
-	 * Resolve the object path of the scratch UNiagaraScript backing a stack module.
-	 * (NiagaraEmitterService.get_module_info leaves ScriptAssetPath empty for scratch modules.)
-	 *
-	 * @return Script object path, or empty string if the module is not a scratch module.
-	 *
-	 * Example:
-	 *   path = unreal.NiagaraScratchPadService.get_scratch_script_path("/Game/VFX/NS_Fx", "Main", "SplatLine")
-	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (AICallable, DisplayName = "Get Scratch Script Path"))
-	static FString GetScratchScriptPath(
-		const FString& SystemPath,
-		const FString& EmitterName,
-		const FString& ModuleName);
 
 	/**
 	 * List the names of all scratch-pad modules present on an emitter's stacks.
@@ -435,7 +423,7 @@ public:
 	/**
 	 * Expose a stack input on the module by adding a "Module.<InputName>" read to the module's Map Get node
 	 * (creating the Map Get node if necessary). After apply_changes the input appears in the stack UI and can
-	 * be driven from NiagaraEmitterService.set_module_input or linked to a User parameter.
+	 * be driven from Epic's NiagaraToolset_System.SetStackInputData or linked to a User parameter.
 	 *
 	 * @return Result whose node_id is the Map Get node; the new output pin is named "Module.<InputName>"
 	 *
@@ -480,14 +468,16 @@ public:
 	 * Before compiling, the scratch graphs are validated (e.g. duplicate same-named pins on Map Get/Set
 	 * nodes, which would fire a fatal engine assert inside RequestCompile) — a corrupt graph fails fast
 	 * with a clear error instead of crashing the editor. On compile errors, the real per-script Niagara
-	 * compiler messages are logged and False is returned; fetch them with get_compile_messages.
+	 * compiler messages are logged and False is returned; read them with Epic's
+	 * NiagaraToolsets.NiagaraToolset_System.GetSystemCompileState.
 	 *
 	 * @return True if validation and recompilation succeeded with no errors
 	 *
-	 * Example:
+	 * Example (inside execute_python):
 	 *   ok = unreal.NiagaraScratchPadService.apply_changes("/Game/VFX/NS_Fx")
 	 *   if not ok:
-	 *       print(unreal.NiagaraScratchPadService.get_compile_messages("/Game/VFX/NS_Fx"))
+	 *       state = await call_tool("NiagaraToolsets.NiagaraToolset_System.GetSystemCompileState",
+	 *                               system={"refPath": "/Game/VFX/NS_Fx.NS_Fx"})
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (AICallable, DisplayName = "Apply Scratch Changes"))
 	static bool ApplyChanges(const FString& SystemPath);
@@ -498,6 +488,8 @@ public:
 	 * compilation": walks every script in the system (system spawn/update + each emitter's scripts) and
 	 * reads its last compile status, error summary, and per-node compile events.
 	 *
+	 * Demoted (not an AI tool): use NiagaraToolsets.NiagaraToolset_System.GetSystemCompileState instead; kept because scripts/tests/niagara_scratch_input_regression.py calls it synchronously.
+	 *
 	 * @param SystemPath - Full path to the Niagara System asset
 	 * @param bErrorsOnly - True (default) returns only errors; False includes warnings
 	 * @return One formatted line per diagnostic; empty if the last compile was clean
@@ -506,7 +498,7 @@ public:
 	 *   for line in unreal.NiagaraScratchPadService.get_compile_messages("/Game/VFX/NS_Fx"):
 	 *       print(line)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (AICallable, DisplayName = "Get Compile Messages"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch")
 	static TArray<FString> GetCompileMessages(const FString& SystemPath, bool bErrorsOnly = true);
 
 	// (All internal helpers are file-static in UNiagaraScratchPadService.cpp.)

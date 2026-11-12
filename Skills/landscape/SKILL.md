@@ -314,17 +314,18 @@ factory = unreal.LandscapeGrassTypeFactory()
 new_asset = asset_tools.create_asset("LGT_MyGrass", "/Game/Grass", unreal.LandscapeGrassType, factory)
 ```
 
-### ⚠️ Use LandscapeMaterialService for Landscape Materials - NOT the generic material path
+### Landscape materials: Epic creates the asset, LandscapeMaterialService adds the landscape nodes
 
-- **CORRECT**: `unreal.LandscapeMaterialService.create_landscape_material("M_Terrain", "/Game/Mats")`
-  — VibeUE service, so `execute_python`. Returns `LandscapeMaterialCreateResult`; use `.asset_path`.
-- **WRONG**: `call_tool` → `MaterialToolset.CreateMaterial("/Game/Mats", "M_Terrain")` — Epic's
-  generic material create. It gives you a bare material with none of the landscape scaffolding
-  (layer blend, layer coords, grass output), and the layer work then has nothing to attach to.
+- **Create the material** with Epic's `EditorToolset.MaterialToolset.CreateMaterial`
+  (`folderPath`, `assetName`; returns a `{refPath}` handle). A landscape material starts as an
+  ordinary surface material — VibeUE's `create_landscape_material` made exactly the same bare
+  material and is now a Python-only helper kept for `create_auto_material`.
+- **Add the landscape scaffolding** (layer blend, layer coords, layer sample/weight, grass output,
+  height/slope masks) with `unreal.LandscapeMaterialService` in `execute_python` — Epic has no
+  landscape-node tools. Or build everything in one call with `create_auto_material`.
 
-VibeUE's old `MaterialService` is **deleted**: generic materials are Epic's
-`EditorToolset.MaterialToolset` / `MaterialInstanceToolset` via `call_tool`. Landscape materials
-MUST still use `LandscapeMaterialService`.
+VibeUE's old `MaterialService` is **deleted**: generic material work is Epic's
+`EditorToolset.MaterialToolset` / `MaterialInstanceToolset`.
 
 ### Layer Info Objects Required
 
@@ -340,7 +341,7 @@ After creating/changing a landscape material, compile it before assigning to the
 Compiling is **Epic's** now — `MaterialService.compile_material` is gone:
 
 ```
-call_tool MaterialToolset.Recompile {"MaterialOrFunction": {"refPath": "/Game/Mats/M_Terrain.M_Terrain"}}
+call_tool MaterialToolset.Recompile {"materialOrFunction": {"refPath": "/Game/Mats/M_Terrain.M_Terrain"}}
 ```
 
 (inside `execute_python`: `vibeue.exec_tool("EditorToolset.MaterialToolset", "Recompile", {...})`.)
@@ -365,14 +366,14 @@ Do this in separate steps:
 | `info.success` | Check `info.actor_label` (no success field on info) |
 | `info.num_sections` | `info.num_subsections` |
 | `info.quads_per_section` | `info.subsection_size_quads` |
-| `MaterialToolset.CreateMaterial` for landscapes (and `MaterialService.*`, which is deleted) | `LandscapeMaterialService.create_landscape_material()` |
+| `MaterialService.*` (deleted) to create a landscape material | `MaterialToolset.CreateMaterial` (`folderPath`, `assetName`), then `LandscapeMaterialService` for the landscape nodes |
 | Guessing layer info path `Grass_LayerInfo` | Use `create_layer_info_object().asset_path` → `LI_Grass` |
 | `segment.start_control_point_index` | `segment.start_point_index` (spline segment) |
 | `segment.end_control_point_index` | `segment.end_point_index` (spline segment) |
 | `layer.name` on list_layers result | `layer.layer_name` (LandscapeLayerInfo_Custom property) |
 | `LandscapeService.create_spline_control_point(...)` (no such method) | `LandscapeService.create_spline_point(...)` -- no "control" in the name |
 | `LandscapeMaterialService.add_material_layer(...)` (no such method) | `LandscapeMaterialService.add_layer_to_blend_node(...)` |
-| `mat_path = create_landscape_material(...)` as string | Returns `LandscapeMaterialCreateResult` — use `result.asset_path` |
+| `LandscapeService.set_landscape_material` / `set_landscape_property` / `set_landscape_visibility` (cut / demoted) | `ObjectToolset.SetProperties` on the landscape actor (`{"LandscapeMaterial": "<object path>"}`); `LevelToolset.SetActorHidden` — see workflows-editing.md |
 | `connect_spline_points(..., tangent_length=25.0)` ignoring negative source | Pass `tangent_length=seg.start_tangent_length, end_tangent_length=seg.end_tangent_length` — **both** tangents are needed for exact shape |
 | Only passing `tangent_length` to `connect_spline_points` | Must also pass `end_tangent_length=seg.end_tangent_length` — end tangent is typically negative (UE convention). Omitting it defaults to `-start_tangent` which is usually correct for NEW splines, but when copying, always pass both explicitly |
 | `create_spline_point("L", location=vec)` | Parameter is `world_location`, NOT `location`: `create_spline_point("L", world_location=vec)` |

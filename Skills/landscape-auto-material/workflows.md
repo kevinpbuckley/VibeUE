@@ -65,7 +65,7 @@ print(f"Layer infos: {result.layer_info_paths}")
 **Block 3 — Compile (slow!):** compiling is Epic's, via `call_tool` — `MaterialService` is gone:
 ```
 call_tool MaterialToolset.Recompile
-    {"MaterialOrFunction": {"refPath": "/Game/Materials/M_Terrain_Auto.M_Terrain_Auto"}}
+    {"materialOrFunction": {"refPath": "/Game/Materials/M_Terrain_Auto.M_Terrain_Auto"}}
 ```
 
 ### Workflow B: Create Material Instance for a New Biome
@@ -77,26 +77,26 @@ typed call per parameter, and you check each reply.
 ```
 # 1. Create the instance under the master material
 call_tool MaterialInstanceToolset.Create
-    {"FolderPath": "/Game/Materials", "AssetName": "MI_Landscape_Tropical",
-     "Parent": {"refPath": "/Game/Materials/M_Landscape_Master.M_Landscape_Master"}}
+    {"folderPath": "/Game/Materials", "assetName": "MI_Landscape_Tropical",
+     "parent": {"refPath": "/Game/Materials/M_Landscape_Master.M_Landscape_Master"}}
 
 # 2. Find out what the parent exposes, and each parameter's real type, before writing
 call_tool MaterialInstanceToolset.ListParameters
-    {"Material": {"refPath": "/Game/Materials/M_Landscape_Master.M_Landscape_Master"}}
+    {"material": {"refPath": "/Game/Materials/M_Landscape_Master.M_Landscape_Master"}}
 
 # 3. One call per parameter, typed to match (Texture / Scalar / Vector / StaticSwitch)
 call_tool MaterialInstanceToolset.SetTextureParameter
-    {"Instance": {"refPath": "<MI>"}, "Name": "GrassTexture",
-     "Value": {"refPath": "/Game/Textures/T_Tropical_Grass_BC.T_Tropical_Grass_BC"}}
-call_tool MaterialInstanceToolset.SetTextureParameter   {"Instance": {...}, "Name": "RockTexture", "Value": {...}}
-call_tool MaterialInstanceToolset.SetTextureParameter   {"Instance": {...}, "Name": "SandTexture", "Value": {...}}
-call_tool MaterialInstanceToolset.SetScalarParameter    {"Instance": {...}, "Name": "SlopeThreshold",    "Value": 0.7}
-call_tool MaterialInstanceToolset.SetScalarParameter    {"Instance": {...}, "Name": "SlopeBlendWidth",   "Value": 0.15}
-call_tool MaterialInstanceToolset.SetScalarParameter    {"Instance": {...}, "Name": "AltitudeThreshold", "Value": 5000.0}
-call_tool MaterialInstanceToolset.SetStaticSwitchParameter {"Instance": {...}, "Name": "EnableSnow", "Value": false}
+    {"instance": {"refPath": "<MI>"}, "name": "GrassTexture",
+     "value": {"refPath": "/Game/Textures/T_Tropical_Grass_BC.T_Tropical_Grass_BC"}}
+call_tool MaterialInstanceToolset.SetTextureParameter   {"instance": {...}, "name": "RockTexture", "value": {...}}
+call_tool MaterialInstanceToolset.SetTextureParameter   {"instance": {...}, "name": "SandTexture", "value": {...}}
+call_tool MaterialInstanceToolset.SetScalarParameter    {"instance": {...}, "name": "SlopeThreshold",    "value": 0.7}
+call_tool MaterialInstanceToolset.SetScalarParameter    {"instance": {...}, "name": "SlopeBlendWidth",   "value": 0.15}
+call_tool MaterialInstanceToolset.SetScalarParameter    {"instance": {...}, "name": "AltitudeThreshold", "value": 5000.0}
+call_tool MaterialInstanceToolset.SetStaticSwitchParameter {"instance": {...}, "name": "EnableSnow", "value": false}
 
 # 4. Save, and recompile for the static switch (see "Static Switch Parameters" in SKILL.md)
-call_tool AssetToolset.SaveAsset  {"Asset": {"refPath": "<MI>"}}
+call_tool AssetToolset.SaveAsset  {"assetPath": "<MI path>"}
 ```
 
 A biome is now a loop you drive, not one call: nothing reports "set N of M", so the evidence for a
@@ -111,27 +111,27 @@ configure with `ObjectToolset.SetProperties`:
 
 ```
 # Create the function asset
-call_tool MaterialToolset.CreateFunction {"FolderPath": "/Game/Materials/Functions", "AssetName": "MF_Layer_Tropical"}
-call_tool ObjectToolset.SetProperties    {"Object": {"refPath": "<MF>"},
-    "Properties": {"Description": "Samples and blends tropical layer textures", "bExposeToLibrary": true}}
+call_tool MaterialToolset.CreateFunction {"folderPath": "/Game/Materials/Functions", "assetName": "MF_Layer_Tropical"}
+call_tool ObjectToolset.SetProperties    {"instance": {"refPath": "<MF>"},
+    "values": "{\"Description\": \"Samples and blends tropical layer textures\", \"bExposeToLibrary\": true}"}
+# `values` is a JSON *string* (FString), not an object — json.dumps(...) it from Python.
 
 # Inputs: one AddExpression + one SetProperties each. SortPriority sets pin order.
-call_tool MaterialToolset.AddExpression {"MaterialOrFunction": {"refPath": "<MF>"},
-    "ExpressionClass": "/Script/Engine.MaterialExpressionFunctionInput", "X": -600, "Y": 0}
-call_tool ObjectToolset.SetProperties   {"Object": {"refPath": "<that expression>"},
-    "Properties": {"InputName": "BaseColorTexture", "InputType": "FunctionInput_Texture2D",
-                   "SortPriority": 0, "Description": "Diffuse texture for this layer"}}
+call_tool MaterialToolset.AddExpression {"materialOrFunction": {"refPath": "<MF>"},
+    "expressionClass": "/Script/Engine.MaterialExpressionFunctionInput", "x": -600, "y": 0}
+call_tool ObjectToolset.SetProperties   {"instance": {"refPath": "<that expression>"},
+    "values": "{\"InputName\": \"BaseColorTexture\", \"InputType\": \"FunctionInput_Texture2D\", \"SortPriority\": 0, \"Description\": \"Diffuse texture for this layer\"}"}
 # ... repeat for NormalTexture (Texture2D, 1) and Tiling (FunctionInput_Scalar, 2)
 
 # Outputs: MaterialExpressionFunctionOutput + OutputName / SortPriority
-call_tool MaterialToolset.AddExpression {"MaterialOrFunction": {"refPath": "<MF>"},
-    "ExpressionClass": "/Script/Engine.MaterialExpressionFunctionOutput", "X": 400, "Y": 0}
-call_tool ObjectToolset.SetProperties   {"Object": {"refPath": "<that expression>"},
-    "Properties": {"OutputName": "BlendedColor", "SortPriority": 0}}
+call_tool MaterialToolset.AddExpression {"materialOrFunction": {"refPath": "<MF>"},
+    "expressionClass": "/Script/Engine.MaterialExpressionFunctionOutput", "x": 400, "y": 0}
+call_tool ObjectToolset.SetProperties   {"instance": {"refPath": "<that expression>"},
+    "values": "{\"OutputName\": \"BlendedColor\", \"SortPriority\": 0}"}
 # ... repeat for BlendedNormal (1)
 
 # Save before adding internal nodes
-call_tool AssetToolset.SaveAsset {"Asset": {"refPath": "<MF>"}}
+call_tool AssetToolset.SaveAsset {"assetPath": "<MF path>"}
 ```
 
 Keep the `refPath` each `AddExpression` returns — that is how you wire the node in Block 2. There
@@ -143,16 +143,16 @@ are no integer expression IDs any more.
 
 ```
 # Create a texture sampler inside the function
-call_tool MaterialToolset.AddExpression {"MaterialOrFunction": {"refPath": "<MF>"},
-    "ExpressionClass": "/Script/Engine.MaterialExpressionTextureSample", "X": -300, "Y": 0}
+call_tool MaterialToolset.AddExpression {"materialOrFunction": {"refPath": "<MF>"},
+    "expressionClass": "/Script/Engine.MaterialExpressionTextureSample", "x": -300, "y": 0}
 
 # Wire input -> sampler -> output, by expression refPath and PIN NAME (not index)
-call_tool MaterialToolset.ConnectExpressions {"FromExpression": {"refPath": "<BaseColorTexture input>"},
-    "FromOutputName": "", "ToExpression": {"refPath": "<sampler>"}, "ToInputName": "Tex"}
-call_tool MaterialToolset.ConnectExpressions {"FromExpression": {"refPath": "<sampler>"},
-    "FromOutputName": "RGB", "ToExpression": {"refPath": "<BlendedColor output>"}, "ToInputName": ""}
+call_tool MaterialToolset.ConnectExpressions {"fromExpression": {"refPath": "<BaseColorTexture input>"},
+    "fromOutputName": "", "toExpression": {"refPath": "<sampler>"}, "toInputName": "Tex"}
+call_tool MaterialToolset.ConnectExpressions {"fromExpression": {"refPath": "<sampler>"},
+    "fromOutputName": "RGB", "toExpression": {"refPath": "<BlendedColor output>"}, "toInputName": ""}
 
-call_tool AssetToolset.SaveAsset {"Asset": {"refPath": "<MF>"}}
+call_tool AssetToolset.SaveAsset {"assetPath": "<MF path>"}
 ```
 
 `GetExpressionInputNames` / `GetExpressionOutputNames` on an expression give the exact pin names if a
@@ -174,9 +174,9 @@ call_id = unreal.MaterialNodeService.create_function_call(
 Then connect it and compile with Epic's `MaterialToolset` (`call_tool`):
 
 ```
-call_tool MaterialToolset.ConnectToOutput {"Expression": {"refPath": "<the function-call node>"},
-    "OutputName": "BlendedColor", "MaterialProperty": "MP_BaseColor"}
-call_tool MaterialToolset.Recompile       {"MaterialOrFunction": {"refPath": "/Game/Materials/M_Landscape_Master.M_Landscape_Master"}}
+call_tool MaterialToolset.ConnectToOutput {"expression": {"refPath": "<the function-call node>"},
+    "outputName": "BlendedColor", "materialProperty": "MP_BaseColor"}
+call_tool MaterialToolset.Recompile       {"materialOrFunction": {"refPath": "/Game/Materials/M_Landscape_Master.M_Landscape_Master"}}
 ```
 
 ### Workflow D: Inspect Material Functions
@@ -186,22 +186,25 @@ dump. Walk the function with Epic's reads (`call_tool`):
 
 ```
 # The function's own fields (Description, bExposeToLibrary, ...)
-call_tool ObjectToolset.GetProperties   {"Object": {"refPath": "/Game/Materials/Functions/MF_AutoLayer.MF_AutoLayer"}}
+call_tool ObjectToolset.GetProperties   {"instance": {"refPath": "/Game/Materials/Functions/MF_AutoLayer.MF_AutoLayer"},
+                                         "properties": ["Description", "bExposeToLibrary"]}
+# GetProperties needs the names; ObjectToolset.ListProperties {"instance": {...}} lists them.
 
 # Every expression in it — its inputs and outputs are the FunctionInput / FunctionOutput nodes
-call_tool MaterialToolset.GetExpressions {"MaterialOrFunction": {"refPath": "<MF>"}}
+call_tool MaterialToolset.GetExpressions {"materialOrFunction": {"refPath": "<MF>"}}
 
 # For each FunctionInput / FunctionOutput node, its interface fields:
-call_tool ObjectToolset.GetProperties   {"Object": {"refPath": "<expression>"}}
+call_tool ObjectToolset.GetProperties   {"instance": {"refPath": "<expression>"},
+                                         "properties": ["InputName", "InputType", "SortPriority", "Description"]}
 #   InputName / InputType / SortPriority / Description   (inputs)
 #   OutputName / SortPriority / Description              (outputs)
 
 # The wiring, one expression at a time
-call_tool MaterialToolset.GetExpressionInputs {"MaterialOrFunction": {"refPath": "<MF>"},
-                                               "Expression": {"refPath": "<expression>"}}
+call_tool MaterialToolset.GetExpressionInputs {"materialOrFunction": {"refPath": "<MF>"},
+                                               "expression": {"refPath": "<expression>"}}
 
 # Which materials would be affected if you change this function
-call_tool MaterialToolset.GetReferencingMaterials {"MaterialFunction": {"refPath": "<MF>"}}
+call_tool MaterialToolset.GetReferencingMaterials {"materialFunction": {"refPath": "<MF>"}}
 ```
 
 `GetReferencingMaterials` is the check to run **before** editing a shared layer function:
@@ -241,10 +244,20 @@ vol = unreal.RuntimeVirtualTextureService.create_rvt_volume(
 )
 print(f"Volume: {vol.volume_label}")
 
-# Assign RVT to landscape slot 0
-unreal.RuntimeVirtualTextureService.assign_rvt_to_landscape(
-    "MyLandscape", rvt_path, 0)
+# Assign the RVT to the landscape — Epic's ObjectToolset on the landscape actor's
+# RuntimeVirtualTextures array (write the whole array; keep any RVTs already in it).
+import json
+ls = next(a for a in unreal.get_editor_subsystem(unreal.EditorActorSubsystem).get_all_level_actors()
+          if isinstance(a, unreal.Landscape) and a.get_actor_label() == "MyLandscape")
+ok = await call_tool("EditorToolset.ObjectToolset.SetProperties",
+                     instance={"refPath": ls.get_path_name()},
+                     values=json.dumps({"RuntimeVirtualTextures": [rvt_path + ".RVT_Landscape_01"]}))
+ok
 ```
+
+> Epic's property write names the changed property, so `ALandscape::PostEditChangeProperty` runs its
+> material rebuild and propagates the RVT list to World Partition streaming proxies — VibeUE's old
+> `assign_rvt_to_landscape` fired a bare `PostEditChange()` that never reached the proxies.
 
 **Block 3 — Add RVT output to material.** All Epic (`call_tool`): the material property, the
 expression, the connections and the compile. `MaterialService.set_property` and
@@ -252,22 +265,22 @@ expression, the connections and the compile. `MaterialService.set_property` and
 
 ```
 # Enable virtual texturing on the material (do this BEFORE the recompile)
-call_tool ObjectToolset.SetProperties {"Object": {"refPath": "/Game/Materials/M_Landscape_Master.M_Landscape_Master"},
-    "Properties": {"bUsedWithVirtualTexturing": true}}
+call_tool ObjectToolset.SetProperties {"instance": {"refPath": "/Game/Materials/M_Landscape_Master.M_Landscape_Master"},
+    "values": "{\"bUsedWithVirtualTexturing\": true}"}
 
 # Create the RVT output node
-call_tool MaterialToolset.AddExpression {"MaterialOrFunction": {"refPath": "<master material>"},
-    "ExpressionClass": "/Script/Engine.MaterialExpressionRuntimeVirtualTextureOutput", "X": 400, "Y": 0}
+call_tool MaterialToolset.AddExpression {"materialOrFunction": {"refPath": "<master material>"},
+    "expressionClass": "/Script/Engine.MaterialExpressionRuntimeVirtualTextureOutput", "x": 400, "y": 0}
 
 # Connect BaseColor / Normal / Roughness into it — one call each, by expression refPath and pin name
 # (<blend>, <normal>, <roughness> are the refPaths of your layer-blend chain's outputs)
-call_tool MaterialToolset.ConnectExpressions {"FromExpression": {"refPath": "<blend>"},
-    "FromOutputName": "RGB", "ToExpression": {"refPath": "<rvt output>"}, "ToInputName": "BaseColor"}
-call_tool MaterialToolset.ConnectExpressions {"FromExpression": {"refPath": "<normal>"},
-    "FromOutputName": "RGB", "ToExpression": {"refPath": "<rvt output>"}, "ToInputName": "Normal"}
-call_tool MaterialToolset.ConnectExpressions {"FromExpression": {"refPath": "<roughness>"},
-    "FromOutputName": "",    "ToExpression": {"refPath": "<rvt output>"}, "ToInputName": "Roughness"}
+call_tool MaterialToolset.ConnectExpressions {"fromExpression": {"refPath": "<blend>"},
+    "fromOutputName": "RGB", "toExpression": {"refPath": "<rvt output>"}, "toInputName": "BaseColor"}
+call_tool MaterialToolset.ConnectExpressions {"fromExpression": {"refPath": "<normal>"},
+    "fromOutputName": "RGB", "toExpression": {"refPath": "<rvt output>"}, "toInputName": "Normal"}
+call_tool MaterialToolset.ConnectExpressions {"fromExpression": {"refPath": "<roughness>"},
+    "fromOutputName": "",    "toExpression": {"refPath": "<rvt output>"}, "toInputName": "Roughness"}
 
 # Compile last, in its own step
-call_tool MaterialToolset.Recompile {"MaterialOrFunction": {"refPath": "<master material>"}}
+call_tool MaterialToolset.Recompile {"materialOrFunction": {"refPath": "<master material>"}}
 ```

@@ -5,7 +5,7 @@ description: Gated stage rules for map blockout — the validation checks each s
 
 # Map Blockout — Stage Rules
 
-Authoritative per-stage rules. Mirrors [docs/design/map-designer-spec.md](../../../docs/design/map-designer-spec.md) (the spec is the source of truth — if these two disagree, the spec wins).
+Authoritative per-stage rules. Mirrors [docs/design/map-designer-spec.md](../../docs/design/map-designer-spec.md) (the spec is the source of truth — if these two disagree, the spec wins).
 
 Every stage runs its CHECK list in order. **Any single FAIL fails the stage**. The orchestrator stops at the first failing gate and surfaces the failing check name + message via `result.final_state.<stage>.gate.checks`.
 

@@ -1,15 +1,15 @@
 ---
 name: vibeue
-description: Unreal Engine 5 development using the VibeUE Python API. Use when working in Unreal Engine â€” blueprints, state trees, materials, actors, landscapes, animation, niagara, widgets, sound, foliage, gameplay tags, enhanced input, skeletons, PCG (procedural content generation), and more. VibeUE is an extension of Unreal's native MCP endpoint.
+description: Unreal Engine 5 development using the VibeUE Python API. Use when working in Unreal Engine — blueprints, state trees, materials, actors, landscapes, animation, niagara, widgets, sound, foliage, gameplay tags, enhanced input, skeletons, PCG (procedural content generation), and more. VibeUE is an extension of Unreal's native MCP endpoint.
 ---
 
 VibeUE is an **extension on Unreal Engine's native MCP endpoint** (`http://localhost:8000/mcp`).
-There is no separate VibeUE server, no API key, and no in-editor chat â€” VibeUE simply registers
+There is no separate VibeUE server, no API key, and no in-editor chat — VibeUE simply registers
 extra Python services (`unreal.<Service>`) and skill packs on top of the engine's own toolsets.
 
 ## Wait for VibeUE readiness after launch
 
-`BuildAndLaunchGame.ps1` / `.sh` print `Editor-PID=<pid>` â€” treat that as the process identity. Check
+`BuildAndLaunchGame.ps1` / `.sh` print `Editor-PID=<pid>` — treat that as the process identity. Check
 once, then watch the filesystem for `<ProjectDir>/Saved/VibeUE/Signals/editor-<pid>-true.json` before
 using MCP. Wait at most 180 seconds, do not poll MCP while waiting, and fail if that Editor process
 exits or the timeout expires. Ignore signal files for other or dead PIDs. The signal only means
@@ -28,11 +28,11 @@ Editor, but if you launch it some other way, verify `sessionStartUtc` is later t
 started the process before trusting the signal.
 
 `currentMap` is the loaded map's package name and the signal is re-published on every map open
-(issue #554) â€” **gate world-edit scripts on it**. A relaunch opens the project default map unless
+(issue #554) — **gate world-edit scripts on it**. A relaunch opens the project default map unless
 you pass `-Map /Game/Maps/YourMap` (`--map` on the .sh) to the launch script; editing "the current
 world" after a relaunch without checking has silently modified the wrong level before.
 
-## Health heartbeat â€” dead or wedged editor detection
+## Health heartbeat — dead or wedged editor detection
 
 `Signals/editor-<pid>-health.json` is rewritten every ~5s by a background thread (issue #555):
 
@@ -43,10 +43,10 @@ world" after a relaunch without checking has silently modified the wrong level b
 ```
 
 Epic's MCP endpoint runs on the game thread with no request timeout, so a dead or wedged editor
-hangs MCP calls for the client's full timeout â€” and even JSON-RPC `ping` hangs with it. Read the
-health file instead: file missing or `updatedUtc` older than ~15s â†’ the process is gone (relaunch);
-`gameThreadStallSeconds` above ~10 â†’ alive but wedged (modal dialog / crash handler; MCP will
-hang â€” relaunch); fresh and small â†’ the editor is healthy, debug something else.
+hangs MCP calls for the client's full timeout — and even JSON-RPC `ping` hangs with it. Read the
+health file instead: file missing or `updatedUtc` older than ~15s → the process is gone (relaunch);
+`gameThreadStallSeconds` above ~10 → alive but wedged (modal dialog / crash handler; MCP will
+hang — relaunch); fresh and small → the editor is healthy, debug something else.
 
 Both the readiness and health JSON also carry `mcpPort` and `mcpListening` (issue B6). **Check
 `mcpListening` before assuming a live link.** The very first readiness signal is written the instant
@@ -104,49 +104,49 @@ pinning an asset and `vibeue.release_globals(names)` drops it.
 Skills are discovered and read through the engine `AgentSkillToolset`, invoked with `call_tool`:
 
 ```
-# List every available skill (full path â†’ description)
+# List every available skill (full path → description)
 call_tool(toolset_name="ToolsetRegistry.AgentSkillToolset", tool_name="ListSkills", arguments={})
 
-# Read one or more skills â€” GetSkills takes the FULL paths that ListSkills returns
+# Read one or more skills — GetSkills takes the FULL paths that ListSkills returns
 call_tool(toolset_name="ToolsetRegistry.AgentSkillToolset", tool_name="GetSkills",
           arguments={"skillPaths": ["/VibeUE/Python/init_unreal_PY.VibeUE_pcg",
                                     "/VibeUE/Python/init_unreal_PY.VibeUE_materials"]})
 ```
 
-> **Naming rule (verified live):** skill pack `<slug>` registers as `VibeUE_<slug>` (hyphens â†’
+> **Naming rule (verified live):** skill pack `<slug>` registers as `VibeUE_<slug>` (hyphens →
 > underscores) and sub-doc `<slug>/<file>.md` as `VibeUE_<slug>__<file>`, all under the path prefix
 > `/VibeUE/Python/init_unreal_PY.`. Short names such as `"pcg"` or `"state-trees/api-reference"`
-> return an **empty result with no error** â€” always pass full paths, taking them from `ListSkills`
+> return an **empty result with no error** — always pass full paths, taking them from `ListSkills`
 > when unsure. Run `describe_toolset` on `ToolsetRegistry.AgentSkillToolset` if the call signature
 > differs in your build. The old `vibeue-skills-manager` tool no longer exists.
 
 **Route by functional area.** Find the area whose scope matches the task, then `GetSkills` the
-listed skill(s) â€” full paths per the naming rule above. The *NOT for* column is the disambiguator â€”
+listed skill(s) — full paths per the naming rule above. The *NOT for* column is the disambiguator —
 when two areas seem to fit, the one that *excludes* your task is telling you where to go instead.
 
-| Functional area | Use for â€” **NOT** forâ€¦ | Load skill(s) |
+| Functional area | Use for — **NOT** for… | Load skill(s) |
 |---|---|---|
-| **Scene & actors** | place / move / arrange / organize / tag actors in a level â€” NOT gameplay logic (â†’ Blueprints), NOT world-scale terrain/foliage (â†’ Environment), NOT attaching a Niagara/particle component (â†’ VFX) | `level-actors` |
-| **Blueprints & gameplay logic** | author Blueprint classes & graphs, Enhanced Input, gameplay tags, Gameplay Ability System (abilities/attributes/effects/cues) â€” NOT AI behavior (â†’ AI), NOT AnimBP graphs (â†’ Animation), NOT C++/source (coding-agent handoff) | `blueprints`, `blueprint-graphs`, `enhanced-input`, `gas` |
-| **AI** | author StateTree and Behavior Tree logic. Both are mostly Epic's in 5.9: `state_tree_toolset.state_tree.StateTreeToolset` owns StateTree states/tasks/conditions and `AIModuleToolset` owns BT and EQS. VibeUE keeps StateTree property bindings, asset creation, node-type discovery, theme colours and root parameters, plus BT/EQS graph repair, blackboard key rename/reference sweep and running an EQS query. Covers Behavior Trees / Blackboards / Environment Queries (Epic's AIModuleToolset, with VibeUE only for BT graph repair, blackboard key rename/reference sweep and running an EQS query) â€” NOT character body animation (â†’ Animation), NOT generic actor placement (â†’ Scene) | `state-trees`, `behavior-trees` |
-| **Animation & rigging** | AnimBP state machines, AnimSequence keyframes, montages & AnimNotify wiring, bone/skeleton editing & retarget â€” NOT cinematic timelines (Epic Sequencer), NOT AI movement (â†’ AI), NOT authoring/adding sound assets â€” even a character's footstep sounds (â†’ Audio) | `animation-blueprint`, `animsequence`, `animation-editing`, `animation-montage`, `skeleton` |
-| **Character customization (Mutable)** | Customizable Object graphs: modular character parts, mesh sections, skin/clothing parameters, switches, hat/outfit groups and child objects, compiling a CO â€” NOT plain skeletal mesh or skeleton edits (â†’ Animation), NOT ordinary material graphs (â†’ Materials) | `customizable-object` |
-| **Materials & shading** | materials, instances, graph nodes, Custom HLSL â€” NOT Niagara particle materials (â†’ VFX), NOT landscape auto-materials (â†’ Environment) | `materials` |
-| **VFX (Niagara)** | particle systems, emitters, scratch-pad HLSL, attaching/placing a Niagara component on an actor â€” NOT surface materials (â†’ Materials) | `niagara-emitters` (colour curves; systems/emitters/modules are Epic `NiagaraToolsets`) |
-| **UI (UMG)** | widget blueprints, layout, fonts/brushes, MVVM â€” NOT the gameplay behind the UI (â†’ Blueprints) | `umg-widgets` |
-| **Environment (world-scale)** | landscape sculpt/paint, landscape materials, foliage, PCG, map blockout, real-world terrain â€” NOT single-actor placement (â†’ Scene), NOT sound/audio (â†’ Audio) | `landscape`, `landscape-materials`, `landscape-auto-material`, `foliage`, `pcg`, `map-blockout`, `terrain-data` |
-| **Audio** | SoundCue authoring â€” creating the sound asset itself: ambient, a character's footstep/foley, UI sounds â€” NOT triggering sounds from gameplay logic (â†’ Blueprints), NOT wiring an existing sound to anim-notify foot-plant frames (â†’ Animation) | `sound-cues` (MetaSound is Epic `MetaSoundToolset`) |
-| **Assets, data & project** | import/export assets, UV mapping, the surviving PIE/engine settings helpers, and bulk asset maintenance you now drive yourself (iterate `AssetToolset` / `BlueprintToolset`, check before you write) â€” NOT actors placed in a level (â†’ Scene) | `asset-management`, `uv-mapping`, `engine-settings` |
-| **Diagnostics, testing & run** | start/stop/query PIE, profile (CPU-vs-GPU / Insights), uncap frame rate â€” NOT fixing the logic a bug points to (â†’ its authoring area) | `pie-testing`, `profiling`, `frame-rate` |
-| **Camera & viewport** | viewport camera, view mode, FOV, exposure, layout â€” NOT material look (â†’ Materials), NOT placing/editing light actors (â†’ Scene) | `viewport` |
-| **Cinematics Â· Physics** | Sequencer cinematics and Physics assets (ragdoll/skeletal) are **Epic-native** â€” VibeUE adds no skill here â€” NOT enabling simulate-physics on a level actor (â†’ Scene) | *(none â€” use `list_toolsets`: `animation_toolset.*` / `PhysicsToolsets`)* |
+| **Scene & actors** | place / move / arrange / organize / tag actors in a level — NOT gameplay logic (→ Blueprints), NOT world-scale terrain/foliage (→ Environment), NOT attaching a Niagara/particle component (→ VFX) | `level-actors` |
+| **Blueprints & gameplay logic** | author Blueprint classes & graphs, Enhanced Input, gameplay tags, Gameplay Ability System (abilities/attributes/effects/cues) — NOT AI behavior (→ AI), NOT AnimBP graphs (→ Animation), NOT C++/source (coding-agent handoff) | `blueprints`, `blueprint-graphs`, `enhanced-input`, `gas` |
+| **AI** | author StateTree and Behavior Tree logic. Both are mostly Epic's in 5.9: `state_tree_toolset.state_tree.StateTreeToolset` owns StateTree states/tasks/conditions and `AIModuleToolset` owns BT and EQS. VibeUE keeps StateTree property bindings, asset creation, node-type discovery, theme colours and root parameters, plus BT/EQS graph repair, blackboard key rename/reference sweep and running an EQS query. Covers Behavior Trees / Blackboards / Environment Queries (Epic's AIModuleToolset, with VibeUE only for BT graph repair, blackboard key rename/reference sweep and running an EQS query) — NOT character body animation (→ Animation), NOT generic actor placement (→ Scene) | `state-trees`, `behavior-trees` |
+| **Animation & rigging** | AnimBP state machines, AnimSequence keyframes, montages & AnimNotify wiring, bone/skeleton editing & retarget — NOT cinematic timelines (Epic Sequencer), NOT AI movement (→ AI), NOT authoring/adding sound assets — even a character's footstep sounds (→ Audio) | `animation-blueprint`, `animsequence`, `animation-editing`, `animation-montage`, `skeleton` |
+| **Character customization (Mutable)** | Customizable Object graphs: modular character parts, mesh sections, skin/clothing parameters, switches, hat/outfit groups and child objects, compiling a CO — NOT plain skeletal mesh or skeleton edits (→ Animation), NOT ordinary material graphs (→ Materials) | `customizable-object` |
+| **Materials & shading** | materials, instances, graph nodes, Custom HLSL — NOT Niagara particle materials (→ VFX), NOT landscape auto-materials (→ Environment) | `materials` |
+| **VFX (Niagara)** | particle systems, emitters, scratch-pad HLSL, attaching/placing a Niagara component on an actor — NOT surface materials (→ Materials) | `niagara-emitters` (colour curves; systems/emitters/modules are Epic `NiagaraToolsets`) |
+| **UI (UMG)** | widget blueprints, layout, fonts/brushes, MVVM — NOT the gameplay behind the UI (→ Blueprints) | `umg-widgets` |
+| **Environment (world-scale)** | landscape sculpt/paint, landscape materials, foliage, PCG, map blockout, real-world terrain — NOT single-actor placement (→ Scene), NOT sound/audio (→ Audio) | `landscape`, `landscape-materials`, `landscape-auto-material`, `foliage`, `pcg`, `map-blockout`, `terrain-data` |
+| **Audio** | SoundCue authoring — creating the sound asset itself: ambient, a character's footstep/foley, UI sounds — NOT triggering sounds from gameplay logic (→ Blueprints), NOT wiring an existing sound to anim-notify foot-plant frames (→ Animation) | `sound-cues` (MetaSound is Epic `MetaSoundToolset`) |
+| **Assets, data & project** | import/export assets, UV mapping, the surviving PIE/engine settings helpers, and bulk asset maintenance you now drive yourself (iterate `AssetToolset` / `BlueprintToolset`, check before you write) — NOT actors placed in a level (→ Scene) | `asset-management`, `uv-mapping`, `engine-settings` |
+| **Diagnostics, testing & run** | start/stop/query PIE, profile (CPU-vs-GPU / Insights), uncap frame rate — NOT fixing the logic a bug points to (→ its authoring area) | `pie-testing`, `profiling`, `frame-rate` |
+| **Camera & viewport** | viewport camera, view mode, FOV, exposure, layout — NOT material look (→ Materials), NOT placing/editing light actors (→ Scene) | `viewport` |
+| **Cinematics · Physics** | Sequencer cinematics and Physics assets (ragdoll/skeletal) are **Epic-native** — VibeUE adds no skill here — NOT enabling simulate-physics on a level actor (→ Scene) | *(none — use `list_toolsets`: `animation_toolset.*` / `PhysicsToolsets`)* |
 
 A loaded skill gives you:
 - workflows, gotchas, and property formats for the domain
-- `vibeue_classes` / `unreal_classes` â€” class names to feed into `get_symbol` for live method signatures
+- `vibeue_classes` / `unreal_classes` — class names to feed into `get_symbol` for live method signatures
 - sub-doc references (`<skill>/<section>`) you can fetch via `GetSkills` for deeper detail
 
-Always call `get_symbol` on the classes in `vibeue_classes` before writing code â€” never
+Always call `get_symbol` on the classes in `vibeue_classes` before writing code — never
 guess method names from the skill content alone. **Batch the discovery into ONE call** instead of
 one call per class:
 
@@ -156,13 +156,13 @@ get_symbol(
     class_name="unreal.LandscapeMaterialService, unreal.WidgetService, unreal.MaterialNodeService",
     method_filter="create|delete|layer|property|color")
 
-# WRONG â€” three separate calls for three classes wastes round-trips and repeats boilerplate
+# WRONG — three separate calls for three classes wastes round-trips and repeats boilerplate
 ```
 
 `class_name` accepts a comma-separated list (response gains a `classes` array, one entry per class);
 `method_filter` ORs keywords with `|`.
 
-## How work gets done â€” `execute_python` is the workhorse
+## How work gets done — `execute_python` is the workhorse
 
 VibeUE services are plain Python on the editor's `unreal` module. Run everything through
 `execute_python`:
@@ -257,11 +257,11 @@ So treat this as prevention, not repair:
 
 The open level is never reported - only stragglers.
 
-## Tools â€” what each is for
+## Tools — what each is for
 
 | Tool | Use it for |
 |------|-----------|
-| `execute_python` | Run `unreal.*` Python in the editor â€” the workhorse for every VibeUE service |
+| `execute_python` | Run `unreal.*` Python in the editor — the workhorse for every VibeUE service |
 | `call_tool` | Invoke engine toolsets and skills (skills, PIE control, logs, assets, gameplay tags) |
 | `describe_toolset` / `list_toolsets` | Discover engine toolsets and their actions/args |
 | `get_symbol` / `get_symbol` / `search_symbols` | Get live signatures before writing code |
@@ -281,8 +281,8 @@ called via `call_tool` (run `describe_toolset` for action names/params):
 
 | Need | Engine toolset (via `call_tool`) |
 |------|----------------------------------|
-| Start / stop / query PIE | `EditorToolset.EditorAppToolset` â†’ `StartPIE` / `StopPIE` / `IsPIERunning` |
-| Capture a viewport screenshot | `EditorToolset.EditorAppToolset` â†’ `CaptureViewport` |
+| Start / stop / query PIE | `EditorToolset.EditorAppToolset` → `StartPIE` / `StopPIE` / `IsPIERunning` |
+| Capture a viewport screenshot | `EditorToolset.EditorAppToolset` → `CaptureViewport` |
 | List / read / filter / tail UE logs | `ConsoleToolset.LogsToolset` -> `GetLogEntries` (needs a `pattern`) |
 | Run a console command | `ConsoleToolset` -> `RunConsoleCommand` |
 | Search / open / save / move / import assets | `AssetTools` |
@@ -298,8 +298,8 @@ called via `call_tool` (run `describe_toolset` for action names/params):
 | Single-tag gameplay-tag CRUD | Epic `GameplayTagsToolset` via `call_tool` |
 | Inspect a live Ability System (attributes/tags/effects/abilities), attribute-set discovery, gameplay cues | `GASToolsets.*` (see `gas` skill) |
 
-Performance/Insights tracing is the one net-new VibeUE service â€” `unreal.PerformanceService.*` (see
-the `profiling` skill) â€” because Unreal 5.8 shipped no performance toolset. On 5.9 the split is narrower: frame timings are
+Performance/Insights tracing is the one net-new VibeUE service — `unreal.PerformanceService.*` (see
+the `profiling` skill) — because Unreal 5.8 shipped no performance toolset. On 5.9 the split is narrower: frame timings are
 Epic's (`PerfToolset.StatsToolset.GetFrameTimings` -- `PerformanceService.frame_timing` is **gone**),
 trace start/stop is `ConsoleToolset.RunConsoleCommand("Trace.*")` (`start_trace` / `stop_trace` are
 gone), and what is left on `PerformanceService` is `force_hitch`, `analyse`, the standalone-capture
@@ -397,7 +397,7 @@ with vibeue.gate_session(clients=3, net_mode="ListenServer"):   # throttling + P
   graph as DSL with `BlueprintDslToolset.Read`. VibeUE's `set_node_pin_value` / `get_node_pins` are
   gone with the rest of the node surface.
 - `unreal.PerformanceService.set_background_throttling(False)` / `get_background_throttling()` replace the hand-written `EditorPerformanceSettings` CDO write. Both return a JSON string.
-- Runtime input: Epic `InputToolset.ApplyInput` (`Entries` + `DurationSeconds`) via `call_tool` for every bounded press or hold -- `inject_action_for` and `inject_key` are **gone**. VibeUE keeps exactly `unreal.InputService.inject_action(action_path, x, y, z, pie_instance)` and `stop_injection(action_path, pie_instance)` for an INDEFINITE hold released in a later call. Either way, don't hand-roll a slate-tick loop around `inject_input_vector_for_action`. `pie_instance` picks the PIE world; -1 means the first PIE world with a local player.
+- Runtime input: Epic `InputToolset.ApplyInput` (`entries` + `durationSeconds`) via `call_tool` for every bounded press or hold -- `inject_action_for` and `inject_key` are **gone**. VibeUE keeps `unreal.InputService.start_injection(action_path, x, y, z, pie_instance)` and `stop_injection(action_path, pie_instance)` for an INDEFINITE hold released in a later call, and `inject_action(action_path, x, y, z, pie_instance)` for a single queued one-tick press. Either way, don't hand-roll a slate-tick loop around `inject_input_vector_for_action`. `pie_instance` picks the PIE world; -1 means the first PIE world with a local player.
 - `unreal.EngineSettingsService.set_pie_settings(net_mode, clients, run_under_one_process)` / `get_pie_settings()` set and read the PIE net mode ("Standalone", "ListenServer", "Client"). It is saved to the user's ini. These two are **Python-only helpers** now: `EngineSettingsService` has no MCP tools left, so they only exist inside `execute_python`.
 - `unreal.ActorService.rerun_construction_scripts(label_or_name)` matches an actor by label or object name. It works in the editor world only and refuses during PIE.
 - `WidgetService.capture_preview` is **gone** (as are `get_live_property`, `is_pie_running`, `start_pie` and `stop_pie`): capture a widget asset with `EditorAppToolset.CaptureAssetImage`, or spawn it with `WidgetService.spawn_widget_in_pie` and shoot the running viewport with `SceneCaptureToolset.CaptureGameViewport`, which draws the UMG over it. To read a live widget's properties: `SlateInspectorToolset.Snapshot` -> `GetUMGInfo(ref)` -> `ObjectToolset.GetProperties`.

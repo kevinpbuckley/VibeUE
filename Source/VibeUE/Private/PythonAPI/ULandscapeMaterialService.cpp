@@ -787,31 +787,6 @@ FLandscapeLayerInfoCreateResult ULandscapeMaterialService::CreateLayerInfoObject
 	return Result;
 }
 
-bool ULandscapeMaterialService::GetLayerInfoDetails(
-	const FString& LayerInfoAssetPath,
-	FString& OutLayerName,
-	bool& bOutIsWeightBlended)
-{
-	UObject* LoadedObj = UEditorAssetLibrary::LoadAsset(LayerInfoAssetPath);
-	if (!LoadedObj)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("ULandscapeMaterialService::GetLayerInfoDetails: Failed to load '%s'"), *LayerInfoAssetPath);
-		return false;
-	}
-
-	ULandscapeLayerInfoObject* LayerInfo = Cast<ULandscapeLayerInfoObject>(LoadedObj);
-	if (!LayerInfo)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("ULandscapeMaterialService::GetLayerInfoDetails: Not a ULandscapeLayerInfoObject: '%s'"), *LayerInfoAssetPath);
-		return false;
-	}
-
-	OutLayerName = LayerInfo->GetLayerName().ToString();
-	bOutIsWeightBlended = LayerInfo->GetBlendMethod() != ELandscapeTargetLayerBlendMethod::None;
-
-	return true;
-}
-
 // =================================================================
 // Material Assignment
 // =================================================================
@@ -1899,42 +1874,4 @@ TArray<FLandscapeTextureSet> ULandscapeMaterialService::FindLandscapeTextures(
 		Results.Num(), *RootPath, *TerrainType);
 
 	return Results;
-}
-
-// =================================================================
-// Existence Checks
-// =================================================================
-
-bool ULandscapeMaterialService::LandscapeMaterialExists(const FString& MaterialPath)
-{
-	if (MaterialPath.IsEmpty())
-	{
-		return false;
-	}
-
-	// A full content path resolves directly.
-	if (MaterialPath.StartsWith(TEXT("/")))
-	{
-		return UEditorAssetLibrary::DoesAssetExist(MaterialPath);
-	}
-
-	// Bare asset name (e.g. "M_Landscape"): resolve via the AssetRegistry so callers
-	// don't have to know the full path (issue #456). Matches any Material / MaterialInstance.
-	FAssetRegistryModule& ARM = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
-	IAssetRegistry& AR = ARM.Get();
-	TArray<FAssetData> Assets;
-	AR.GetAssetsByClass(UMaterialInterface::StaticClass()->GetClassPathName(), Assets, /*bSearchSubClasses=*/true);
-	for (const FAssetData& AD : Assets)
-	{
-		if (AD.AssetName.ToString().Equals(MaterialPath, ESearchCase::IgnoreCase))
-		{
-			return true;
-		}
-	}
-	return false;
-}
-
-bool ULandscapeMaterialService::LayerInfoExists(const FString& LayerInfoAssetPath)
-{
-	return UEditorAssetLibrary::DoesAssetExist(LayerInfoAssetPath);
 }

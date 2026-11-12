@@ -72,8 +72,8 @@ load**. Also save before risky work (`unreal.EditorLoadingAndSavingUtils.save_di
 and do not keep level objects in variables across an `await` or a level change — re-fetch them.
 `unreal.PythonTools.get_dirty_packages()` tells you what a script left dirty.
 
-**Speed + tokens:** **avoid `describe_toolset` as a habit** — it dumps the full JSON schema of every
-tool in a toolset (the most token-heavy thing here). Reach for a **skill** plus a narrow
+**Speed + tokens:** **avoid `describe_toolsets` / `describe_tools` as a habit** — they dump the full
+JSON schema of every tool in a toolset (the most token-heavy thing here). Reach for a **skill** plus a narrow
 `search_symbols` / `get_symbol` instead.
 
 ---
@@ -88,7 +88,7 @@ tool in a toolset (the most token-heavy thing here). Reach for a **skill** plus 
   NAME / SIGNATURE / DOCUMENTATION. This replaces VibeUE's old `discover_python_*` tools and is
   stronger: it only returns symbols this editor session actually provides.
 - `get_symbol` — full documentation for a tool, toolset, type, function, method or property.
-  Feed it a `qualified_name` from `search_symbols`. For a type it lists editor properties, enum
+  Pass a fully-qualified name from `search_symbols` as its `name` argument. For a type it lists editor properties, enum
   values and methods. Use it to check an `unreal` API **before** calling it.
 
 **VibeUE MCP tools (call directly) — only two remain, both things the engine has no tool for:**
@@ -130,49 +130,54 @@ engine toolset first and use these only for the named delta:
 | `AssetDiscoveryService` | `reimport_asset`, `export_texture` | `AssetToolset` / `TextureToolset` / `FileSystemToolset` |
 | `TransactionService` | undo/redo stepping only | `UndoHistoryToolset` + `unreal.ScopedEditorTransaction` |
 | `GameplayTagService` | `request_tag`, `request_tag_container` | `GameplayTagsToolset` |
-| `NiagaraEmitterService` | the three colour-curve tools | `NiagaraToolsets` (57 tools) |
+| `NiagaraEmitterService` | `shift_color_hue` (HSV rotation of a colour curve) | `NiagaraToolsets` (57 tools) — curve keys are read and written with `GetStackInputData` / `SetStackInputData` on the `ColorCurve` data-interface input |
 | `MaterialNodeService` | `create_function_call`, `create_collection_parameter` | `MaterialToolset` / `MaterialInstanceToolset` / `ObjectToolset` (`MaterialService` is deleted) |
 | `WorkflowService` | `get_environment` — engine version, build config, toolchain, build staleness | nothing: Epic reports none of it. `run_scenario` → `AutomationTestToolset`; the run journal → `FileSystemToolset` + `UndoHistoryToolset`; `run_bulk_maintenance` → `BlueprintToolset` / `AssetToolset`, batched by you |
 
 These trimmed services keep only what the engine lacks -- for plain asset/actor/blueprint
 basics the engine's own tools may be simpler (below).
 
-**Calling Epic's engine toolsets from Python (`execute_tool`).** Epic's engine toolset *classes*
+**Calling Epic's engine toolsets from Python (`call_tool`).** Epic's engine toolset *classes*
 exist as `unreal.*` (e.g. `unreal.EditorAppToolset`) but their AICallable functions are **not**
-exposed as Python methods — `unreal.EditorAppToolset.get_selected_assets()` fails. Invoke them
-through the registry instead (same dispatch `call_tool` uses, but in-process and batchable):
+exposed as Python methods — `unreal.EditorAppToolset.get_selected_assets()` fails. Inside
+`execute_python`, invoke them with the injected, awaited `call_tool`, passing the tool's
+**full name** and its parameters as keyword arguments. It returns the tool's value directly
+(JSON-shaped, object references as `{"refPath": ...}`) and raises on failure:
 ```python
-import unreal, vibeue   # vibeue ships in the plugin's Content/Python — always importable
-
-out = vibeue.exec_tool("EditorToolset.EditorAppToolset", "GetSelectedAssets")
-# exec_tool fills missing optional params from the tool's schema (so bare StartPIE/CaptureViewport
-# calls just work), reports ALL missing required params in ONE error, and returns fully-decoded
-# Python values (the raw execute_tool "returnValue" is sometimes double-encoded JSON).
+selected = await call_tool("EditorToolset.EditorAppToolset.GetSelectedAssets")
+await call_tool("BlueprintToolsets.BlueprintToolset.AddVariable",
+                blueprint={"refPath": "/Game/Blueprints/BP_Enemy.BP_Enemy"}, name="Health", typeName="float")
 ```
-Discover schemas by NAME with `vibeue.get_toolset_schema("EditorToolset.EditorAppToolset")` /
-`vibeue.list_toolset_names()`. (The engine's own
-`unreal.ToolsetRegistry.get_toolset_json_schema(...)` takes a **class object** like
-`unreal.EditorAppToolset`, NOT a name string; `get_all_toolset_json_schemas()` dumps everything —
-token-heavy.) Names are namespaced — `EditorToolset.EditorAppToolset`,
-`NiagaraToolsets.NiagaraToolset_System`, etc. (a bare `"EditorAppToolset"` returns "Toolset not
-found"). Raw `unreal.ToolsetRegistry.execute_tool(name, tool, args_json)` remains available; it
-returns an **async** result — the editor tools above complete synchronously (`is_complete=True`),
-but for a long-running tool check `is_complete` / bind `on_completed` rather than assuming `value`
-is ready.
+**Never call `unreal.ToolsetRegistry.execute_tool(...)` in an `execute_python` script** — the runner
+rejects the whole script before it runs, because that call returns an async result nothing awaits.
+Parameter names are the tool's own camelCase schema names (`typeName`, not `type_name`): look them up
+with `get_symbol` on the tool's full name, or `vibeue.get_toolset_schema("EditorToolset.EditorAppToolset")`
+/ `vibeue.list_toolset_names()` for a whole toolset. Names are namespaced —
+`EditorToolset.EditorAppToolset`, `NiagaraToolsets.NiagaraToolset_System`, etc. (a bare
+`"EditorAppToolset"` is not found).
+
+`vibeue.exec_tool("EditorToolset.EditorAppToolset", "StartPIE", {...args dict...})` is a synchronous
+helper for code that cannot `await` (a plain `init_unreal.py`, a ticker callback). It takes the
+toolset name, the tool name and an optional args **dict**, fills missing optional params from the
+schema (so a bare `StartPIE` works), and reports every missing required param in one error. It does
+not wait on a long-running asynchronous tool (`exec_tool_async` + `collect_tool_result` split that
+across two calls), so prefer `await call_tool(...)` whenever you are in `execute_python`.
 
 **Use the engine's native tools for these (VibeUE intentionally doesn't duplicate them):**
 - **Assets** (find / save / move / delete / duplicate / metadata): native Python
   `unreal.EditorAssetLibrary` / `EditorAssetSubsystem` inside `execute_python` (batchable), or
-  Epic's `AssetTools` toolset (via `execute_tool` in-Python, or `call_tool`).
+  Epic's `EditorToolset.AssetToolset` (via `await call_tool(...)` in-Python, or MCP `call_tool`).
 - **Screenshots / vision**: engine-native in 5.9 (see §6) — `SceneCaptureToolset.CaptureGameViewport`
   captures the PIE viewport *with* the UMG/Slate HUD, and every capture tool returns a real MCP
   image block. VibeUE's `capture_image` is gone.
-- **PIE**: `EditorAppToolset.StartPIE` / `StopPIE` / `IsPIERunning` — via `vibeue.exec_tool`
-  (bare `StartPIE` works; the raw path demands the full options shape), or `call_tool`.
-- **Logs**: `ConsoleToolset.LogsToolset.GetLogEntries` (LogsToolset moved into ConsoleToolset in 5.9) — via `execute_tool` or `call_tool` (or read the `.log` file).
-- **DataTables / DataAssets / user enums & structs**: Epic's `DataTableTools` / `DataAssetTools` /
-  `UserDefinedEnumToolset` / `UserDefinedStructToolset` / `ObjectTools` (via `execute_tool` or
-  `call_tool`). VibeUE no longer ships an enum/struct service - 5.9 covers it.
+- **PIE**: `EditorToolset.EditorAppToolset.StartPIE` / `StopPIE` / `IsPIERunning` — via
+  `await call_tool(...)` (or `vibeue.exec_tool`, where bare `StartPIE` works without the full
+  options shape).
+- **Logs**: `ConsoleToolset.LogsToolset.GetLogEntries` (LogsToolset moved into ConsoleToolset in
+  5.9) — via `await call_tool(...)` (or read the `.log` file).
+- **DataTables / DataAssets / user enums & structs**: Epic's `DataTableToolset` /
+  `UserDefinedEnumToolset` / `UserDefinedStructToolset` / `ObjectToolset` (via `await call_tool(...)`).
+  VibeUE no longer ships an enum/struct service - 5.9 covers it.
 
 ---
 
@@ -183,24 +188,33 @@ VibeUE's 32 skill packs are **Markdown agent skills discovered natively by UE 5.
 engine's `AgentSkillToolset` alongside the engine's own skills. Skills tell you **what to do and
 why**; they do **not** replace discovery of exact signatures.
 
-**Discover + load (both are `call_tool` on `ToolsetRegistry.AgentSkillToolset`):**
+**Discover + load (both are tools on `ToolsetRegistry.AgentSkillToolset`):**
 ```
+# MCP, one call each:
 call_tool(tool_name="ListSkills", toolset_name="ToolsetRegistry.AgentSkillToolset")
   → { "/Skills/VibeUE/blueprints": "Create and modify Blueprint assets…", … }
 
 call_tool(tool_name="GetSkills", toolset_name="ToolsetRegistry.AgentSkillToolset",
-          arguments={"skillPaths": ["/Skills/VibeUE/blueprints"]})
-  → full markdown for that pack
+          arguments={"skillPaths": ["/Skills/VibeUE/blueprints", "/Skills/VibeUE/blueprint-graphs"]})
+  → { "<path>": "<full markdown>", … }
+
+# or inside an execute_python script:
+skills = await call_tool("ToolsetRegistry.AgentSkillToolset.ListSkills")
+docs   = await call_tool("ToolsetRegistry.AgentSkillToolset.GetSkills", skillPaths=["/Skills/VibeUE/landscape"])
 ```
+Not sure which pack applies? Load **`/Skills/VibeUE/vibeue`**, the index that routes every task to its pack.
 - `ListSkills` returns **summaries only** (cheap) — call it once per session to see what exists.
   VibeUE packs are **`/Skills/VibeUE/<name>`**; engine skills are `/Skills/Engine/<name>` and other
   plugins' are `/Skills/<PluginName>/...`.
 - `GetSkills` returns full instructions **lazily** — request only the packs you need.
 - **Sub-docs are no longer separate skill entries.** A pack's deep-reference pages are plain
   markdown files next to its `SKILL.md`, listed under its **Reference pages** section as relative
-  links. UE rewrites those links to absolute paths when it serves the skill, so **read the file at
-  the path given** rather than looking for a `/Skills/...` entry for it. Same for the
+  links. UE rewrites those links to absolute file paths when it serves the skill (e.g.
+  `E:/…/Plugins/VibeUE/Skills/niagara-emitters/color.md`), so **open the file at that path with your
+  file-reading tool** rather than looking for a `/Skills/...` entry for it. Same for the
   `scripts/*.txt` runnable samples.
+- The engine re-reads the markdown on every call: there is no reload command and no restart needed.
+- `CreateSkill` / `UpdateSkill` on the same toolset **write** skills — only on the user's explicit request.
 
 **When to load a skill:** the user names a domain ("create a blueprint", "build a state tree"), or you
 hit a non-obvious workflow. Then: read the pack → `get_symbol` the classes it names → write
@@ -219,17 +233,16 @@ sub = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
 # VibeUE services are static classes, called directly:
 tl = unreal.BlueprintService.get_timelines("/Game/MyBP")
 
-# Batch a whole task in ONE execute_python call, printing evidence as you go.
-# Blueprint create / variables are ENGINE-side (native libs + BlueprintTools toolset), NOT
-# BlueprintService (it owns graphs/components/timelines and compile — see get_symbol):
-import json
+# Batch a whole task in ONE execute_python call; the final expression is what comes back.
+# Blueprint create / variables / compile are ENGINE-side (native libs + BlueprintToolset), NOT
+# BlueprintService (it keeps timelines, macro graphs and layout analysis — see get_symbol):
 factory = unreal.BlueprintFactory(); factory.set_editor_property("ParentClass", unreal.Actor)
-bp = unreal.AssetToolsHelpers.get_asset_tools().create_asset("BP_Enemy", "/Game/Blueprints", unreal.Blueprint, factory); print("CREATED:", bp)
-unreal.ToolsetRegistry.execute_tool("BlueprintToolsets.BlueprintToolset", "AddVariable",
-    json.dumps({"blueprint": {"refPath": "/Game/Blueprints/BP_Enemy.BP_Enemy"},   # refPath = full object path
-                "name": "Health", "type_name": "float"})); print("ADDED: Health")
-unreal.ToolsetRegistry.execute_tool("BlueprintToolsets.BlueprintToolset", "CompileBlueprint",
-    json.dumps({"blueprint": {"refPath": "/Game/Blueprints/BP_Enemy.BP_Enemy"}})); print("COMPILED: BP_Enemy")
+bp = unreal.AssetToolsHelpers.get_asset_tools().create_asset("BP_Enemy", "/Game/Blueprints", unreal.Blueprint, factory)
+ref = {"refPath": bp.get_path_name()}                       # refPath = full object path
+await call_tool("BlueprintToolsets.BlueprintToolset.AddVariable", blueprint=ref, name="Health", typeName="float")
+await call_tool("BlueprintToolsets.BlueprintToolset.CompileBlueprint", blueprint=ref)
+{"created": ref["refPath"],
+ "variables": await call_tool("BlueprintToolsets.BlueprintToolset.ListVariables", blueprint=ref)}
 ```
 
 ---
@@ -293,9 +306,9 @@ CPU-bound frame:
 # RUN FIRST: game/render/GPU ms. Epic's, via call_tool — judge the bound yourself from the numbers.
 call_tool PerfToolset.StatsToolset.GetFrameTimings
 # Trace control is console commands now (start_trace / stop_trace are gone):
-call_tool ConsoleToolset.RunConsoleCommand {"Command": "Trace.Start cpu,gpu,frame"}
+call_tool ConsoleToolset.RunConsoleCommand {"command": "Trace.Start cpu,gpu,frame"}
 # … reproduce the workload (ideally under PIE / standalone) …
-call_tool ConsoleToolset.RunConsoleCommand {"Command": "Trace.Stop"}
+call_tool ConsoleToolset.RunConsoleCommand {"command": "Trace.Stop"}
 ```
 ```python
 import unreal
@@ -316,15 +329,19 @@ unreal.PerformanceService.set_background_throttling(True)    # restore when done
 To drive gameplay in PIE without OS focus or input-asset remapping, **every bounded press or hold is
 Epic's** (`inject_action_for` and `inject_key` are gone):
 ```
-call_tool InputToolset.ApplyInput {"Entries": [{"Action": "/Game/Input/IA_Block", "Value": [1,0,0]}],
-                                   "DurationSeconds": 1.5}       # 0 = a tap (down then up)
-call_tool InputToolset.ApplyInput {"Entries": [{"Key": "SpaceBar", "Value": [1,0,0]}], "DurationSeconds": 0}
+call_tool InputToolset.ApplyInput {"entries": [{"action": {"refPath": "/Game/Input/IA_Block.IA_Block"},
+                                               "value": {"x": 1, "y": 0, "z": 0}}],
+                                   "durationSeconds": 1.5}       # 0 = a tap (down then up)
+call_tool InputToolset.ApplyInput {"entries": [{"key": {"keyName": "SpaceBar"}, "value": {"x": 1, "y": 0, "z": 0}}],
+                                   "durationSeconds": 0}
 ```
-VibeUE keeps exactly two input-injection calls, for an **indefinite** hold released later:
-`unreal.InputService.inject_action("/Game/Input/IA_Fire")` (Enhanced Input, queued for the next input
-tick: read the result in a later call) and `unreal.InputService.stop_injection("/Game/Input/IA_Fire")`.
-Holds keep the editor off its background frame rate and end with PIE. Both take `pie_instance` to
-pick the PIE world (-1 = the first PIE world with a local player). Never hand-roll a slate-tick loop
+VibeUE keeps the **indefinite** hold, whose release depends on something you observe first (Epic's
+`ApplyInput` always self-releases after `DurationSeconds`):
+`unreal.InputService.start_injection("/Game/Input/IA_MoveForward")` … other calls, read the pawn …
+`unreal.InputService.stop_injection("/Game/Input/IA_MoveForward")`. `inject_action` is a single-tick
+press queued for the next input tick (read its effect in a later call). Holds keep the editor off its
+background frame rate and end with PIE. All three take `pie_instance` to pick the PIE world (-1 = the
+first PIE world with a local player). Never hand-roll a slate-tick loop
 around `inject_input_vector_for_action`.
 PIE net mode and client count: `unreal.EngineSettingsService.set_pie_settings("ListenServer", 3, True)`
 (net mode, clients 1-10, run under one process; it is saved to the user's ini), read back with
@@ -391,9 +408,10 @@ crash handler — MCP will hang; relaunch); fresh and small → the editor is fi
 - **Idempotent: check before create.** Use the service `*_exists()` (or `unreal.EditorAssetLibrary.does_asset_exist`)
   before creating, to avoid duplicates.
 - **Compile after structure changes.** `BlueprintToolsets.BlueprintToolset.CompileBlueprint` after adding
-  variables/functions/components. It returns `success`, `num_errors`, `num_warnings`, `errors` and
-  `warnings`. `unreal.BlueprintEditorLibrary.compile_blueprint(loaded_bp)` also works but returns no
-  errors. A `BlueprintDslToolset.Write` or `.Edit` is transactional and reports parse failures itself,
+  variables/functions/components. It returns nothing on success and **raises** on failure with every
+  error node's message joined in the exception text (`bWarningsAsErrors=True` fails on warnings too),
+  so an `await call_tool(...)` that did not raise is the compile evidence.
+  `unreal.BlueprintEditorLibrary.compile_blueprint(loaded_bp)` also works but reports no errors. A `BlueprintDslToolset.Write` or `.Edit` is transactional and reports parse failures itself,
   but still compile afterwards.
 - **Verify success with evidence.** For Blueprint/Widget/Material/AnimGraph/StateTree edits, a successful
   tool call isn't proof — re-read the asset (`BlueprintDslToolset.Read` for a graph, which shows nodes

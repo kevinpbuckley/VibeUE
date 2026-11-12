@@ -3,7 +3,8 @@
 Natural language prompts for Niagara authoring, stated as goals. Run sequentially.
 
 `NiagaraService` was deleted: systems, emitters and modules are Epic's `NiagaraToolsets`, and VibeUE
-keeps only `NiagaraEmitterService` (three colour-curve tools) and `NiagaraScratchPadService`. The
+keeps only `NiagaraEmitterService` (`shift_color_hue`; colour-curve keys are Epic's
+`GetStackInputData` / `SetStackInputData`) and `NiagaraScratchPadService`. The
 prompts below name no tools on purpose — an agent carrying VibeUE's skills should still reach the
 goal with whatever tool now owns the job. A failure here is usually a stale mapping table in a
 skill, not a missing capability.
@@ -298,8 +299,9 @@ on the `ParticleUpdate` stage via `NiagaraScratchPadService.create_scratch_modul
 
 ---
 
-Resolve the scratch script path for `ScratchSmoke` with `get_scratch_script_path` and list
-its graph nodes - the default template should include MapGet, MapSet, an Input, and an Output.
+Resolve the scratch script path for `ScratchSmoke` with Epic's `GetModuleTopology`
+(`moduleScript`) and list its graph nodes - the default template should include MapGet, MapSet,
+an Input, and an Output.
 
 ---
 
@@ -309,7 +311,7 @@ pin named `In` and an `Output` `float` pin named `Out`. Add a module input `Scal
 
 ---
 
-Call `apply_changes` on `NS_SmokeTest` and then `compile_with_results`. The system should
+Call `apply_changes` on `NS_SmokeTest` and then Epic's `GetSystemCompileState`. The system should
 compile with zero errors.
 
 ---

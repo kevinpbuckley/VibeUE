@@ -155,47 +155,6 @@ FString UAnimSequenceService::AdditiveTypeToString(int32 Type)
 	}
 }
 
-int32 UAnimSequenceService::StringToAdditiveType(const FString& TypeString)
-{
-	if (TypeString.Equals(TEXT("LocalSpace"), ESearchCase::IgnoreCase))
-	{
-		return static_cast<int32>(EAdditiveAnimationType::AAT_LocalSpaceBase);
-	}
-	else if (TypeString.Equals(TEXT("MeshSpace"), ESearchCase::IgnoreCase))
-	{
-		return static_cast<int32>(EAdditiveAnimationType::AAT_RotationOffsetMeshSpace);
-	}
-	return static_cast<int32>(EAdditiveAnimationType::AAT_None);
-}
-
-FString UAnimSequenceService::RootLockToString(int32 LockType)
-{
-	switch (static_cast<ERootMotionRootLock::Type>(LockType))
-	{
-		case ERootMotionRootLock::RefPose:
-			return TEXT("RefPose");
-		case ERootMotionRootLock::AnimFirstFrame:
-			return TEXT("AnimFirstFrame");
-		case ERootMotionRootLock::Zero:
-			return TEXT("Zero");
-		default:
-			return TEXT("RefPose");
-	}
-}
-
-int32 UAnimSequenceService::StringToRootLock(const FString& LockString)
-{
-	if (LockString.Equals(TEXT("AnimFirstFrame"), ESearchCase::IgnoreCase))
-	{
-		return static_cast<int32>(ERootMotionRootLock::AnimFirstFrame);
-	}
-	else if (LockString.Equals(TEXT("Zero"), ESearchCase::IgnoreCase))
-	{
-		return static_cast<int32>(ERootMotionRootLock::Zero);
-	}
-	return static_cast<int32>(ERootMotionRootLock::RefPose);
-}
-
 FString UAnimSequenceService::InterpModeToString(int32 Mode)
 {
 	switch (static_cast<ERichCurveInterpMode>(Mode))
@@ -957,16 +916,6 @@ void UAnimSequenceService::MultiplyQuats(const FQuat& A, const FQuat& B, FQuat& 
 // ANIMATION PROPERTIES
 // ============================================================================
 
-float UAnimSequenceService::GetAnimationLength(const FString& AnimPath)
-{
-	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
-	if (!AnimSeq)
-	{
-		return -1.0f;
-	}
-	return AnimSeq->GetPlayLength();
-}
-
 float UAnimSequenceService::GetAnimationFrameRate(const FString& AnimPath)
 {
 	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
@@ -1006,47 +955,6 @@ bool UAnimSequenceService::SetAnimationFrameRate(const FString& AnimPath, float 
 	IAnimationDataController& Controller = AnimSeq->GetController();
 	Controller.SetFrameRate(FFrameRate(FMath::RoundToInt32(NewFrameRate), 1));
 
-	AnimSeq->MarkPackageDirty();
-	return true;
-}
-
-FString UAnimSequenceService::GetAnimationSkeleton(const FString& AnimPath)
-{
-	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
-	if (!AnimSeq)
-	{
-		return FString();
-	}
-
-	USkeleton* Skeleton = AnimSeq->GetSkeleton();
-	if (!Skeleton)
-	{
-		return FString();
-	}
-
-	return Skeleton->GetPathName();
-}
-
-float UAnimSequenceService::GetRateScale(const FString& AnimPath)
-{
-	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
-	if (!AnimSeq)
-	{
-		return -1.0f;
-	}
-	return AnimSeq->RateScale;
-}
-
-bool UAnimSequenceService::SetRateScale(const FString& AnimPath, float RateScale)
-{
-	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
-	if (!AnimSeq)
-	{
-		return false;
-	}
-
-	AnimSeq->Modify();
-	AnimSeq->RateScale = RateScale;
 	AnimSeq->MarkPackageDirty();
 	return true;
 }
@@ -2460,159 +2368,6 @@ bool UAnimSequenceService::SetSyncMarkerTimeByName(
 }
 
 // ============================================================================
-// ADDITIVE ANIMATION
-// ============================================================================
-
-FString UAnimSequenceService::GetAdditiveAnimType(const FString& AnimPath)
-{
-	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
-	if (!AnimSeq)
-	{
-		return TEXT("");
-	}
-
-	return AdditiveTypeToString(static_cast<int32>(AnimSeq->AdditiveAnimType));
-}
-
-bool UAnimSequenceService::SetAdditiveAnimType(const FString& AnimPath, const FString& Type)
-{
-	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
-	if (!AnimSeq)
-	{
-		return false;
-	}
-
-	AnimSeq->Modify();
-	AnimSeq->AdditiveAnimType = static_cast<EAdditiveAnimationType>(StringToAdditiveType(Type));
-	AnimSeq->MarkPackageDirty();
-
-	return true;
-}
-
-FString UAnimSequenceService::GetAdditiveBasePose(const FString& AnimPath)
-{
-	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
-	if (!AnimSeq)
-	{
-		return FString();
-	}
-
-	if (AnimSeq->RefPoseSeq)
-	{
-		return AnimSeq->RefPoseSeq->GetPathName();
-	}
-
-	return FString();
-}
-
-bool UAnimSequenceService::SetAdditiveBasePose(
-	const FString& AnimPath,
-	const FString& BasePoseAnimPath)
-{
-	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
-	if (!AnimSeq)
-	{
-		return false;
-	}
-
-	UAnimSequence* BasePoseAnim = LoadAnimSequence(BasePoseAnimPath);
-	if (!BasePoseAnim && !BasePoseAnimPath.IsEmpty())
-	{
-		UE_LOG(LogTemp, Warning, TEXT("UAnimSequenceService::SetAdditiveBasePose: Could not load base pose: %s"), *BasePoseAnimPath);
-		return false;
-	}
-
-	AnimSeq->Modify();
-	AnimSeq->RefPoseSeq = BasePoseAnim;
-	AnimSeq->RefPoseType = BasePoseAnim ? EAdditiveBasePoseType::ABPT_AnimScaled : EAdditiveBasePoseType::ABPT_RefPose;
-	AnimSeq->MarkPackageDirty();
-
-	return true;
-}
-
-// ============================================================================
-// ROOT MOTION
-// ============================================================================
-
-bool UAnimSequenceService::GetEnableRootMotion(const FString& AnimPath)
-{
-	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
-	if (!AnimSeq)
-	{
-		return false;
-	}
-
-	return AnimSeq->bEnableRootMotion;
-}
-
-bool UAnimSequenceService::SetEnableRootMotion(const FString& AnimPath, bool bEnable)
-{
-	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
-	if (!AnimSeq)
-	{
-		return false;
-	}
-
-	AnimSeq->Modify();
-	AnimSeq->bEnableRootMotion = bEnable;
-	AnimSeq->MarkPackageDirty();
-
-	return true;
-}
-
-FString UAnimSequenceService::GetRootMotionRootLock(const FString& AnimPath)
-{
-	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
-	if (!AnimSeq)
-	{
-		return TEXT("");
-	}
-
-	return RootLockToString(static_cast<int32>(AnimSeq->RootMotionRootLock));
-}
-
-bool UAnimSequenceService::SetRootMotionRootLock(const FString& AnimPath, const FString& LockType)
-{
-	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
-	if (!AnimSeq)
-	{
-		return false;
-	}
-
-	AnimSeq->Modify();
-	AnimSeq->RootMotionRootLock = static_cast<ERootMotionRootLock::Type>(StringToRootLock(LockType));
-	AnimSeq->MarkPackageDirty();
-
-	return true;
-}
-
-bool UAnimSequenceService::GetForceRootLock(const FString& AnimPath)
-{
-	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
-	if (!AnimSeq)
-	{
-		return false;
-	}
-
-	return AnimSeq->bForceRootLock;
-}
-
-bool UAnimSequenceService::SetForceRootLock(const FString& AnimPath, bool bForce)
-{
-	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
-	if (!AnimSeq)
-	{
-		return false;
-	}
-
-	AnimSeq->Modify();
-	AnimSeq->bForceRootLock = bForce;
-	AnimSeq->MarkPackageDirty();
-
-	return true;
-}
-
-// ============================================================================
 // COMPRESSION
 // ============================================================================
 
@@ -2639,33 +2394,6 @@ bool UAnimSequenceService::GetCompressionInfo(
 	{
 		OutInfo.CompressionScheme = AnimSeq->BoneCompressionSettings->GetName();
 	}
-
-	return true;
-}
-
-bool UAnimSequenceService::SetCompressionScheme(
-	const FString& AnimPath,
-	const FString& CompressionSchemePath)
-{
-	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
-	if (!AnimSeq)
-	{
-		return false;
-	}
-
-	// Load compression settings
-	UObject* LoadedObject = LoadAssetAnyState(CompressionSchemePath);
-	UAnimBoneCompressionSettings* CompressionSettings = Cast<UAnimBoneCompressionSettings>(LoadedObject);
-
-	if (!CompressionSettings)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("UAnimSequenceService::SetCompressionScheme: Could not load compression settings: %s"), *CompressionSchemePath);
-		return false;
-	}
-
-	AnimSeq->Modify();
-	AnimSeq->BoneCompressionSettings = CompressionSettings;
-	AnimSeq->MarkPackageDirty();
 
 	return true;
 }
@@ -2779,23 +2507,6 @@ TArray<FString> UAnimSequenceService::GetSourceFiles(const FString& AnimPath)
 // ============================================================================
 // EDITOR NAVIGATION
 // ============================================================================
-
-bool UAnimSequenceService::OpenAnimationEditor(const FString& AnimPath)
-{
-	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
-	if (!AnimSeq)
-	{
-		return false;
-	}
-
-	if (GEditor)
-	{
-		GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(AnimSeq);
-		return true;
-	}
-
-	return false;
-}
 
 bool UAnimSequenceService::SetPreviewTime(const FString& AnimPath, float Time)
 {

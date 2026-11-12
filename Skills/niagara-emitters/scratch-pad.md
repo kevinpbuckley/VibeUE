@@ -111,9 +111,10 @@ unreal.NiagaraScratchPadService.connect_pins(S, E, MOD, HLSL, "Splatted", mapset
 # 6. Apply + recompile + save (one call)
 ok = unreal.NiagaraScratchPadService.apply_changes(S)
 if not ok:
-    # Real per-script compiler diagnostics — no more guessing from "System is invalid"
-    for line in unreal.NiagaraScratchPadService.get_compile_messages(S):
-        print(line)
+    # Real per-script compiler diagnostics (Epic) — no more guessing from "System is invalid"
+    state = await call_tool("NiagaraToolsets.NiagaraToolset_System.GetSystemCompileState",
+                            system={"refPath": S + "." + S.rsplit("/", 1)[-1]})
+    print(state)
 ```
 
 ### Compile failures are debuggable now
@@ -121,9 +122,9 @@ if not ok:
 - `apply_changes` **validates the scratch graphs before compiling** (duplicate same-named Map
   Get/Set pins used to fire a fatal engine assert and crash the editor — now it refuses with an
   error naming the node/pin) and returns `False` when the compile produced errors.
-- `get_compile_messages(system_path, errors_only=True)` returns the actual Niagara translator
-  messages per script (`"Error: [Emitter/Script] message (node <guid>)"`). Call it after any failed
-  compile instead of bisecting the graph.
+- Epic's `NiagaraToolsets.NiagaraToolset_System.GetSystemCompileState(system)` returns the
+  aggregate status plus per-script compile info and compile events (the actual Niagara translator
+  messages, with severity). Call it after any failed compile instead of bisecting the graph.
 - GPU-only data interfaces on a CPU emitter (below) are the most common cause — fix with
   Epic `NiagaraToolsets.SetEmitterData` to set the emitter's sim target to GPU, which recompiles the system.
 
@@ -171,13 +172,13 @@ If a bare name doesn't resolve, pass the full `Namespace::Op` string.
 
 > ⚠️ **`Grid2DCollection`, `Grid3DCollection`, and `RenderTarget2D` data interfaces are GPU-compute
 > only.** If their inputs/writes appear in an emitter whose Sim Target is **CPU** (the default for a
-> `minimal` emitter), `compile_with_results` returns `success=False` with the generic message
+> `minimal` emitter), the compile (`apply_changes`) fails with the generic message
 > `"System is invalid after compilation"` — this is a Niagara constraint, not a service failure. Set
 > the emitter to **GPUComputeSim** before wiring grid/render-target logic:
 > set the sim target to GPU with Epic `NiagaraToolsets.SetEmitterData` (it recompiles the system).
 > A Custom HLSL bool output wired to a plain `Particles.*` attribute compiles fine on CPU; it's the
 > grid/RT data interfaces that force GPU. When you hit "System is invalid", check
-> `get_compile_messages(S)` and the emitter's Sim Target first.
+> Epic `GetSystemCompileState` and the emitter's Sim Target first.
 
 ### One pattern that fixes most "input not found" errors
 

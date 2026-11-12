@@ -1,18 +1,26 @@
 never run more than one tool at a time
 
-# Widget Child Order Tests (add_component child_index + reorder_component)
+# Widget Child Order Tests (CreateAndAddWidget childIndex + MoveWidget)
 
-Coverage for ordered insert (`add_component(..., child_index=N)`) and `reorder_component`, added in
-PR #526. Order is what a VerticalBox actually lays out, so every check is a hierarchy readback — do
-not trust a `True` return on its own. Run sequentially.
+Coverage for ordered insert (`UMGEditor.WidgetBlueprintEditorSubsystem.CreateAndAddWidget` with
+`childIndex`) and in-parent reorder (`MoveWidget` with the widget's current parent). These replaced
+VibeUE's `WidgetService.add_component(child_index)` / `reorder_component` / `reparent_widget`, which
+were cut in favour of Epic's tools. Order is what a VerticalBox actually lays out, so every check is a
+`WidgetStaticAnalysisToolset.DescribeWidget` readback — do not trust a return value on its own. Run
+sequentially.
+
+Widget arguments are object paths in the editable tree:
+`/Game/Blueprints/TestChildOrder.TestChildOrder:WidgetTree.<Name>`. `widgetClass` is a class path
+(`/Script/UMG.TextBlock`). Neither tool compiles the Blueprint; compile before the persistence check.
 
 ---
 
 ## Setup
 
 Create a widget blueprint called TestChildOrder in the Blueprints folder. If it already exists, delete
-it silently and create a new one. Give it a VerticalBox root named ListRoot, then add three TextBlocks
-under it named ItemA, ItemB, ItemC — in that order, with no child_index.
+it silently and create a new one. With `CreateAndAddWidget`, give it a VerticalBox root named ListRoot
+(no `parentWidget` on an empty tree makes it the root), then add three TextBlocks under it named ItemA,
+ItemB, ItemC — in that order, with `childIndex` -1.
 
 ---
 
@@ -23,18 +31,18 @@ the order you actually see.
 
 ## Insert at the front
 
-Add a TextBlock named Banner under ListRoot at child_index 0.
+Add a TextBlock named Banner under ListRoot with `childIndex` 0.
 
 ---
 
 Read the hierarchy back. The order must now be Banner, ItemA, ItemB, ItemC. If Banner landed at the
-end, child_index was ignored — report that as a failure.
+end, childIndex was ignored — report that as a failure.
 
 ---
 
 ## Insert in the middle
 
-Add a TextBlock named Middle under ListRoot at child_index 2.
+Add a TextBlock named Middle under ListRoot with `childIndex` 2.
 
 ---
 
@@ -44,8 +52,8 @@ Read the hierarchy back: Banner, ItemA, Middle, ItemB, ItemC.
 
 ## Insert at the end via an explicit index
 
-Add a TextBlock named Tail under ListRoot at a child_index equal to the current number of children
-(that boundary value is legal and means "append").
+Add a TextBlock named Tail under ListRoot with `childIndex` equal to the current number of children
+(that boundary value should mean "append").
 
 ---
 
@@ -55,52 +63,45 @@ Read the hierarchy back: Tail must be last, and nothing else may have moved.
 
 ## Default is still append
 
-Add a TextBlock named Appended under ListRoot with no child_index argument at all.
+Add a TextBlock named Appended under ListRoot, leaving `childIndex` at its default (-1).
 
 ---
 
-Read the hierarchy back. Appended must be last — the default behaviour must not have changed.
+Read the hierarchy back. Appended must be last.
 
 ---
 
-## Out-of-range insert must fail loudly
+## Out-of-range insert
 
-Try to add a TextBlock named TooFar under ListRoot at child_index 99.
-
----
-
-This must fail with an error message naming the valid range — it must NOT silently append. Confirm
-TooFar does not exist in the hierarchy afterwards.
+Try to add a TextBlock named TooFar under ListRoot with `childIndex` 99.
 
 ---
 
-Try to add a TextBlock named Negative under ListRoot at child_index -5. Same expectation: an explicit
-error, and no widget created. (Only -1 means append.)
+Report exactly what Epic's tool does (error, clamp to append, or something else). It must not corrupt
+the tree. Read the hierarchy back and report whether TooFar exists and where.
 
 ---
 
-## Empty parent name means "the root panel", not "become the root"
-
-Add a TextBlock named IntoRoot with an empty parent name and child_index 0.
-
----
-
-This must SUCCEED and land at index 0 of ListRoot — an empty parent name resolves to the existing root
-panel. It must not become a second root.
+Try to add a TextBlock named Negative under ListRoot with `childIndex` -5. Same: report the observed
+behaviour and read the hierarchy back. (Only -1 is documented as append.)
 
 ---
 
-## child_index with genuinely no panel parent
+## Omitted parent means "root", but only on an empty tree
 
-Create a second, completely empty widget blueprint (no root widget at all), then try to add a TextBlock
-to it with child_index 0. This must fail with an error explaining there is no panel parent to insert
-into, and must not create the widget. Delete that blueprint afterwards.
+Add a TextBlock named IntoRoot with no `parentWidget` while the tree already has a root.
+
+---
+
+Report what happens. The documented contract is that a null parent makes the widget the root only
+when the tree is empty; do not assume it falls back to the existing root panel (VibeUE's removed
+`add_component` did). Read the hierarchy back and confirm there is still exactly one root, ListRoot.
 
 ---
 
 ## Reorder an existing widget
 
-Move ItemC to index 0 with reorder_component.
+Move ItemC to the front with `MoveWidget(newParent=<ListRoot>, childIndex=0)`.
 
 ---
 
@@ -108,7 +109,8 @@ Read the hierarchy back and confirm ItemC is first and every other widget kept i
 
 ---
 
-Move ItemC back to the last index.
+Move ItemC back to the last position. Because `MoveWidget` uses drop-position semantics, moving
+forward within the same parent to final position N needs `childIndex` N+1, or -1 to append. Use -1.
 
 ---
 
@@ -118,45 +120,44 @@ Read the hierarchy back and confirm it is last.
 
 ## Reorder edge cases
 
-Reorder a widget to the index it already occupies. This should succeed and change nothing.
+Move a widget to the position it already occupies. This should succeed and change nothing (mind the
+N+1 rule for forward moves).
 
 ---
 
-Try reorder_component with an index equal to the child count (one past the end). It must return False,
-and the hierarchy must be unchanged.
+Try `MoveWidget` on a widget name that does not exist. It must return an error, not crash.
 
 ---
 
-Try reorder_component with index -1. It must return False — unlike add_component, -1 is not special
-here.
+Try `MoveWidget` on ListRoot itself (the root, which has no panel parent). It must be rejected, not
+crash, and the hierarchy must be unchanged.
 
 ---
 
-Try reorder_component on a widget name that does not exist. It must return False, not crash.
-
----
-
-Try reorder_component on ListRoot itself (the root widget, which has no panel parent). It must return
-False, not crash, and the hierarchy must be unchanged.
-
----
-
-## Reorder does not reparent
+## Reparent
 
 Add a HorizontalBox named SideBox under ListRoot, and a TextBlock named Nested under SideBox. Now call
-reorder_component on Nested with index 0.
+`MoveWidget` on Nested with `newParent` ListRoot and `childIndex` 0.
 
 ---
 
-Read the hierarchy back. Nested must still be a child of SideBox — reorder_component only moves a
-widget within its current parent. Moving between parents is reparent_widget's job.
+Read the hierarchy back. Nested must now be ListRoot's first child and SideBox must be empty. Then
+try `MoveWidget` on SideBox with `newParent` Nested (a non-panel) and with `newParent` SideBox itself;
+both must be rejected and leave the tree unchanged.
+
+---
+
+## Rename and remove
+
+Rename Banner to BannerRenamed with `RenameWidget`. Read the hierarchy back and confirm the new name
+and its position. Then `RemoveWidget` SideBox and confirm SideBox is gone along with any children.
 
 ---
 
 ## Persistence
 
-Save and reload the widget blueprint, then read the hierarchy one more time. The child order must
-survive the round trip.
+Compile and save the widget blueprint, reload it, then read the hierarchy one more time. The child
+order must survive the round trip.
 
 ---
 

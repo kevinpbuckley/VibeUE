@@ -31,7 +31,15 @@ keywords:
 > (`unreal.AnimGraphService.<method>()`); reach engine toolsets with `call_tool`.
 
 > An AnimBP **is a Blueprint**. The state-machine/AnimGraph authoring here is VibeUE
-> `AnimGraphService` (intact, 48 tools). Everything else about it as a Blueprint is the engine's:
+> `AnimGraphService` (40 AI tools). Its `get_parent_class` is gone -- use
+> `BlueprintToolsets.BlueprintToolset.GetParent`. `add_blend_by_bool`, `add_blend_by_int`,
+> `add_layered_blend`, `add_use_cached_pose`, `add_save_cached_pose`, `add_two_bone_ik_node` and `get_output_pose_node_id`
+> are still callable from Python (they return the node GUIDs `connect_anim_nodes` takes) but are no
+> longer AI tools: the engine's `BlueprintToolset.CreateNode` (palette type ids such as
+> `Animation|Blends|BlendPosesbybool`, `Animation|Blends|BlendPosesbyint`,
+> `Animation|Blends|Layeredblendperbone`, `Animation|SkeletalControls|TwoBoneIK`,
+> `Animation|CachedPoses|Usecachedpose'<CacheName>'`, `Animation|CachedPoses|NewSavecachedpose...` then `await call_tool("EditorToolset.ObjectToolset.SetProperties", instance=<node ref from CreateNode>, values='{"CacheName": "..."}')` -- `values` is a JSON STRING, and `CreateNode` returns the node as an object reference you pass straight in as `instance`) and `FindNodes` (nodeClass
+> `AnimGraphNode_Root`) cover them. Everything else about it as a Blueprint is the engine's:
 > `BlueprintToolsets.BlueprintToolset` owns variables, components, interfaces, events, function
 > graphs, node CRUD and compiling (`AddVariable`, `AddObjectVariable`, `AddStructVariable`,
 > `ListVariables`, `GetVariableTooltip`/`SetVariableTooltip` and the other flag accessors,
@@ -184,8 +192,9 @@ import unreal
 
 abp_path = "/Game/Blueprints/SandboxCharacter_CMC_ABP"
 
-# Get overview
-parent = unreal.AnimGraphService.get_parent_class(abp_path)
+# Get overview (parent class is the engine's BlueprintToolset.GetParent; object path form)
+parent = await call_tool("BlueprintToolsets.BlueprintToolset.GetParent",
+                         blueprint={"refPath": abp_path + ".SandboxCharacter_CMC_ABP"})
 skeleton = unreal.AnimGraphService.get_skeleton(abp_path)
 print(f"Parent: {parent}, Skeleton: {skeleton}")
 
@@ -421,31 +430,65 @@ follows a variable — all are a **pose piped through Modify Bone nodes**, which
 shape and has its own traps.
 
 The chain is always: a pose source → **Local To Component** → one Modify Bone per bone →
-**Component To Local** → Output. Skeletal controls only operate in component space, and
-`connect_anim_nodes` does **not** insert the space conversions for you.
+**Component To Local** → Output. Skeletal controls only operate in component space, and neither
+`connect_anim_nodes` nor `BlueprintToolset.ConnectPins` inserts the space conversions for you.
+
+VibeUE has no creator for the space converters, the ref pose or a variable getter, and its
+connect tools address nodes by GUID, which the engine's node handles do not carry -- so build this
+chain entirely with the engine's `BlueprintToolset` (one `execute_python` call):
 
 ```python
 import unreal
-AG, BS = unreal.AnimGraphService, unreal.BlueprintService
-PATH, G = "/Game/ABP_Windmill", "AnimGraph"
+BT = "BlueprintToolsets.BlueprintToolset."
+ABP = {"refPath": "/Game/ABP_Windmill.ABP_Windmill"}           # object path: name after the dot
+g = await call_tool(BT + "GetGraph", blueprint=ABP, graphName="AnimGraph")
 
-REF = "SPAWN AnimGraphNode_LocalRefPose|Local Space Ref Pose"   # no sequence needed
-L2C = "SPAWN AnimGraphNode_LocalToComponentSpace|Local To Component"
-C2L = "SPAWN AnimGraphNode_ComponentToLocalSpace|Component To Local"
+async def make(fragment, x, y):
+    """Create the one palette entry whose type id contains `fragment` (case-insensitive)."""
+    ids = await call_tool(BT + "FindNodeTypes", graph=g, typeIdFilter=fragment)
+    if len(ids) != 1:                                  # widen/narrow the fragment, don't guess
+        raise RuntimeError(f"{fragment!r} matched {list(ids)}")
+    return await call_tool(BT + "CreateNode", graph=g, typeId=ids[0], pos=[x, y])
 
-ref = BS.create_node_by_key(PATH, G, REF, -900, -80)
-l2c = BS.create_node_by_key(PATH, G, L2C, -640, -80)
-AG.connect_anim_nodes(PATH, G, ref, "Pose", l2c, "LocalPose")
+async def pin(node, name, output):
+    info = (await call_tool(BT + "GetNodeInfos", nodes=[node]))[0]
+    pins = info["outputPins"] if output else info["inputPins"]
+    return next(p["pinId"] for p in pins if p["name"] == name)
 
-mb = AG.add_modify_bone_node(PATH, G, "sails", -340, -80)
-AG.connect_anim_nodes(PATH, G, l2c, "ComponentPose", mb, "ComponentPose")
-getter = BS.create_node_by_key(PATH, G, "SPAWN K2Node_VariableGet|Get SailRotation", -400, 200)
-BS.connect_nodes(PATH, G, getter, "SailRotation", mb, "Rotation")
+async def wire(src, src_pin, dst, dst_pin):
+    await call_tool(BT + "ConnectPins", outputPin=await pin(src, src_pin, True),
+                    inputPin=await pin(dst, dst_pin, False))
 
-c2l = BS.create_node_by_key(PATH, G, C2L, 0, -80)
-AG.connect_anim_nodes(PATH, G, mb, "Pose", c2l, "ComponentPose")
-AG.connect_to_output_pose(PATH, G, c2l, "Pose")
+ref = await make("LocalSpaceRefPose", -900, -80)                # no sequence needed
+l2c = await make("LocalToComponent", -640, -80)
+mb  = await make("SkeletalControls|Transform", -340, -80)       # Transform (Modify) Bone
+c2l = await make("ComponentToLocal", 0, -80)
+get = await make("GetSailRotation", -400, 200)                  # see the getter-name gotcha below
+
+# Bone and modes live on the node's inner `node` struct (see the Modify Bone gotcha below)
+o = unreal.find_object(None, mb["refPath"])
+n = o.get_editor_property("node")
+bone = n.get_editor_property("bone_to_modify")                  # struct copies: set, then write back
+bone.set_editor_property("bone_name", "sails")
+n.set_editor_property("bone_to_modify", bone)
+n.set_editor_property("rotation_mode", unreal.BoneModificationMode.BMM_ADDITIVE)
+n.set_editor_property("rotation_space", unreal.BoneControlSpace.BCS_COMPONENT_SPACE)
+o.set_editor_property("node", n)                                # write the struct back
+
+await wire(ref, "Pose", l2c, "LocalPose")
+await wire(l2c, "ComponentPose", mb, "ComponentPose")
+await wire(get, "SailRotation", mb, "Rotation")
+await wire(mb, "Pose", c2l, "ComponentPose")
+root = (await call_tool(BT + "FindNodes", graph=g,
+                        nodeClass="/Script/AnimGraph.AnimGraphNode_Root"))[0]
+await wire(c2l, "Pose", root, "Result")
+await call_tool(BT + "CompileBlueprint", blueprint=ABP)
 ```
+
+`FindNodeTypes` filters on a substring of the palette type id (`Category|Title`, spaces dropped),
+so a fragment that matches none or several entries raises with the candidates -- adjust it and
+rerun. Verify the result with `BlueprintDslToolset.Read` or `GetNodeInfos` rather than trusting
+the compile.
 
 Pin names to remember: `LocalPose` in / `ComponentPose` out on Local To Component; `ComponentPose`
 in / `Pose` out on Modify Bone and Component To Local.

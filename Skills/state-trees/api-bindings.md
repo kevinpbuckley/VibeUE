@@ -227,12 +227,13 @@ transition_index = 0  # index within the state's Transitions array (read it with
 #
 #   call_tool ListVariables      {"blueprint": {"refPath": bp_path}}
 #   call_tool AddStructVariable  {"blueprint": {"refPath": bp_path},
-#                                 "variableName": "FinishRotatingDispatcher", ...}
+#                                 "name": "FinishRotatingDispatcher",
+#                                 "structType": {"refPath": "/Script/StateTreeModule.StateTreeDelegateDispatcher"}}
 #   call_tool CompileBlueprint   {"blueprint": {"refPath": bp_path}}
-#   call_tool SaveAsset          {"asset": {"refPath": bp_path}}       # EditorToolset.AssetToolset
+#   call_tool SaveAsset          {"assetPath": bp_path}               # EditorToolset.AssetToolset
 #
-# Run describe_toolset on BlueprintToolsets.BlueprintToolset for AddStructVariable's exact
-# struct-type argument before writing it.
+# Parameters are blueprint, name, structType, options. Check structType's exact form with
+# get_symbol name="BlueprintToolsets.BlueprintToolset.AddStructVariable" before writing it.
 
 # Step 2: Set that transition element's Trigger to OnDelegate — Epic ObjectToolset.
 # Change the ONE element's field in place; do not drop-and-re-add it and do not rewrite the array.
@@ -488,10 +489,10 @@ engine, then write the property with `ObjectToolset.SetProperties`:
 ```
 call_tool GetDefaultObject  {"blueprint": {"refPath": "<BP path>"}}       # BlueprintToolsets.BlueprintToolset
 call_tool GetComponents     {"actor": {"refPath": "<CDO refPath>"}}       # EditorToolset.ActorToolset
-call_tool GetPropertySchema {"instance": {"refPath": "<component refPath>"}, "property": "StateTreeRef"}
+call_tool GetPropertySchema {"instance": {"refPath": "<component refPath>"}, "root": "StateTreeRef"}
 call_tool SetProperties     {"instance": {"refPath": "<component refPath>"}, "values": "{...}"}
 call_tool CompileBlueprint  {"blueprint": {"refPath": "<BP path>"}}       # BlueprintToolsets.BlueprintToolset
-call_tool SaveAsset         {"asset": {"refPath": "<BP path>"}}           # EditorToolset.AssetToolset
+call_tool SaveAsset         {"assetPath": "<BP path>"}                    # EditorToolset.AssetToolset
 ```
 
 `StateTreeRef` is an `FStateTreeReference` struct, not a bare asset path -- read its shape with

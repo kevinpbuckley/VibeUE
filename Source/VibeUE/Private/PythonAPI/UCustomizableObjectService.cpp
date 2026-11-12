@@ -2,7 +2,6 @@
 
 #include "PythonAPI/UCustomizableObjectService.h"
 
-#include "AssetRegistry/ARFilter.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetToolsModule.h"
 #include "CustomizableObjectServiceInternal.h"
@@ -99,30 +98,6 @@ namespace
 bool UCustomizableObjectService::IsMutableAvailable()
 {
 	return VibeCO::CheckAvailable().IsEmpty();
-}
-
-TArray<FString> UCustomizableObjectService::ListCustomizableObjects(const FString& DirectoryPath)
-{
-	TArray<FString> Paths;
-	if (!IsMutableAvailable() || DirectoryPath.IsEmpty() || !VibeCO::CheckNameLength(DirectoryPath, TEXT("DirectoryPath")).IsEmpty())
-	{
-		return Paths;
-	}
-
-	IAssetRegistry& Registry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
-	FARFilter Filter;
-	Filter.ClassPaths.Add(VibeCO::GetObjectClass()->GetClassPathName());
-	Filter.PackagePaths.Add(FName(*DirectoryPath));
-	Filter.bRecursivePaths = true;
-
-	TArray<FAssetData> Assets;
-	Registry.GetAssets(Filter, Assets);
-	for (const FAssetData& Asset : Assets)
-	{
-		Paths.Add(Asset.PackageName.ToString());
-	}
-	Paths.Sort();
-	return Paths;
 }
 
 FVibeCOEditResult UCustomizableObjectService::CreateCustomizableObject(const FString& AssetPath)

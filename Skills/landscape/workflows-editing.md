@@ -99,13 +99,33 @@ unreal.LandscapeService.add_layer("MyTerrain", grass_info.asset_path)
 unreal.LandscapeService.paint_layer_at_location("MyTerrain", "Grass", 500.0, 500.0, 2000.0, 1.0)
 ```
 
-### Set Landscape Material
+### Set Landscape Material, Properties, Visibility (Epic toolsets)
+
+Landscape actor properties go through Epic's `ObjectToolset`; editor show/hide through
+`LevelToolset`. Epic's property write names the changed property, so
+`ALandscape::PostEditChangeProperty` rebuilds materials and propagates to World Partition streaming
+proxies (VibeUE's old setters fired a bare `PostEditChange()` that never reached the proxies).
 
 ```python
-import unreal
+import unreal, json
 
-unreal.LandscapeService.set_landscape_material("MyTerrain", "/Game/Materials/M_Terrain")
+ls = next(a for a in unreal.get_editor_subsystem(unreal.EditorActorSubsystem).get_all_level_actors()
+          if isinstance(a, unreal.Landscape) and a.get_actor_label() == "MyTerrain")
+landscape = {"refPath": ls.get_path_name()}
+
+# Material (object references are full object paths inside the JSON string)
+ok = await call_tool("EditorToolset.ObjectToolset.SetProperties", instance=landscape,
+                     values=json.dumps({"LandscapeMaterial": "/Game/Materials/M_Terrain.M_Terrain"}))
+# Any other property, e.g. LOD / streaming settings
+ok = ok and await call_tool("EditorToolset.ObjectToolset.SetProperties", instance=landscape,
+                            values=json.dumps({"StaticLightingLOD": 0}))
+# Editor-only show/hide (the outliner eye icon)
+await call_tool("EditorToolset.LevelToolset.SetActorHidden", actor=landscape, bHidden=True)
+ok
 ```
+
+`assign_material_to_landscape` (LandscapeMaterialService) is still the call when layer info objects
+must be mapped at the same time.
 
 ### Query Terrain Info
 

@@ -376,7 +376,8 @@ struct FVibeCOCompileResult
  *
  * Methods:
  * - is_mutable_available: whether the Mutable plugin is loaded
- * - list_customizable_objects: Customizable Object assets under a directory
+ * - (finding Customizable Object assets is Epic's: `EditorToolset.AssetToolset.FindAssets` with
+ *   filter {"folderPath": "/Game", "assetType": {"refPath": "/Script/CustomizableObject.CustomizableObject"}})
  * - create_customizable_object: new asset with its graph and Base Object node
  * - get_object_info: parent/children, parameters, states, components, compile status
  * - get_graph / get_node: nodes, pins and connections
@@ -401,10 +402,6 @@ public:
 	/** True when the Mutable plugin (CustomizableObject + CustomizableObjectEditor modules) is loaded. */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Mutable")
 	static bool IsMutableAvailable();
-
-	/** Package paths of every Customizable Object asset under DirectoryPath (recursive), sorted. */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Mutable")
-	static TArray<FString> ListCustomizableObjects(const FString& DirectoryPath = TEXT("/Game"));
 
 	/**
 	 * Create a Customizable Object at AssetPath (e.g. "/Game/Characters/CO_Hero") through the engine's

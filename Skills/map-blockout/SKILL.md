@@ -52,7 +52,7 @@ forests/treelines, railway, bridges — then materialize the plan as real engine
 geometry. Quality benchmark is **Arma / Squad**.
 
 The design pipeline is **gated**: every stage runs ordered pass/fail checks
-against the authoritative spec at [docs/design/map-designer-spec.md](../../../docs/design/map-designer-spec.md).
+against the authoritative spec at [docs/design/map-designer-spec.md](../../docs/design/map-designer-spec.md).
 You may not advance until all checks PASS. On failure, fix the offending element
 and re-run the stage.
 

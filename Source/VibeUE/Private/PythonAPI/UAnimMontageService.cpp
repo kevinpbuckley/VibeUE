@@ -194,49 +194,6 @@ void UAnimMontageService::FillMontageInfo(UAnimMontage* Montage, FMontageInfo& O
 	}
 }
 
-FString UAnimMontageService::BlendOptionToString(EAlphaBlendOption Option)
-{
-	switch (Option)
-	{
-		case EAlphaBlendOption::Linear: return TEXT("Linear");
-		case EAlphaBlendOption::Cubic: return TEXT("Cubic");
-		case EAlphaBlendOption::HermiteCubic: return TEXT("HermiteCubic");
-		case EAlphaBlendOption::Sinusoidal: return TEXT("Sinusoidal");
-		case EAlphaBlendOption::QuadraticInOut: return TEXT("QuadraticInOut");
-		case EAlphaBlendOption::CubicInOut: return TEXT("CubicInOut");
-		case EAlphaBlendOption::QuarticInOut: return TEXT("QuarticInOut");
-		case EAlphaBlendOption::QuinticInOut: return TEXT("QuinticInOut");
-		case EAlphaBlendOption::CircularIn: return TEXT("CircularIn");
-		case EAlphaBlendOption::CircularOut: return TEXT("CircularOut");
-		case EAlphaBlendOption::CircularInOut: return TEXT("CircularInOut");
-		case EAlphaBlendOption::ExpIn: return TEXT("ExpIn");
-		case EAlphaBlendOption::ExpOut: return TEXT("ExpOut");
-		case EAlphaBlendOption::ExpInOut: return TEXT("ExpInOut");
-		case EAlphaBlendOption::Custom: return TEXT("Custom");
-		default: return TEXT("Linear");
-	}
-}
-
-EAlphaBlendOption UAnimMontageService::StringToBlendOption(const FString& OptionString)
-{
-	if (OptionString.Equals(TEXT("Linear"), ESearchCase::IgnoreCase)) return EAlphaBlendOption::Linear;
-	if (OptionString.Equals(TEXT("Cubic"), ESearchCase::IgnoreCase)) return EAlphaBlendOption::Cubic;
-	if (OptionString.Equals(TEXT("HermiteCubic"), ESearchCase::IgnoreCase)) return EAlphaBlendOption::HermiteCubic;
-	if (OptionString.Equals(TEXT("Sinusoidal"), ESearchCase::IgnoreCase)) return EAlphaBlendOption::Sinusoidal;
-	if (OptionString.Equals(TEXT("QuadraticInOut"), ESearchCase::IgnoreCase)) return EAlphaBlendOption::QuadraticInOut;
-	if (OptionString.Equals(TEXT("CubicInOut"), ESearchCase::IgnoreCase)) return EAlphaBlendOption::CubicInOut;
-	if (OptionString.Equals(TEXT("QuarticInOut"), ESearchCase::IgnoreCase)) return EAlphaBlendOption::QuarticInOut;
-	if (OptionString.Equals(TEXT("QuinticInOut"), ESearchCase::IgnoreCase)) return EAlphaBlendOption::QuinticInOut;
-	if (OptionString.Equals(TEXT("CircularIn"), ESearchCase::IgnoreCase)) return EAlphaBlendOption::CircularIn;
-	if (OptionString.Equals(TEXT("CircularOut"), ESearchCase::IgnoreCase)) return EAlphaBlendOption::CircularOut;
-	if (OptionString.Equals(TEXT("CircularInOut"), ESearchCase::IgnoreCase)) return EAlphaBlendOption::CircularInOut;
-	if (OptionString.Equals(TEXT("ExpIn"), ESearchCase::IgnoreCase)) return EAlphaBlendOption::ExpIn;
-	if (OptionString.Equals(TEXT("ExpOut"), ESearchCase::IgnoreCase)) return EAlphaBlendOption::ExpOut;
-	if (OptionString.Equals(TEXT("ExpInOut"), ESearchCase::IgnoreCase)) return EAlphaBlendOption::ExpInOut;
-	if (OptionString.Equals(TEXT("Custom"), ESearchCase::IgnoreCase)) return EAlphaBlendOption::Custom;
-	return EAlphaBlendOption::Linear;
-}
-
 // ============================================================================
 // MONTAGE DISCOVERY
 // ============================================================================
@@ -340,88 +297,6 @@ TArray<FMontageInfo> UAnimMontageService::FindMontagesUsingAnimation(const FStri
 	}
 
 	return Results;
-}
-
-// ============================================================================
-// MONTAGE PROPERTIES
-// ============================================================================
-
-float UAnimMontageService::GetMontageLength(const FString& MontagePath)
-{
-	UAnimMontage* Montage = LoadMontageToRead(MontagePath);
-	if (!Montage) return -1.0f;
-
-	return Montage->GetPlayLength();
-}
-
-FString UAnimMontageService::GetMontageSkeleton(const FString& MontagePath)
-{
-	UAnimMontage* Montage = LoadMontageToRead(MontagePath);
-	if (!Montage) return FString();
-
-	USkeleton* Skeleton = Montage->GetSkeleton();
-	return Skeleton ? Skeleton->GetPathName() : FString();
-}
-
-bool UAnimMontageService::SetBlendIn(
-	const FString& MontagePath,
-	float BlendTime,
-	const FString& BlendOption)
-{
-	UAnimMontage* Montage = LoadMontage(MontagePath);
-	if (!Montage) return false;
-
-	Montage->Modify();
-	Montage->BlendIn.SetBlendTime(FMath::Max(0.0f, BlendTime));
-	Montage->BlendIn.SetBlendOption(StringToBlendOption(BlendOption));
-	MarkMontageModified(Montage);
-
-	return true;
-}
-
-bool UAnimMontageService::SetBlendOut(
-	const FString& MontagePath,
-	float BlendTime,
-	const FString& BlendOption)
-{
-	UAnimMontage* Montage = LoadMontage(MontagePath);
-	if (!Montage) return false;
-
-	Montage->Modify();
-	Montage->BlendOut.SetBlendTime(FMath::Max(0.0f, BlendTime));
-	Montage->BlendOut.SetBlendOption(StringToBlendOption(BlendOption));
-	MarkMontageModified(Montage);
-
-	return true;
-}
-
-bool UAnimMontageService::GetBlendSettings(const FString& MontagePath, FVibeMontageBlendSettings& OutSettings)
-{
-	UAnimMontage* Montage = LoadMontageToRead(MontagePath);
-	if (!Montage) return false;
-
-	OutSettings.BlendInTime = Montage->BlendIn.GetBlendTime();
-	OutSettings.BlendInOption = BlendOptionToString(Montage->BlendIn.GetBlendOption());
-	OutSettings.BlendOutTime = Montage->BlendOut.GetBlendTime();
-	OutSettings.BlendOutOption = BlendOptionToString(Montage->BlendOut.GetBlendOption());
-	OutSettings.BlendOutTriggerTime = Montage->BlendOutTriggerTime;
-
-	// Note: CustomCurve is private in FAlphaBlend, cannot access directly
-	// Custom curves must be set via SetCustomCurve() and retrieved via other means if needed
-
-	return true;
-}
-
-bool UAnimMontageService::SetBlendOutTriggerTime(const FString& MontagePath, float TriggerTime)
-{
-	UAnimMontage* Montage = LoadMontage(MontagePath);
-	if (!Montage) return false;
-
-	Montage->Modify();
-	Montage->BlendOutTriggerTime = TriggerTime;
-	MarkMontageModified(Montage);
-
-	return true;
 }
 
 // ============================================================================
@@ -1706,44 +1581,6 @@ FString UAnimMontageService::CreateEmptyMontage(
 
 	UE_LOG(LogTemp, Log, TEXT("UAnimMontageService::CreateEmptyMontage: Created montage: %s"), *FullPath);
 	return FullPath;
-}
-
-FString UAnimMontageService::DuplicateMontage(
-	const FString& SourcePath,
-	const FString& DestPath,
-	const FString& NewName)
-{
-	// Load source montage
-	UAnimMontage* SourceMontage = LoadMontage(SourcePath);
-	if (!SourceMontage)
-	{
-		return FString();
-	}
-
-	// Construct full destination path
-	FString FullPath = DestPath;
-	if (!FullPath.EndsWith(TEXT("/")))
-	{
-		FullPath += TEXT("/");
-	}
-	FullPath += NewName;
-
-	// Check if asset already exists
-	if (UEditorAssetLibrary::DoesAssetExist(FullPath))
-	{
-		UE_LOG(LogTemp, Warning, TEXT("UAnimMontageService::DuplicateMontage: Asset already exists: %s"), *FullPath);
-		return FString();
-	}
-
-	// Duplicate the asset
-	if (UEditorAssetLibrary::DuplicateAsset(SourcePath, FullPath))
-	{
-		UE_LOG(LogTemp, Log, TEXT("UAnimMontageService::DuplicateMontage: Created duplicate: %s"), *FullPath);
-		return FullPath;
-	}
-
-	UE_LOG(LogTemp, Error, TEXT("UAnimMontageService::DuplicateMontage: Failed to duplicate montage"));
-	return FString();
 }
 
 // ============================================================================

@@ -176,7 +176,14 @@ struct FSoundWaveInfo
  *   # ... connect and set root
  *
  * @note All methods are static
- * @note Always call save_sound_cue() after editing to persist changes
+ * @note Edits only dirty the package: save with Epic's EditorToolset.AssetToolset.SaveAsset
+ *
+ * Use Epic's engine toolsets for everything outside the cue's node graph:
+ *  - save / duplicate / delete: `EditorToolset.AssetToolset` (SaveAsset / Duplicate / Delete)
+ *  - import an audio file as a SoundWave: `EditorToolset.SoundWaveToolset.ImportFile`
+ *  - cue settings (VolumeMultiplier, PitchMultiplier, SoundClassObject, AttenuationSettings,
+ *    ConcurrencySet) and SoundWave properties (bLooping, Volume, Pitch, SubtitlePriority):
+ *    `EditorToolset.ObjectToolset` (GetProperties / SetProperties)
  *
  * **C++ Source:**
  *
@@ -225,47 +232,6 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Lifecycle")
 	static FSoundCueInfo GetSoundCueInfo(const FString& AssetPath);
-
-	/**
-	 * Save a SoundCue asset to disk.
-	 * Always call this after editing to persist changes.
-	 *
-	 * @param AssetPath - Full path to the SoundCue asset
-	 * @return True if saved successfully
-	 *
-	 * Example:
-	 *   unreal.SoundCueService.save_sound_cue("/Game/Audio/SC_Footstep")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Lifecycle")
-	static bool SaveSoundCue(const FString& AssetPath);
-
-	/**
-	 * Duplicate an existing SoundCue to a new path.
-	 *
-	 * @param SourcePath - Full path to the existing SoundCue
-	 * @param DestPath   - Full path for the new copy (must not already exist)
-	 * @return FSoundCueResult with bSuccess=true and AssetPath set on success
-	 *
-	 * Example:
-	 *   r = unreal.SoundCueService.duplicate_sound_cue(
-	 *       "/Game/Audio/SC_Footstep", "/Game/Audio/SC_Footstep_Gravel")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Lifecycle")
-	static FSoundCueResult DuplicateSoundCue(
-		const FString& SourcePath,
-		const FString& DestPath);
-
-	/**
-	 * Delete a SoundCue asset from the content browser.
-	 *
-	 * @param AssetPath - Full path to the SoundCue to delete
-	 * @return True if deleted successfully
-	 *
-	 * Example:
-	 *   unreal.SoundCueService.delete_sound_cue("/Game/Audio/SC_Temp")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Lifecycle")
-	static bool DeleteSoundCue(const FString& AssetPath);
 
 	// ============================================================================
 	// NODE INSPECTION
@@ -638,66 +604,6 @@ public:
 		const FString& SoundWavePath);
 
 	// ============================================================================
-	// CUE SETTINGS
-	// ============================================================================
-
-	/**
-	 * Set the volume multiplier on a SoundCue.
-	 *
-	 * @param AssetPath - Full path to the SoundCue asset
-	 * @param Value     - Volume multiplier (default 1.0)
-	 * @return True if successful
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Settings")
-	static bool SetVolumeMultiplier(const FString& AssetPath, float Value);
-
-	/**
-	 * Set the pitch multiplier on a SoundCue.
-	 *
-	 * @param AssetPath - Full path to the SoundCue asset
-	 * @param Value     - Pitch multiplier (default 1.0)
-	 * @return True if successful
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Settings")
-	static bool SetPitchMultiplier(const FString& AssetPath, float Value);
-
-	/**
-	 * Assign a SoundClass to a SoundCue.
-	 *
-	 * @param AssetPath      - Full path to the SoundCue asset
-	 * @param SoundClassPath - Full path to the SoundClass asset
-	 *                         (e.g. "/Game/Audio/SC_SFX" or "/Engine/EngineSounds/Master")
-	 * @return True if successful
-	 *
-	 * Example:
-	 *   unreal.SoundCueService.set_sound_class(
-	 *       "/Game/Audio/SC_Footstep", "/Game/Audio/Classes/SFX")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Settings")
-	static bool SetSoundClass(const FString& AssetPath, const FString& SoundClassPath);
-
-	/** Assign an attenuation settings asset to a SoundCue.
-	 *  Pass empty string to clear the current attenuation asset. */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Settings")
-	static bool SetAttenuation(const FString& AssetPath, const FString& AttenuationAssetPath);
-
-	/** Return the asset path of the attenuation settings assigned to a SoundCue, or empty if none. */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Settings")
-	static FString GetAttenuation(const FString& AssetPath);
-
-	/** Assign a SoundConcurrency asset to a SoundCue (adds to the concurrency set).
-	 *  Pass bClearExisting=true to replace any previously assigned concurrency assets. */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Settings")
-	static bool SetConcurrency(
-		const FString& AssetPath,
-		const FString& ConcurrencyAssetPath,
-		bool bClearExisting = false);
-
-	/** Return all concurrency asset paths assigned to a SoundCue. */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|Settings")
-	static TArray<FString> GetConcurrency(const FString& AssetPath);
-
-	// ============================================================================
 	// SOUNDWAVE UTILITIES
 	// ============================================================================
 
@@ -713,46 +619,6 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|SoundWave")
 	static FSoundWaveInfo GetSoundWaveInfo(const FString& SoundWavePath);
-
-	/**
-	 * Import a .wav or .mp3 audio file from disk as a SoundWave asset.
-	 *
-	 * @param FilePath   - Absolute path to the audio file on disk (e.g. "C:/Sounds/shot.wav")
-	 * @param AssetPath  - Destination content browser path (e.g. "/Game/Audio/SW_Shot")
-	 * @return FSoundCueResult with bSuccess=true and AssetPath set on success
-	 *
-	 * Example:
-	 *   r = unreal.SoundCueService.import_sound_wave(
-	 *       r"C:/Sounds/gunshot.wav", "/Game/Audio/SW_Gunshot")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|SoundWave")
-	static FSoundCueResult ImportSoundWave(
-		const FString& FilePath,
-		const FString& AssetPath);
-
-	/**
-	 * Set a property on a SoundWave asset by name.
-	 *
-	 * Common properties:
-	 *   "bLooping"           (bool)   — loop indefinitely
-	 *   "VolumeMultiplier"   (float)  — output volume scale
-	 *   "PitchMultiplier"    (float)  — output pitch scale
-	 *   "SubtitlePriority"   (float)  — subtitle display priority
-	 *   "bStreaming"         (bool)   — force streaming from disk
-	 *
-	 * @param SoundWavePath - Full path to the SoundWave asset
-	 * @param PropertyName  - UPROPERTY name (as in C++, e.g. "bLooping")
-	 * @param Value         - String representation of the value (e.g. "true", "1.5")
-	 * @return True on success
-	 *
-	 * Example:
-	 *   unreal.SoundCueService.set_sound_wave_property("/Game/Audio/SW_Wind", "bLooping", "true")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Audio|SoundWave")
-	static bool SetSoundWaveProperty(
-		const FString& SoundWavePath,
-		const FString& PropertyName,
-		const FString& Value);
 
 private:
 

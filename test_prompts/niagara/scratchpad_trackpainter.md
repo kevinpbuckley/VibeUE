@@ -46,9 +46,10 @@ Report which were added vs. already existed.
 ## Scratch module via NiagaraScratchPadService
 
 Use `unreal.NiagaraScratchPadService.create_scratch_module` to add an empty scratch module
-called `SplatLine` to the `CompletelyEmpty` emitter on the `ParticleUpdate` stage. Then call
-`get_scratch_script_path` and print where the scratch UNiagaraScript was stored - it should be
-a sub-object path under the emitter, not `/Game/...`.
+called `SplatLine` to the `CompletelyEmpty` emitter on the `ParticleUpdate` stage. Then print
+where the scratch UNiagaraScript was stored (the result's `script_path`, cross-checked against
+Epic's `GetModuleTopology` `moduleScript`) - it should be a sub-object path under the emitter,
+not `/Game/...`.
 
 ---
 
@@ -110,7 +111,7 @@ Then call `list_connections` and confirm every wire is present.
 
 ## Apply + compile
 
-Call `apply_changes` on the system, then `compile_with_results`. Report:
+Call `apply_changes` on the system, then Epic's `GetSystemCompileState`. Report:
 - success / error count / warning count
 - any error or warning text verbatim
 

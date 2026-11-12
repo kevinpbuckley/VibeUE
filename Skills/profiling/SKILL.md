@@ -201,15 +201,15 @@ here is a category error; they will not move the number.
 
 1. **Numeric thread split via log** — reliable, works headless:
    ```
-   call_tool RunConsoleCommand {"Command": "stat dumpframe -ms=0.5 -root=gamethread"}
-   call_tool RunConsoleCommand {"Command": "stat dumpframe -ms=0.5 -root=renderthread"}
+   call_tool RunConsoleCommand {"command": "stat dumpframe -ms=0.5 -root=gamethread"}
+   call_tool RunConsoleCommand {"command": "stat dumpframe -ms=0.5 -root=renderthread"}
    call_tool GetLogEntries {}
    ```
    `LogsToolset.GetLogEntries` returns the full thread hierarchy in ms (e.g. `World Tick Time`,
    `FTickFunctionTask`, individual Blueprint `ReceiveTick` costs). This is the single most useful
    CPU drill-down.
 2. **Resolution-scaling test** (decisive GPU-bound proof) — read `GetFrameTimings` at full res,
-   then `RunConsoleCommand {"Command": "r.ScreenPercentage 50"}`, and read it again. Frame time
+   then `RunConsoleCommand {"command": "r.ScreenPercentage 50"}`, and read it again. Frame time
    drops a lot → **GPU-bound**. Barely moves → **CPU-bound**.
 3. **`stat unit`** is the canonical overlay, but its numbers do **not** go to the log, and PIE
    often runs in a separate window so screenshots are unreliable. Prefer `GetFrameTimings` or
@@ -252,20 +252,20 @@ here is a category error; they will not move the number.
 ### Start / stop a trace
 
 ```
-call_tool RunConsoleCommand {"Command": "Trace.File combat_encounter frame,cpu,gpu,stats,log"}
-call_tool RunConsoleCommand {"Command": "Trace.Start"}
+call_tool RunConsoleCommand {"command": "Trace.File combat_encounter frame,cpu,gpu,stats,log"}
+call_tool RunConsoleCommand {"command": "Trace.Start"}
 call_tool GetLogEntries {}                   # confirm the destination it chose
 
 # ... reproduce the workload ...
 
-call_tool RunConsoleCommand {"Command": "Trace.Stop"}
+call_tool RunConsoleCommand {"command": "Trace.Stop"}
 call_tool GetLogEntries {}                   # trace path + size
 ```
 
 ### Check status
 
 ```
-call_tool RunConsoleCommand {"Command": "Trace.Status"}
+call_tool RunConsoleCommand {"command": "Trace.Status"}
 call_tool GetLogEntries {}                   # active? which channels?
 ```
 
@@ -274,19 +274,19 @@ call_tool GetLogEntries {}                   # active? which channels?
 Use these **while a trace is running** to label interesting moments in the Insights timeline.
 
 ```
-call_tool RunConsoleCommand {"Command": "Trace.Bookmark spawn_wave_3"}
+call_tool RunConsoleCommand {"command": "Trace.Bookmark spawn_wave_3"}
 
-call_tool RunConsoleCommand {"Command": "Trace.RegionBegin loading_level"}
+call_tool RunConsoleCommand {"command": "Trace.RegionBegin loading_level"}
 # ... trigger the thing you want to measure ...
-call_tool RunConsoleCommand {"Command": "Trace.RegionEnd loading_level"}
+call_tool RunConsoleCommand {"command": "Trace.RegionEnd loading_level"}
 ```
 
 ### CSV profiler — aggregates without opening Insights
 
 ```
-call_tool RunConsoleCommand {"Command": "CsvProfile start"}
+call_tool RunConsoleCommand {"command": "CsvProfile start"}
 # ... workload ...
-call_tool RunConsoleCommand {"Command": "CsvProfile stop"}
+call_tool RunConsoleCommand {"command": "CsvProfile stop"}
 call_tool GetCsvInfo {}                      # then ReduceStat / ReadStatValues / TopStats / ListEvents
 ```
 
@@ -367,12 +367,12 @@ call_tool GetFrameTimings {}
 #    → then do the STEP 0 arithmetic: largest field, vs FrameMs, vs 1000/target_fps
 
 # 2. Capture a clean trace around the workload
-call_tool RunConsoleCommand {"Command": "Trace.File combat_encounter frame,cpu,gpu,stats,log"}
-call_tool RunConsoleCommand {"Command": "Trace.Start"}
-call_tool RunConsoleCommand {"Command": "Trace.RegionBegin wave_spawn"}
+call_tool RunConsoleCommand {"command": "Trace.File combat_encounter frame,cpu,gpu,stats,log"}
+call_tool RunConsoleCommand {"command": "Trace.Start"}
+call_tool RunConsoleCommand {"command": "Trace.RegionBegin wave_spawn"}
 # (trigger the gameplay here)
-call_tool RunConsoleCommand {"Command": "Trace.RegionEnd wave_spawn"}
-call_tool RunConsoleCommand {"Command": "Trace.Stop"}
+call_tool RunConsoleCommand {"command": "Trace.RegionEnd wave_spawn"}
+call_tool RunConsoleCommand {"command": "Trace.Stop"}
 call_tool GetLogEntries {}
 ```
 
@@ -384,7 +384,7 @@ print(json.loads(unreal.PerformanceService.analyse("both")))
 
 ```
 # 4. Write up the findings yourself — there is no report tool any more
-call_tool WriteTextFile {"Path": "Saved/VibeUE/Performance/combat_encounter.md", "Contents": "..."}
+call_tool WriteTextFile {"path": "Saved/VibeUE/Performance/combat_encounter.md", "contents": "..."}
 ```
 
 Put in that write-up what the old `report` generated: the per-thread numbers, the bottleneck and

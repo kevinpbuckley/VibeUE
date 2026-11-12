@@ -40,10 +40,14 @@ else:
 Safe workflow for editing one bone:
 
 ```python
-import unreal
+import unreal, json
 
 anim_path = "/Game/Anims/AS_Idle"
-skeleton_path = unreal.AnimSequenceService.get_animation_skeleton(anim_path)
+# The skeleton is a plain property: Epic's ObjectToolset reads it (object path = name repeated after the dot)
+props = json.loads(await call_tool("EditorToolset.ObjectToolset.GetProperties",
+                                   instance={"refPath": "/Game/Anims/AS_Idle.AS_Idle"},
+                                   properties=["Skeleton"]))
+skeleton_path = props["Skeleton"]["refPath"]
 
 # Step 1: Build profile (if not cached)
 unreal.SkeletonService.create_skeleton_profile(skeleton_path)
@@ -337,7 +341,7 @@ anim_path = unreal.AnimSequenceService.create_anim_sequence(
 
 if anim_path:
     print(f"Created animation: {anim_path}")
-    unreal.AnimSequenceService.open_animation_editor(anim_path)
+    await call_tool("EditorToolset.EditorAppToolset.OpenEditorForAsset", assetPath=anim_path)
 ```
 
 ### Simple Keyframe Creation (Direct Values)

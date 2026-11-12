@@ -88,8 +88,8 @@ struct FRVTVolumeResult
  *
  * Runtime Virtual Textures enable efficient rendering of large landscapes by
  * caching material results into virtual texture pages. This service provides
- * tools to create RVT assets, place RVT volumes in levels, and assign RVTs
- * to landscape actors.
+ * tools to create RVT assets and place RVT volumes in levels. Assigning an RVT
+ * to a landscape is EditorToolset.ObjectToolset.SetProperties (RuntimeVirtualTextures).
  *
  * Python usage:
  *   import unreal
@@ -110,10 +110,10 @@ struct FRVTVolumeResult
  *       "Landscape", "/Game/RVT/RVT_MyLandscape"
  *   )
  *
- *   # Assign RVT to a landscape component
- *   unreal.RuntimeVirtualTextureService.assign_rvt_to_landscape(
- *       "Landscape", "/Game/RVT/RVT_MyLandscape"
- *   )
+ *   # Assign RVT to the landscape (Epic tool, inside execute_python)
+ *   await call_tool("EditorToolset.ObjectToolset.SetProperties",
+ *       instance={"refPath": landscape_actor.get_path_name()},
+ *       values='{"RuntimeVirtualTextures": ["/Game/RVT/RVT_MyLandscape.RVT_MyLandscape"]}')
  */
 UCLASS(BlueprintType)
 class VIBEUE_API URuntimeVirtualTextureService : public UToolsetDefinition
@@ -194,23 +194,8 @@ public:
 		const FString& RVTAssetPath,
 		const FString& VolumeName = TEXT(""));
 
-	/**
-	 * Assign an RVT to a landscape component's virtual texture slots.
-	 * Maps to action="assign_rvt_to_landscape"
-	 *
-	 * Sets the RVT on the landscape's RuntimeVirtualTextures array at the given slot.
-	 * The landscape will output to this RVT during rendering.
-	 *
-	 * @param LandscapeNameOrLabel - Name or label of the target landscape actor
-	 * @param RVTAssetPath - Path to the RVT asset to assign
-	 * @param SlotIndex - Slot index in the landscape's RVT array (default: 0)
-	 * @return True if assignment succeeded
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|RVT")
-	static bool AssignRVTToLandscape(
-		const FString& LandscapeNameOrLabel,
-		const FString& RVTAssetPath,
-		int32 SlotIndex = 0);
+	// Assigning an RVT to a landscape: EditorToolset.ObjectToolset.SetProperties on the landscape
+	// actor with {"RuntimeVirtualTextures": ["<rvt object path>"]}.
 
 private:
 	static URuntimeVirtualTexture* LoadRVTAsset(const FString& AssetPath);

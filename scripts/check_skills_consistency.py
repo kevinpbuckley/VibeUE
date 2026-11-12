@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """Consistency check between the functional-area dispatcher table in
-Content/Skills/vibeue/SKILL.md and the actual skill packs on disk.
+Skills/vibeue/SKILL.md and the actual skill packs on disk.
 
 Fails (exit 1) on:
   * dead routes  — a slug in the table's "Load skill(s)" column with no
-                   Content/Skills/<slug>/SKILL.md behind it
-  * orphan packs — a Content/Skills/<slug>/SKILL.md no dispatcher row routes to
+                   Skills/<slug>/SKILL.md behind it
+  * orphan packs — a Skills/<slug>/SKILL.md no dispatcher row routes to
                    (the dispatcher itself, `vibeue`, is exempt)
   * missing descriptions — a SKILL.md without a non-empty frontmatter
-                   `description:` (init_unreal.py registers the skill from it,
-                   and Epic's AgentSkillToolset.ListSkills HIDES skills whose
-                   description is empty — an empty one is an invisible skill)
+                   `description:` (UE 5.9's native markdown skill discovery
+                   reads it, and Epic's AgentSkillToolset.ListSkills HIDES
+                   skills whose description is empty — an invisible skill)
 
 Stdlib only. Run from anywhere:  python3 scripts/check_skills_consistency.py
 """
@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-SKILLS_DIR = REPO / "Content" / "Skills"
+SKILLS_DIR = REPO / "Skills"
 DISPATCHER = SKILLS_DIR / "vibeue" / "SKILL.md"
 DISPATCHER_SLUG = "vibeue"
 

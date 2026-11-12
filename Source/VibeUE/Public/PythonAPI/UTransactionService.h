@@ -16,9 +16,11 @@
  *    given one is: `EditorToolset.UndoHistoryToolset` (GetRecentTransactions /
  *    GetTransactionDetails / GetTransactionRecencyIndex / SearchTransactions), via call_tool
  *
- * What is left is the one thing none of those can do. UndoHistoryToolset only READS the buffer;
- * Python has no undo/redo binding and GEditor is not scriptable, so nothing outside this service
- * can actually step the buffer or clear it. That is the whole remaining justification here.
+ * What is left is what none of those does with a result. UndoHistoryToolset only READS the buffer,
+ * and Python has no undo/redo binding. `ConsoleToolset.RunConsoleCommand("TRANSACTION UNDO")` /
+ * `("TRANSACTION REDO")` does step the buffer (GEditor->Exec -> Exec_Transaction), but it reports no
+ * success, cannot step N at once, and has no can-undo/can-redo query and no reset -- so this service
+ * keeps undo/redo with a result, the multi-step and query forms, and clearing the buffer.
  *
  * Most VibeUE edits already open their own transaction, so undo() typically reverts the last whole
  * operation; wrap a batch in unreal.ScopedEditorTransaction to make it one step.

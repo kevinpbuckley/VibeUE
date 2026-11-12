@@ -2,26 +2,37 @@
 
 # recolor_emitter.txt — Recolour a Niagara emitter by rotating its ColorFromCurve hue.
 #
-# Sample script for the niagara-emitters skill. Run via execute_python.
+# Sample script for the niagara-emitters skill. Run via execute_python (top-level await).
 # shift_color_hue rotates the colour wheel and PRESERVES the authored gradient, saturation and
 # alpha. A multiplicative tint does not: equal channels only brighten/dim, and a zero channel
 # kills it outright. For a value-driven emitter (no ColorFromCurve) set Scale Color through
-# Epic NiagaraToolsets.SetStackInputData instead — VibeUE's tint/rapid-iteration writes were cut
-# on the 5-9 branch because the engine covers them.
+# Epic NiagaraToolset_System.SetStackInputData instead. To edit individual curve keys, read and
+# write the ColorCurve data-interface input with Epic GetStackInputData / SetStackInputData
+# (see color.md) — VibeUE's get/set_color_curve_keys were cut on the 5-9 branch.
+import json
 import unreal
 nes = unreal.NiagaraEmitterService
+NS = "NiagaraToolsets.NiagaraToolset_System"
 
 SYSTEM = "/Game/VFX/NS_SkillTest"
 EMITTER = "MyEmitter"
+SYS_REF = {"refPath": SYSTEM + "." + SYSTEM.rsplit("/", 1)[-1]}
+CURVE_REF = {"system": SYS_REF, "emitterName": EMITTER, "scriptName": "ParticleUpdateScript",
+             "moduleName": "Color", "inputNameStack": ["Color", "ColorCurve"]}
 
-# Curve-driven or not? An empty list means there is no ColorFromCurve module to rotate.
-keys = nes.get_color_curve_keys(SYSTEM, EMITTER, "ColorFromCurve")
-if not keys:
-    print("No ColorFromCurve on this emitter - set Scale Color via Epic SetStackInputData instead.")
-else:
+# Curve-driven or not? Read the ColorCurve data interface; failure means no ColorFromCurve here.
+try:
+    data = await call_tool(f"{NS}.GetStackInputData", stackInputRef=CURVE_REF)
+    pv = json.loads(data["value"]["propertyValues"])
+    print("keys before:", {ch: len(pv[ch]["keys"]) for ch in ("RedCurve", "GreenCurve", "BlueCurve", "AlphaCurve")})
+    curve_driven = True
+except Exception as e:
+    print("No ColorFromCurve on Color/ParticleUpdate - set Scale Color via Epic SetStackInputData instead.", e)
+    curve_driven = False
+
+if curve_driven:
     # Degrees: 120=toward green, 180=cyan/opposite, 240=blue/purple, -60=toward red
     print("shift_color_hue:", nes.shift_color_hue(SYSTEM, EMITTER, 120.0, "ColorFromCurve"))
-
-# Compile via the ENGINE NiagaraToolsets (system/compile CRUD is engine-owned), then save:
-# call_tool("NiagaraToolsets.NiagaraToolset_System", "<compile tool>", {... SYSTEM ...})
-unreal.EditorAssetLibrary.save_asset(SYSTEM)
+    state = await call_tool(f"{NS}.GetSystemCompileState", system=SYS_REF)
+    print("compile:", state)
+    await call_tool("EditorToolset.AssetToolset.SaveAsset", assetPath=SYSTEM)

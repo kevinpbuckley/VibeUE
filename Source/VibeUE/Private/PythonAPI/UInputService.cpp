@@ -385,94 +385,6 @@ FInputCreateResult UInputService::CreateAction(
 	return Result;
 }
 
-TArray<FString> UInputService::ListInputActions()
-{
-	TArray<FString> ActionPaths;
-
-	IAssetRegistry& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
-
-	FARFilter Filter;
-	Filter.ClassPaths.Add(FTopLevelAssetPath(TEXT("/Script/EnhancedInput.InputAction")));
-
-	TArray<FAssetData> AssetDataList;
-	AssetRegistry.GetAssets(Filter, AssetDataList);
-
-	for (const FAssetData& AssetData : AssetDataList)
-	{
-		ActionPaths.Add(AssetData.GetObjectPathString());
-	}
-
-	return ActionPaths;
-}
-
-bool UInputService::GetInputActionInfo(const FString& ActionPath, FInputActionDetailedInfo& OutInfo)
-{
-	UInputAction* InputAction = LoadInputAction(ActionPath);
-	if (!InputAction)
-	{
-		return false;
-	}
-
-	OutInfo.ActionName = InputAction->GetName();
-	OutInfo.ActionPath = ActionPath;
-	OutInfo.bConsumeInput = InputAction->bConsumeInput;
-	OutInfo.bTriggerWhenPaused = InputAction->bTriggerWhenPaused;
-	OutInfo.Description = InputAction->ActionDescription.ToString();
-
-	// Get value type
-	switch (InputAction->ValueType)
-	{
-	case EInputActionValueType::Boolean:
-		OutInfo.ValueType = TEXT("Boolean");
-		break;
-	case EInputActionValueType::Axis1D:
-		OutInfo.ValueType = TEXT("Axis1D");
-		break;
-	case EInputActionValueType::Axis2D:
-		OutInfo.ValueType = TEXT("Axis2D");
-		break;
-	case EInputActionValueType::Axis3D:
-		OutInfo.ValueType = TEXT("Axis3D");
-		break;
-	default:
-		OutInfo.ValueType = TEXT("Unknown");
-		break;
-	}
-
-	return true;
-}
-
-bool UInputService::ConfigureAction(
-	const FString& ActionPath,
-	bool bConsumeInput,
-	bool bTriggerWhenPaused,
-	const FString& Description)
-{
-	UInputAction* InputAction = LoadInputAction(ActionPath);
-	if (!InputAction)
-	{
-		return false;
-	}
-
-	InputAction->Modify();
-	InputAction->bConsumeInput = bConsumeInput;
-	InputAction->bTriggerWhenPaused = bTriggerWhenPaused;
-	
-	if (!Description.IsEmpty())
-	{
-		InputAction->ActionDescription = FText::FromString(Description);
-	}
-
-	// Save the asset
-	UPackage* Package = InputAction->GetOutermost();
-	if (Package)
-	{
-		Package->MarkPackageDirty();
-	}
-
-	return true;
-}
-
 // =================================================================
 // Mapping Context Management
 // =================================================================
@@ -524,26 +436,6 @@ FInputCreateResult UInputService::CreateMappingContext(
 	Result.AssetPath = FullPath + TEXT(".") + ContextName;
 	
 	return Result;
-}
-
-TArray<FString> UInputService::ListMappingContexts()
-{
-	TArray<FString> ContextPaths;
-
-	IAssetRegistry& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
-
-	FARFilter Filter;
-	Filter.ClassPaths.Add(FTopLevelAssetPath(TEXT("/Script/EnhancedInput.InputMappingContext")));
-
-	TArray<FAssetData> AssetDataList;
-	AssetRegistry.GetAssets(Filter, AssetDataList);
-
-	for (const FAssetData& AssetData : AssetDataList)
-	{
-		ContextPaths.Add(AssetData.GetObjectPathString());
-	}
-
-	return ContextPaths;
 }
 
 bool UInputService::GetMappingContextInfo(const FString& ContextPath, FMappingContextDetailedInfo& OutInfo)
@@ -1063,24 +955,6 @@ TArray<FString> UInputService::GetAvailableTriggerTypes()
 // Existence Checks
 // =================================================================
 
-bool UInputService::InputActionExists(const FString& ActionPath)
-{
-	if (ActionPath.IsEmpty())
-	{
-		return false;
-	}
-	return UEditorAssetLibrary::DoesAssetExist(ActionPath);
-}
-
-bool UInputService::MappingContextExists(const FString& ContextPath)
-{
-	if (ContextPath.IsEmpty())
-	{
-		return false;
-	}
-	return UEditorAssetLibrary::DoesAssetExist(ContextPath);
-}
-
 bool UInputService::KeyMappingExists(const FString& ContextPath, const FString& ActionPath)
 {
 	if (ContextPath.IsEmpty() || ActionPath.IsEmpty())
@@ -1548,7 +1422,7 @@ FString UInputService::StartInjection(const FString& ActionPath, float X, float 
 
 FString UInputService::StopInjection(const FString& ActionPath, int32 PieInstance)
 {
-	// The hold is found the way inject_action_for filed it: by the action object and the PIE instance -1
+	// The hold is found the way start_injection filed it: by the action object and the PIE instance -1
 	// resolves to, so any spelling of the path that names the same action finds it.
 	bool bWasActive = false;
 	int32 UsedInstance = PieInstance;

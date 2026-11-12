@@ -168,10 +168,10 @@ Save as AM_Reload_UpperBody in /Game/Tests/Montages/
 ## Reads During Play In Editor
 
 With AM_Reload_UpperBody from above:
-1. Read its length, skeleton, sections, slot tracks and blend settings
+1. Read its length, skeleton, sections, slot tracks and blend settings (skeleton and blend settings are plain properties: read them with Epic's ObjectToolset.GetProperties)
 2. Start Play In Editor
 3. Read the same five again: each must match step 1 (not -1, an empty string or an empty list)
-4. Try set_blend_in on it: it must be refused while PIE runs, and its blend in must read as before
+4. Try set_enable_root_motion_translation on it: it must be refused while PIE runs, and its root motion translation flag must read as before
 5. Stop Play In Editor
 
 ---

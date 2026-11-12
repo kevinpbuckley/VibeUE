@@ -9,11 +9,11 @@
 
 # 1) View mode — Epic's EditorAppToolset (VibeUE's set_view_mode was removed).
 #    Takes the full EViewModeIndex; describe_toolset EditorAppToolset lists the live names.
-call_tool SetViewportViewMode {"ViewMode": "VMI_Lit"}
+call_tool SetViewportViewMode {"viewMode": "VMI_Lit"}
 
 # 2) Camera transform — Epic's EditorAppToolset (FocusOnActors frames actors instead of guessing).
-call_tool SetCameraTransform {"Location": {"X": 1000, "Y": 1000, "Z": 800},
-                              "Rotation": {"Pitch": -30, "Yaw": -135, "Roll": 0}}
+call_tool SetCameraTransform {"translation": {"X": 1000, "Y": 1000, "Z": 800},
+                              "rotation": {"Pitch": -30, "Yaw": -135, "Roll": 0}}
 
 # 3) FOV — still VibeUE's, because Epic ships no FOV writer.
 #    WARNING: set_fov persists into EditorPerProjectUserSettings.ini. Snapshot and restore.

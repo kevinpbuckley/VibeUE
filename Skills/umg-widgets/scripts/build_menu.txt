@@ -6,7 +6,7 @@
 # Assumes WIDGET_PATH already exists (see create_widget.txt).
 #
 # TWO call styles in one script:
-#   - the hierarchy is VibeUE's              -> unreal.WidgetService.add_component(...)
+#   - the hierarchy is Epic's WidgetBlueprintEditorSubsystem -> vibeue.exec_tool(WS, "CreateAndAddWidget", ...)
 #   - the label text is Epic's ObjectToolset -> vibeue.exec_tool("EditorToolset.ObjectToolset", ...)
 #     (ObjectToolset has NO Python binding: unreal.ObjectToolset.set_properties() does not exist)
 import json
@@ -17,7 +17,9 @@ WIDGET_PATH = "/Game/Blueprints/TestWidget"
 BUTTONS = [("PlayButton", "PLAY"), ("OptionsButton", "OPTIONS"), ("QuitButton", "QUIT")]
 
 OT = "EditorToolset.ObjectToolset"
+WS = "UMGEditor.WidgetBlueprintEditorSubsystem"
 ASSET = WIDGET_PATH.rsplit("/", 1)[-1]
+WBP_OBJ = f"{WIDGET_PATH}.{ASSET}"
 
 
 def widget_obj(name):
@@ -29,15 +31,22 @@ def widget_obj(name):
     return f"{WIDGET_PATH}.{ASSET}:WidgetTree.{name}"
 
 
-# Root first (empty parent name -> becomes the root), then the container, then children.
-unreal.WidgetService.add_component(WIDGET_PATH, "CanvasPanel", "Root", "", True)
-unreal.WidgetService.add_component(WIDGET_PATH, "VerticalBox", "ButtonList", "Root", False)
+def add(widget_class, name, parent=None):
+    args = {"widgetBlueprint": WBP_OBJ, "widgetClass": widget_class, "widgetDisplayName": name}
+    if parent:
+        args["parentWidget"] = widget_obj(parent)   # explicit parent; no parent + empty tree -> root
+    return vibeue.exec_tool(WS, "CreateAndAddWidget", args)
+
+
+# Root first (no parent on an empty tree -> becomes the root), then the container, then children.
+add("/Script/UMG.CanvasPanel", "Root")
+add("/Script/UMG.VerticalBox", "ButtonList", "Root")
 
 for btn_name, label in BUTTONS:
     # Widget names are unique PER BLUEPRINT, not per parent — hence the per-button suffix.
-    unreal.WidgetService.add_component(WIDGET_PATH, "Button", btn_name, "ButtonList", False)
+    add("/Script/UMG.Button", btn_name, "ButtonList")
     text_name = f"{btn_name}Text"
-    unreal.WidgetService.add_component(WIDGET_PATH, "TextBlock", text_name, btn_name, False)
+    add("/Script/UMG.TextBlock", text_name, btn_name)
     vibeue.exec_tool(OT, "SetProperties", {
         "instance": widget_obj(text_name),
         "values": json.dumps({"Text": label}),   # `values` is a JSON *string*

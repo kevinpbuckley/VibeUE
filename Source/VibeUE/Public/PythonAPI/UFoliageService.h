@@ -140,8 +140,7 @@ struct FFoliageQueryResult
  *
  * Foliage Type Management:
  * - create_foliage_type: Create a UFoliageType asset from a static mesh
- * - set_foliage_type_property: Set a property on a foliage type asset
- * - get_foliage_type_property: Get a property from a foliage type asset
+ *   (read/write its properties: EditorToolset.ObjectToolset.GetProperties / SetProperties)
  *
  * Placement:
  * - scatter_foliage: Scatter instances in a circular region with Poisson disk sampling
@@ -159,8 +158,7 @@ struct FFoliageQueryResult
  * Query:
  * - get_foliage_in_radius: Get foliage instances in a circular region
  *
- * Existence:
- * - foliage_type_exists: Check if a foliage type asset exists
+ * Existence (asset existence: EditorToolset.AssetToolset.Exists):
  * - has_foliage_instances: Check if any foliage instances exist for a type
  *
  * Python Usage:
@@ -233,31 +231,8 @@ public:
 		float GroundSlopeMaxAngle = 45.0f,
 		float CullDistanceMax = 20000.0f);
 
-	/**
-	 * Set a property on an existing foliage type asset.
-	 *
-	 * @param FoliageTypePath - Path to the UFoliageType asset
-	 * @param PropertyName - Property name; nested struct members use dots (e.g. "Scaling", "CullDistance.Max")
-	 * @param Value - Value as string. Whole structs need UE import text (e.g. "(Min=0,Max=30000)"); prefer setting the member directly ("CullDistance.Max" = "30000")
-	 * @return True if property was set
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Foliage")
-	static bool SetFoliageTypeProperty(
-		const FString& FoliageTypePath,
-		const FString& PropertyName,
-		const FString& Value);
-
-	/**
-	 * Get a property from an existing foliage type asset.
-	 *
-	 * @param FoliageTypePath - Path to the UFoliageType asset
-	 * @param PropertyName - Property name; nested struct members use dots (e.g. "CullDistance.Max")
-	 * @return Property value as string, empty if not found
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Foliage")
-	static FString GetFoliageTypeProperty(
-		const FString& FoliageTypePath,
-		const FString& PropertyName);
+	// Foliage type properties: EditorToolset.ObjectToolset.SetProperties / GetProperties
+	// (nested structs as nested JSON, e.g. {"CullDistance": {"Max": 30000}}).
 
 	// =================================================================
 	// Placement
@@ -446,14 +421,7 @@ public:
 	// Existence Checks
 	// =================================================================
 
-	/**
-	 * Check if a foliage type asset exists at the given path.
-	 *
-	 * @param AssetPath - Path to check (UStaticMesh or UFoliageType)
-	 * @return True if the asset exists
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Foliage|Exists")
-	static bool FoliageTypeExists(const FString& AssetPath);
+	// Asset existence: EditorToolset.AssetToolset.Exists + AssetToolset.GetAssetClass.
 
 	/**
 	 * Check if any foliage instances exist in the level for a given mesh/type.

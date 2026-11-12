@@ -80,7 +80,7 @@ call_tool AddEvent {"blueprint": {"refPath": "<bp_path>"}, "eventName": "Receive
 call_tool AddEvent {"blueprint": {"refPath": "<bp_path>"}, "eventName": "ReceiveExitState"}
 
 call_tool CompileBlueprint {"blueprint": {"refPath": "<bp_path>"}}
-call_tool SaveAsset        {"asset": {"refPath": "<bp_path>"}}        # EditorToolset.AssetToolset
+call_tool SaveAsset        {"assetPath": "<bp_path>"}                 # EditorToolset.AssetToolset
 ```
 
 `ListCompatibleEventFunctions` lists what a given Blueprint will accept, which beats typing an

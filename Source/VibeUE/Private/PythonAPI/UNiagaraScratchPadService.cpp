@@ -524,22 +524,6 @@ FNiagaraScratchResult UNiagaraScratchPadService::CreateScratchModule(
 	return Result;
 }
 
-FString UNiagaraScratchPadService::GetScratchScriptPath(
-	const FString& SystemPath,
-	const FString& EmitterName,
-	const FString& ModuleName)
-{
-	UNiagaraSystem* System = LoadSystem(SystemPath);
-	if (!System) return FString();
-	FNiagaraEmitterHandle* Handle = FindEmitterHandle(System, EmitterName);
-	if (!Handle) return FString();
-	FVersionedNiagaraEmitterData* EmitterData = Handle->GetEmitterData();
-	UNiagaraNodeFunctionCall* Call = FindModuleNodeOnEmitter(EmitterData, ModuleName);
-	if (!Call || !Call->FunctionScript) return FString();
-	// Confirm it's a scratch script (i.e. transient outer = scratch container or system) vs. asset
-	return Call->FunctionScript->GetPathName();
-}
-
 TArray<FString> UNiagaraScratchPadService::ListScratchModules(
 	const FString& SystemPath,
 	const FString& EmitterName)

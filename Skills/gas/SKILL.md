@@ -73,16 +73,19 @@ the routing map plus the live-verified gotchas.
 ## PIE verification recipe (one round-trip per step)
 
 ```python
-import unreal, json
+# Inside execute_python. Use the injected `await call_tool(...)` — a script that calls
+# unreal.ToolsetRegistry.execute_tool directly is rejected before it runs.
 world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_game_world()
 pawn = unreal.GameplayStatics.get_player_pawn(world, 0)
-ref = json.dumps({"actor": {"refPath": pawn.get_path_name()}})
+actor = {"refPath": pawn.get_path_name()}
+state = {}
 for tool in ["GetAttributeValues", "GetActiveTags", "GetActiveEffects", "GetGrantedAbilities"]:
-    r = unreal.ToolsetRegistry.execute_tool("GASToolsets.AbilitySystemInspectorToolset", tool, ref)
-    print(tool, r.get_value_as_json_string())
+    state[tool] = await call_tool(f"GASToolsets.AbilitySystemInspectorToolset.{tool}", actor=actor)
 # drive an ability and re-inspect IN THE SAME CALL for deterministic assertions
 asc = unreal.AbilitySystemLibrary.get_ability_system_component(pawn)
 asc.try_activate_ability_by_class(unreal.MyGA_Fire)
+state["after_tags"] = await call_tool("GASToolsets.AbilitySystemInspectorToolset.GetActiveTags", actor=actor)
+state
 ```
 
 Damage through the classic funnel also exercises GE pipelines when the project routes

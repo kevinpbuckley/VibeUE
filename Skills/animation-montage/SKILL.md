@@ -33,9 +33,11 @@ Use `AnimMontageService` for animation montage operations.
 ### Discovery Methods
 > ⚠️ **`list_montages` filters are strings, not `None`** (issue #461) — pass `""` for "no
 > filter", never `None` (an FString arg can't be null and raises a TypeError).
-> **Playback rate:** there is no `set_playback_rate_scale` method; set the montage's `RateScale`
-> directly — `unreal.load_asset(montage_path).set_editor_property("RateScale", 1.5)` then
-> `unreal.EditorAssetLibrary.save_asset(montage_path)`.
+> **Plain properties are Epic's, not this service's.** Skeleton, playback rate (`RateScale`), blend
+> in/out and blend-out trigger time are ordinary `UAnimMontage` UPROPERTYs: read and write them with
+> `EditorToolset.ObjectToolset.GetProperties` / `SetProperties` (see *Blend Settings* below), which run
+> the engine's `PostEditChangeProperty` fixups. Duplicating is `EditorToolset.AssetToolset.Duplicate`,
+> opening the editor is `EditorToolset.EditorAppToolset.OpenEditorForAsset`.
 
 ```python
 # List all montages in a path (use "" for no skeleton filter, NOT None)
@@ -59,8 +61,9 @@ path = AnimMontageService.create_montage_from_animation(anim_path, dest_path, na
 # Create empty montage for a skeleton
 path = AnimMontageService.create_empty_montage(skeleton_path, dest_path, name) -> str
 
-# Duplicate existing montage
-path = AnimMontageService.duplicate_montage(source_path, dest_path, new_name) -> str
+# Duplicate an existing montage: Epic's AssetToolset (inside execute_python)
+await call_tool("EditorToolset.AssetToolset.Duplicate",
+                path="/Game/Montages/AM_Attack", newPath="/Game/Montages/AM_Attack_Heavy")
 ```
 
 ### Section Management (CRITICAL for gameplay!)
@@ -131,19 +134,26 @@ AnimMontageService.set_slot_name(montage_path, track_index, new_slot_name) -> bo
 AnimMontageService.remove_slot_track(montage_path, track_index) -> bool
 ```
 
-### Blend Settings
+### Blend Settings (and Skeleton, RateScale) — Epic's ObjectToolset
+`BlendIn` / `BlendOut` are `FAlphaBlend` structs with `BlendTime` (float) and `BlendOption`
+(`Linear`, `Cubic`, `HermiteCubic`, `Sinusoidal`, `QuadraticInOut`, `CubicInOut`, `QuarticInOut`,
+`QuinticInOut`, `CircularIn`, `CircularOut`, `CircularInOut`, `ExpIn`, `ExpOut`, `ExpInOut`,
+`Custom`); `BlendOutTriggerTime` is a float (-1 = auto). Address struct fields with dotted paths.
+These are in-place property writes, not structural edits, so an open montage editor survives them.
+
 ```python
-# Set blend in (options: Linear, Cubic, HermiteCubic, Sinusoidal, etc.)
-AnimMontageService.set_blend_in(montage_path, time, option) -> bool
+# inside execute_python
+import json
+OT = "EditorToolset.ObjectToolset."
+m = {"refPath": "/Game/Montages/AM_Attack.AM_Attack"}     # object path: name repeated after the dot
 
-# Set blend out
-AnimMontageService.set_blend_out(montage_path, time, option) -> bool
-
-# Set blend out trigger time (-1 = auto)
-AnimMontageService.set_blend_out_trigger_time(montage_path, time) -> bool
-
-# Get all blend settings
-settings = AnimMontageService.get_blend_settings(montage_path) -> MontageBlendSettings
+ok = await call_tool(OT + "SetProperties", instance=m, values=json.dumps({
+    "BlendIn.BlendTime": 0.15, "BlendIn.BlendOption": "Cubic",
+    "BlendOut.BlendTime": 0.2, "BlendOut.BlendOption": "Linear",
+    "BlendOutTriggerTime": -1.0}))
+blend = json.loads(await call_tool(OT + "GetProperties", instance=m,
+                   properties=["Skeleton", "RateScale", "BlendIn", "BlendOut", "BlendOutTriggerTime"]))
+# GetProperties returns a JSON string keyed by the paths you asked for; Skeleton is {"refPath": ...}
 ```
 
 ### Branching Points (Frame-Accurate Gameplay Events)
@@ -169,8 +179,8 @@ AnimMontageService.set_enable_root_motion_rotation(montage_path, enable) -> bool
 
 ### Editor Methods
 ```python
-# Open montage in Animation Editor
-AnimMontageService.open_montage_editor(montage_path) -> bool
+# Open montage in Animation Editor: Epic's EditorAppToolset (inside execute_python)
+await call_tool("EditorToolset.EditorAppToolset.OpenEditorForAsset", assetPath=montage_path)
 
 # Refresh editor UI: call this ONCE, AFTER all edits are done (see crash warning below)
 AnimMontageService.refresh_montage_editor(montage_path) -> bool
@@ -186,7 +196,7 @@ AnimMontageService.play_preview(montage_path, start_section) -> bool
 > Adding/removing **sections, slot tracks, segments, notifies, or branching points** reallocates
 > the montage's internal arrays. If the montage editor (Persona) is open, its live preview holds
 > pointers into those arrays and the next tick will dereference freed memory → **the editor hard-crashes**.
-> Rule: do ALL structural edits FIRST, then `refresh_montage_editor()` / `open_montage_editor()` **exactly once at the very end**.
+> Rule: do ALL structural edits FIRST, then `refresh_montage_editor()` / `OpenEditorForAsset` **exactly once at the very end**.
 > Do NOT call `refresh_montage_editor()` between edits. (The service now also auto-closes the editor before
 > each structural edit as a safety net, but you should still batch edits and open last so the editor isn't
 > opening and closing repeatedly.)
@@ -239,7 +249,7 @@ Each struct field is read-only data already populated; just read it.
 ### Create Multi-Animation Montage with Sections
 
 ```python
-import unreal
+import unreal, json
 
 # 1. Create empty montage
 path = unreal.AnimMontageService.create_empty_montage(
@@ -267,9 +277,11 @@ unreal.AnimMontageService.set_next_section(path, "Attack2", "Attack3")
 unreal.AnimMontageService.add_branching_point(path, "Combo1Window", 0.7)
 unreal.AnimMontageService.add_branching_point(path, "Combo2Window", 1.7)
 
-# 6. Configure blend settings
-unreal.AnimMontageService.set_blend_in(path, 0.15, "Cubic")
-unreal.AnimMontageService.set_blend_out(path, 0.2, "Linear")
+# 6. Configure blend settings (plain properties: Epic's ObjectToolset)
+await call_tool("EditorToolset.ObjectToolset.SetProperties",
+                instance={"refPath": path + "." + path.rsplit("/", 1)[-1]},
+                values=json.dumps({"BlendIn.BlendTime": 0.15, "BlendIn.BlendOption": "Cubic",
+                                   "BlendOut.BlendTime": 0.2, "BlendOut.BlendOption": "Linear"}))
 
 # 7. Save FIRST, while no editor is open
 unreal.EditorAssetLibrary.save_asset(path)
@@ -282,7 +294,7 @@ unreal.AnimMontageService.refresh_montage_editor(path)
 ### Create Layered Upper Body Montage
 
 ```python
-import unreal
+import unreal, json
 
 # 1. Create montage from animation
 path = unreal.AnimMontageService.create_montage_from_animation(
@@ -294,9 +306,11 @@ path = unreal.AnimMontageService.create_montage_from_animation(
 # 2. Change slot to UpperBody for layered blending
 unreal.AnimMontageService.set_slot_name(path, 0, "UpperBody")
 
-# 3. Configure blend
-unreal.AnimMontageService.set_blend_in(path, 0.1, "Linear")
-unreal.AnimMontageService.set_blend_out(path, 0.15, "Linear")
+# 3. Configure blend (plain properties: Epic's ObjectToolset)
+await call_tool("EditorToolset.ObjectToolset.SetProperties",
+                instance={"refPath": path + "." + path.rsplit("/", 1)[-1]},
+                values=json.dumps({"BlendIn.BlendTime": 0.1, "BlendIn.BlendOption": "Linear",
+                                   "BlendOut.BlendTime": 0.15, "BlendOut.BlendOption": "Linear"}))
 
 # 4. Disable root motion for upper body action
 unreal.AnimMontageService.set_enable_root_motion_translation(path, False)
@@ -356,6 +370,8 @@ AnimMontageService.refresh_montage_editor(path)   # single refresh at the very e
 # If montage is 3.0s, this fails:
 AnimMontageService.add_section(path, "Late", 5.0)  # Beyond duration
 
+# Montage length (get_montage_length is gone): unreal.EditorAssetLibrary.load_asset(path).get_play_length()
+# in Python, or EditorToolset.ObjectToolset.GetProperties(instance={"refPath": ...}, properties=["SequenceLength"])
 # CORRECT - Add segments first to extend duration, then add sections
 AnimMontageService.add_anim_segment(path, 0, anim_path, 3.0)  # Extends montage
 AnimMontageService.add_section(path, "Late", 3.5)  # Now within range

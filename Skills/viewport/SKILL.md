@@ -125,7 +125,7 @@ print(res.success, res.output_path, res.error_message)
 
 If a viewport is already stuck on a fixed exposure, `set_exposure(False)` puts it back on game
 settings (`set_exposure_game_settings` was removed — it only duplicated that call); if eye
-adaptation itself is off, `call_tool SetShowFlag {"ShowFlag": "EyeAdaptation", "Enabled": true}`
+adaptation itself is off, `call_tool SetShowFlag {"flagName": "EyeAdaptation", "bEnabled": true}`
 re-enables it. `capture_with_view` refuses (and touches nothing) during PIE, in an orthographic
 viewport, while the viewport pilots an actor or is locked to a Sequencer camera (moving the camera
 would move that actor, and its FOV would override yours), and while the editor window is
@@ -199,8 +199,8 @@ VibeUE's 9 strings never covered — run `describe_toolset` on `EditorAppToolset
 names.
 
 ```
-call_tool SetViewportViewMode {"ViewMode": "VMI_Wireframe"}
-call_tool SetViewportViewMode {"ViewMode": "VMI_Lit"}
+call_tool SetViewportViewMode {"viewMode": "VMI_Wireframe"}
+call_tool SetViewportViewMode {"viewMode": "VMI_Lit"}
 ```
 
 Reading it back is still VibeUE's `get_view_mode()`, which returns one of these strings (Epic ships
@@ -395,9 +395,9 @@ unreal.ViewportService.set_realtime(True)
 Setting the mode is a `call_tool`, reading it back is Python:
 
 ```
-call_tool SetViewportViewMode {"ViewMode": "VMI_Wireframe"}
+call_tool SetViewportViewMode {"viewMode": "VMI_Wireframe"}
 # ... inspect mesh topology ...
-call_tool SetViewportViewMode {"ViewMode": "VMI_Lit"}
+call_tool SetViewportViewMode {"viewMode": "VMI_Lit"}
 ```
 
 ```python

@@ -42,9 +42,9 @@ cover it better (see "Why the old service is gone" at the end).
 | Read command output | `ConsoleToolset.LogsToolset.GetLogEntries` (console output goes to the log, not the tool result) |
 
 ```
-call_tool SetCVarValue   {"Name": "r.ReflectionMethod", "Value": "1"}
-call_tool GetCVarValue   {"Name": "r.ReflectionMethod"}
-call_tool SearchCVars    {"Search": "r.Lumen"}
+call_tool SetCVarValue   {"name": "r.ReflectionMethod", "value": "1"}
+call_tool GetCVarValue   {"name": "r.ReflectionMethod"}
+call_tool SearchCVars    {"name": "r.Lumen"}
 ```
 
 A cvar is **not** config: there is nothing to "save" afterwards. The old
@@ -61,8 +61,8 @@ which is the closest substitute.
 
 | Want | Tool |
 |---|---|
-| All group levels | `ConsoleToolset.RunConsoleCommand("Scalability")` → reads back from the log; or `SearchCVars {"Search": "sg."}` |
-| One group | `SetCVarValue {"Name": "sg.ShadowQuality", "Value": "2"}` |
+| All group levels | `ConsoleToolset.RunConsoleCommand("Scalability")` → reads back from the log; or `SearchCVars {"name": "sg."}` |
+| One group | `SetCVarValue {"name": "sg.ShadowQuality", "value": "2"}` |
 | Overall preset | `RunConsoleCommand("Scalability 3")` (or `"Scalability cine"`) |
 
 Prefer the `Scalability` command for the overall preset: it persists to the **correct** ini
@@ -84,9 +84,9 @@ checkout and undo.
 | Force a save | `ConfigSettingsToolset.SaveSection` (usually unnecessary — the setters save) |
 
 ```
-call_tool SearchSettings          {"Search": "Smooth Frame Rate"}
-call_tool GetSectionPropertyValues {"Container": "Project", "Category": "Engine", "Section": "General", "Properties": ["bSmoothFrameRate"]}
-call_tool SetSectionProperties     {"Container": "Project", "Category": "Engine", "Section": "General", "Values": "{\"bSmoothFrameRate\": false}"}
+call_tool SearchSettings          {"query": "Smooth Frame Rate"}
+call_tool GetSectionPropertyValues {"containerName": "Project", "categoryName": "Engine", "sectionName": "General", "propertyNames": ["bSmoothFrameRate"]}
+call_tool SetSectionProperties     {"containerName": "Project", "categoryName": "Engine", "sectionName": "General", "propertiesJson": "{\"bSmoothFrameRate\": false}"}
 ```
 
 Useful section coordinates: `UEngine` → `Project / Engine / General`; `ULevelEditorPlaySettings` →

@@ -10,7 +10,7 @@
 #   - WRITE it with the slot's typed Python setters (simplest), or hand slot.get_path_name()
 #     to ObjectToolset.SetProperties. The slot's own object name is auto-generated, so get the
 #     slot from Python rather than constructing a path for it.
-#   - reparent_widget is VibeUE's: nothing in Epic's surface mutates a UWidgetTree.
+#   - reparenting is Epic's UMGEditor.WidgetBlueprintEditorSubsystem.MoveWidget.
 import json
 import unreal
 import vibeue
@@ -63,9 +63,14 @@ if bslot is not None and hasattr(bslot, "set_padding"):
 else:
     print(f"{BOX_CHILD} has no box/overlay slot (slot={type(bslot).__name__})")
 
-# --- Move a widget to a new parent panel (VibeUE; preserves the widget object/GUID) ----------
-# Rejects moving a panel into itself or a descendant; the root cannot be reparented.
-print("reparented:", unreal.WidgetService.reparent_widget(PATH, MOVE_WIDGET, MOVE_TO_PARENT))
+# --- Move a widget to a new parent panel (Epic MoveWidget; keeps the widget object, carries slot layout) ---
+# Rejects a non-panel parent and moving a panel into itself or a descendant; the root cannot be moved.
+# Pass the CURRENT parent as newParent to reorder instead (forward move to final position N: childIndex N+1).
+TREE = f"{PATH}.{ASSET}:WidgetTree."
+vibeue.exec_tool("UMGEditor.WidgetBlueprintEditorSubsystem", "MoveWidget", {
+    "widgetBlueprint": f"{PATH}.{ASSET}", "widget": TREE + MOVE_WIDGET,
+    "newParent": TREE + MOVE_TO_PARENT, "childIndex": -1})
+print("reparented:", MOVE_WIDGET, "->", MOVE_TO_PARENT)
 
 wbp = unreal.load_asset(PATH)
 unreal.BlueprintToolset.compile_blueprint(wbp, False)

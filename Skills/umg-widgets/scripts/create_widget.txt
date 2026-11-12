@@ -3,8 +3,10 @@
 # create_widget.txt — Create a new UMG Widget Blueprint.
 #
 # Sample script for the umg-widgets skill. Run via execute_python.
-# Edit ASSET_NAME / PACKAGE_PATH, then execute. The factory is the ONLY way to create a
-# Widget Blueprint: neither WidgetService nor any Epic toolset creates the asset.
+# Edit ASSET_NAME / PACKAGE_PATH, then execute. This uses the factory (WidgetService does not create the
+# asset). Epic's UMGEditor.WidgetBlueprintEditorSubsystem.CreateWidgetBlueprint(folderPath, assetName,
+# parentClass) is an AI tool that does the same, e.g. vibeue.exec_tool("UMGEditor.WidgetBlueprintEditorSubsystem",
+# "CreateWidgetBlueprint", {"folderPath": PACKAGE_PATH, "assetName": ASSET_NAME, "parentClass": "/Script/UMG.UserWidget"}).
 import unreal
 
 ASSET_NAME = "TestWidget"          # name of the new Widget Blueprint
@@ -25,5 +27,7 @@ unreal.EditorAssetLibrary.save_asset(asset_path)
 print("created:", asset_path, "ok:", widget_asset is not None)
 
 # A brand-new WBP has NO root widget. Add one before anything else (empty parent -> root):
-#   unreal.WidgetService.add_component(asset_path, "CanvasPanel", "RootCanvas", "", True)
+#   vibeue.exec_tool("UMGEditor.WidgetBlueprintEditorSubsystem", "CreateAndAddWidget",
+#                    {"widgetBlueprint": asset_path + "." + ASSET_NAME,
+#                     "widgetClass": "/Script/UMG.CanvasPanel", "widgetDisplayName": "RootCanvas"})
 # See build_menu.txt for the full hierarchy build.

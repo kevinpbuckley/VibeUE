@@ -1,7 +1,7 @@
 ---
 name: sound-cues
 display_name: Sound Cue Editor
-description: Create and modify SoundCue assets — add/connect nodes (mixer, random, delay, attenuation, modulator, etc.) and set audio properties (SoundCueService). Use when the user asks to create a Sound Cue, build a SoundCue node graph, or wire audio playback logic.
+description: Create and modify SoundCue assets — add/connect nodes (mixer, random, delay, attenuation, modulator, etc.) with SoundCueService; cue/wave settings, import, save, duplicate and delete go through Epic's AssetToolset, SoundWaveToolset and ObjectToolset. Use when the user asks to create a Sound Cue, build a SoundCue node graph, or wire audio playback logic.
 vibeue_classes:
   - SoundCueService
 unreal_classes:
@@ -47,6 +47,18 @@ import unreal
 svc = unreal.SoundCueService()
 ```
 
+`SoundCueService` owns the cue's **node graph** only. Everything else is Epic's, called from the
+same `execute_python` script with the injected `await call_tool("Toolset.Full.Name.Tool", ...)`:
+
+| Task | Epic tool |
+|------|-----------|
+| Save / duplicate / delete a cue or wave | `EditorToolset.AssetToolset.SaveAsset(assetPath)` / `Duplicate(path, newPath)` / `Delete(path)` |
+| Import a .wav/.mp3/.ogg/.flac/... as a SoundWave | `EditorToolset.SoundWaveToolset.ImportFile(folderPath, assetName, sourceFile, bReplaceExisting=False, bSave=False)` |
+| Cue volume, pitch, sound class, attenuation, concurrency | `EditorToolset.ObjectToolset.SetProperties` / `GetProperties` on the `USoundCue` |
+| SoundWave looping, volume, pitch, subtitle priority | `EditorToolset.ObjectToolset.SetProperties` / `GetProperties` on the `USoundWave` |
+
+`SoundCueService` edits only dirty the package — save with `AssetToolset.SaveAsset` when done.
+
 ---
 
 ## Audio Flow Direction
@@ -74,8 +86,10 @@ UE strips the `b` prefix from bool UPROPERTY names in Python:
 |-----------------|-----------------|
 | `bSuccess`      | `success`       |
 | `bIsRootNode`   | `is_root_node`  |
-| `bLooping`      | `is_looping`    |
-| `bStreaming`    | `is_streaming`  |
+| `bLooping`      | `looping`       |
+| `bStreaming`    | `streaming`     |
+
+(Epic's `ObjectToolset` takes the **C++** names — `bLooping`, not `looping`.)
 
 ### ⚠️ Node indices are positional and may shift
 
@@ -129,8 +143,8 @@ assert r.success
 nodes = svc.list_nodes('/Game/Audio/SC_Footstep')
 svc.set_root_node('/Game/Audio/SC_Footstep', nodes[0].node_index)
 
-# Save
-svc.save_sound_cue('/Game/Audio/SC_Footstep')
+# Save (Epic)
+await call_tool("EditorToolset.AssetToolset.SaveAsset", assetPath='/Game/Audio/SC_Footstep')
 ```
 
 ### Random from Multiple Waves
@@ -156,7 +170,7 @@ for i in range(3):
     svc.connect_nodes(cue, random_idx, i, i)  # each wave into random
 
 svc.set_root_node(cue, random_idx)
-svc.save_sound_cue(cue)
+await call_tool("EditorToolset.AssetToolset.SaveAsset", assetPath=cue)
 ```
 
 ### Mixer (parallel blend)
@@ -179,15 +193,55 @@ mixer = next(i for i, n in enumerate(nodes) if 'Mixer' in n.node_class)
 svc.connect_nodes(cue, mixer, wave0, 0)
 svc.connect_nodes(cue, mixer, wave1, 1)
 svc.set_root_node(cue, mixer)
-svc.save_sound_cue(cue)
+await call_tool("EditorToolset.AssetToolset.SaveAsset", assetPath=cue)
 ```
 
-### Volume / Pitch / SoundClass
+### Volume / Pitch / SoundClass / Attenuation / Concurrency (Epic `ObjectToolset`)
 
 ```python
-svc.set_volume_multiplier('/Game/Audio/SC_Explosion', 1.5)
-svc.set_pitch_multiplier('/Game/Audio/SC_Explosion', 0.9)
-svc.set_sound_class('/Game/Audio/SC_Explosion', '/Game/Audio/SC_SFX')
+import json
+OT = "EditorToolset.ObjectToolset"
+cue = {"refPath": "/Game/Audio/SC_Explosion.SC_Explosion"}   # full object path
+
+# `values` is a JSON STRING. Object references take an object path (or {"refPath": path}); null clears.
+await call_tool(f"{OT}.SetProperties", instance=cue, values=json.dumps({
+    "VolumeMultiplier": 1.5,
+    "PitchMultiplier": 0.9,
+    "SoundClassObject": "/Game/Audio/SFX.SFX",
+    "AttenuationSettings": "/Game/Audio/ATT_Explosion.ATT_Explosion",
+}))
+
+# ConcurrencySet is a set: read it, add, write the whole set back (there is no "append one").
+# It has EditCondition !bOverrideConcurrency (SoundBase.h), so ObjectToolset REFUSES this write while
+# bOverrideConcurrency is true: read that flag first (GetProperties properties=["bOverrideConcurrency"]).
+cur = await call_tool(f"{OT}.GetProperties", instance=cue, properties=["ConcurrencySet"])
+print(cur)   # current members (JSON); keep them in the list you write back, then:
+await call_tool(f"{OT}.SetProperties", instance=cue, values=json.dumps({
+    "ConcurrencySet": ["/Game/Audio/CON_Explosions.CON_Explosions"],   # [] clears
+}))
+await call_tool("EditorToolset.AssetToolset.SaveAsset", assetPath="/Game/Audio/SC_Explosion")
+```
+
+> `AttenuationSettings` is refused while the cue's `bOverrideAttenuation` is on (the asset is not
+> used then — the cue's inline `AttenuationOverrides` are). Set `bOverrideAttenuation` false first,
+> or edit `AttenuationOverrides` instead.
+
+> `ConcurrencySet` is likewise refused while `bOverrideConcurrency` is true (the cue's inline `ConcurrencyOverrides` apply then); set `bOverrideConcurrency` false in a separate SetProperties call first, or edit `ConcurrencyOverrides`.
+
+### Import a SoundWave and set its properties
+
+```python
+import json
+# Async import; awaiting returns the produced asset(s).
+r = await call_tool("EditorToolset.SoundWaveToolset.ImportFile",
+                    folderPath="/Game/Audio", assetName="SW_Gunshot",
+                    sourceFile=r"C:/Sounds/gunshot.wav", bReplaceExisting=True, bSave=True)
+print(r)
+
+await call_tool("EditorToolset.ObjectToolset.SetProperties",
+                instance={"refPath": "/Game/Audio/SW_Gunshot.SW_Gunshot"},
+                values=json.dumps({"bLooping": False, "Volume": 0.8, "Pitch": 1.0}))
+await call_tool("EditorToolset.AssetToolset.SaveAsset", assetPath="/Game/Audio/SW_Gunshot")
 ```
 
 ---
@@ -199,10 +253,10 @@ svc.set_sound_class('/Game/Audio/SC_Explosion', '/Game/Audio/SC_SFX')
 | Method | Returns | Notes |
 |--------|---------|-------|
 | `create_sound_cue(path, wave_path)` | `FSoundCueResult` | `wave_path=''` for empty cue |
-| `duplicate_sound_cue(src_path, dst_path)` | `FSoundCueResult` | copy a cue to a new path |
-| `delete_sound_cue(path)` | `bool` | deletes the asset from disk |
-| `get_sound_cue_info(path)` | `FSoundCueInfo` | node count, root index, vol, pitch, duration |
-| `save_sound_cue(path)` | `bool` | saves to disk |
+| `get_sound_cue_info(path)` | `FSoundCueInfo` | node count, root index, vol, pitch, class, attenuation, duration |
+
+Save / duplicate / delete are Epic's: `EditorToolset.AssetToolset.SaveAsset(assetPath)`,
+`Duplicate(path, newPath)`, `Delete(path)`.
 
 ### Node Creation — all return `FSoundCueResult`
 
@@ -237,17 +291,18 @@ svc.set_sound_class('/Game/Audio/SC_Explosion', '/Game/Audio/SC_SFX')
 | `get_node_property(path, index, prop_name)` | `FString` | read any node UPROPERTY |
 | `set_node_property(path, index, prop_name, value)` | `bool` | write any node UPROPERTY |
 
-### Cue-Level Settings
+### Cue-Level Settings — Epic `EditorToolset.ObjectToolset` on the `USoundCue`
 
-| Method | Returns | Notes |
-|--------|---------|-------|
-| `set_volume_multiplier(path, vol)` | `bool` | — |
-| `set_pitch_multiplier(path, pitch)` | `bool` | — |
-| `set_sound_class(path, class_path)` | `bool` | — |
-| `set_attenuation(path, att_path)` | `bool` | `att_path=''` to clear |
-| `get_attenuation(path)` | `FString` | returns asset path or `''` |
-| `set_concurrency(path, conc_path, clear=False)` | `bool` | `conc_path=''` + `clear=True` to clear all |
-| `get_concurrency(path)` | `TArray<FString>` | list of assigned concurrency asset paths |
+| UPROPERTY (C++ name) | Type | Notes |
+|---|---|---|
+| `VolumeMultiplier` | float | new cues default to `0.75` |
+| `PitchMultiplier` | float | |
+| `SoundClassObject` | SoundClass ref | object path; `null` clears |
+| `AttenuationSettings` | SoundAttenuation ref | object path; `null` clears; refused while `bOverrideAttenuation` is true |
+| `ConcurrencySet` | set of SoundConcurrency refs | write the whole set (read-modify-write to add one); `[]` clears; refused while `bOverrideConcurrency` is true (inline `ConcurrencyOverrides` apply then): set it false in a separate SetProperties call first, or edit `ConcurrencyOverrides` |
+
+Read with `GetProperties(instance, properties=[...])`, write with `SetProperties(instance, values=<JSON string>)`.
+`get_sound_cue_info` also reports volume, pitch, class name and attenuation path.
 
 ### FSoundCueNodeInfo fields
 
@@ -265,18 +320,21 @@ n.child_indices   # list[int] — indices of connected children (-1 = unconnecte
 | Method | Returns | Notes |
 |--------|---------|-------|
 | `get_sound_wave_info(sw_path)` | `FSoundWaveInfo` | duration, sample rate, channels, looping, streaming |
-| `import_sound_wave(file_path, asset_path)` | `FSoundCueResult` | import .wav/.mp3 from disk |
-| `set_sound_wave_property(sw_path, prop, value)` | `bool` | set any UPROPERTY by name |
 
-Common `set_sound_wave_property` property names:
+Import is Epic's `EditorToolset.SoundWaveToolset.ImportFile(folderPath, assetName, sourceFile,
+bReplaceExisting=False, bSave=False)` (wav, aif, aiff, ogg, flac, opus, mp3; async — await it).
+Wave properties are set with `EditorToolset.ObjectToolset.SetProperties` on the `USoundWave`:
 
-| PropertyName | Type | Example value |
+| UPROPERTY (C++ name) | Type | Example value |
 |---|---|---|
-| `bLooping` | bool | `"true"` |
-| `bStreaming` | bool | `"true"` |
-| `VolumeMultiplier` | float | `"1.5"` |
-| `PitchMultiplier` | float | `"0.9"` |
-| `SubtitlePriority` | float | `"100.0"` |
+| `bLooping` | bool | `true` |
+| `Volume` | float | `1.5` (ClampMin 0) |
+| `Pitch` | float | `0.9` (0.125 – 4.0) |
+| `SubtitlePriority` | float | `100.0` |
+
+USoundWave has **no** `VolumeMultiplier` / `PitchMultiplier` (those are `USoundCue`'s). `bStreaming`
+is a legacy bare `UPROPERTY()` — not editable, so `SetProperties` cannot set it; streaming is
+controlled by the wave's `LoadingBehavior`.
 
 ### FSoundWaveInfo fields
 

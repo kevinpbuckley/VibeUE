@@ -17,18 +17,27 @@ unreal_classes:
 ### 🚨 Real Python method names — do NOT search for the docstring's "action" names
 
 The `InputService` class docstring lists MCP-style action ids (`action_create`,
-`mapping_list_contexts`, `action_configure`, ...). Those are **not** the Python method
+`reflection_discover_types`, ...). Those are **not** the Python method
 names — `get_symbol(method_filter=...)` matches nothing for them. The complete
 real API is below; you rarely need a discovery call at all:
 
 | Area | Methods |
 |------|---------|
 | Reflection | `discover_types()`, `get_available_keys(filter="")`, `get_available_modifier_types()`, `get_available_trigger_types()` |
-| Actions | `create_action(name, path, value_type="Axis1D")`, `list_input_actions()`, `get_input_action_info(action_path)` → info or None, `configure_action(action_path, consume_input=True, trigger_when_paused=False, description="")`, `input_action_exists(action_path)` |
-| Contexts | `create_mapping_context(name, path, priority=0)`, `list_mapping_contexts()`, `get_mapping_context_info(context_path)` → info or None, `mapping_context_exists(context_path)` |
+| Actions | `create_action(name, path, value_type="Axis1D")` |
+| Contexts | `create_mapping_context(name, path, priority=0)`, `get_mapping_context_info(context_path)` → info or None |
 | Mappings | `get_mappings(context_path)`, `add_key_mapping(context_path, action_path, key_name)`, `remove_mapping(context_path, mapping_index)`, `key_mapping_exists(context_path, action_path)` |
 | Modifiers | `add_modifier(context_path, mapping_index, modifier_type)`, `remove_modifier(context_path, mapping_index, modifier_index)`, `get_modifiers(context_path, mapping_index)` |
 | Triggers | `add_trigger(context_path, mapping_index, trigger_type, properties_json="")`, `add_action_trigger(action_path, trigger_type, properties_json="")` → JSON, `remove_trigger(context_path, mapping_index, trigger_index)`, `get_triggers(context_path, mapping_index)` |
+
+**No longer InputService methods — use Epic's tools** (`vibeue.exec_tool` or `call_tool`):
+
+| Removed | Use instead |
+|---|---|
+| `input_action_exists`, `mapping_context_exists` | `EditorToolset.AssetToolset.Exists(path)` (also true for a folder path) |
+| `list_input_actions`, `list_mapping_contexts` | `EditorToolset.AssetToolset.FindAssets(filter={"assetType": "/Script/EnhancedInput.InputAction", "maxResults": 0})`, or `"/Script/EnhancedInput.InputMappingContext"` for contexts. Sees only saved assets (`create_action` / `create_mapping_context` save on creation); `maxResults=0` drops the default cap of 100 |
+| `get_input_action_info` | `EditorToolset.ObjectToolset.GetProperties(instance="/Game/Input/IA_Jump.IA_Jump", properties=["ValueType","bConsumeInput","bTriggerWhenPaused","ActionDescription"])` |
+| `configure_action` | `EditorToolset.ObjectToolset.SetProperties(instance="/Game/Input/IA_Jump.IA_Jump", values=json.dumps({"bConsumeInput": True, "bTriggerWhenPaused": False, "ActionDescription": "..."}))` — sets only the keys you pass, and also reaches `ValueType`, `AccumulationBehavior` |
 
 `create_action` value types are the strings `discover_types()` returns: `"Boolean"`
 (alias `"Digital"`), `"Axis1D"`, `"Axis2D"`, `"Axis3D"`. The `create_*` folder may be a bare
@@ -160,9 +169,12 @@ mappings = unreal.InputService.get_mappings("/Game/Input/IMC_Default")
 for m in mappings:
     print(f"Action: {m.action_name}, Key: {m.key_name}")
 
-info = unreal.InputService.get_input_action_info("/Game/Input/IA_Jump")
-if info:
-    print(f"Action: {info.action_name}, ValueType: {info.value_type}")
+# An Input Action's own settings are Epic's ObjectToolset (no InputService method):
+import vibeue
+info = vibeue.exec_tool("EditorToolset.ObjectToolset", "GetProperties", {
+    "instance": "/Game/Input/IA_Jump.IA_Jump",
+    "properties": ["ValueType", "bConsumeInput", "bTriggerWhenPaused", "ActionDescription"]})
+print(info)
 ```
 
 ### Discover Available Types
@@ -194,25 +206,32 @@ import unreal
 # X/Y/Z map to the value type. Read the result in a later call: nothing ticks while this one runs.
 print(unreal.InputService.inject_action("/Game/Input/IA_Fire", 1.0))
 
-# Hold an action for 1.5 s of real time (a guard, a charge, a Hold trigger); returns at once.
-# inject_action_for is gone: use Epic InputToolset.ApplyInput (entries + DurationSeconds)
-# call_tool ApplyInput {"Entries": [{"Action": <IA path>, "Value": [1,0,0]}], "DurationSeconds": 1.0}
-print(unreal.InputService.stop_injection("/Game/Input/IA_Block"))   # release early
-
-# Raw key through Slate to the game viewport: "tap" (default), "down", "up", or "hold".
-# inject_key is no longer a tool: Epic InputToolset.ApplyInput takes a legacy Key entry
-# call_tool ApplyInput {"Entries": [{"Key": "SpaceBar", "Value": [1,0,0]}], "DurationSeconds": 0}
-# hold: ApplyInput with DurationSeconds > 0 -- {"Key": "RightMouseButton"}, duration 1.5))
+# Hold an action INDEFINITELY, and release it in a later call once you have seen what you need
+# (hold forward, read where the pawn got to, then let go). Calling it again restarts the hold.
+print(unreal.InputService.start_injection("/Game/Input/IA_Block"))
+# ... later call ...
+print(unreal.InputService.stop_injection("/Game/Input/IA_Block"))
 ```
 
-All return JSON with `success`/`error_code` (PIE not running, `NO_LOCAL_PLAYER` /
-`NO_PLAYER_CONTROLLER` while PIE or a client's join is still starting — retry on a later call —,
-unknown key, `BAD_DURATION` outside 0.05 to 60 s). `inject_action` reports `queued: true`: it was
-queued, not yet applied. The action calls take `pie_instance` to pick a PIE world: -1, the default,
-is the first PIE world with a local player (the lowest instance number), and replies report the
-instance actually used. A hold is one hold per action and PIE world whatever the path spelling, so
-`stop_injection` finds it either way; holding a held key again extends it (`extended: true`); ending
-PIE drops every hold. See the `pie-testing` skill for the full verification loop.
+A press or hold of **known length** — and any raw key — is Epic's `InputToolset.ApplyInput`
+(`inject_action_for` and `inject_key` are gone). It takes `entries` plus `durationSeconds` (`0` = a
+one-tick tap, `> 0` = held that long, then released) and can press several actions or keys together:
+
+```
+call_tool InputToolset.ApplyInput {"entries": [{"action": {"refPath": "/Game/Input/IA_Block.IA_Block"},
+                                               "value": {"x": 1, "y": 0, "z": 0}}], "durationSeconds": 1.5}
+call_tool InputToolset.ApplyInput {"entries": [{"key": {"keyName": "SpaceBar"}, "value": {"x": 1, "y": 0, "z": 0}}],
+                                   "durationSeconds": 0}
+```
+
+The VibeUE calls return JSON with `success`/`error_code` (PIE not running, `NO_LOCAL_PLAYER` /
+`NO_PLAYER_CONTROLLER` while PIE or a client's join is still starting — retry on a later call).
+`inject_action` reports `queued: true`: it was queued, not yet applied. They take `pie_instance` to
+pick a PIE world: -1, the default, is the first PIE world with a local player (the lowest instance
+number), and replies report the instance actually used. A `start_injection` hold is one hold per
+action and PIE world whatever the path spelling, so `stop_injection` finds it either way; ending PIE
+drops every hold. An `ApplyInput` hold is Epic's own and ends on its `durationSeconds`. See the
+`pie-testing` skill for the full verification loop.
 
 ## Reference pages
 

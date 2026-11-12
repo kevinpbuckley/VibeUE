@@ -35,10 +35,13 @@ if not profile.has_learned_constraints:
 ## Preview and validate a single bone edit
 
 ```python
-import unreal
+import unreal, json
 ass = unreal.AnimSequenceService
 anim_path = "/Game/Anims/AS_Idle"
-skeleton_path = ass.get_animation_skeleton(anim_path)
+# Skeleton is a plain property: read it with Epic's ObjectToolset (object path form)
+props = json.loads(await call_tool("EditorToolset.ObjectToolset.GetProperties",
+                                   instance={"refPath": anim_path + ".AS_Idle"}, properties=["Skeleton"]))
+skeleton_path = props["Skeleton"]["refPath"]
 unreal.SkeletonService.create_skeleton_profile(skeleton_path)
 
 r = ass.preview_bone_rotation(anim_path, "upperarm_r", unreal.Rotator(0, 45, 0), "local", 0)

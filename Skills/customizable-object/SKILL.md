@@ -42,6 +42,10 @@ compiles it. Discover exact signatures with
   `pin_name` OR the display name the editor shows (`"Mesh"` works for `Mesh_Input_Pin`).
 - **Every write saves the asset** and returns `success` / `error`. Read `error` — it names the
   cause (incompatible pin categories, unknown property, value that did not parse).
+- **Finding Customizable Objects** is Epic's (VibeUE's `list_customizable_objects` was cut):
+  `await call_tool("EditorToolset.AssetToolset.FindAssets", filter={"folderPath": "/Game",
+  "assetType": {"refPath": "/Script/CustomizableObject.CustomizableObject"}, "maxResults": 0})`
+  returns object paths of saved assets (unsaved ones are not found).
 
 ## The golden workflow — a compilable object
 

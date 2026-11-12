@@ -93,15 +93,17 @@ material functions through the same `MaterialOrFunction` parameter, so one patte
 
 ```
 # Every expression in the graph (a material OR a material function):
-call_tool MaterialToolset.GetExpressions   {"MaterialOrFunction": {"refPath": "/Game/Materials/M_Landscape_Master.M_Landscape_Master"}}
-call_tool MaterialToolset.GetExpressions   {"MaterialOrFunction": {"refPath": "/Game/Functions/MF_AutoLayer.MF_AutoLayer"}}
+call_tool MaterialToolset.GetExpressions   {"materialOrFunction": {"refPath": "/Game/Materials/M_Landscape_Master.M_Landscape_Master"}}
+call_tool MaterialToolset.GetExpressions   {"materialOrFunction": {"refPath": "/Game/Functions/MF_AutoLayer.MF_AutoLayer"}}
 
 # What feeds each expression, and what feeds the material outputs:
-call_tool MaterialToolset.GetExpressionInputs {"MaterialOrFunction": {...}, "Expression": {"refPath": "<expression from GetExpressions>"}}
-call_tool MaterialToolset.GetPropertyInput    {"Material": {...}, "MaterialProperty": "MP_BaseColor"}
+call_tool MaterialToolset.GetExpressionInputs {"materialOrFunction": {...}, "expression": {"refPath": "<expression from GetExpressions>"}}
+call_tool MaterialToolset.GetPropertyInput    {"material": {...}, "materialProperty": "MP_BaseColor"}
 
 # Any property of any expression (parameter names, defaults, function input type/sort priority):
-call_tool ObjectToolset.GetProperties {"Object": {"refPath": "<expression>"}}
+call_tool ObjectToolset.ListProperties {"instance": {"refPath": "<expression>"}}          # the names
+call_tool ObjectToolset.GetProperties  {"instance": {"refPath": "<expression>"},
+                                        "properties": ["ParameterName", "DefaultValue"]}  # their values
 ```
 
 There is no single JSON blob any more: `GetExpressions` gives you the nodes and
@@ -132,7 +134,7 @@ Master materials with many function calls are **very slow** to compile. NEVER cr
 
 Split into steps:
 1. **Block 1**: Create material, add functions, connect graph, save
-2. **Block 2**: `call_tool MaterialToolset.Recompile {"MaterialOrFunction": {"refPath": "<mat>"}}`
+2. **Block 2**: `call_tool MaterialToolset.Recompile {"materialOrFunction": {"refPath": "<mat>"}}`
    alone (may take minutes). For a material **function**, `Recompile` also recompiles every material
    that references it — so it is slower still.
 3. **Block 3**: Create instances, set parameters, assign to landscape
@@ -143,8 +145,9 @@ If using RVT, you MUST set `bUsedWithVirtualTexturing = true` on the master mate
 properties are Epic's `ObjectToolset` now (`MaterialService.set_property` is gone):
 
 ```
-call_tool ObjectToolset.SetProperties {"Object": {"refPath": "/Game/Materials/M_Terrain.M_Terrain"},
-                                       "Properties": {"bUsedWithVirtualTexturing": true}}
+call_tool ObjectToolset.SetProperties {"instance": {"refPath": "/Game/Materials/M_Terrain.M_Terrain"},
+                                       "values": "{\"bUsedWithVirtualTexturing\": true}"}
+# `values` is a JSON string, not an object.
 ```
 
 Set it **before** the recompile, then read it back with `ObjectToolset.GetProperties`.
@@ -162,10 +165,10 @@ unreal.EditorAssetLibrary.save_asset(func_path)
 expression you add to the function and then configure — two `call_tool` calls per pin:
 
 ```
-call_tool MaterialToolset.AddExpression {"MaterialOrFunction": {"refPath": "<MF path>"},
-          "ExpressionClass": "/Script/Engine.MaterialExpressionFunctionInput", "X": -600, "Y": 0}
-call_tool ObjectToolset.SetProperties   {"Object": {"refPath": "<the expression returned above>"},
-          "Properties": {"InputName": "BaseColor", "InputType": "FunctionInput_Vector3", "SortPriority": 0}}
+call_tool MaterialToolset.AddExpression {"materialOrFunction": {"refPath": "<MF path>"},
+          "expressionClass": "/Script/Engine.MaterialExpressionFunctionInput", "x": -600, "y": 0}
+call_tool ObjectToolset.SetProperties   {"instance": {"refPath": "<the expression returned above>"},
+          "values": "{\"InputName\": \"BaseColor\", \"InputType\": \"FunctionInput_Vector3\", \"SortPriority\": 0}"}
 ```
 
 `SortPriority` controls pin ordering — lower values appear first, so give `BaseColor` 0, `Normal` 1,

@@ -7,42 +7,6 @@
 #include "UInputService.generated.h"
 
 /**
- * Information about an Input Action.
- * Python access: info = unreal.InputService.get_input_action_info(path)
- * 
- * Properties:
- * - action_name (str): Name of the action (e.g., "IA_Jump")
- * - action_path (str): Full asset path (e.g., "/Game/Input/IA_Jump")
- * - value_type (str): "Boolean", "Axis1D", "Axis2D", or "Axis3D"
- * - consume_input (bool): Whether the action consumes input
- * - trigger_when_paused (bool): Whether triggers when game is paused
- * - description (str): Description text for the action
- */
-USTRUCT(BlueprintType)
-struct FInputActionDetailedInfo
-{
-	GENERATED_BODY()
-
-	UPROPERTY(BlueprintReadWrite, Category = "Input")
-	FString ActionName;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Input")
-	FString ActionPath;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Input")
-	FString ValueType;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Input")
-	bool bConsumeInput = true;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Input")
-	bool bTriggerWhenPaused = false;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Input")
-	FString Description;
-};
-
-/**
  * Information about a Mapping Context.
  * Python access: info = unreal.InputService.get_mapping_context_info(path)
  * 
@@ -209,8 +173,8 @@ struct FInputTypeDiscoveryResult
 /**
  * Input Service - Enhanced Input ASSET authoring, plus action injection into PIE.
  *
- * Nothing in UE 5.9 authors Enhanced Input assets, so that whole surface stays here: Input Actions
- * and Mapping Contexts (create / list / info / configure / exists), key mappings, and the modifiers
+ * Nothing in UE 5.9 authors Enhanced Input assets, so that surface stays here: creating Input Actions
+ * and Mapping Contexts, reading a context, key mappings, and the modifiers
  * and triggers on them -- addressed by INDEX on the mapping, so read with get_mappings /
  * get_modifiers / get_triggers before adding or removing. The reflection calls (discover_types,
  * get_available_keys, get_available_modifier_types, get_available_trigger_types) return the only
@@ -221,10 +185,14 @@ struct FInputTypeDiscoveryResult
  *    (ApplyInput takes Entries -- each entry one Action or one Key, with its value -- and
  *    DurationSeconds; IsInputApplied reads back whether they are applied). This is what replaced
  *    VibeUE's held-action and raw-key injection.
- *  - any property on an input asset these calls do not reach: `EditorToolset.ObjectToolset`
- *    (GetProperties / SetProperties / ListProperties)
- *  - finding, saving and validating the assets: `EditorToolset.AssetToolset`
- *    (FindAssets / SaveAsset / ValidateAssets)
+ *  - any property on an input asset: `EditorToolset.ObjectToolset` (GetProperties / SetProperties /
+ *    ListProperties). An Input Action's info is GetProperties(instance=<action path>, properties=
+ *    ["ValueType","bConsumeInput","bTriggerWhenPaused","ActionDescription"]) and configuring it is
+ *    SetProperties(instance=<action path>, values=<JSON of the same names>)
+ *  - finding, existence, saving and validating the assets: `EditorToolset.AssetToolset`
+ *    (FindAssets with filter={"assetType": "/Script/EnhancedInput.InputAction", "maxResults": 0} or
+ *    {"assetType": "/Script/EnhancedInput.InputMappingContext", "maxResults": 0} for all of them
+ *    -- maxResults is a field of the filter object, 0 = no limit / Exists / SaveAsset / ValidateAssets)
  *
  * On the PIE side what is left is inject_action: one Enhanced Input action value QUEUED onto the
  * next input tick of a PIE world's local player, with no OS focus and no remapping of game assets.
@@ -259,7 +227,7 @@ public:
 	static FInputTypeDiscoveryResult DiscoverTypes();
 
 	// =================================================================
-	// Action Management (action_create, action_list, action_get_properties, action_configure)
+	// Action Management (action_create)
 	// =================================================================
 
 	/**
@@ -281,43 +249,6 @@ public:
 		const FString& AssetPath,
 		const FString& ValueType = TEXT("Axis1D"));
 
-	/**
-	 * List all Input Action assets.
-	 * Maps to action="action_list"
-	 *
-	 * @return Array of Input Action paths
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input")
-	static TArray<FString> ListInputActions();
-
-	/**
-	 * Get Input Action properties.
-	 * Maps to action="action_get_properties"
-	 *
-	 * @param ActionPath - Full path to the Input Action
-	 * @param OutInfo - Structure containing action details
-	 * @return True if successful
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input")
-	static bool GetInputActionInfo(const FString& ActionPath, FInputActionDetailedInfo& OutInfo);
-
-	/**
-	 * Configure an Input Action's properties.
-	 * Maps to action="action_configure"
-	 *
-	 * @param ActionPath - Full path to the Input Action
-	 * @param bConsumeInput - Whether the action consumes input
-	 * @param bTriggerWhenPaused - Whether to trigger when game is paused
-	 * @param Description - Description text for the action
-	 * @return True if configuration was successful
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input")
-	static bool ConfigureAction(
-		const FString& ActionPath,
-		bool bConsumeInput = true,
-		bool bTriggerWhenPaused = false,
-		const FString& Description = TEXT(""));
-
 	// =================================================================
 	// Mapping Context Management
 	// =================================================================
@@ -336,15 +267,6 @@ public:
 		const FString& ContextName,
 		const FString& AssetPath,
 		int32 Priority = 0);
-
-	/**
-	 * List all Input Mapping Context assets.
-	 * Maps to action="mapping_list_contexts"
-	 *
-	 * @return Array of Mapping Context paths
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input")
-	static TArray<FString> ListMappingContexts();
 
 	/**
 	 * Get Mapping Context information including all mapped actions.
@@ -548,32 +470,6 @@ public:
 	// =================================================================
 
 	/**
-	 * Check if an Input Action exists at the given path.
-	 *
-	 * @param ActionPath - Full path to the Input Action
-	 * @return True if Input Action exists
-	 *
-	 * Example:
-	 *   if not unreal.InputService.input_action_exists("/Game/Input/IA_Jump"):
-	 *       unreal.InputService.create_action("IA_Jump", "/Game/Input", "Axis1D")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input|Exists")
-	static bool InputActionExists(const FString& ActionPath);
-
-	/**
-	 * Check if a Mapping Context exists at the given path.
-	 *
-	 * @param ContextPath - Full path to the Mapping Context
-	 * @return True if Mapping Context exists
-	 *
-	 * Example:
-	 *   if not unreal.InputService.mapping_context_exists("/Game/Input/IMC_Default"):
-	 *       unreal.InputService.create_mapping_context("IMC_Default", "/Game/Input")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input|Exists")
-	static bool MappingContextExists(const FString& ContextPath);
-
-	/**
 	 * Check if a key mapping for a specific action exists in a context.
 	 *
 	 * @param ContextPath - Full path to the Mapping Context
@@ -598,8 +494,9 @@ public:
 	 * The value is QUEUED: it applies on the next input tick and is released on the tick after, so a
 	 * press fires Started and Completed almost at once. The world does not tick while a Python call runs,
 	 * so read the result in a LATER call, two or more frames on. To HOLD an action (a guard, a charge,
-	 * a Hold trigger) use the engine's `InputToolset` ApplyInput with a DurationSeconds -- holding is no
-	 * longer done here. X/Y/Z map onto the action's value type (Boolean uses X != 0).
+	 * a Hold trigger) for a known time use the engine's `InputToolset` ApplyInput with a DurationSeconds;
+	 * for a hold whose release you decide later, use start_injection + stop_injection.
+	 * X/Y/Z map onto the action's value type (Boolean uses X != 0).
 	 *
 	 * @param ActionPath - Input Action asset path (/Game/Input/IA_Fire or full object path)
 	 * @param PieInstance - Which PIE world (its PIE instance number); -1 = the first PIE world with a local

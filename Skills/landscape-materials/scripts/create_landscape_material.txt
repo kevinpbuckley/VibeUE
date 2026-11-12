@@ -10,21 +10,24 @@
 import unreal
 lms = unreal.LandscapeMaterialService
 
-r = lms.create_landscape_material("M_Landscape", "/Game/Landscape/")   # LandscapeMaterialCreateResult
-print("create:", r)
-path = r.asset_path if hasattr(r, "asset_path") else None
+# The material asset itself is Epic's MaterialToolset.CreateMaterial (returns a {refPath} handle);
+# LandscapeMaterialService only adds the landscape nodes.
+path = "/Game/Landscape/M_Landscape"
+if not await call_tool("EditorToolset.AssetToolset.Exists", path=path):
+    r = await call_tool("EditorToolset.MaterialToolset.CreateMaterial",
+                        folderPath="/Game/Landscape", assetName="M_Landscape")
+    print("CREATED:", r)
 
 # Build a LayerBlend node with named layers (Grass, Rock), wire to BaseColor, etc.
 # blend = lms.create_layer_blend_node_with_layers(path, ["Grass", "Rock"], -400, 0)
 # ... connect textures per layer with lms.setup_layer_textures(...) (see workflows.md) ...
 
-if path:
-    unreal.EditorAssetLibrary.save_asset(path)
+unreal.EditorAssetLibrary.save_asset(path)
 print("done — now run the two engine steps, each as its own call_tool:")
 print('  call_tool MaterialToolset.ConnectToOutput '
-      '{"Expression": {"refPath": "<the LandscapeLayerBlend from GetExpressions>"}, '
-      '"OutputName": "", "MaterialProperty": "MP_BaseColor"}')
-print('  call_tool MaterialToolset.Recompile {"MaterialOrFunction": {"refPath": "%s.%s"}}'
-      % (path, path.rsplit("/", 1)[-1] if path else ""))
+      '{"expression": {"refPath": "<the LandscapeLayerBlend from GetExpressions>"}, '
+      '"outputName": "", "materialProperty": "MP_BaseColor"}')
+print('  call_tool MaterialToolset.Recompile {"materialOrFunction": {"refPath": "%s.%s"}}'
+      % (path, path.rsplit("/", 1)[-1]))
 # NOTE: a LandscapeMaterialService node_id is an internal handle — Epic's MaterialToolset takes an
 # object ref ({"refPath": ...}), so cross between them with MaterialToolset.GetExpressions.

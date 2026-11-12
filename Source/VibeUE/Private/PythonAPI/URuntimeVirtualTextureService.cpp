@@ -3,6 +3,7 @@
 #include "PythonAPI/URuntimeVirtualTextureService.h"
 #include "VT/RuntimeVirtualTexture.h"
 #include "Components/RuntimeVirtualTextureComponent.h"
+#include "VT/RuntimeVirtualTextureVolume.h"
 #include "VT/VirtualTextureBuilder.h"
 #include "Landscape.h"
 #include "LandscapeInfo.h"
@@ -297,45 +298,58 @@ FRVTVolumeResult URuntimeVirtualTextureService::CreateRVTVolume(
 		return Result;
 	}
 
-	// Get landscape bounds for volume sizing
-	FVector Origin, Extent;
-	LandscapeProxy->GetActorBounds(false, Origin, Extent);
+	// Landscape world bounds (ALandscape includes unloaded components, as the engine's own SetBounds does)
+	FBox WorldBounds(ForceInit);
+	if (const ALandscape* LandscapeActor = Cast<ALandscape>(LandscapeProxy))
+	{
+		WorldBounds = LandscapeActor->GetCompleteBounds();
+	}
+	if (!WorldBounds.IsValid)
+	{
+		FVector Origin, Extent;
+		LandscapeProxy->GetActorBounds(false, Origin, Extent);
+		WorldBounds = FBox(Origin - Extent, Origin + Extent);
+	}
 
-	// Spawn the RuntimeVirtualTextureComponent on a new actor
-	// We create the actor with a RuntimeVirtualTextureComponent
+	// Same math as RuntimeVirtualTexture::SetBounds (VirtualTexturingEditor, Public/RuntimeVirtualTextureSetBounds.h):
+	// bounds in the landscape's rotated local space -> volume location = min corner, scale = bounds size.
+	const FQuat TargetRotation = LandscapeProxy->GetActorQuat();
+	FTransform LocalTransform;
+	LocalTransform.SetComponents(TargetRotation, WorldBounds.GetCenter(), FVector::OneVector);
+	FBox LocalBounds = WorldBounds.TransformBy(LocalTransform.Inverse());
+	const FVector LocalSize = LocalBounds.GetSize();
+	if (LocalSize.X > UE_KINDA_SMALL_NUMBER && LocalSize.Y > UE_KINDA_SMALL_NUMBER && LocalSize.Z <= UE_KINDA_SMALL_NUMBER)
+	{
+		// Flat landscape: give the volume a little height so it still renders.
+		LocalBounds = LocalBounds.ExpandBy(FVector(0.0, 0.0, 0.5));
+	}
+	FTransform VolumeTransform;
+	VolumeTransform.SetComponents(TargetRotation, LocalTransform.TransformPosition(LocalBounds.Min), LocalBounds.GetSize());
+
 	FString ActorLabel = VolumeName.IsEmpty()
 		? FString::Printf(TEXT("RVT_Volume_%s"), *LandscapeProxy->GetActorLabel())
 		: VolumeName;
 
 	FScopedTransaction Transaction(NSLOCTEXT("RVTService", "CreateRVTVolume", "Create RVT Volume"));
 
-	// Spawn a generic actor with RVT component
+	// Spawn the engine's volume actor (same as the Landscape details panel's "Create Volume" button)
 	FActorSpawnParameters SpawnParams;
 	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
-	AActor* VolumeActor = World->SpawnActor<AActor>(AActor::StaticClass(), Origin, FRotator::ZeroRotator, SpawnParams);
-	if (!VolumeActor)
+	ARuntimeVirtualTextureVolume* VolumeActor = World->SpawnActor<ARuntimeVirtualTextureVolume>(
+		ARuntimeVirtualTextureVolume::StaticClass(), VolumeTransform, SpawnParams);
+	if (!VolumeActor || !VolumeActor->VirtualTextureComponent)
 	{
 		Result.ErrorMessage = TEXT("Failed to spawn RVT volume actor");
 		return Result;
 	}
 
 	VolumeActor->SetActorLabel(ActorLabel);
-
-	// Add RuntimeVirtualTextureComponent
-	URuntimeVirtualTextureComponent* RVTComponent = NewObject<URuntimeVirtualTextureComponent>(
-		VolumeActor, URuntimeVirtualTextureComponent::StaticClass(), TEXT("RuntimeVirtualTexture"));
-
-	if (RVTComponent)
-	{
-		RVTComponent->SetVirtualTexture(RVT);
-
-		// Size the component to cover the landscape
-		RVTComponent->SetWorldTransform(FTransform(FRotator::ZeroRotator, Origin, FVector::OneVector));
-
-		VolumeActor->AddInstanceComponent(RVTComponent);
-		RVTComponent->RegisterComponent();
-	}
+	VolumeActor->VirtualTextureComponent->SetVirtualTexture(RVT);
+	VolumeActor->VirtualTextureComponent->SetBoundsAlignActor(LandscapeProxy);
+	VolumeActor->Modify();
+	VolumeActor->SetActorTransform(VolumeTransform);
+	VolumeActor->PostEditMove(true);
 
 	Result.bSuccess = true;
 	Result.VolumeName = VolumeActor->GetName();
@@ -345,65 +359,4 @@ FRVTVolumeResult URuntimeVirtualTextureService::CreateRVTVolume(
 		*Result.VolumeLabel, *LandscapeNameOrLabel);
 
 	return Result;
-}
-
-bool URuntimeVirtualTextureService::AssignRVTToLandscape(
-	const FString& LandscapeNameOrLabel,
-	const FString& RVTAssetPath,
-	int32 SlotIndex)
-{
-	// Get world
-	UWorld* World = nullptr;
-	if (GEditor)
-	{
-		World = GEditor->GetEditorWorldContext().World();
-	}
-	if (!World)
-	{
-		UE_LOG(LogTemp, Error, TEXT("URuntimeVirtualTextureService::AssignRVTToLandscape: No editor world available"));
-		return false;
-	}
-
-	// Find landscape
-	ALandscapeProxy* LandscapeProxy = nullptr;
-	for (TActorIterator<ALandscapeProxy> It(World); It; ++It)
-	{
-		if ((*It)->GetActorLabel().Equals(LandscapeNameOrLabel, ESearchCase::IgnoreCase) ||
-			(*It)->GetName().Equals(LandscapeNameOrLabel, ESearchCase::IgnoreCase))
-		{
-			LandscapeProxy = *It;
-			break;
-		}
-	}
-
-	if (!LandscapeProxy)
-	{
-		UE_LOG(LogTemp, Error, TEXT("URuntimeVirtualTextureService::AssignRVTToLandscape: Landscape '%s' not found"),
-			*LandscapeNameOrLabel);
-		return false;
-	}
-
-	// Load RVT
-	URuntimeVirtualTexture* RVT = LoadRVTAsset(RVTAssetPath);
-	if (!RVT)
-	{
-		return false;
-	}
-
-	FScopedTransaction Transaction(NSLOCTEXT("RVTService", "AssignRVT", "Assign RVT to Landscape"));
-	LandscapeProxy->Modify();
-
-	// Ensure the RuntimeVirtualTextures array is large enough
-	while (LandscapeProxy->RuntimeVirtualTextures.Num() <= SlotIndex)
-	{
-		LandscapeProxy->RuntimeVirtualTextures.Add(nullptr);
-	}
-
-	LandscapeProxy->RuntimeVirtualTextures[SlotIndex] = RVT;
-	LandscapeProxy->PostEditChange();
-
-	UE_LOG(LogTemp, Log, TEXT("URuntimeVirtualTextureService::AssignRVTToLandscape: Assigned '%s' to '%s' at slot %d"),
-		*RVTAssetPath, *LandscapeNameOrLabel, SlotIndex);
-
-	return true;
 }

@@ -64,10 +64,9 @@ Material-function authoring is Epic's: `MaterialNodeService.create_material_func
 `ObjectToolset.SetProperties` (full call shapes in `workflows.md`, Workflow C). All `call_tool`:
 
 ```
-call_tool MaterialToolset.CreateFunction {"FolderPath": "/Game/Materials/Functions", "AssetName": "MF_Slope_Blend"}
-call_tool ObjectToolset.SetProperties    {"Object": {"refPath": "<MF>"},
-    "Properties": {"Description": "Generates a slope mask from world normal",
-                   "bExposeToLibrary": true, "LibraryCategoriesText": ["Landscape"]}}
+call_tool MaterialToolset.CreateFunction {"folderPath": "/Game/Materials/Functions", "assetName": "MF_Slope_Blend"}
+call_tool ObjectToolset.SetProperties    {"instance": {"refPath": "<MF>"},
+    "values": "{\"Description\": \"Generates a slope mask from world normal\", \"bExposeToLibrary\": true, \"LibraryCategoriesText\": [\"Landscape\"]}"}
 ```
 
 | Pin | Class | Fields |
@@ -76,7 +75,7 @@ call_tool ObjectToolset.SetProperties    {"Object": {"refPath": "<MF>"},
 | in `BlendWidth` | `MaterialExpressionFunctionInput` | `InputType: FunctionInput_Scalar`, `SortPriority: 1` — transition smoothness |
 | out `SlopeMask` | `MaterialExpressionFunctionOutput` | `SortPriority: 0` — 0=flat, 1=steep |
 
-Then `call_tool AssetToolset.SaveAsset {"Asset": {"refPath": "<MF>"}}`.
+Then `call_tool AssetToolset.SaveAsset {"assetPath": "<MF path>"}`.
 
 ### Creating the Altitude Blend Function
 
