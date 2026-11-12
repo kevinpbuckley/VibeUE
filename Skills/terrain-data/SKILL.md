@@ -42,7 +42,9 @@ keywords:
 
 Generates heightmaps and water feature splines from real geographic coordinates via the `terrain_data`
 MCP tool. The tool downloads Mapbox tiles server-side and writes UE5-compatible heightmaps + landscape
-splines into the project's `Saved/Terrain/` folder — no API key or chat configuration is required.
+splines into the project's `Saved/Terrain/` folder. It **requires a VibeUE API key** (Editor Preferences ▸
+Plugins ▸ VibeUE ▸ API Key; free at https://www.vibeue.com/login). Without one every action returns
+`NO_API_KEY` and nothing is downloaded. `deep_research` geocoding needs no key.
 
 ## Workflow
 
