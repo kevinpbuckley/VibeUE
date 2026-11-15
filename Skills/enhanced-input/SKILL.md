@@ -18,7 +18,7 @@ unreal_classes:
 
 The `InputService` class docstring lists MCP-style action ids (`action_create`,
 `reflection_discover_types`, ...). Those are **not** the Python method
-names — `get_symbol(method_filter=...)` matches nothing for them. The complete
+names — `search_symbols(pattern="action_create")` matches nothing for them. The complete
 real API is below; you rarely need a discovery call at all:
 
 | Area | Methods |

@@ -110,8 +110,8 @@ lights = [a for a in actor_subsys.get_all_level_actors() if isinstance(a, unreal
 | `comp.set_editor_property("cast_shadow", …)` | property is plural | `comp.set_editor_property("cast_shadows", False)` |
 | `unreal.HorizontalTextAligment` | UE misspells it | `unreal.HorizTextAligment` / `unreal.VerticalTextAligment` (for `TextRenderActor`) |
 
-When unsure of a property/method name, call `get_symbol(class_name="unreal.X")` ONCE up front
-rather than guessing repeatedly — its `doc_string` lists the real editor-property names.
+When unsure of a property/method name, call `get_symbol(name="X")` (for example `name="StaticMeshActor"`) ONCE up front
+rather than guessing repeatedly — it lists the real editor-property names, enum values and methods.
 
 **Migration guide:**
 | Deprecated (`EditorLevelLibrary`) | Replacement (`EditorActorSubsystem`) |

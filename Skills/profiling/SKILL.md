@@ -52,7 +52,7 @@ not VibeUE's:
   its exact action names and params.
 - **VibeUE's 7 surviving `PerformanceService` methods** are `unreal.PerformanceService.<method>()`
   run through **`execute_python`**, and each returns a JSON string. Read the live signatures with
-  `get_symbol(class_name="unreal.PerformanceService")`.
+  `get_symbol(name="PerformanceService")`.
 
 ### What moved to Epic in 5.9 (10 VibeUE tools removed)
 
