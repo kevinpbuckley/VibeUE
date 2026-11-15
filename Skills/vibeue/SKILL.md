@@ -271,9 +271,10 @@ with vibeue.gate_session(clients=3, net_mode="ListenServer"): ...               
 - **Helper modules must do nothing at import.** A module you `import` from `execute_python` stays loaded
   and is imported again by other scripts. An export script that ran its export and called `quit_editor()`
   at module level closed the user's GUI editor when another script imported one of its functions. Put
-  actions in functions; guard a script's own run with `if __name__ == "__main__":` (the engine runs
-  `execute_python` scripts as `__main__`, so for a file you `runpy.run_path`, pass a different
-  `run_name`). And never `time.sleep` in a helper: it freezes the game thread and PIE.
+  actions in functions; guard a script's own run with `if __name__ == "__main__":`. An `import` never
+  runs that block. `runpy.run_path(path)` does not either (its default `__name__` is `"<run_path>"`):
+  pass `run_name="__main__"` when you do want the file's own run. And never `time.sleep` in a helper:
+  it freezes the game thread and PIE.
 
 ## 8. Other gotchas
 

@@ -1483,6 +1483,7 @@ class PieSession(object):
         self._gate = GateSession(clients=clients, net_mode=net_mode, throttle=False)
         self._window_before = []      # [(settings object, {field: value}), ...]
         self._hid_messages = False
+        self._requested_pie = False   # StartPIE was sent (it may have raised after PIE came up)
         self._started = False
         self._stopped = False
 
@@ -1527,6 +1528,7 @@ class PieSession(object):
         try:
             self.state["gate"] = self._gate.enter()
             self._apply_window()
+            self._requested_pie = True
             await exec_tool_await(_EDITOR_APP, "StartPIE", {
                 "options": {"playMode": self.play_mode, "warmupSeconds": self.warmup_s}})
             self.state["started_pie"] = True
@@ -1564,7 +1566,9 @@ class PieSession(object):
             if self._hid_messages:
                 unreal.SystemLibrary.execute_console_command(None, "EnableAllScreenMessages")
                 self._hid_messages = False
-            if self.state["started_pie"] and self.stop_on_exit and _pie_running():
+            # PIE was not running when start() began, so one that runs now is this session's, also
+            # when StartPIE itself raised (its 30 s limit) after the session came up.
+            if (self.state["started_pie"] or self._requested_pie) and self.stop_on_exit and _pie_running():
                 await exec_tool_await(_EDITOR_APP, "StopPIE")
                 if await _await_until(lambda: game_world() is None, 10.0) is None:
                     self.state["notes"].append("the PIE world was still alive 10 s after StopPIE")

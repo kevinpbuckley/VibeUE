@@ -69,7 +69,8 @@ call_tool(toolset_name="ToolsetRegistry.AgentSkillToolset", tool_name="GetSkills
 ```
 
 `ListSkills` returns summaries (cheap); copy paths from it, since a wrong path returns nothing and no
-error. A pack's deeper pages are linked files: open them with your file-reading tool. Route by task:
+error. A pack's deeper pages are linked files: open them with your file-reading tool. `CreateSkill` /
+`UpdateSkill` write skills: only on the user's explicit request. Route by task:
 
 | Task | Packs (`/Skills/VibeUE/<pack>`) |
 |---|---|
@@ -91,7 +92,11 @@ error. A pack's deeper pages are linked files: open them with your file-reading 
 
 - Rebuild and relaunch with `Plugins/VibeUE/BuildAndLaunchGame.ps1` (`.sh` on Linux/macOS), not a manual
   build. Pass **`-Map /Game/Maps/YourMap`** when the task targets a non-default level; without it the
-  editor opens the project default map.
+  editor opens the project default map. `-SkipBuild` relaunches only, `-StrictRebuild` recompiles the
+  plugin under warnings-as-errors, `-Clean` wipes build artifacts (`--skip-build` etc. on the `.sh`).
+- C++ work is not done until a real build succeeded: `unreal.WorkflowService.get_environment()` reports
+  the engine version and source path, the toolchain and `lastBuild.status`. Call it before claiming
+  engine source or a compiler is missing.
 - After launch, parse `Editor-PID=<pid>` and watch for
   `<Project>/Saved/VibeUE/Signals/editor-<pid>-true.json` (up to 180 s; do not poll MCP). Gate world
   edits on its `currentMap`, and check `mcpListening`.
