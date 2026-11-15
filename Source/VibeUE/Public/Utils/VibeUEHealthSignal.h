@@ -17,11 +17,21 @@
  *  - File missing, or `updatedUtc` older than ~15s  -> the editor process is gone (crashed/exited).
  *  - `gameThreadStallSeconds` above ~10             -> the process is alive but the game thread is
  *    wedged (modal dialog, crash handler, hang) — MCP calls WILL hang; relaunch instead of waiting.
+ *  - `slowTask` or `modal` true                     -> the editor is busy, not wedged (issue #681): the
+ *    MCP server refuses tool calls ("Not run: the Unreal Editor is running a slow task" / "is showing a
+ *    modal dialog") and the stall figure grows while it lasts. Watch the file and call again once both
+ *    are false; `slowTaskText` / `modalTitle` say what it is. Takes precedence over the stall rule.
  *  - Fresh file, small stall                        -> the editor is healthy; an MCP failure is
  *    something else (config, port, transport).
  *
- * Fields: signal ("health"), pid, updatedUtc, sessionStartUtc, gameThreadStallSeconds. Written to a
+ * Fields: signal ("health"), pid, updatedUtc, sessionStartUtc, gameThreadStallSeconds, mcpPort,
+ * mcpListening, slowTask, slowTaskText, slowTaskSeconds, modal, modalTitle, modalSeconds. Written to a
  * .tmp sibling and moved into place, so a watcher never observes a half-written file.
+ *
+ * Slow-task and modal state is set from FSlowTask::OnProgress and Slate's modal-loop tick, the game-thread
+ * callbacks that still run while the editor's normal loop is blocked, and cleared by the core ticker once the
+ * loop runs again. A slow task that reports no progress, or a native OS message box (not a Slate modal), is not
+ * seen: then only the stall figure grows.
  */
 class VIBEUE_API FVibeUEHealthSignal
 {
