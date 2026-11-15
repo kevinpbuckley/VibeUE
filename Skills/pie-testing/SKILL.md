@@ -135,9 +135,46 @@ set the floating window comes back at the size it was last closed at.
 
 ## Session helpers in vibeue (pie_session, capture_game)
 
-`async with vibeue.pie_session(width, height) as s:` and `await vibeue.capture_game(path)` wrap the
-setup above (throttling, window size, start, wait for the player, screen messages, capture to PNG)
-and restore everything on exit.
+The setup above, written once. Both are coroutines: use them in an `execute_python` script with
+top-level `await`.
+
+```python
+import unreal, vibeue
+
+async with vibeue.pie_session(1280, 720) as s:          # hide_screen_messages=True by default
+    pc = s["player_controller"]                          # player 0's controller, already there
+    # ... drive the game: await call_tool("SlateInspectorToolset.SlateInspectorToolset.Click", ref=...),
+    #     await asyncio.sleep(0.4) to let it settle ...
+    shot = await vibeue.capture_game("C:/Proj/Saved/Shots/menu.png")
+{"shot": shot}                                           # return the PATH, then open the PNG
+```
+
+- **`vibeue.pie_session(width=1280, height=720, hide_screen_messages=True, *, position=(0, 0),
+  play_mode="PlayMode_InEditorFloating", warmup_s=2.0, timeout_s=30.0, clients=None, net_mode=None,
+  stop_on_exit=True)`**. On enter: background throttling off (and the PIE net mode, when `clients` /
+  `net_mode` are given, through `gate_session`); the window size and position on BOTH play-settings
+  objects; `StartPIE`; an awaited wait (never `time.sleep`) for player 0's controller, `TimeoutError`
+  after `timeout_s`; `DisableAllScreenMessages`. It yields `{"world", "player_controller",
+  "started_pie", "window", "gate", "notes"}`. On exit, on every path including an exception:
+  `EnableAllScreenMessages`, `StopPIE` and a wait until the PIE world is gone, then the window,
+  throttling and net-mode settings put back. It raises `RuntimeError` at once if PIE is already
+  running. The world and controller in the dict are dropped on exit; do not keep them elsewhere.
+- **`await vibeue.capture_game(path, max_res=None, world=None)`** calls
+  `SceneCaptureToolset.SceneCaptureToolset.CaptureGameViewport` (scene plus UMG), writes the PNG
+  (folders created) and returns `path`. `world` defaults to the PIE world (`vibeue.game_world()`);
+  pass a client world from `vibeue.pie_worlds()` for another window. `max_res=None` captures 1:1 at the
+  viewport's own size instead of the tool's 1024 default. It raises `RuntimeError` with no game
+  world or an empty image.
+- The whole block runs in one `execute_python` call, so keep it well under a minute; split a long run
+  into several sessions.
+- When PIE ends, the engine writes the floating window's last size and position to the play
+  settings and saves `EditorPerProjectUserSettings.ini` itself. `pie_session` puts the in-memory
+  values back afterwards (the next PIE opens at the old size), but the ini keeps this session's size
+  until the editor next saves its play settings.
+
+Tested headless (`scripts/tests/vibeue_helpers_regression.py`): world and controller yielded, the size
+on both objects, the capture 1:1 with the viewport, PIE stopped and every setting restored after the
+block and after an exception inside it.
 
 ## Standard Test Loop
 

@@ -28,11 +28,17 @@ Also provides (agent helpers for PIE, async tools, and asset GC):
   else the pending key to collect_tool_result() later.
 - python_globals_holding() / release_globals() — find and drop the execute_python script
   globals that root an asset (a GCObjectReferencer root), so delete_asset_unattended can proceed.
-- safe_load_level(level_path, *, allow_resident_target=False) — LevelEditorSubsystem.load_level
-  behind a resident-map check: a map loaded as an ASSET (Save-As, a Level Instance, load_asset on a
-  map) stays resident, and the next load_level then FATALS the editor ("World Memory Leaks").
-  Raises LevelLoadRefused instead of loading while any map other than the open level is resident,
-  or when the target does not exist. Returns load_level's bool.
+- safe_load_level(level_path, *, allow_resident_target=False, discard_temp=True) —
+  LevelEditorSubsystem.load_level behind a resident-map check: a map loaded as an ASSET (Save-As, a
+  Level Instance, load_asset on a map) stays resident, and the next load_level then FATALS the editor
+  ("World Memory Leaks"). Raises LevelLoadRefused instead of loading while any map other than the
+  open level is resident, or when the target does not exist. Discards a dirty never-saved /Temp/
+  open level (LevelEditorUnsavedChangesPolicy.DISCARD), never a dirty real map. Returns load_level's
+  bool.
+- pie_session() / capture_game() / game_world() — `async with vibeue.pie_session(1280, 720) as s:`
+  sets throttling, the PIE window size (in both places it must go), starts PIE, waits for the player
+  controller and hides screen messages, and restores all of it on exit; `await
+  vibeue.capture_game(path)` writes CaptureGameViewport to a PNG and returns the path.
 - wait_for() / wait_until() / wait_for_players() / waits() / cancel_all_waits() — non-blocking
   waits for gate harnesses (a Slate post-tick callback with a wall-clock deadline; never sleep on
   the game thread), and player_ids() for the PIE server's PlayerState ids.
@@ -46,6 +52,7 @@ Also provides (agent helpers for PIE, async tools, and asset GC):
 """
 
 import asyncio
+import base64
 import contextlib
 import inspect
 import json
@@ -396,22 +403,23 @@ def exec_tool_collect(toolset_name, tool_name, args=None, key=None):
 # --- Asset GC roots held by Python globals ---------------------------------------------------
 #
 # Namespace note: inside execute_python, __name__ == "__main__" but globals() is NOT
-# sys.modules["__main__"].__dict__ — the script runs in a SEPARATE dict that persists across calls
-# (which is exactly why a global there keeps rooting an asset). So `import __main__` never sees it.
-# These helpers resolve the CALLER's globals via the call stack AND scan __main__ as a fallback.
+# sys.modules["__main__"].__dict__ — the script runs in a SEPARATE dict. UE 5.9's execute_python
+# gives each call a fresh one, so a script global roots an asset only until that call ends (and
+# across an `await` inside it); a global in an imported module, or in __main__, lives on. So
+# `import __main__` never sees the script's own globals. These helpers resolve the CALLER's globals
+# via the call stack AND scan __main__ as a fallback.
 #
-# Self-test (run the two lines below in ONE execute_python call, then a THIRD call):
+# Self-test (one execute_python call):
 #   import unreal, vibeue
 #   held = unreal.load_asset("/Game/UI/W_Prompt")            # a script global now roots the asset
-#   print(vibeue.python_globals_holding("/Game/UI/W_Prompt"))  # -> ['held']
-#   # ...next call:
-#   print(vibeue.release_globals(vibeue.python_globals_holding("/Game/UI/W_Prompt")))  # -> ['held']
+#   found = vibeue.python_globals_holding("/Game/UI/W_Prompt")   # -> ['held']
+#   [found, vibeue.release_globals(found)]                        # -> [['held'], ['held']]
 
 def _script_namespaces():
     """The namespace dicts an execute_python global might live in, most-relevant first.
 
     Returns the CALLER's globals (found by walking the stack back past vibeue's own frames — the
-    execute_python script namespace, a persistent dict that is not sys.modules['__main__'])
+    execute_python script namespace, a dict that is not sys.modules['__main__'])
     followed by sys.modules['__main__'].__dict__ as a fallback, deduplicated by dict identity.
     """
     module_ns = globals()
@@ -527,7 +535,48 @@ def _map_package_name(path):
     return path
 
 
-def safe_load_level(level_path, *, allow_resident_target=False):
+def _open_level_package():
+    """Package name of the editor world ('/Temp/Untitled_1', '/Game/Maps/Foo'), or '' if none."""
+    try:
+        world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()
+    except Exception:
+        return ""
+    if world is None:
+        return ""
+    try:
+        return str(world.get_outermost().get_name())
+    except Exception:
+        return _map_package_name(world.get_path_name())
+
+
+def _dirty_map_package_names():
+    try:
+        return [str(p.get_name()) for p in unreal.EditorLoadingAndSavingUtils.get_dirty_map_packages()]
+    except Exception:
+        return []
+
+
+def _unsaved_changes_policy(open_pkg, discard_temp):
+    """(policy or None, reason) for load_level. None = the engine default (FAIL).
+
+    DISCARD only when the open level is a /Temp/ level (a never-saved scratch world, e.g. a
+    turnaround or preview render) AND every dirty map package is under /Temp/ too: discarding is
+    then losing nothing anyone saved. A dirty real map keeps the engine's refusal (FAIL).
+    """
+    policy_enum = getattr(unreal, "LevelEditorUnsavedChangesPolicy", None)   # new in 5.9
+    if not discard_temp or policy_enum is None or not open_pkg.startswith("/Temp/"):
+        return None, ""
+    real_dirty = [p for p in _dirty_map_package_names() if not p.startswith("/Temp/")]
+    if real_dirty:
+        raise LevelLoadRefused(
+            "safe_load_level: the open level {} is a temporary level, but real maps also have unsaved "
+            "changes ({}). Save them (unreal.EditorLoadingAndSavingUtils.save_dirty_packages(True, True)) "
+            "or load with load_level(path, unreal.LevelEditorUnsavedChangesPolicy.DISCARD) if losing "
+            "them is intended.".format(open_pkg, ", ".join(real_dirty)))
+    return policy_enum.DISCARD, "discarded the temporary level {}".format(open_pkg)
+
+
+def safe_load_level(level_path, *, allow_resident_target=False, discard_temp=True):
     """Load a level with LevelEditorSubsystem.load_level, refusing when that would crash the editor.
 
     Reads unreal.PythonTools.get_resident_maps() (map worlds resident besides the open level: the
@@ -538,8 +587,17 @@ def safe_load_level(level_path, *, allow_resident_target=False):
         message lists them; restart the editor first;
       - the TARGET itself is resident, unless allow_resident_target=True (issue #613 shape: loading
         a map that is already resident as an asset);
-      - level_path is empty, or the asset registry has no map at that package path.
-    Otherwise calls load_level(level_path) and returns its bool.
+      - level_path is empty, or the asset registry has no map at that package path;
+      - the open level is a /Temp/ level but a real map also has unsaved changes (see below).
+
+    Unsaved changes (issue #680): load_level refuses while the open level has unsaved changes
+    ("LoadLevel: There are unsaved level changes in /Temp/... Save them before loading a level, or
+    load it with UnsavedChangesPolicy"). With discard_temp=True (default), when the open level is a
+    never-saved /Temp/ level (a scratch world from a turnaround, preview or new_level) and no real map
+    is dirty, it loads with unreal.LevelEditorUnsavedChangesPolicy.DISCARD (5.9). A dirty REAL map
+    is never discarded: the engine still refuses, and the exception names the packages. Save first,
+    or call load_level(path, unreal.LevelEditorUnsavedChangesPolicy.SAVE / DISCARD) yourself.
+    Otherwise calls load_level and returns its bool.
 
         import unreal, vibeue
         vibeue.safe_load_level("/Game/Maps/RunMap_01")
@@ -582,7 +640,12 @@ def safe_load_level(level_path, *, allow_resident_target=False):
         raise LevelLoadRefused(
             "safe_load_level: no map at '{}' in the asset registry; nothing was loaded".format(target_pkg))
 
-    return unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).load_level(level_path)
+    policy, note = _unsaved_changes_policy(_open_level_package(), discard_temp)
+    subsystem = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
+    if policy is None:
+        return subsystem.load_level(level_path)
+    unreal.log("vibeue.safe_load_level: {}".format(note))
+    return subsystem.load_level(level_path, policy)
 
 
 # --- Non-blocking waits (gate harnesses) -----------------------------------------------------
@@ -785,8 +848,10 @@ def wait_for(predicate: Callable[[], Any], timeout_s: float = 10.0, poll_s: floa
         import vibeue
         w = vibeue.wait_for(lambda: unreal.GameplayStatics.get_player_pawn(world, 0),
                             timeout_s=5, description="pawn")
-        # ... and read it back in a LATER call (script globals persist between calls):
-        print(w.done, w.ok, w.elapsed_s)     # or: print(vibeue.waits())
+        # ... and read it back in a LATER call. Script globals do not survive the call in 5.9,
+        # so find it again through the registry:
+        vibeue.waits()                       # [<vibeue.Wait #1 'pawn' ok after 0.40s, 4 ticks>]
+        # Inside ONE call, top-level `await asyncio.sleep(...)` lets the editor tick instead.
 
         # 2) chain the follow-up so it runs on the game thread when the wait completes:
         vibeue.wait_for(lambda: door.is_open()).then(lambda w: print("door", w.ok, w.elapsed_s))
@@ -1334,6 +1399,268 @@ def gate_session(*, clients: Optional[int] = None, net_mode: Optional[str] = Non
             print(s["pie_before"], s["pie_applied"])
     """
     return GateSession(clients=clients, net_mode=net_mode, throttle=throttle)
+
+
+# --- PIE session and game capture (issue #679) -----------------------------------------------
+#
+# Every PIE check in the 2026-11 jam re-implemented the same setup: throttling off, the floating
+# window size written to BOTH the LevelEditorSubsystem play settings and the LevelEditorPlaySettings
+# CDO (with only one set, the window comes back at the size it was last closed at), StartPIE, a
+# wait for the local player controller, DisableAllScreenMessages, and base64-to-PNG saving of a
+# CaptureGameViewport result. pie_session() and capture_game() are that code, written once.
+# Both are coroutines: use them from an execute_python script with top-level await.
+
+_EDITOR_APP = "EditorToolset.EditorAppToolset"
+_SCENE_CAPTURE = "SceneCaptureToolset.SceneCaptureToolset"
+_WINDOW_FIELDS = ("new_window_width", "new_window_height", "new_window_position")
+
+
+def game_world():
+    """The PIE (or Simulate) world from UnrealEditorSubsystem.get_game_world(), or None."""
+    try:
+        return unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_game_world()
+    except Exception:
+        return None
+
+
+def _play_settings_objects() -> list:
+    """The subsystem's play settings object and the LevelEditorPlaySettings CDO (different objects)."""
+    objects = []
+    try:
+        objects.append(unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).get_play_settings())
+    except Exception:
+        pass
+    try:
+        cdo = unreal.LevelEditorPlaySettings.get_default_object()
+        if not any(cdo == o for o in objects):
+            objects.append(cdo)
+    except Exception:
+        pass
+    return [o for o in objects if o is not None]
+
+
+def _pie_running() -> bool:
+    try:
+        return bool(exec_tool(_EDITOR_APP, "IsPIERunning"))
+    except Exception:
+        return game_world() is not None
+
+
+async def _await_until(predicate, timeout_s: float, step_s: float = 0.1):
+    """Poll predicate() with await asyncio.sleep(step_s) until it is truthy or the wall-clock deadline
+    passes; returns the truthy value or None. The editor ticks during each await."""
+    deadline = time.monotonic() + max(0.0, float(timeout_s))
+    while True:
+        value = predicate()
+        if value:
+            return value
+        if time.monotonic() >= deadline:
+            return None
+        await asyncio.sleep(step_s)
+
+
+class PieSession(object):
+    """A PIE run with its editor settings, made by pie_session(); see there.
+
+    start() / stop() are the coroutines `async with` runs. stop() is idempotent and puts back
+    everything start() changed, also after a start() that failed half-way.
+    """
+
+    def __init__(self, width: int = 1280, height: int = 720, hide_screen_messages: bool = True, *,
+                 position=(0, 0), play_mode: str = "PlayMode_InEditorFloating",
+                 warmup_s: float = 2.0, timeout_s: float = 30.0, clients: Optional[int] = None,
+                 net_mode: Optional[str] = None, stop_on_exit: bool = True):
+        self.width = int(width)
+        self.height = int(height)
+        self.hide_screen_messages = bool(hide_screen_messages)
+        self.position = position
+        self.play_mode = play_mode
+        self.warmup_s = float(warmup_s)
+        self.timeout_s = float(timeout_s)
+        self.stop_on_exit = bool(stop_on_exit)
+        self.state = {"world": None, "player_controller": None, "started_pie": False,
+                      "window": (self.width, self.height), "gate": None, "notes": []}
+        self._gate = GateSession(clients=clients, net_mode=net_mode, throttle=False)
+        self._window_before = []      # [(settings object, {field: value}), ...]
+        self._hid_messages = False
+        self._started = False
+        self._stopped = False
+
+    def _apply_window(self):
+        position = self.position
+        if position is not None and not isinstance(position, unreal.IntPoint):
+            position = unreal.IntPoint(int(position[0]), int(position[1]))
+        for settings in _play_settings_objects():
+            before = {}
+            for field in _WINDOW_FIELDS:
+                try:
+                    value = settings.get_editor_property(field)
+                except Exception:
+                    continue
+                if isinstance(value, unreal.IntPoint):
+                    # A copy: restoring the read-back wrapper itself did not put the position back.
+                    value = unreal.IntPoint(value.x, value.y)
+                before[field] = value
+            self._window_before.append((settings, before))
+            settings.set_editor_property("new_window_width", self.width)
+            settings.set_editor_property("new_window_height", self.height)
+            if position is not None:
+                settings.set_editor_property("new_window_position", position)
+
+    def _restore_window(self):
+        for settings, before in reversed(self._window_before):
+            for field, value in before.items():
+                try:
+                    settings.set_editor_property(field, value)
+                except Exception as exc:
+                    unreal.log_warning("vibeue.pie_session: could not restore {}: {}".format(field, exc))
+        self._window_before = []
+
+    async def start(self) -> dict:
+        """Throttling off, window size, StartPIE, wait for player 0's controller, screen messages off."""
+        if self._started:
+            return self.state
+        if _pie_running():
+            raise RuntimeError("vibeue.pie_session: a PIE session is already running; stop it first "
+                               "(EditorToolset.EditorAppToolset.StopPIE)")
+        self._started = True
+        try:
+            self.state["gate"] = self._gate.enter()
+            self._apply_window()
+            await exec_tool_await(_EDITOR_APP, "StartPIE", {
+                "options": {"playMode": self.play_mode, "warmupSeconds": self.warmup_s}})
+            self.state["started_pie"] = True
+
+            def _player():
+                world = game_world()
+                if world is None:
+                    return None
+                return unreal.GameplayStatics.get_player_controller(world, 0)
+
+            pc = await _await_until(_player, self.timeout_s)
+            if pc is None:
+                raise TimeoutError("vibeue.pie_session: no player controller after {:.0f} s".format(
+                    self.timeout_s))
+            world = game_world()
+            if self.hide_screen_messages:
+                unreal.SystemLibrary.execute_console_command(world, "DisableAllScreenMessages")
+                self._hid_messages = True
+            self.state["world"] = world
+            self.state["player_controller"] = pc
+            return self.state
+        except BaseException:
+            await self.stop()
+            raise
+
+    async def stop(self) -> dict:
+        """StopPIE (if this session started it), then put back messages, window size and settings."""
+        if self._stopped or not self._started:
+            return self.state
+        self._stopped = True
+        # Drop PIE object references first: one kept past StopPIE asserts on PIE teardown.
+        self.state["world"] = None
+        self.state["player_controller"] = None
+        try:
+            if self._hid_messages:
+                unreal.SystemLibrary.execute_console_command(None, "EnableAllScreenMessages")
+                self._hid_messages = False
+            if self.state["started_pie"] and self.stop_on_exit and _pie_running():
+                await exec_tool_await(_EDITOR_APP, "StopPIE")
+                if await _await_until(lambda: game_world() is None, 10.0) is None:
+                    self.state["notes"].append("the PIE world was still alive 10 s after StopPIE")
+        finally:
+            self._restore_window()
+            self._gate.exit()
+        return self.state
+
+    async def __aenter__(self) -> dict:
+        return await self.start()
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        await self.stop()
+        return False
+
+
+def pie_session(width: int = 1280, height: int = 720, hide_screen_messages: bool = True, *,
+                position=(0, 0), play_mode: str = "PlayMode_InEditorFloating", warmup_s: float = 2.0,
+                timeout_s: float = 30.0, clients: Optional[int] = None,
+                net_mode: Optional[str] = None, stop_on_exit: bool = True) -> PieSession:
+    """Start a PIE session set up for an agent, and put the editor back afterwards.
+
+    An async context manager, for an execute_python script with top-level await:
+
+        import unreal, vibeue
+        async with vibeue.pie_session(1280, 720) as s:
+            pc = s["player_controller"]
+            # ... drive the game: await call_tool(...), await asyncio.sleep(...) ...
+            shot = await vibeue.capture_game("C:/Proj/Saved/Shots/menu.png")
+        shot
+
+    On enter, in order: background throttling off (gate_session; with clients / net_mode it also
+    sets the PIE net mode); new_window_width / new_window_height / new_window_position written to
+    BOTH the LevelEditorSubsystem play settings and the LevelEditorPlaySettings CDO; StartPIE with
+    play_mode (floating window by default, so the size applies) and warmup_s; a wait, with awaits
+    (never time.sleep), for player 0's controller up to timeout_s (TimeoutError after); then
+    DisableAllScreenMessages when hide_screen_messages. Yields a dict {"world", "player_controller",
+    "started_pie", "window", "gate", "notes"}.
+
+    On exit, on every path (exceptions included): EnableAllScreenMessages, StopPIE and a wait until
+    the PIE world is gone (skipped with stop_on_exit=False), the window settings and the throttling /
+    net-mode settings put back. Raises RuntimeError at once if PIE is already running. A failure
+    half-way through enter undoes what was done.
+
+    When PIE ends, the engine itself writes the floating window's last size and position to the
+    LevelEditorPlaySettings CDO and saves EditorPerProjectUserSettings.ini (PlayLevel.cpp). The
+    in-memory settings are put back after that, so the next PIE opens at the old size, but the ini
+    file keeps this session's size until the editor next saves its play settings.
+
+    The whole block runs inside one execute_python call, so keep it short (a client times out after
+    roughly a minute while the script keeps running). The yielded world and controller are dropped
+    on exit; do not keep PIE objects in a module past the block.
+    """
+    return PieSession(width, height, hide_screen_messages, position=position, play_mode=play_mode,
+                      warmup_s=warmup_s, timeout_s=timeout_s, clients=clients, net_mode=net_mode,
+                      stop_on_exit=stop_on_exit)
+
+
+async def capture_game(path: str, max_res: Optional[int] = None, world=None) -> str:
+    """Capture the running game viewport, UMG included, to a PNG file and return its path.
+
+    Calls SceneCaptureToolset.SceneCaptureToolset.CaptureGameViewport (as Slate draws it: scene plus
+    every widget over the viewport) and writes the decoded image to `path` (folders are created).
+    world defaults to game_world(); pass one of pie_worlds()["clients"] for a client window.
+    max_res caps the longest edge; None uses the viewport's own longest edge (a 1:1 shot; the tool's
+    default would be 1024), capped by the toolset's configured maximum. Raises RuntimeError when
+    there is no game world or the capture comes back empty. Return the path, not the image, from
+    your script, then open the PNG with your file-reading tool.
+
+        path = await vibeue.capture_game("C:/Proj/Saved/Shots/hud.png")
+    """
+    if world is None:
+        world = game_world()
+    if world is None:
+        raise RuntimeError("vibeue.capture_game: no PIE or Game world; start PIE first")
+    if max_res is None:
+        try:
+            size = unreal.WidgetLayoutLibrary.get_viewport_size(world)
+            max_res = int(round(max(size.x, size.y)))
+        except Exception:
+            max_res = 0
+        if max_res <= 0:
+            max_res = 1024
+    result = await exec_tool_await(_SCENE_CAPTURE, "CaptureGameViewport",
+                                   {"world": world.get_path_name(), "maxResolution": int(max_res)})
+    image = result.get("image") if isinstance(result, dict) else None
+    data = image.get("data") if isinstance(image, dict) else image
+    if not data:
+        warnings = result.get("warnings") if isinstance(result, dict) else result
+        raise RuntimeError("vibeue.capture_game: the capture came back empty ({})".format(warnings))
+    folder = os.path.dirname(os.path.abspath(path))
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+    with open(path, "wb") as handle:
+        handle.write(base64.b64decode(data))
+    return path
 
 
 # --- Small API traps -------------------------------------------------------------------------
