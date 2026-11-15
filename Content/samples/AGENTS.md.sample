@@ -1,447 +1,143 @@
-# VibeUE — AI agent guide (Unreal Engine 5.9)
+# VibeUE: AI agent guide (Unreal Engine 5.9)
 
-VibeUE **extends Unreal 5.9's native AI toolset system** — its services, tools, and skills register
-into the engine's `ToolsetRegistry` and are reachable through the MCP tools you already have.
+VibeUE extends Unreal 5.9's native MCP endpoint: its services, two MCP tools and its skill packs register
+next to the engine's own toolsets. Use the MCP tools and the Python API for every Unreal operation;
+never read or edit `.uasset` files from disk.
 
-**ALWAYS use the MCP tools / Python API for Unreal operations — NEVER read `.uasset` files from disk.**
+## Two skill libraries: use both
 
-### Environment, evidence, and unattended work
+- **In-editor skills** (`ToolsetRegistry.AgentSkillToolset`): how to drive this editor's tools - VibeUE's
+  packs (`/Skills/VibeUE/<pack>`) and Epic's (`/Skills/Engine/...`, Python-registered ones such as
+  `/AnimationAssistantToolset/Python/animation_toolset/skills/sequencer_core_PY.SequencerCoreSkill`).
+  Not sure which applies? Load `/Skills/VibeUE/vibeue`, the index that routes every task to a pack.
+- **The Unreal Engine Skills MCP server** (tool `unreal-engine-skills-manager`), when it is connected:
+  engine knowledge - correct C++ APIs and signatures, architecture, gotchas, citations into engine
+  source. Call it `{action: "search", query: "<a few keywords>"}`, then `{action: "load", skill: "<id>"}`:
+  **before writing or reviewing engine C++**, **after an `unreal.` AttributeError or a wrong-signature
+  error** (before a second guess), and **for cook, packaging and platform work**. It never touches the
+  editor; the in-editor skills and tools do.
 
-- Call `unreal.WorkflowService.get_environment()` before claiming Unreal source, UBT, a compiler,
-  or an engine installation is missing. Prefer the reported `engineSource.path` over memory or web
-  guesses about engine behavior.
-- C++ work is not complete without `lastBuild.status == "succeeded"` from a real build. A skipped,
-  missing, running, failed, or stale result is not verification. Use the plugin's
-  `BuildAndLaunchGame.ps1`/`.sh` when Live Coding is unsafe.
-  `get_environment()` is the **only** `WorkflowService` tool left — nothing in Epic's toolsets
-  reports engine version, build configuration, toolchain location or build staleness.
-- **The run journal is gone** (`start_run`, `add_run_note`, `attach_run_artifact`, `finish_run`,
-  `get_run`, `list_runs`, `delete_run`). Keep your own record of an unattended run with
-  `FileSystemToolset.WriteTextFile` / `ReadTextFile` / `EditTextByAnchor` / `ListDirectory` /
-  `DeleteFile` (it mounts `/Saved`), and get affected-asset provenance from
-  `UndoHistoryToolset.GetRecentTransactions` / `GetTransactionDetails` /
-  `GetTransactionRecencyIndex` / `SearchTransactions`. Nothing deduplicates touched packages for you.
-- **PIE scenarios are gone** (`run_scenario`, `get_scenario`, `cancel_scenario`). For an authored
-  automation test, the async run/poll/cancel shape is `AutomationTestToolset.DiscoverTests` →
-  `RunTests` → `GetTestStatus` → `GetTestResults` / `StopTests`. For an ad-hoc runtime check, compose
-  the loop yourself (`EditorAppToolset` for PIE, `InputToolset.ApplyInput` for input,
-  `ConsoleToolset.LogsToolset.GetLogEntries` for logs, `SceneCaptureToolset.CaptureGameViewport` for
-  evidence, your own asserts in `execute_python`) — see the `pie-testing` skill.
-- **Bulk maintenance is gone** (`run_bulk_maintenance`, and the `bulk-maintenance` skill with it).
-  The operations are engine-native — `BlueprintToolset.AddInterface` / `RemoveInterface` /
-  `CompileBlueprint` / `SetVariableTooltip` / `SetVariableCategory` / `SetVariableInstanceEditable` /
-  `SetVariableReadOnly`, and `AssetToolset.Move` / `FixUpRedirectors` / `GetReferencers` /
-  `GetDependencies` / `FindAssets` — but the batching, dry run, path scoping and rollback were
-  VibeUE's and are **now your job**: iterate one target at a time, check each with
-  `GetReferencers`/`GetDependencies`/`Exists` *before* writing, never feed a search result straight
-  into a mutation, and log as you go. Nothing resumes or rolls back a half-finished batch.
+## The call contract
 
----
+**`call_tool`** (over MCP) takes the toolset's FULL name, the tool name and the tool's camelCase
+arguments: `call_tool(toolset_name="EditorToolset.EditorAppToolset", tool_name="IsPIERunning",
+arguments={})`. A bare toolset name is not found.
 
-## 1. The efficient interaction model (read this first)
+**`execute_python`** (toolset `editor_toolset.toolsets.python_scripting.PythonScriptingTools`) is the
+workhorse: one round-trip runs a whole multi-step task on the game thread, with every VibeUE service
+(`unreal.<Name>Service`) and the full `unreal.*` API. Call its `read_me` once per conversation. It takes
+ONE argument:
 
-There are two ways to act on the editor. Pick the cheap one:
+```
+arguments={"script": {"language": "Python", "content": "<python source>"}}
+```
 
-- **`execute_python` — your workhorse.** Engine-native
-  (`editor_toolset.toolsets.python_scripting.PythonScriptingTools`). Runs an arbitrary Python script in the editor in **one
-  round-trip**, on the game thread, with top-level `await`. Every VibeUE service is exposed to
-  Python (`unreal.StateTreeService.create_state_tree(...)`) and sits next to the whole native `unreal.*`
-  API in the same script. **Batch aggressively** — do a whole multi-step task (create + edit +
-  compile + verify) in a single call, and `print()` only what you need back (print goes to the
-  Output Log; the script's final expression is what comes back).
-  **Call `read_me` once per conversation before your first `execute_python`** — it carries the
-  execution-environment rules (shared namespace, awaiting, composing other tools).
-- **`call_tool` — one tool per round-trip.** Needed for **skills** (`AgentSkillToolset`) and for
-  the few toolsets with no Python path. Everything else from Epic's engine toolsets is also
-  reachable from inside `execute_python` (see §2), so batch engine-toolset calls with your Python
-  instead of spending a round-trip.
-
-**Before you load a level, check for resident maps.** VibeUE's own `execute_python_code` used to
-save and sweep for you; it is gone (5.9's `execute_python` replaces it), so the guard is now
-explicit and yours to run:
+- The result is the value of the script's **final expression** (a string as is, anything else as JSON).
+  `print()` goes to the Output Log, not the result.
+- **Imports at the top level only**; no star imports. `time.sleep`, `subprocess.run`, `requests.*` and
+  `unreal.ToolsetRegistry.execute_tool` are rejected before anything runs.
+- Top-level `await` works and lets the editor tick (`await asyncio.sleep(0.1)` to wait). Keep each call
+  well under a minute.
+- **Each call has a fresh namespace**: repeat imports every time; only imported modules keep state.
+- Call any tool from Python with `await call_tool("<Toolset full name>.<Tool>", **camelCaseArgs)`. It
+  returns the value directly (no `returnValue` envelope); a field the tool does not declare raises a
+  KeyError listing the real ones.
+- **Nothing is saved for you.** Save on purpose with
+  `unreal.EditorLoadingAndSavingUtils.save_dirty_packages(True, True)`; see what a script left dirty
+  with `unreal.PythonTools.get_dirty_packages()`.
 
 ```python
 import unreal
-resident = unreal.PythonTools.get_resident_maps()
-if resident:
-    print("RESIDENT MAPS - releasing these before any level load:", resident)
-```
-
-A map other than the open level still loaded in memory will **crash the editor on the next level
-load**. Also save before risky work (`unreal.EditorLoadingAndSavingUtils.save_dirty_packages(True, True)`),
-and do not keep level objects in variables across an `await` or a level change — re-fetch them.
-`unreal.PythonTools.get_dirty_packages()` tells you what a script left dirty.
-
-**Speed + tokens:** **avoid `describe_toolsets` / `describe_tools` as a habit** — they dump the full
-JSON schema of every tool in a toolset (the most token-heavy thing here). Reach for a **skill** plus a narrow
-`search_symbols` / `get_symbol` instead.
-
----
-
-## 2. Tool roster — what's where
-
-**Python and API discovery (engine-native, `editor_toolset.toolsets.python_scripting.PythonScriptingTools`):**
-- `execute_python` — run a Python script. The workhorse.
-- `read_me` — usage instructions; call once per conversation before `execute_python`.
-- `search_symbols` — regex search across the registered tools **and** the whole `unreal` API;
-  filter by `kinds`, by `accepts` (parameter type) or `returns` (return type), and match against
-  NAME / SIGNATURE / DOCUMENTATION. This replaces VibeUE's old `discover_python_*` tools and is
-  stronger: it only returns symbols this editor session actually provides.
-- `get_symbol` — full documentation for a tool, toolset, type, function, method or property.
-  Pass a fully-qualified name from `search_symbols` as its `name` argument. For a type it lists editor properties, enum
-  values and methods. Use it to check an `unreal` API **before** calling it.
-
-**VibeUE MCP tools (call directly) — only two remain, both things the engine has no tool for:**
-- `deep_research` — web search / page fetch / geocode (see §5).
-- `terrain_data` — real-world heightmaps + water splines (see §5).
-
-**Screenshots are engine-native now.** `SceneCaptureToolset.CaptureGameViewport` captures the
-Game/PIE viewport **as Slate draws it, with UMG and any other UI over the viewport**, takes a
-`World` from `ListWorlds` to pick a PIE instance, and returns a real MCP image block the client
-renders. `CaptureActiveEditorView` / `CaptureEditorViewport` capture the scene without UI, and
-`EditorAppToolset.CaptureEditorImage` grabs the whole editor window. VibeUE's `capture_image` is
-gone — 5.9 covers every source it had, including the UMG HUD it was built for.
-
-**VibeUE services (call from Python inside `execute_python`):** `unreal.<Name>Service.<method>()`
-— StateTree, AnimSequence, Landscape(+Material), AnimMontage, AnimGraph, SoundCue, Input, Skeleton,
-UVMapping, NiagaraScratchPad, Blueprint (+BlueprintGraph via BlueprintService), MapBlockout,
-CustomizableObject, Viewport, Foliage, Widget, Transaction, RuntimeVirtualTexture, Actor,
-NiagaraEmitter, AssetDiscovery, Blackboard, EnvQuery, GameplayTag, MaterialNode, PythonTools,
-BehaviorTree, Workflow (`get_environment` only), **Performance** (`force_hitch`, `analyse`,
-standalone capture, background throttling), **PIEActor**
-(`unreal.PIEActorService.spawn_actor(...)` -- spawn/destroy transient actors in a running PIE world).
-
-**Deleted services — do not call them, and do not expect a VibeUE equivalent:** `MaterialService`
-(→ Epic `MaterialToolset` / `MaterialInstanceToolset` / `ObjectToolset` / `AssetToolset`),
-`ProjectSettingsService` and `EngineSettingsService` (→ Epic `ConfigSettingsToolset`; only the
-Python-only `get_pie_settings` / `set_pie_settings` helpers remain), `FabService`, `NiagaraService`
-(→ Epic `NiagaraToolsets`), `MetaSoundService` (→ Epic `MetaSoundToolset`) and `EnumStructService`
-(→ Epic `UserDefinedEnumToolset` / `UserDefinedStructToolset`).
-
-Several services are now **one or two tools each**, because 5.9 absorbed the rest. Reach for the
-engine toolset first and use these only for the named delta:
-
-| Service | All that is left | Everything else lives in |
-|---|---|---|
-| `BehaviorTreeService` | `repair_graph_from_runtime_tree` | `AIModuleToolset.BehaviorTreeToolset` (25 tools) |
-| `BlackboardService` | `rename_blackboard_key`, `find_blackboard_key_references` | `BehaviorTreeToolset` blackboard tools + `ObjectToolset` |
-| `EnvQueryService` | `run_query`, `repair_graph_from_options` | `AIModuleToolset.EnvironmentQueryToolset` (14 tools) |
-| `ActorService` | `rerun_construction_scripts` | `ActorToolset` / `LevelToolset` / `ObjectToolset` / `EditorAppToolset` |
-| `AssetDiscoveryService` | `reimport_asset`, `export_texture` | `AssetToolset` / `TextureToolset` / `FileSystemToolset` |
-| `TransactionService` | undo/redo stepping only | `UndoHistoryToolset` + `unreal.ScopedEditorTransaction` |
-| `GameplayTagService` | `request_tag`, `request_tag_container` | `GameplayTagsToolset` |
-| `NiagaraEmitterService` | `shift_color_hue` (HSV rotation of a colour curve) | `NiagaraToolsets` (57 tools) — curve keys are read and written with `GetStackInputData` / `SetStackInputData` on the `ColorCurve` data-interface input |
-| `MaterialNodeService` | `create_function_call`, `create_collection_parameter` | `MaterialToolset` / `MaterialInstanceToolset` / `ObjectToolset` (`MaterialService` is deleted) |
-| `WorkflowService` | `get_environment` — engine version, build config, toolchain, build staleness | nothing: Epic reports none of it. `run_scenario` → `AutomationTestToolset`; the run journal → `FileSystemToolset` + `UndoHistoryToolset`; `run_bulk_maintenance` → `BlueprintToolset` / `AssetToolset`, batched by you |
-
-These trimmed services keep only what the engine lacks -- for plain asset/actor/blueprint
-basics the engine's own tools may be simpler (below).
-
-**Calling Epic's engine toolsets from Python (`call_tool`).** Epic's engine toolset *classes*
-exist as `unreal.*` (e.g. `unreal.EditorAppToolset`) but their AICallable functions are **not**
-exposed as Python methods — `unreal.EditorAppToolset.get_selected_assets()` fails. Inside
-`execute_python`, invoke them with the injected, awaited `call_tool`, passing the tool's
-**full name** and its parameters as keyword arguments. It returns the tool's value directly
-(JSON-shaped, object references as `{"refPath": ...}`) and raises on failure:
-```python
-selected = await call_tool("EditorToolset.EditorAppToolset.GetSelectedAssets")
-await call_tool("BlueprintToolsets.BlueprintToolset.AddVariable",
-                blueprint={"refPath": "/Game/Blueprints/BP_Enemy.BP_Enemy"}, name="Health", typeName="float")
-```
-**Never call `unreal.ToolsetRegistry.execute_tool(...)` in an `execute_python` script** — the runner
-rejects the whole script before it runs, because that call returns an async result nothing awaits.
-Parameter names are the tool's own camelCase schema names (`typeName`, not `type_name`): look them up
-with `get_symbol` on the tool's full name, or `vibeue.get_toolset_schema("EditorToolset.EditorAppToolset")`
-/ `vibeue.list_toolset_names()` for a whole toolset. Names are namespaced —
-`EditorToolset.EditorAppToolset`, `NiagaraToolsets.NiagaraToolset_System`, etc. (a bare
-`"EditorAppToolset"` is not found).
-
-`vibeue.exec_tool("EditorToolset.EditorAppToolset", "StartPIE", {...args dict...})` is a synchronous
-helper for code that cannot `await` (a plain `init_unreal.py`, a ticker callback). It takes the
-toolset name, the tool name and an optional args **dict**, fills missing optional params from the
-schema (so a bare `StartPIE` works), and reports every missing required param in one error. It does
-not wait on a long-running asynchronous tool (`exec_tool_async` + `collect_tool_result` split that
-across two calls), so prefer `await call_tool(...)` whenever you are in `execute_python`.
-
-**Use the engine's native tools for these (VibeUE intentionally doesn't duplicate them):**
-- **Assets** (find / save / move / delete / duplicate / metadata): native Python
-  `unreal.EditorAssetLibrary` / `EditorAssetSubsystem` inside `execute_python` (batchable), or
-  Epic's `EditorToolset.AssetToolset` (via `await call_tool(...)` in-Python, or MCP `call_tool`).
-- **Screenshots / vision**: engine-native in 5.9 (see §6) — `SceneCaptureToolset.CaptureGameViewport`
-  captures the PIE viewport *with* the UMG/Slate HUD, and every capture tool returns a real MCP
-  image block. VibeUE's `capture_image` is gone.
-- **PIE**: `EditorToolset.EditorAppToolset.StartPIE` / `StopPIE` / `IsPIERunning` — via
-  `await call_tool(...)` (or `vibeue.exec_tool`, where bare `StartPIE` works without the full
-  options shape).
-- **Logs**: `ConsoleToolset.LogsToolset.GetLogEntries` (LogsToolset moved into ConsoleToolset in
-  5.9) — via `await call_tool(...)` (or read the `.log` file).
-- **DataTables / DataAssets / user enums & structs**: Epic's `DataTableToolset` /
-  `UserDefinedEnumToolset` / `UserDefinedStructToolset` / `ObjectToolset` (via `await call_tool(...)`).
-  VibeUE no longer ships an enum/struct service - 5.9 covers it.
-
----
-
-## 3. Skills — native `AgentSkill` (lazy domain knowledge)
-
-VibeUE's 32 skill packs are **Markdown agent skills discovered natively by UE 5.9**
-(`ToolsetRegistry` MarkdownAgentSkills reads `<Plugin>/Skills/**/SKILL.md`) and served by the
-engine's `AgentSkillToolset` alongside the engine's own skills. Skills tell you **what to do and
-why**; they do **not** replace discovery of exact signatures.
-
-**Discover + load (both are tools on `ToolsetRegistry.AgentSkillToolset`):**
-```
-# MCP, one call each:
-call_tool(tool_name="ListSkills", toolset_name="ToolsetRegistry.AgentSkillToolset")
-  → { "/Skills/VibeUE/blueprints": "Create and modify Blueprint assets…", … }
-
-call_tool(tool_name="GetSkills", toolset_name="ToolsetRegistry.AgentSkillToolset",
-          arguments={"skillPaths": ["/Skills/VibeUE/blueprints", "/Skills/VibeUE/blueprint-graphs"]})
-  → { "<path>": "<full markdown>", … }
-
-# or inside an execute_python script:
-skills = await call_tool("ToolsetRegistry.AgentSkillToolset.ListSkills")
-docs   = await call_tool("ToolsetRegistry.AgentSkillToolset.GetSkills", skillPaths=["/Skills/VibeUE/landscape"])
-```
-Not sure which pack applies? Load **`/Skills/VibeUE/vibeue`**, the index that routes every task to its pack.
-- `ListSkills` returns **summaries only** (cheap) — call it once per session to see what exists.
-  VibeUE packs are **`/Skills/VibeUE/<name>`**; engine skills are `/Skills/Engine/<name>` and other
-  plugins' are `/Skills/<PluginName>/...`.
-- `GetSkills` returns full instructions **lazily** — request only the packs you need.
-- **Sub-docs are no longer separate skill entries.** A pack's deep-reference pages are plain
-  markdown files next to its `SKILL.md`, listed under its **Reference pages** section as relative
-  links. UE rewrites those links to absolute file paths when it serves the skill (e.g.
-  `E:/…/Plugins/VibeUE/Skills/niagara-emitters/color.md`), so **open the file at that path with your
-  file-reading tool** rather than looking for a `/Skills/...` entry for it. Same for the
-  `scripts/*.txt` runnable samples.
-- The engine re-reads the markdown on every call: there is no reload command and no restart needed.
-- `CreateSkill` / `UpdateSkill` on the same toolset **write** skills — only on the user's explicit request.
-
-**When to load a skill:** the user names a domain ("create a blueprint", "build a state tree"), or you
-hit a non-obvious workflow. Then: read the pack → `get_symbol` the classes it names → write
-the Python. Don't reload a pack you already loaded this session.
-
----
-
-## 4. Python basics
-
-```python
-import unreal  # lowercase
-
-# Editor subsystems:
-sub = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
-
-# VibeUE services are static classes, called directly:
-tl = unreal.BlueprintService.get_timelines("/Game/MyBP")
-
-# Batch a whole task in ONE execute_python call; the final expression is what comes back.
-# Blueprint create / variables / compile are ENGINE-side (native libs + BlueprintToolset), NOT
-# BlueprintService (it keeps timelines, macro graphs and layout analysis — see get_symbol):
-factory = unreal.BlueprintFactory(); factory.set_editor_property("ParentClass", unreal.Actor)
-bp = unreal.AssetToolsHelpers.get_asset_tools().create_asset("BP_Enemy", "/Game/Blueprints", unreal.Blueprint, factory)
-ref = {"refPath": bp.get_path_name()}                       # refPath = full object path
+bp = unreal.load_asset("/Game/Blueprints/BP_Enemy")
+ref = {"refPath": bp.get_path_name()}
 await call_tool("BlueprintToolsets.BlueprintToolset.AddVariable", blueprint=ref, name="Health", typeName="float")
-await call_tool("BlueprintToolsets.BlueprintToolset.CompileBlueprint", blueprint=ref)
-{"created": ref["refPath"],
- "variables": await call_tool("BlueprintToolsets.BlueprintToolset.ListVariables", blueprint=ref)}
+await call_tool("BlueprintToolsets.BlueprintToolset.CompileBlueprint", blueprint=ref)   # raises on errors
+{"variables": await call_tool("BlueprintToolsets.BlueprintToolset.ListVariables", blueprint=ref)}
 ```
 
----
+**Discover before you call.** `search_symbols(pattern, kinds, accepts, returns)` searches the registered
+tools and this session's `unreal` module; `get_symbol(name=...)` documents one type, member
+(`"Class.member"`), toolset or tool. Skills say which class and why; discovery gives the exact call. Avoid
+`describe_toolsets` / `describe_tools` as a habit: they dump every schema in a toolset.
 
-## 5. When to use `deep_research` and `terrain_data`
+## Load skills
 
-**`deep_research`** — when you need information that isn't in the editor:
-- `action="search"` / `action="fetch_page"` — research a UE topic, API, or technique before writing code.
-- `action="geocode"` / `action="reverse_geocode"` — turn a place name into lat/lng (feeds `terrain_data`).
+```
+call_tool(toolset_name="ToolsetRegistry.AgentSkillToolset", tool_name="ListSkills", arguments={})
+call_tool(toolset_name="ToolsetRegistry.AgentSkillToolset", tool_name="GetSkills",
+          arguments={"skillPaths": ["/Skills/VibeUE/blueprints", "/Skills/VibeUE/blueprint-graphs"]})
+```
 
-**`terrain_data`** — when the user wants terrain from a **real-world location**:
-- `preview_elevation` → use the suggested `base_level`/`height_scale` → `generate_heightmap`
-  (`resolution` MUST match the landscape) → import via `unreal.LandscapeService` → `get_water_features`
-  for rivers/lakes.
+`ListSkills` returns summaries (cheap); copy paths from it, since a wrong path returns nothing and no
+error. A pack's deeper pages are linked files: open them with your file-reading tool. Route by task:
 
-**The real-world-terrain chain:** `deep_research(geocode "Mount Fuji")` → `terrain_data(generate_heightmap, lng/lat)`
-→ `LandscapeService` import → `terrain_data(get_water_features)` → landscape splines. Load the
-`terrain-data` and `landscape` skills for the resolution formulas and water workflow.
-
----
-
-## 6. See what you built (screenshots)
-
-Capture is **engine-native in 5.9** — `SceneCaptureToolset` plus
-`EditorAppToolset.CaptureEditorImage`. All of them return a real MCP **image block** the client
-renders (the protocol carries `"type": "image"`), so you see the picture directly: no base64
-decoding, no token blowout. VibeUE's old `capture_image` is gone; 5.9 covers every source it had.
-
-After any **visible** change, capture and actually look before claiming success:
-
-| What you want | Tool |
+| Task | Packs (`/Skills/VibeUE/<pack>`) |
 |---|---|
-| The running game, **including the UMG/Slate HUD** | `SceneCaptureToolset.CaptureGameViewport` — captures the Game/PIE viewport *as Slate draws it*, UI included. Pass a `World` from `ListWorlds` to pick one PIE instance in a multi-player session. `StartPIE` first. |
-| The editor viewport scene (no UI) | `SceneCaptureToolset.CaptureActiveEditorView` or `CaptureEditorViewport` (`ListEditorViewports` / `GetActiveEditorView` to choose one) |
-| The whole editor window, any panel | `EditorAppToolset.CaptureEditorImage` |
-| An asset thumbnail | `EditorAppToolset.CaptureAssetImage` / `GetAssetThumbnails` |
-| A video of the viewport | `SceneCaptureToolset.StartViewportRecording` / `StopViewportRecording` / `ListViewportRecordings` |
+| Place and arrange level actors | `level-actors` |
+| Blueprints, Enhanced Input, gameplay tags, GAS | `blueprints`, `blueprint-graphs`, `enhanced-input`, `gas` |
+| StateTree, Behavior Trees, EQS | `state-trees`, `behavior-trees` |
+| AnimBPs, AnimSequences, montages, skeletons, retargeting | `animation-blueprint`, `animsequence`, `animation-editing`, `animation-montage`, `skeleton` |
+| Level Sequences, cameras, cutscene playback and capture | `cinematics` |
+| Materials; Niagara colour and scratch pad | `materials`; `niagara-emitters` |
+| UMG widgets and driving a live UI | `umg-widgets` |
+| Landscape, foliage, PCG, blockout, real-world terrain | `landscape`, `landscape-materials`, `landscape-auto-material`, `foliage`, `pcg`, `map-blockout`, `terrain-data` |
+| SoundCues | `sound-cues` |
+| Assets, UVs, PIE and engine settings | `asset-management`, `uv-mapping`, `engine-settings` |
+| PIE testing, profiling, frame rate | `pie-testing`, `profiling`, `frame-rate` |
+| Editor viewport camera and look | `viewport` |
+| Customizable Objects (Mutable) | `customizable-object` |
 
-`MaxResolution` caps the longest edge (scaled down, aspect preserved). Reach them with `call_tool`,
-or batch from inside `execute_python` via `vibeue.exec_tool` (see §2).
+## Launch, readiness, health
 
-If a capture fails because the editor window is minimized (a minimized editor also freezes PIE —
-world time stays 0), run `unreal.ViewportService.set_editor_window_state("restore")` in
-`execute_python` and retry.
+- Rebuild and relaunch with `Plugins/VibeUE/BuildAndLaunchGame.ps1` (`.sh` on Linux/macOS), not a manual
+  build. Pass **`-Map /Game/Maps/YourMap`** when the task targets a non-default level; without it the
+  editor opens the project default map.
+- After launch, parse `Editor-PID=<pid>` and watch for
+  `<Project>/Saved/VibeUE/Signals/editor-<pid>-true.json` (up to 180 s; do not poll MCP). Gate world
+  edits on its `currentMap`, and check `mcpListening`.
+- `Saved/VibeUE/Signals/editor-<pid>-health.json` is rewritten every ~5 s. Missing or `updatedUtc` older
+  than ~15 s: the editor is gone, relaunch. **`slowTask` or `modal` true: the editor is busy and MCP
+  refuses calls ("running a slow task" / "showing a modal dialog"); wait until both are false, then call
+  again - do not retry in a loop or relaunch.** `gameThreadStallSeconds` above ~10 with both false:
+  wedged, relaunch.
+- A second, headless editor (`UnrealEditor-Cmd.exe <project> -ExecCmds="py <script>"`) can write assets
+  beside the GUI editor if it gets its own `-ModelContextProtocolPort` and the two never write the same
+  package.
 
-Scripts that change the viewport's FOV or exposure for a shot must restore them: those settings
-persist into the user's editor config. Snapshot with `info = unreal.ViewportService.get_viewport_info()`
-and finish with `unreal.ViewportService.restore_viewport_info(info)`, or use
-`unreal.ViewportService.capture_with_view(...)`, which restores by itself.
+## Critical rules
 
-**Look at the image, judge it against the request, fix, re-capture.**
----
+- **Levels:** change level with `vibeue.safe_load_level(path)`. A map loaded as an asset stays resident
+  and the next level load is fatal; `safe_load_level` refuses instead, and discards a dirty never-saved
+  `/Temp/` level (`unreal.LevelEditorUnsavedChangesPolicy.DISCARD`) but never a dirty real map. Never
+  `load_asset` a map to look at it.
+- **PIE:** `async with vibeue.pie_session(1280, 720) as s:` sets up and restores everything;
+  `await vibeue.capture_game(path)` saves a screenshot (UMG included) and returns the path. Drive a live UI
+  with `SlateInspectorToolset.SlateInspectorToolset` (`Click`, `Drag`, `Type`); see `pie-testing`.
+- **Verify with evidence.** A tool call that returned is not proof: re-read the asset, compile, or
+  capture and look at the image. After a visible change, capture (`SceneCaptureToolset.SceneCaptureToolset`)
+  and judge it before claiming success.
+- **Check before create; never remove-and-recreate** to change a value. Find the setter; if there is none,
+  report the gap.
+- **Loop prevention:** never repeat the same call with the same arguments more than twice when the output
+  is unchanged; after two failed attempts at a goal, stop and report.
+- **No blocking:** no modal dialogs, no `input()`, no `time.sleep` (await instead), no infinite loops.
+  Helper modules you import must do nothing at import time.
+- **Full asset paths** (`/Game/Blueprints/BP_Name`); colours are 0.0-1.0.
+- `unreal.EditorLevelLibrary` is deprecated: use `unreal.EditorActorSubsystem`.
+- Restore what you change for a shot (viewport FOV and exposure persist): `with vibeue.viewport_state():`.
 
-## 7. Diagnose performance
+## The two VibeUE MCP tools
 
-Performance work is now **split** between Epic and VibeUE, and the frame-timing read has moved:
-`PerformanceService.frame_timing`, the budget gate, the trace-control tools and the HTML report are
-**gone**. **STEP 0 is still CPU-bound vs GPU-bound** — optimising the GPU does nothing on a
-CPU-bound frame:
-```
-# RUN FIRST: game/render/GPU ms. Epic's, via call_tool — judge the bound yourself from the numbers.
-call_tool PerfToolset.StatsToolset.GetFrameTimings
-# Trace control is console commands now (start_trace / stop_trace are gone):
-call_tool ConsoleToolset.RunConsoleCommand {"command": "Trace.Start cpu,gpu,frame"}
-# … reproduce the workload (ideally under PIE / standalone) …
-call_tool ConsoleToolset.RunConsoleCommand {"command": "Trace.Stop"}
-```
-```python
-import unreal
-# Still VibeUE's: analysing a capture, forcing a hitch to validate a verdict, standalone capture.
-print(unreal.PerformanceService.analyse("both", ""))       # frame stats + worst frames + log hitches
-print(unreal.PerformanceService.force_hitch("game", 250.0, 1))
-```
-Load the `profiling` and `frame-rate` skills for the full drill-down.
+- `deep_research`: `search` / `fetch_page` for a UE topic before writing code; `geocode` /
+  `reverse_geocode` for a place's lat/lng.
+- `terrain_data` (needs the free VibeUE API key): real-world heightmaps and water. Chain: geocode ->
+  `preview_elevation` -> `generate_heightmap` (resolution must match the landscape) -> import with
+  `unreal.LandscapeService` -> `get_water_features`. Load `terrain-data` and `landscape`.
 
-**Unfocused editor = ~3 FPS.** Editor background throttling makes unattended PIE runs useless and
-is NOT controlled by `t.IdleWhenNotInForeground` or `Slate.bAllowThrottling`. Disable it for the
-session before automated verification — no window-focus (AppActivate) hacks needed:
-```python
-unreal.PerformanceService.set_background_throttling(False)   # full rate while unfocused/minimized
-# ... run your PIE verification ...
-unreal.PerformanceService.set_background_throttling(True)    # restore when done
-```
-To drive gameplay in PIE without OS focus or input-asset remapping, **every bounded press or hold is
-Epic's** (`inject_action_for` and `inject_key` are gone):
-```
-call_tool InputToolset.ApplyInput {"entries": [{"action": {"refPath": "/Game/Input/IA_Block.IA_Block"},
-                                               "value": {"x": 1, "y": 0, "z": 0}}],
-                                   "durationSeconds": 1.5}       # 0 = a tap (down then up)
-call_tool InputToolset.ApplyInput {"entries": [{"key": {"keyName": "SpaceBar"}, "value": {"x": 1, "y": 0, "z": 0}}],
-                                   "durationSeconds": 0}
-```
-VibeUE keeps the **indefinite** hold, whose release depends on something you observe first (Epic's
-`ApplyInput` always self-releases after `DurationSeconds`):
-`unreal.InputService.start_injection("/Game/Input/IA_MoveForward")` … other calls, read the pawn …
-`unreal.InputService.stop_injection("/Game/Input/IA_MoveForward")`. `inject_action` is a single-tick
-press queued for the next input tick (read its effect in a later call). Holds keep the editor off its
-background frame rate and end with PIE. All three take `pie_instance` to pick the PIE world (-1 = the
-first PIE world with a local player). Never hand-roll a slate-tick loop
-around `inject_input_vector_for_action`.
-PIE net mode and client count: `unreal.EngineSettingsService.set_pie_settings("ListenServer", 3, True)`
-(net mode, clients 1-10, run under one process; it is saved to the user's ini), read back with
-`get_pie_settings()` — these two are **Python-only helpers**, not MCP tools.
+## Working style
 
-For gate harnesses, `import vibeue` adds `wait_for` / `wait_for_players` (non-blocking waits: never
-`time.sleep()` on the game thread, it freezes every PIE net driver), `gate_session` (throttling + PIE
-settings, restored on exit), `viewport_state` (camera/FOV/exposure, restored on exit),
-`dirty_snapshot` / `dirty_delta`, `set_prop_pie` and `set_array_prop`. The `vibeue` skill has the details.
-
-To spawn a test actor (blocker, dummy, trigger) into a live PIE world — the one thing native/engine
-spawn can't do (they hit the editor world or refuse during PIE):
-`unreal.PIEActorService.spawn_actor("server", "/Script/Engine.StaticMeshActor", unreal.Transform())`
-(role selector `server`/`client`/`client:N`/`instance:N`; transient; `destroy_all()` to clean up;
-handles die with the PIE session). See the `pie-testing` skill.
-To call a UFUNCTION or RPC in PIE from Python with REAL net routing (plain Python calls run every RPC
-locally): `unreal.PIEActorService.call_function("client:1", "BP_Test_C_0", "Server_Foo", '{"Arg": 1}')`;
-its `callspace` field (`local`/`remote`/`local+remote`/`absorbed`) says whether an RPC was sent.
-`unreal.PIEActorService.console_command("server", "r.VSync 0")` runs a console command in one PIE world
-the same way.
-
----
-
-## 8. Build & launch
-
-When asked to rebuild / relaunch / test, use the project script — not manual `Build.bat`/editor commands:
-- `./Plugins/VibeUE/BuildAndLaunchGame.ps1` (stops the editor, builds, relaunches).
-- `-StrictRebuild` for a full plugin recompile under warnings-as-errors; `-Clean` to wipe artifacts;
-  `-SkipBuild` to relaunch only.
-- **`-Map /Game/Maps/YourMap`** — open a specific map. Without it the editor opens the project
-  DEFAULT map; after a mid-task relaunch that is usually the wrong level, and world-edit scripts
-  that grab "the current world" then modify the wrong map. Always pass `-Map` when your task
-  targets a non-default level, and verify `currentMap` from the readiness signal before editing.
-- On Linux or macOS: `./Plugins/VibeUE/BuildAndLaunchGame.sh --engine /path/to/UE5`.
-  Use `--strict-rebuild`, `--clean`, `--skip-build`, or `--map` for the corresponding operations.
-
-**Readiness gate (required after launch, both platforms):**
-- Parse `Editor-PID=<pid>` from the launch script's output.
-- Check once, then watch `<ProjectDir>/Saved/VibeUE/Signals/editor-<pid>-true.json` using filesystem events.
-- Wait at most 180 seconds; do not poll MCP. Fail if that Editor process exits or the timeout expires.
-- Ignore signal files for other or dead PIDs. The signal only means `RegisterToolsets()` reached its end;
-  Python, World, and level readiness remain separate checks.
-- The file is JSON (`signal`, `pid`, `createdUtc`, `sessionStartUtc`, `pluginVersion`, `currentMap`)
-  and is written atomically, so it is complete as soon as it appears. It is re-published on every map
-  open, so `currentMap` (the loaded map's package name, e.g. `/Game/Maps/TrainingPool`) stays fresh —
-  gate world edits on it. PIDs get recycled: the launch scripts clear a stale same-PID signal on
-  start, but if you launch the Editor yourself, check that `sessionStartUtc` is later than your
-  launch time before trusting it.
-
-**Health heartbeat (is the editor alive?):** `Signals/editor-<pid>-health.json` is rewritten every
-~5s by a background thread and carries `updatedUtc` + `gameThreadStallSeconds`. Epic's MCP endpoint
-runs on the game thread with NO request timeout, so a dead or wedged editor hangs MCP calls for the
-client's full timeout (300s observed). Before waiting on a suspect call — or whenever results come
-back empty/strange — read the health file instead: file missing or `updatedUtc` older than ~15s →
-the process is gone (relaunch); `gameThreadStallSeconds` > ~10 → alive but wedged (modal dialog /
-crash handler — MCP will hang; relaunch); fresh and small → the editor is fine, look elsewhere.
-
----
-
-## 9. Critical rules (evergreen)
-
-- **Log every change for rollback.** Python has no auto-rollback — `print("CREATED:/ADDED:/MODIFIED:/DELETED:", path)`
-  after each op so a mid-script failure can be undone.
-- **Idempotent: check before create.** Use the service `*_exists()` (or `unreal.EditorAssetLibrary.does_asset_exist`)
-  before creating, to avoid duplicates.
-- **Compile after structure changes.** `BlueprintToolsets.BlueprintToolset.CompileBlueprint` after adding
-  variables/functions/components. It returns nothing on success and **raises** on failure with every
-  error node's message joined in the exception text (`bWarningsAsErrors=True` fails on warnings too),
-  so an `await call_tool(...)` that did not raise is the compile evidence.
-  `unreal.BlueprintEditorLibrary.compile_blueprint(loaded_bp)` also works but reports no errors. A `BlueprintDslToolset.Write` or `.Edit` is transactional and reports parse failures itself,
-  but still compile afterwards.
-- **Verify success with evidence.** For Blueprint/Widget/Material/AnimGraph/StateTree edits, a successful
-  tool call isn't proof — re-read the asset (`BlueprintDslToolset.Read` for a graph, which shows nodes
-  and wires together; `BlueprintToolset.FindNodes` / `GetNodeInfos` for one node; the compile result)
-  and report brief evidence.
-- **Non-destructive.** Never remove-and-recreate to change a value, clear data to make a write succeed,
-  or replace a whole object to change one field. Discover the supported setter; if none exists, report
-  the gap. (StateTree reparenting: Epic's `move_child_state` / `move_sub_tree`, never remove+add --
-  a remove-and-re-add mints new IDs and orphans every binding keyed on the old ones.)
-- **Loop prevention.** Track *outcomes*. Never repeat the same call with the same args >2× when output
-  is unchanged; after 2 failed attempts at a goal, stop and report — don't try a 3rd variation.
-- **Never** use modal dialogs, `input()`, blocking ops, long `time.sleep()`, or infinite loops.
-- **Full asset paths** (`/Game/Blueprints/BP_Name`). **Colors are 0.0–1.0** (`{"R":1.0,"G":0.5,"B":0.0,"A":1.0}`).
-- **Know what your script dirtied.** `execute_python` does not report this, so ask: 
-  `unreal.PythonTools.get_dirty_packages()` lists what is dirty now, and
-  `unreal.PythonTools.get_resident_maps()` warns of a map still in memory that would crash the next
-  level load. After a script that raised, check both before saving a half-finished edit.
-- **Change level with `vibeue.safe_load_level(path)`**, never a bare `load_level` while `resident_maps` is
-  non-empty: a resident map makes the next level load FATAL the editor. It refuses (raises) instead.
-- **`unreal.EditorLevelLibrary` is deprecated** — use `EditorActorSubsystem` (`get_all_level_actors()`
-  + `isinstance` filtering; `get_all_level_actors_of_class` does not exist).
-
----
-
-## 10. Communication & working style
-
-- **Be concise** — this is an IDE tool. Before each tool call, one sentence on what/why; after, 1–2 on
-  the result. Execute multi-step tasks straight through — don't pause for "continue".
-- **Discover before you call.** Method signatures come from `get_symbol` / `search_symbols`, not memory or skill
-  prose. Skills say *which* class and *why*; discovery gives the exact call shape.
-- **Commit at milestones** if the project is a git repo, so a bad experiment reverts cleanly.
-- **Living gotchas:** when you solve a real problem, append a one-line gotcha+fix to this file so the
-  next session doesn't relearn it.
+- Be concise. Before each tool call, one sentence on what and why; after, one or two on the result.
+  Execute multi-step tasks straight through.
+- Commit at milestones in a git project, so a bad experiment reverts cleanly.
+- When you solve a real problem, add a one-line gotcha and fix outside this generated block, so the next
+  session does not relearn it.
