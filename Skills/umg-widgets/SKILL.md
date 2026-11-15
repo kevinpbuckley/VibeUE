@@ -1,7 +1,7 @@
 ---
 name: umg-widgets
 display_name: UMG Widget Blueprints
-description: Create and modify UMG Widget Blueprints (UI). Widget event binding, spawning a widget into PIE and removing a ViewModel are VibeUE's `unreal.WidgetService.*`; everything else — tree edits (add/remove/rename/reorder/reparent via `UMGEditor.WidgetBlueprintEditorSubsystem`), reading the tree, properties, fonts, brushes, slots, animations, MVVM ViewModels, PIE lifecycle, screenshots — is Epic's engine toolsets via `call_tool`. Use when the user asks to create a UI/HUD/menu, add or arrange widgets (Button, TextBlock, Image, panels), style or animate a widget, audit a widget's bindings, or set up data bindings in a Widget Blueprint (WBP).
+description: Create and modify UMG Widget Blueprints (UI). Widget event binding, spawning a widget into PIE and removing a ViewModel are VibeUE's `unreal.WidgetService.*`; everything else — tree edits (add/remove/rename/reorder/reparent via `UMGEditor.WidgetBlueprintEditorSubsystem`), reading the tree, properties, fonts, brushes, slots, animations, MVVM ViewModels, PIE lifecycle, screenshots — is Epic's engine toolsets via `call_tool`. Driving a RUNNING UI in PIE (find a live widget, click, drag, type, wait for and read it) is Epic's SlateInspectorToolset and WidgetFinder. Use when the user asks to create a UI/HUD/menu, add or arrange widgets (Button, TextBlock, Image, panels), style or animate a widget, audit a widget's bindings, set up data bindings in a Widget Blueprint (WBP), or click, drag, type into or read a live widget in a running game.
 vibeue_classes:
   - WidgetService
 unreal_classes:
@@ -27,9 +27,13 @@ keywords:
   - mvvm
   - binding
   - animation
+  - click
+  - drag
+  - live widget
 related_skills:
   - blueprints
   - blueprint-graphs
+  - pie-testing
 ---
 
 > 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "umg-and-slate"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
@@ -42,6 +46,56 @@ from the Task Index and load the matching workflow doc and/or run the matching s
 
 > Load the **`blueprints`** skill when you also need to add Blueprint variables, functions, or
 > components, and **`blueprint-graphs`** when wiring event-graph nodes for bound events.
+
+## Drive a running UI: find, snapshot, click, drag, type, wait, read
+
+Testing a widget in a running game is not authoring: it is Epic's SlateInspectorToolset (tools
+only, AICallable: no `unreal.SlateInspectorToolset.click`) and WidgetFinder (tools, and also
+PythonCallable on the engine subsystem `unreal.WidgetFinderSubsystem`). Do not write your own PIE UI driver
+or OS mouse script first. `S` below is `SlateInspectorToolset.SlateInspectorToolset`, `WF` is
+`WidgetFinder.WidgetFinderSubsystem`. Over MCP: `call_tool(toolset_name=..., tool_name=...,
+arguments={...})`; inside `execute_python`: `await call_tool("<toolset>.<tool>", **args)`. Arguments
+are camelCase. PIE setup (throttling, window size, waiting for the player) is in `pie-testing`.
+
+Load Epic's two guides once (Python-registered skills, so object paths, not `/Skills/...`; confirm
+them with `ToolsetRegistry.AgentSkillToolset.ListSkills`):
+
+- `/EditorToolset/Python/editor_toolset/skills/debug_runtime_ui_bug_PY.DebugRuntimeUIBugSkill`:
+  reproduce and classify a runtime UI bug, with the recorders to arm first (`UMGEditor.UMGDebuggerSubsystem`
+  widget lifetime log, CommonUI log, focus recording).
+- `/SlateInspectorToolset/Python/slate_inspector_toolset/skills/input_simulation_PY.SlateInspectorInputSimulationSkill`:
+  prefer the one-call tools (`Click`, `PressKey`, `Type`, `Drag`, `Scroll`); after an interrupted
+  `MouseDown` / `KeyDown`, call `ReleaseHeldInput`.
+
+| Step | Call (camelCase arguments) | What to know |
+|---|---|---|
+| Find the window | `S.Windows` with `action="list"` | A JSON **string** of `{index, ref, title, active, regular, x, y, width, height}`; the PIE window's title contains `Preview`. `action="resize"` with `ref`, `width`, `height` (outer size). |
+| Locate a widget | `WF.StartService` once, `WF.GetQuerySyntax` once, then `WF.Query` with `request={"query": "text(*PLAY*)"}` | The argument is `request`. Text matches exactly unless it globs. Results carry `ref`, `type`, `name`, `bVisible`, `x`, `y`, `width`, `height`; check `bSuccess` / `errorMessage` first. |
+| ... or snapshot | `S.Snapshot` with `ref=<window ref>`, `maxDepth=60` | One widget per line: `[pos=x,y size=w,h]` (desktop pixels), `[umg=WBP_Title.Btn_Play(Button)]` (the UMG widget name and its WBP), `[ref=...]`. Collapsed/Hidden widgets are left out. |
+| Click | `S.Click` with `ref`, optional `params={"button": "left", "bDoubleClick": false, "position": {"x": 0.5, "y": 0.5}}` | `true` = delivered, not handled; confirm by a capture or state read. On `false`, `S.LastRefusal`. |
+| Drag | `S.Drag` with `startRef`, `endRef`, optional `params` (`startPosition` / `endPosition` 0..1 in each widget, `waypoints={"points": [...]}`, `moveByX` / `moveByY`) | Hit-tests both ends, presses, moves in steps (drag detection fires, the target gets `OnDragOver`), releases. Empty `endRef` + `moveByX`/`moveByY` drags a slider or splitter. Read in 5.9 source; not yet run against a UMG drag-and-drop. |
+| Type, keys | `S.Type` with `ref`, `text`, `submit`; `S.PressKey` with `key`; `S.Focus` with `ref` | `Type` focuses the field first. |
+| Wait | `WF.WaitForQuery` with `request={"query": "...", "comparison": "GreaterOrEqual", "threshold": 1, "timeoutSeconds": 10}` | Completes once without polling (`"Equal"` + `0` waits for it to go). `S.WaitFor` (`text` / `textGone`) checks once: poll it. |
+| Read | `S.GetUMGInfo` with `ref` -> `widget`, `widgetName`, `widgetClass`, `asset`, `outerUserWidgets`; then `EditorToolset.ObjectToolset.GetProperties` with `instance=<widget>`, `properties=["Text", "Visibility"]` | The live `UWidget`, not the design-time one. |
+| Is it reachable? | `S.HitTest` with `ref`, `params={"grid": 3}` | What covers it, without clicking. |
+| Look | `S.Screenshot` with `ref`; `SceneCaptureToolset.SceneCaptureToolset.CaptureGameViewport` with `world`, `maxResolution` | The game capture includes the UMG. |
+
+Jam-run (2026-11): `Windows`, `Snapshot`, `Hover`, `Screenshot` inside `execute_python`, and
+`WF.Query` -> `S.Click` over MCP. The rest is read in the 5.9 source. `on_clicked.broadcast()` on a
+live button runs its handlers but skips hit testing, focus and visibility: fine for moving a test
+along, not proof that a player can click it.
+
+### What does not work from Python, and what to use instead
+
+| Fails | Use instead |
+|---|---|
+| `widget_blueprint.widget_tree`, `widget_blueprint.parent_class` | `DescribeWidget` (below) or `unreal.load_object(None, "/Game/UI/WBP_X.WBP_X:WidgetTree.Btn_Play")`; parent class `unreal.BlueprintEditorLibrary.get_blueprint_parent_class(bp)`. |
+| `user_widget.get_widget_from_name(...)` | `user_widget.get_editor_property("Btn_Play")` for a Blueprint-variable widget; otherwise `unreal.ObjectIterator(unreal.Widget)` matched on `get_name()` under `<instance path>.WidgetTree.`; or the snapshot's `[umg=...]` tag. |
+| `unreal.WidgetBlueprintLibrary` | `unreal.WidgetLibrary` (renamed in 5.8): `unreal.WidgetLibrary.get_all_widgets_of_class(world, widget_class, False)` for live instances. Take the last that `is_in_viewport()` or has a parent: removed screens linger until GC and still react to presses. |
+| `unreal.SlateBlueprintLibrary` | `unreal.SlateLibrary`, but its geometry reads are zero (next row). |
+| `widget.get_cached_geometry()` / `WidgetLayoutLibrary.get_viewport_widget_geometry()` (all zeros from Python) | Positions from `S.Snapshot` or `WF.Query`; viewport size from `unreal.WidgetLayoutLibrary.get_viewport_size(world)`. |
+| `unreal.SubsystemBlueprintLibrary`, `game_instance.get_subsystem(cls)` | `unreal.get_game_instance_subsystem(unreal.GameplayStatics.get_game_instance(world), cls)`, `unreal.get_world_subsystem(world, cls)`, `unreal.get_local_player_subsystem(local_player, cls)`, `unreal.get_editor_subsystem(cls)`, `unreal.get_engine_subsystem(cls)`. |
+| `str + text_block.get_text()` | `str(text_block.get_text())`; set an entry with `entry.set_text("110")`. |
 
 ## Which surface owns what
 
@@ -74,9 +128,17 @@ call_tool(tool_name="DescribeWidget",
           arguments={"widgetBlueprint": "/Game/UI/WBP_Menu.WBP_Menu"})
 ```
 
-**3. Inside `execute_python`, reach Epic's toolsets with `vibeue.exec_tool`** — the same dispatch
-`call_tool` uses, but in-process, so a whole task batches into one round-trip. This is what the
-sample scripts use:
+**3. Inside `execute_python`, reach Epic's toolsets with the injected `await call_tool(...)`** — one
+string with the full tool name, camelCase keyword arguments, and the tool's value comes back directly
+(it raises on failure). A whole task batches into one round-trip:
+
+```python
+desc = await call_tool("WidgetStaticAnalysisToolset.WidgetStaticAnalysisToolset.DescribeWidget",
+                       widgetBlueprint="/Game/UI/WBP_Menu.WBP_Menu")
+```
+
+The sample scripts use the older synchronous `vibeue.exec_tool(toolset, tool, args_dict)`, which
+still works where you cannot `await`:
 
 ```python
 import vibeue
@@ -96,7 +158,7 @@ A UFUNCTION reaches `unreal.*` only if it is `BlueprintCallable` or carries `Pyt
 | Toolset | `unreal.<Toolset>.<method>()` |
 |---|---|
 | `WidgetStaticAnalysisToolset`, `WidgetAnimationToolset`, `MVVMToolset`, `MovieScene*Extensions`, `BlueprintToolset` | ✅ works — these are `BlueprintCallable`/`PythonCallable` |
-| `ObjectToolset`, `AssetToolset`, `EditorAppToolset`, `SlateInspectorToolset` | ❌ **fails** — `AICallable` only. `call_tool` / `vibeue.exec_tool` is the only path |
+| `ObjectToolset`, `AssetToolset`, `EditorAppToolset`, `SlateInspectorToolset` | ❌ **fails** — `AICallable` only. `call_tool` (MCP or `await call_tool` in a script) / `vibeue.exec_tool` is the only path |
 
 So `unreal.ObjectToolset.set_properties(...)` and `unreal.AssetToolset.find_assets(...)` do not
 exist. Don't guess them.
@@ -369,11 +431,13 @@ returns the Content Browser's cached thumbnails (empty entry when an asset has n
 - `EditorAppToolset.StartPIE` + `unreal.WidgetService.spawn_widget_in_pie` are for **runtime state /
   live property reads** — use only when you need a live instance.
 
-`StartPIE` is **async**: it returns a `UAsyncFunctionResultVoid`, and PIE is not live in the same
-call. Start it in one step (or `await vibeue.exec_tool_await`), then spawn/read in a later step.
-`IsPIERunning` → bool is the gate. Reading a live widget's property is a 3-step chain:
+`StartPIE` is **async**: it returns a `UAsyncFunctionResultVoid`. Awaited (`await call_tool(
+"EditorToolset.EditorAppToolset.StartPIE", options={...})` in a script, or an MCP `call_tool`) it
+completes after warmup; a plain `vibeue.exec_tool` returns before PIE is live. It errors if a session
+is already running. Reading a live widget's property is a 3-step chain:
 `SlateInspectorToolset.Snapshot` → `GetUMGInfo(ref)` (returns a live `Widget` handle, serialized as
-`{refPath}`) → `ObjectToolset.GetProperties` on that handle. Runnable: `scripts/pie_inspect.txt`.
+`{refPath}`) → `ObjectToolset.GetProperties` on that handle; clicking, dragging and typing are in
+"Drive a running UI" at the top. Runnable: `scripts/pie_inspect.txt`.
 
 ### 🚨 Custom WBPs as components — discover first, pass the asset name
 
@@ -476,8 +540,8 @@ Never report a widget as created/configured until it appears in a fresh `Describ
   instances always read unbound); simulate a click with `on_clicked.broadcast()` on that instance.
   Hand-built bound-event nodes compile but never fire — go through `bind_event`.
 - A widget can be fully authored yet never compiled; compile a legacy widget and read the error
-  first. UE 5.8 renamed `WidgetBlueprintLibrary` to `unreal.WidgetLibrary`, and `UserWidget`
-  instances do not expose `get_widget_from_name`.
+  first. For the Python names that do not exist (`WidgetBlueprintLibrary`, `get_widget_from_name`,
+  `widget_tree`) see "What does not work from Python" at the top.
 - Input modes: a UI-only mode drops the first WASD press after it closes, so use
   `SetInputMode_GameAndUIEx` in Construct; the input mode survives `ServerTravel`; `DefaultInput.ini`
   holds a full serialised InputSettings block mid-file, so a key appended at the section top is

@@ -199,8 +199,8 @@ to list what it points at, pass that object as `Instance`. Container brackets re
 
 | Tool | Signature |
 |---|---|
-| `StartPIE` | `(Options?)` → async void. **PIE is not live in the same call** |
-| `StopPIE` | `()` → async void |
+| `StartPIE` | `(Options?)` → async void; awaited, it completes after warmup (`Options`: `bSimulate`, `PlayMode`, `StartTransform`, `WarmupSeconds`). **Errors** if a session is active or queued |
+| `StopPIE` | `()` → async void. **Errors** if no session is active |
 | `IsPIERunning` | `()` → bool |
 | `OpenEditorForAsset` | `(AssetPath)` |
 | `GetAssetThumbnails` | `(AssetPaths[])` → async, one image per path in request order; an empty image where an asset has no cached thumbnail. Does not load or render the asset |
@@ -215,7 +215,16 @@ to list what it points at, pass that object as `Instance`. Container brackets re
 | `GetUMGInfo` | `(Ref)` → `{Error, Widget, WidgetName, WidgetClass, Asset, ResolvedVia, OuterUserWidgets[]}`. `Widget` is a live handle serialized as `{refPath}` — feed it to `ObjectToolset`. `Widget` is non-null exactly when `Error` is empty |
 | `Screenshot` | `(Ref)` → `FToolsetImage`, cropped to that Slate widget. `Ref=""` = active window. Fails (with the reason) on an unknown ref or a widget in no visible window |
 | `Observe` / `Unobserve` | `(Ref, MaxDepth=30)` → identifier / `(Identifier)` — keep a subtree's refs fresh (~100ms tick) before working in it |
-| `Click` / `Hover` / `Type` / `Focus` / `Windows` | live input simulation; see the toolset's own schema |
+| `Click` | `(Ref, Params={Button, bDoubleClick, Modifiers, Position})` → bool (delivered, not handled). `LastRefusal()` says why a `false` |
+| `Drag` | `(StartRef, EndRef, Params={Modifiers, Button, Waypoints{Points[]}, StartPosition, EndPosition, MoveByX, MoveByY})` → bool. Positions are normalized 0..1 in each widget; empty `EndRef` + `MoveBy` drags the widget itself |
+| `Type` / `PressKey` / `Focus` | `(Ref, Text, Submit=false)` / `(Key, UserIndex=-1, RepeatCount=0)` / `(Ref, UserIndex=0)` |
+| `Hover` / `Scroll` / `HitTest` | `(Ref, Params)` each; `HitTest` changes nothing and reports what covers the widget |
+| `WaitFor` | `(Text="", TextGone="")` → bool, checks once (poll it; `WidgetFinder.WidgetFinderSubsystem.WaitForQuery` waits without polling) |
+| `Windows` | `(Action="list", Index=-1, Width=0, Height=0, Ref="")` → JSON string; actions `list`, `select`, `close`, `resize`, `maximize` |
+| `MouseDown` / `MouseMove` / `MouseMoveTo` / `MouseUp`, `KeyDown` / `KeyUp`, `TouchStart` / `TouchMove` / `TouchEnd`, `ReleaseHeldInput` | split input for debugging one half of an interaction; `ReleaseHeldInput` drains anything left held |
+
+JSON argument names are camelCase (`ref`, `startRef`, `maxDepth`, `params.moveByX`); full toolset name
+`SlateInspectorToolset.SlateInspectorToolset`. The workflow is in SKILL.md, "Drive a running UI".
 
 Refs from an earlier `Snapshot` stay usable — you do not need a fresh `Snapshot` before every
 action. `ResolvedVia` is `"self"` when the Slate widget itself carried UMG metadata, `"parent"` when

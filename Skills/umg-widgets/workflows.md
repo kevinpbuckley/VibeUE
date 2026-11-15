@@ -375,34 +375,38 @@ Runnable: `scripts/capture_preview.txt`.
 
 PIE lifecycle is Epic's; spawning a WBP into the viewport is VibeUE's.
 
-`StartPIE` is **async** — it returns an async result and PIE is not live in the same call. Start it
-in one step, then spawn/read in a later step (or `await vibeue.exec_tool_await` in a single script).
+`StartPIE` is **async**. Awaited with the injected `await call_tool(...)` it completes after its
+warmup, so one script can start PIE and read the live widget. (A plain `vibeue.exec_tool(EA,
+"StartPIE")` returns before PIE is live: then spawn/read in a later call.) `StartPIE` errors when a
+session is already running and `StopPIE` when none is, so check `IsPIERunning` first.
 
 ```python
-import json, unreal, vibeue
+import asyncio, unreal
 
-EA = "EditorToolset.EditorAppToolset"
-SI = "SlateInspectorToolset.SlateInspectorToolset"
-OT = "EditorToolset.ObjectToolset"
+EA = "EditorToolset.EditorAppToolset."
+SI = "SlateInspectorToolset.SlateInspectorToolset."
+OT = "EditorToolset.ObjectToolset."
 path = "/Game/UI/WBP_MainMenu"
 
-# Step 1 (its own call):
-if not vibeue.exec_tool(EA, "IsPIERunning"):
-    vibeue.exec_tool(EA, "StartPIE")
+if not await call_tool(EA + "IsPIERunning"):
+    await call_tool(EA + "StartPIE", options={"playMode": "PlayMode_InEditorFloating", "warmupSeconds": 2})
 
-# Step 2 (after PIE is live):
+out = {}
 handle = unreal.WidgetService.spawn_widget_in_pie(path)
-print(handle.valid, handle.instance_id, handle.error_message)
+out["spawned"] = [handle.valid, handle.instance_id, handle.error_message]
 if handle.valid:
+    await asyncio.sleep(0.3)                     # let the widget lay out
     # Live property read: Snapshot -> GetUMGInfo -> ObjectToolset.GetProperties
-    print(vibeue.exec_tool(SI, "Snapshot", {"ref": ""}))
-    info = vibeue.exec_tool(SI, "GetUMGInfo", {"ref": "<ref of the HeaderTitle widget>"})
+    snap = await call_tool(SI + "Snapshot", ref="", maxDepth=60)
+    line = next((l for l in snap.splitlines() if ".HeaderTitle(" in l), "")   # the [umg=WBP.Name(Class)] tag
+    ref = line.rsplit("[ref=", 1)[-1].rstrip("]") if line else ""
+    info = await call_tool(SI + "GetUMGInfo", ref=ref)
     if not info.get("error"):
-        print(vibeue.exec_tool(OT, "GetProperties",
-                               {"instance": info["widget"],
-                                "properties": ["RenderOpacity"]}))
+        out["props"] = await call_tool(OT + "GetProperties", instance=info["widget"],
+                                       properties=["RenderOpacity"])
     unreal.WidgetService.remove_widget_from_pie(handle)   # pass the HANDLE, not instance_id
-vibeue.exec_tool(EA, "StopPIE")
+await call_tool(EA + "StopPIE")
+out
 ```
 
 `GetUMGInfo` returns a live `Widget` handle (serialized as `{"refPath": …}`) plus `WidgetName`,
