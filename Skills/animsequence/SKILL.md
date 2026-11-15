@@ -57,6 +57,26 @@ keywords:
 
 # Animation Sequence & Editing Skill
 
+## Find it here (stop guessing these)
+
+Each row is a guess that failed in a real project, and the call that answers it. Notes: AnimSequenceService
+takes the asset path; `anim` is a loaded `unreal.AnimSequence`.
+
+| You want | Fails | Use |
+|---|---|---|
+| The notifies on a clip | `anim.notifies` / `get_editor_property("notifies")` (protected) | `unreal.AnimSequenceService.list_notifies(path)` (index, name, class, `trigger_time`, `duration`, `is_state`, `track_index`); one notify: `get_notify_info(path, index)`. Read-only alternative: `unreal.AnimationLibrary.get_animation_notify_events(anim)` |
+| A sound's length | `SoundWave.get_duration()` (no such method) | `unreal.SoundCueService.get_sound_wave_info(path).duration` (seconds; also `sample_rate`, `num_channels`), or `wave.get_editor_property("duration")` |
+| Skeletal mesh LOD count / vertices / sections | `mesh.lod_info`, `mesh.get_lod_num()` | Epic `EditorToolset.SkeletalMeshToolset` tools `GetLodCount`, `GetVertexCount(mesh, lodIndex)`, `GetSectionCount(mesh, lodIndex)`, `GetBounds` (via `call_tool`), or in Python `unreal.SkeletalMeshEditorSubsystem.get_lod_count(mesh)` |
+| A clip's frame rate | `unreal.AnimationLibrary.get_frame_rate(anim)` (no such function) | `unreal.AnimSequenceService.get_animation_frame_rate(path)` (float, -1 if not found); frame count `get_animation_frame_count(path)`; both plus duration in `get_anim_sequence_info(path)` |
+| Frames, keys, length, track names | guessing properties | `unreal.AnimationLibrary.get_num_frames(anim)`, `get_num_keys(anim)`, `get_animation_track_names(anim)`, `anim.get_play_length()` |
+| The data model / controller | `AnimationDataController.get_model()`, `anim.get_controller()` | The controller is a property: `c = anim.controller`. Its model: `c.get_model_interface()` |
+| Write every key of a bone at once | one key per call in a loop | `c.set_bone_track_keys(bone, positions, rotations, scales)` (equal-length lists of `unreal.Vector` / `unreal.Quat` / `unreal.Vector`, one per key; the track must exist: `c.add_bone_curve(bone)`). Wrap several in `c.open_bracket(unreal.Text("label"))` ... `c.close_bracket()`; change length with `c.set_number_of_frames(unreal.FrameNumber(n))`. Then `unreal.EditorAssetLibrary.save_asset(path, only_if_is_dirty=False)` |
+| Retarget a clip to another skeleton or a MetaHuman | `AnimSequenceService` (it has only `retarget_preview`, which previews and writes nothing) | The engine's IK Rig + IK Retargeter + batch retarget: [retarget-recipe.md](retarget-recipe.md) |
+| Import FBX animation with your sample rate / skeleton | `FbxImportUI` options on a 5.9 import (Interchange ignores them) | Console `Interchange.FeatureFlags.Import.FBX 0` around the import, then `1`: [retarget-recipe.md](retarget-recipe.md) step 1 |
+
+The bone-editing workflow below (`animation-editing` covers the same rules in short form) is for posing
+and keyframing; the table above is for reading and bulk-writing clip data.
+
 This skill covers the **inspect → profile → preview → validate → bake** workflow for safe animation bone edits with correct bone-space handling and constraint validation.
 
 For gesture/limb work, prefer the **pose authoring** calls over raw local keys: `solve_limb_ik`
@@ -341,6 +361,7 @@ Load these sibling docs for deeper coverage of specific topics:
 - **patterns.md** - Common patterns (listing animations, getting pose at time, adding curves, managing/configuring notifies) and the CRITICAL RULES checklist for creation/notify operations and asset paths.
 - **method-categories.md** - Categorised table of every AnimSequenceService method by domain (Discovery, Creation, Helpers, Properties, Bone Tracks, Poses, Curves, Notifies, Notify Tracks, Sync Markers, Root Motion, Additive, Compression, Export, Editor).
 - **bone-rotation.md** - Bone Rotation Axis Discovery: why bone local coordinate systems are non-intuitive and the required discovery workflow (reference pose values → analyze existing animations → incremental axis testing) before writing rotation animation code.
+- **retarget-recipe.md** - Retargeting with the engine's IK Rig + IK Retargeter + batch retarget (VibeUE has only `retarget_preview`), the legacy FBX importer switch, and the MetaHuman pelvis fix.
 
 ## Sample scripts (run via `execute_python`)
 
@@ -354,6 +375,7 @@ Open these with the paths below; UE rewrites them to absolute paths when it serv
 - [bone-rotation](bone-rotation.md) - Bone Rotation Axis Discovery - why bone local coordinate systems are non-intuitive, and the required discovery workflow (reference pose values, analyz...
 - [data-structures](data-structures.md) - Key data structures (FSkeletonProfile, FBoneConstraint, FLearnedBoneRange, edit/capture results, FBoneDelta) and full DTO reference (AnimSequenceInfo,...
 - [method-categories](method-categories.md) - Categorised table of every AnimSequenceService method by domain (Discovery, Creation, Helpers, Properties, Bone Tracks, Poses, Curves, Notifies, Notif...
+- [retarget-recipe](retarget-recipe.md) - Retarget clips between skeletons (e.g. onto a MetaHuman) with the engine's IK Rig, IK Retargeter and batch retarget from Python; the legacy FBX importer switch; the MetaHuman pelvis fix and bulk bone-key writes.
 - [patterns](patterns.md) - Common patterns for animation work (listing animations for a skeleton, getting bone pose at time, adding curves, managing and configuring notifies) pl...
 - [workflows](workflows.md) - Editing workflows (inspect skeleton, preview/validate single bone, multi-bone atomic edit, manual constraints, learn from animations, copy/mirror pose...
 - [scripts/inspect_sequence.txt](scripts/inspect_sequence.txt) - runnable sample

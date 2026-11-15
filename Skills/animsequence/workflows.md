@@ -222,7 +222,8 @@ if result.success:
 
 ### 8. Preview on Different Skeleton (Retargeting)
 
-Test how an animation looks on a different character:
+Test how an animation looks on a different character. This only previews: it writes no asset. To
+create retargeted clips, use the engine's IK Retargeter ([retarget-recipe.md](retarget-recipe.md)).
 
 ```python
 import unreal
@@ -232,7 +233,10 @@ result = unreal.AnimSequenceService.retarget_preview(
     "/Game/MetaHumans/SK_MetaHuman"
 )
 
-if result.success:
+# A bool UFUNCTION with an out-param returns the out struct on success and None on failure.
+if result is None:
+    print("Retarget preview could not be set up (check both paths)")
+elif result.success:
     print("Retarget preview active - check Animation Editor")
 else:
     print(f"Retarget failed: {result.error_message}")

@@ -48,6 +48,11 @@ bone-space handling and constraint validation.
 > `AgentSkillToolset` (`ListSkills` / `GetSkills`) — there is no `vibeue-skills-manager` tool. Run the
 > VibeUE services below with `execute_python` (`unreal.<Service>.<method>()`).
 
+> **Reading clip data or retargeting?** The `animsequence` skill opens with a "Find it here" table
+> (notifies, sound duration, LOD info, frame rate, the data controller, bulk bone keys) and links
+> [retarget-recipe.md](../animsequence/retarget-recipe.md): batch retarget is the engine's IK
+> Retargeter, since `AnimSequenceService.retarget_preview` only previews.
+
 > **🛡️ Safe discovery — never `unreal.load_asset()` in loops (memory crash 0xC0000005).**
 > Use `AnimSequenceService.find_animations_for_skeleton(skeleton)` and
 > `AnimSequenceService.list_anim_sequences(path, skeleton_filter)` — they query metadata without
@@ -107,6 +112,7 @@ read the reference pose first (`get_reference_pose`).
 | Learn constraints from animations | `workflows.md` → learn constraints | `scripts/learn_constraints.txt` |
 | Copy / mirror a pose | `workflows.md` → copy/mirror | `scripts/mirror_pose.txt` |
 | Retarget preview | `workflows.md` → retargeting | — |
+| Retarget clips onto another skeleton (writes new assets) | `../animsequence/retarget-recipe.md` | — |
 
 ## Sub-docs
 
@@ -125,6 +131,7 @@ Open these with the paths below; UE rewrites them to absolute paths when it serv
 
 - [api-reference](api-reference.md) - Animation editing Python API quick reference — SkeletonService profile/constraint methods, AnimSequenceService preview/edit/pose methods, and the key ...
 - [common-mistakes](common-mistakes.md) - Animation editing pitfalls — always specify bone space, preview/validate before baking, analyze the reference pose before guessing axes, build a skele...
+- [retarget-recipe](../animsequence/retarget-recipe.md) - IK Rig + IK Retargeter + batch retarget from Python, the legacy FBX importer switch, the MetaHuman pelvis fix
 - [workflows](workflows.md) - Step-by-step animation editing workflows — build a skeleton profile, preview/validate/bake single and multi-bone edits, set manual constraints, learn ...
 - [scripts/learn_constraints.txt](scripts/learn_constraints.txt) - runnable sample
 - [scripts/mirror_pose.txt](scripts/mirror_pose.txt) - runnable sample

@@ -46,37 +46,35 @@ keywords:
 
 ## Sockets, bone enumeration, inspection → engine SkeletalMeshTools
 
-These moved to the engine. Discover the exact schemas with
-`describe_toolset("EditorToolset.SkeletalMeshToolset")` and call via `call_tool`
-(the `mesh` argument is a `{"refPath": "<SkeletalMesh asset path>"}` object):
+These moved to the engine. Check a tool's parameters with
+`get_symbol("EditorToolset.SkeletalMeshToolset.<Tool>")` (cheaper than `describe_toolset`). Tool names
+are PascalCase and arguments are camelCase (`socketName`, `boneName`, `lodIndex`). Over MCP the `mesh`
+argument is a `{"refPath": "<SkeletalMesh object path>"}` object; inside `execute_python` pass the loaded
+asset itself.
 
-| Task | Engine tool (`SkeletalMeshTools.*`) |
+| Task | Engine tool (`EditorToolset.SkeletalMeshToolset.*`) |
 |------|--------------------------------------|
-| List sockets | `get_socket_names` |
-| Add / remove / rename socket | `add_socket`, `remove_socket`, `rename_socket` |
-| Get / set socket transform, get socket bone | `get_socket_transform`, `set_socket_transform`, `get_socket_bone` |
-| List bones / parent / children | `get_bone_names`, `get_bone_parent`, `get_bone_children` |
-| Material slots / get / set | `get_material_slots`, `get_material`, `set_material` |
-| Physics asset get / assign | `get_physics_asset`, `assign_physics_asset` |
-| LODs / vertices / sections / bounds | `get_lod_count`, `get_vertex_count`, `get_section_count`, `get_bounds` |
-| Morph target names | `get_morph_target_names` |
+| List sockets | `GetSocketNames` |
+| Add / remove / rename socket | `AddSocket`, `RemoveSocket`, `RenameSocket` |
+| Get / set socket transform, get socket bone | `GetSocketTransform`, `SetSocketTransform` (`translation`, `rotation`, `scale`, each optional), `GetSocketBone` |
+| List bones / parent / children | `GetBoneNames`, `GetBoneParent`, `GetBoneChildren` |
+| Material slots / get / set | `GetMaterialSlots`, `GetMaterial`, `SetMaterial` |
+| Physics asset get / assign | `GetPhysicsAsset`, `AssignPhysicsAsset` |
+| LODs / vertices / sections / bounds | `GetLodCount`, `GetVertexCount`, `GetSectionCount` (`lodIndex`, default 0), `GetBounds`. In plain Python: `unreal.SkeletalMeshEditorSubsystem.get_lod_count(mesh)`. `mesh.lod_info` and `mesh.get_lod_num()` do not exist |
+| Morph target names | `GetMorphTargetNames` |
 
 ```python
-# Example: add a socket on the hand_r bone, then list sockets
-call_tool(toolset_name="EditorToolset.SkeletalMeshToolset",
-          tool_name="AddSocket",
-          arguments={"mesh": {"refPath": "/Game/Characters/SKM_Mannequin"},
-                     "socket_name": "Weapon_R", "bone_name": "hand_r"})
-call_tool(toolset_name="EditorToolset.SkeletalMeshToolset",
-          tool_name="SetSocketTransform",
-          arguments={"mesh": {"refPath": "/Game/Characters/SKM_Mannequin"},
-                     "socket_name": "Weapon_R",
-                     "transform": {"location": {"x":10,"y":0,"z":0},
-                                   "rotation": {"pitch":0,"yaw":90,"roll":0},
-                                   "scale": {"x":1,"y":1,"z":1}}})
+# Example (execute_python script): add a socket on the hand_r bone, offset it, list sockets
+import unreal
+TS = "EditorToolset.SkeletalMeshToolset"
+mesh = unreal.load_asset("/Game/Characters/SKM_Mannequin")
+await call_tool(TS + ".AddSocket", mesh=mesh, socketName="Weapon_R", boneName="hand_r")
+await call_tool(TS + ".SetSocketTransform", mesh=mesh, socketName="Weapon_R",
+                translation=unreal.Vector(10, 0, 0), rotation=unreal.Rotator(roll=0, pitch=0, yaw=90))
+await call_tool(TS + ".GetSocketNames", mesh=mesh)          # final expression = the reply
 ```
 
-> Note: the engine `add_socket` always adds the socket to the **skeletal mesh**. VibeUE's old
+> Note: the engine `AddSocket` always adds the socket to the **skeletal mesh**. VibeUE's old
 > `bAddToSkeleton` (skeleton-wide socket) flag is gone — to share a socket across all meshes on a
 > skeleton, add it on each mesh, or add it on the skeleton via `unreal.*` directly.
 
@@ -108,8 +106,8 @@ unreal.SkeletonService.commit_bone_changes("/Game/SKM_Character")
 
 ### Sockets are now an engine operation
 
-Socket CRUD is on `SkeletalMeshTools` (see the table at the top). The engine `add_socket` attaches to
-the skeletal mesh; set its offset with `set_socket_transform`. There is no `bAddToSkeleton` flag.
+Socket CRUD is on `EditorToolset.SkeletalMeshToolset` (see the table at the top). The engine `AddSocket`
+attaches to the skeletal mesh; set its offset with `SetSocketTransform`. There is no `bAddToSkeleton` flag.
 
 ### Skeleton vs SkeletalMesh Paths
 
@@ -123,8 +121,8 @@ unreal.SkeletonService.get_skeleton_info("/Game/Characters/SK_Mannequin")
 unreal.SkeletonService.set_bone_retargeting_mode("/Game/Characters/SK_Mannequin", "pelvis", "Skeleton")
 
 # Sockets / bone listing (engine) - use SKM_ path via call_tool, e.g.:
-# call_tool("EditorToolset.SkeletalMeshToolset", "GetSocketNames",
-#           {"mesh": {"refPath": "/Game/Characters/SKM_Mannequin"}})
+# await call_tool("EditorToolset.SkeletalMeshToolset.GetSocketNames",
+#                 mesh=unreal.load_asset("/Game/Characters/SKM_Mannequin"))
 ```
 
 ### Retargeting Mode Reference
@@ -178,15 +176,18 @@ if not result.is_valid:
 
 ### List All Bones (engine SkeletalMeshTools)
 
-Bone enumeration moved to the engine. Use `get_bone_names` (hierarchy order, root first) and walk
-parent/children with `get_bone_parent` / `get_bone_children`:
+Bone enumeration moved to the engine. Use `GetBoneNames` (hierarchy order, root first) and walk
+parent/children with `GetBoneParent` / `GetBoneChildren`:
 
 ```python
-# names = call_tool("EditorToolset.SkeletalMeshToolset",
-#                   "GetBoneNames", {"mesh": {"refPath": "/Game/Characters/SKM_Mannequin"}})
-# for n in names:
-#     children = call_tool(... "GetBoneChildren",
-#                          {"mesh": {"refPath": "/Game/Characters/SKM_Mannequin"}, "bone_name": n})
+import unreal
+TS = "EditorToolset.SkeletalMeshToolset"
+mesh = unreal.load_asset("/Game/Characters/SKM_Mannequin")
+names = await call_tool(TS + ".GetBoneNames", mesh=mesh)
+children = {}
+for n in names[:10]:
+    children[n] = await call_tool(TS + ".GetBoneChildren", mesh=mesh, boneName=n)
+children
 ```
 
 For a richer hierarchy with transforms/depth/retarget mode, VibeUE's
@@ -239,20 +240,17 @@ unreal.EditorAssetLibrary.save_asset(mesh_path)
 Socket CRUD is on the engine toolset. Add the socket, then set its offset transform:
 
 ```python
-mesh = {"refPath": "/Game/Characters/SKM_Character"}
+import unreal
+mesh = unreal.load_asset("/Game/Characters/SKM_Character")
 TS = "EditorToolset.SkeletalMeshToolset"
 
-call_tool(TS, "AddSocket", {"mesh": mesh, "socket_name": "Weapon_R", "bone_name": "hand_r"})
-call_tool(TS, "SetSocketTransform", {"mesh": mesh, "socket_name": "Weapon_R",
-          "transform": {"location": {"x":10,"y":0,"z":0},
-                        "rotation": {"pitch":0,"yaw":90,"roll":0},
-                        "scale": {"x":1,"y":1,"z":1}}})
+await call_tool(TS + ".AddSocket", mesh=mesh, socketName="Weapon_R", boneName="hand_r")
+await call_tool(TS + ".SetSocketTransform", mesh=mesh, socketName="Weapon_R",
+                translation=unreal.Vector(10, 0, 0), rotation=unreal.Rotator(roll=0, pitch=0, yaw=90))
 
-call_tool(TS, "AddSocket", {"mesh": mesh, "socket_name": "Holster_Back", "bone_name": "spine_03"})
-call_tool(TS, "SetSocketTransform", {"mesh": mesh, "socket_name": "Holster_Back",
-          "transform": {"location": {"x":0,"y":-20,"z":0},
-                        "rotation": {"pitch":0,"yaw":0,"roll":90},
-                        "scale": {"x":1,"y":1,"z":1}}})
+await call_tool(TS + ".AddSocket", mesh=mesh, socketName="Holster_Back", boneName="spine_03")
+await call_tool(TS + ".SetSocketTransform", mesh=mesh, socketName="Holster_Back",
+                translation=unreal.Vector(0, -20, 0), rotation=unreal.Rotator(roll=90, pitch=0, yaw=0))
 ```
 
 ### Configure Retargeting for Animation Sharing
@@ -327,7 +325,7 @@ unreal.EditorAssetLibrary.save_asset(skeleton_path)
 
 ### Find Bones by Pattern (filter engine bone list)
 
-There is no `find_bones` — get the full list from the engine `get_bone_names` and filter in Python:
+There is no `find_bones` — get the full list from the engine `GetBoneNames` and filter in Python:
 
 ```python
 names = call_tool("EditorToolset.SkeletalMeshToolset",
@@ -416,8 +414,8 @@ unreal.SkeletonService.commit_bone_changes(path)  # NOW it's applied
 That method was cut — sockets are now engine `SkeletalMeshTools`:
 ```python
 # WRONG: unreal.SkeletonService.add_socket(...)               # no longer exists
-# RIGHT: call_tool("EditorToolset.SkeletalMeshToolset",
-#                  "AddSocket", {"mesh": {"refPath": "/Game/SKM_Character"}, ...})
+# RIGHT: await call_tool("EditorToolset.SkeletalMeshToolset.AddSocket",
+#                        mesh=unreal.load_asset("/Game/SKM_Character"), socketName="S", boneName="hand_r")
 ```
 
 ### ❌ WRONG: Not saving after VibeUE modifications
@@ -436,9 +434,13 @@ unreal.EditorAssetLibrary.save_asset(path)
 
 - Engine `SkeletalMeshTools` (via `call_tool`) — sockets, bone enumeration, physics asset, materials, LODs, morph targets.
 - **animation-editing / animsequence** — bone-rotation editing on animations using skeleton profiles.
+- Retargeting clips onto another skeleton (writes new AnimSequences) is the engine's IK Rig + IK Retargeter,
+  not `SkeletonService` (which only sets per-bone translation retargeting modes): see
+  [retarget-recipe.md](../animsequence/retarget-recipe.md).
 
 ## Reference pages
 
 Open these with the paths below; UE rewrites them to absolute paths when it serves this skill.
 
+- [retarget-recipe](../animsequence/retarget-recipe.md) - IK Rig + IK Retargeter + batch retarget from Python, the legacy FBX importer switch, the MetaHuman pelvis fix
 - [scripts/add_socket.txt](scripts/add_socket.txt) - runnable sample

@@ -116,8 +116,11 @@ Runnable: `scripts/mirror_pose.txt`.
 
 ## Preview on a different skeleton (retargeting)
 
+Preview only, nothing is written. To create retargeted clips use the engine's IK Retargeter:
+[retarget-recipe.md](../animsequence/retarget-recipe.md).
+
 ```python
 import unreal
 r = unreal.AnimSequenceService.retarget_preview("/Game/Anims/AS_Run", "/Game/MetaHumans/SK_MetaHuman")
-print(r.success, list(r.messages))
+None if r is None else (r.success, list(r.messages))    # None = the preview could not be set up
 ```
