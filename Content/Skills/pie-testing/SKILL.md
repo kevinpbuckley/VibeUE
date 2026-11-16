@@ -322,7 +322,7 @@ Numbers and bools fill numeric and bool params; strings fill string, name and te
 references nested inside a struct, array or map argument are resolved by the engine's global object
 lookup, not confined to the PIE world**, so pass full PIE-world paths there. An object or class path
 that points into a map package the editor has not loaded is refused with `MAP_PATH_REFUSED` and is
-never loaded (a map loaded as an asset stays resident and makes the next `load_level` fatal); other
+never loaded (a map loaded as an asset stays resident, and opening it later is fatal unless the editor releases it first; see the vibeue skill pack, "A map loaded as an asset"); other
 assets outside the PIE world are found first and loaded only when they are not maps. Integers are
 range-checked against the parameter's size (`int8`, `uint16`, `int32`, ...; `uint64` caps at 2^63-1),
 numbers given as strings must be whole numbers (`"12abc"` is refused), and enum integers or names must
