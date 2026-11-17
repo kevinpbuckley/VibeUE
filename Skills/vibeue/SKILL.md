@@ -129,6 +129,7 @@ tells you where a near miss belongs.
 | **UI (UMG)** | Widget Blueprints, layout, fonts and brushes, MVVM, and driving a live UI in PIE (click, drag, type, read). NOT the gameplay behind the UI (Blueprints) | `umg-widgets` |
 | **Environment (world-scale)** | landscape sculpt and paint, landscape materials, foliage, PCG, map blockout, real-world terrain. NOT single-actor placement (Scene), NOT audio (Audio) | `landscape`, `landscape-materials`, `landscape-auto-material`, `foliage`, `pcg`, `map-blockout`, `terrain-data` |
 | **Audio** | SoundCue authoring: ambient, footstep and foley, UI sounds (MetaSound is Epic `MetaSoundToolset`). NOT triggering sounds from gameplay (Blueprints), NOT notify wiring (Animation) | `sound-cues` |
+| **Fab content** | what the user owns on Fab or can get free, SEEING listings and installed packs as images (`FabPreviewService` contact sheets), installing them (Epic's `FabToolset`). NOT importing files from disk (Assets) | `fab-content` |
 | **Assets, data & project** | import and export, UV mapping, the surviving PIE and engine settings helpers, bulk asset maintenance you drive yourself. NOT actors in a level (Scene) | `asset-management`, `uv-mapping`, `engine-settings` |
 | **Diagnostics, testing & run** | start, drive and capture PIE, automation tests, profiling (CPU vs GPU, Insights), frame-rate caps. NOT fixing the logic a bug points to (its authoring area) | `pie-testing`, `profiling`, `frame-rate` |
 | **Camera & viewport** | editor viewport camera, view mode, FOV, exposure, layout. NOT material look (Materials), NOT light actors (Scene), NOT sequence cameras (Cinematics) | `viewport` |
@@ -214,7 +215,8 @@ drops it.
 VibeUE keeps only what those lack (`get_symbol(name="<Name>Service")` lists each service's methods):
 `PerformanceService` (`analyse`, `force_hitch`, standalone capture, `set_background_throttling`),
 `WorkflowService.get_environment` (engine version, build configuration, toolchain, build staleness),
-`PIEActorService` (spawn into and call functions in a running PIE world), `InputService` holds, and the
+`PIEActorService` (spawn into and call functions in a running PIE world), `InputService` holds,
+`FabPreviewService` (Fab listing pictures and installed packs as one numbered contact-sheet image), and the
 domain services the packs above document. The run journal, scenarios and bulk maintenance are gone:
 compose them from the tools above and keep your own record (`FileSystemToolset`).
 

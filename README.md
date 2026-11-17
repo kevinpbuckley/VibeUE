@@ -69,6 +69,11 @@ VibeUE **complements** them — it focuses on the domains and depth the engine d
   toolchain in one authoritative call.
 - **Performance & profiling** — the parts Epic's 5.9 profiling toolsets still don't cover: see below.
 - **Web research** — search / fetch / geocode for in-context research and terrain workflows.
+- **Fab, seen** — `FabPreviewService` shows Fab content as real images next to Epic's `FabToolset`:
+  `ListingImageSheet` tiles the pictures of a whole search page into one numbered contact sheet (and flags
+  the blurred placeholders Fab serves for delisted listings), `PackSheet` shows what an installed pack
+  holds, with its asset count by class and size on disk (a blank saved thumbnail is rendered again, not
+  trusted), and `RefreshThumbnails` re-renders and saves the blank ones. See `Skills/fab-content/`.
 
 It deliberately **does not duplicate** the engine's general tools (basic asset/actor/blueprint/material
 CRUD, screenshots, logs, PIE) — agents use Unreal's native toolsets for those.
@@ -122,7 +127,7 @@ VibeUE plugs into three native UE 5.9+ systems:
    the endpoint, both things the engine has no tool for: `deep_research` and `terrain_data`. Python
    execution and API discovery are engine-native in 5.9 (`editor_toolset.toolsets.python_scripting.PythonScriptingTools`:
    `execute_python`, `read_me`, `search_symbols`, `get_symbol`), so VibeUE no longer ships its own.
-3. **Skills** (`AgentSkillToolset`) — 33 markdown skill packs under `Skills/` (counting the `vibeue` index), discovered natively by
+3. **Skills** (`AgentSkillToolset`) — 34 markdown skill packs under `Skills/` (counting the `vibeue` index), discovered natively by
    5.9 (`<Plugin>/Skills/**/SKILL.md`), listed by `ListSkills` and loaded lazily via `GetSkills`,
    alongside the engine's own skills.
 

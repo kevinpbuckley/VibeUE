@@ -89,6 +89,7 @@ public class VibeUE : ModuleRules
 				"EnhancedInput",          // For Enhanced Input System support
 				"InputCore",              // For input types
 				"ImageWrapper",           // For image encoding/decoding
+				"ImageCore",              // FImage / FImageCore::ResizeImage (FabPreviewService contact sheets)
 				"DesktopPlatform",        // For file dialogs
 				"Niagara",                // For Niagara VFX runtime classes
 				"NiagaraEditor",          // For Niagara editor utilities and factories
