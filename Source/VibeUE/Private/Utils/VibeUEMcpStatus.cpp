@@ -74,10 +74,10 @@ void FVibeUEMcpStatus::Query(uint32& OutPort, bool& OutListening)
 	{
 		if (FModelContextProtocolServer* Server = Module->GetServer())
 		{
-			OutListening = Server->IsServerRunning();
+			OutListening = Server->IsRunning();
 			if (OutListening)
 			{
-				const uint32 ActivePort = Server->GetServerPort();
+				const uint32 ActivePort = Server->GetPort();
 				if (ActivePort != 0)
 				{
 					OutPort = ActivePort;
