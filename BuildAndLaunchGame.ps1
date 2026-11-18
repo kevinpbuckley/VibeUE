@@ -26,7 +26,10 @@ param(
     # project's default map, which after a mid-task relaunch is usually the WRONG level — world
     # edits then land on the default map (issue #554). The loaded map is also published in the
     # readiness signal JSON as "currentMap" so agents can verify before editing.
-    [string]$Map = ""
+    [string]$Map = "",
+    # Close EVERY Unreal process on the machine before building (the pre-2026-11-17 behaviour).
+    # By default only editors whose command line names this project are closed.
+    [switch]$AllUnrealProcesses
 )
 
 # ============================================================================
@@ -213,13 +216,42 @@ Write-Host "Project : $projectPath" -ForegroundColor Yellow
 Write-Host "Engine  : $enginePath" -ForegroundColor Yellow
 Write-Host "Mode    : $Mode" -ForegroundColor Yellow
 
-# Stop any running Unreal Engine processes gracefully
-$unrealProcesses = Get-Process | Where-Object { 
-    $_.ProcessName -like "UnrealEditor*" -or 
-    $_.ProcessName -like "CrashReportClient*" -or 
-    $_.ProcessName -eq "UnrealTraceServer" -or
-    ($_.ProcessName -eq "crashpad_handler" -and $_.MainModule.FileName -like "*Epic Games*")
+# Stop this project's Unreal Engine processes gracefully. Editors of OTHER projects (another agent's or
+# the user's session on the same machine) are left alone: only UnrealEditor* processes whose command
+# line names this .uproject are closed, plus the shared helpers (CrashReportClient, UnrealTraceServer,
+# Epic crashpad) when no foreign editor is left. -AllUnrealProcesses restores the old close-everything
+# behaviour.
+function Get-ProcessCommandLine([int]$ProcessId) {
+    try { return (Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction Stop).CommandLine } catch { return $null }
 }
+function Test-OwnEditor($Process) {
+    if ($AllUnrealProcesses) { return $true }
+    $cmd = Get-ProcessCommandLine $Process.Id
+    if (-not $cmd) { return $false }
+    return $cmd.IndexOf($projectPath, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+           $cmd.IndexOf($projectPath.Replace('\', '/'), [StringComparison]::OrdinalIgnoreCase) -ge 0
+}
+function Get-UnrealProcessesToStop {
+    $editors = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -like "UnrealEditor*" })
+    $own = @($editors | Where-Object { Test-OwnEditor $_ })
+    $foreign = @($editors | Where-Object { $own.Id -notcontains $_.Id })
+    $helpers = @()
+    if ($foreign.Count -eq 0) {
+        $helpers = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
+            $_.ProcessName -like "CrashReportClient*" -or
+            $_.ProcessName -eq "UnrealTraceServer" -or
+            ($_.ProcessName -eq "crashpad_handler" -and $_.MainModule.FileName -like "*Epic Games*")
+        })
+    }
+    return @($own + $helpers)
+}
+
+$foreignEditors = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -like "UnrealEditor*" -and -not (Test-OwnEditor $_) })
+foreach ($f in $foreignEditors) {
+    Write-Host "Leaving $($f.ProcessName) (PID: $($f.Id)) running: it is not editing $projectName" -ForegroundColor Gray
+}
+
+$unrealProcesses = Get-UnrealProcessesToStop
 
 if ($unrealProcesses) {
     Write-Host "Requesting Unreal Engine processes to close gracefully..." -ForegroundColor Yellow
@@ -228,37 +260,22 @@ if ($unrealProcesses) {
             $_.CloseMainWindow() | Out-Null
         }
     }
-    
+
     # Wait up to 15 seconds for graceful shutdown
     $timeout = 15
     $elapsed = 0
-    $remaining = Get-Process | Where-Object { 
-        $_.ProcessName -like "UnrealEditor*" -or 
-        $_.ProcessName -like "CrashReportClient*" -or 
-        $_.ProcessName -eq "UnrealTraceServer" -or
-        ($_.ProcessName -eq "crashpad_handler" -and $_.MainModule.FileName -like "*Epic Games*")
-    }
-    
+    $remaining = @($unrealProcesses | Where-Object { -not $_.HasExited })
+
     while ($remaining -and ($elapsed -lt $timeout)) {
         Start-Sleep 1
         $elapsed++
         Write-Host "  Waiting for processes to close... ($elapsed/$timeout seconds)" -ForegroundColor Gray
-        $remaining = Get-Process | Where-Object { 
-            $_.ProcessName -like "UnrealEditor*" -or 
-            $_.ProcessName -like "CrashReportClient*" -or 
-            $_.ProcessName -eq "UnrealTraceServer" -or
-            ($_.ProcessName -eq "crashpad_handler" -and $_.MainModule.FileName -like "*Epic Games*")
-        }
+        $remaining = @($unrealProcesses | Where-Object { -not $_.HasExited })
     }
-    
+
     # Force kill if still running
-    $remaining = Get-Process | Where-Object { 
-        $_.ProcessName -like "UnrealEditor*" -or 
-        $_.ProcessName -like "CrashReportClient*" -or 
-        $_.ProcessName -eq "UnrealTraceServer" -or
-        ($_.ProcessName -eq "crashpad_handler" -and $_.MainModule.FileName -like "*Epic Games*")
-    }
-    
+    $remaining = @($unrealProcesses | Where-Object { -not $_.HasExited })
+
     if ($remaining) {
         Write-Host "Processes didn't close gracefully, forcing shutdown..." -ForegroundColor Yellow
         $remaining | ForEach-Object {
@@ -266,19 +283,19 @@ if ($unrealProcesses) {
             taskkill /F /PID $_.Id /T 2>$null
         }
         Start-Sleep 3
-        
-        $stillRunning = Get-Process | Where-Object { $_.ProcessName -like "UnrealEditor*" }
+
+        $stillRunning = @($unrealProcesses | Where-Object { -not $_.HasExited })
         if ($stillRunning) {
-            Write-Host "  Some processes still running, using taskkill by name..." -ForegroundColor Yellow
-            taskkill /F /IM UnrealEditor.exe /T 2>$null
+            Write-Host "  Some processes still running, killing them again..." -ForegroundColor Yellow
+            $stillRunning | ForEach-Object { taskkill /F /PID $_.Id /T 2>$null }
             Start-Sleep 2
         }
-        Write-Host "All Unreal Engine processes terminated!" -ForegroundColor Green
+        Write-Host "All of $projectName's Unreal Engine processes terminated!" -ForegroundColor Green
     } else {
         Write-Host "All processes closed gracefully!" -ForegroundColor Green
     }
 } else {
-    Write-Host "No running Unreal Engine processes found." -ForegroundColor Gray
+    Write-Host "No running Unreal Engine processes of $projectName found." -ForegroundColor Gray
 }
 
 # Clean build if requested (relative to project root)
@@ -316,7 +333,15 @@ if (-not $SkipBuild) {
     Write-Host "Building $projectName in $Mode mode (strict: warnings-as-errors via VibeUE.Build.cs)..." -ForegroundColor Yellow
     Write-BuildManifest "running" $null
     
-    & $buildBat $editorTarget Win64 $Mode $projectPath -waitmutex
+    # UBT refuses to build while ANY editor of this engine install has a Live Coding session (the mutex is
+    # keyed on the engine's UnrealEditor.exe). This project's editors are closed by now, so a remaining
+    # session belongs to another project and cannot patch our modules: skip that check.
+    $ubtExtra = @()
+    if ($foreignEditors.Count -gt 0) {
+        Write-Host "Another project's editor is running: building with -NoHotReloadFromIDE" -ForegroundColor Gray
+        $ubtExtra += "-NoHotReloadFromIDE"
+    }
+    & $buildBat $editorTarget Win64 $Mode $projectPath -waitmutex @ubtExtra
     
     if ($LASTEXITCODE -ne 0) {
         Write-BuildManifest "failed" $LASTEXITCODE "UnrealBuildTool returned a non-zero exit code."

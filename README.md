@@ -168,7 +168,12 @@ Build with the project script:
 Plugins/VibeUE/BuildAndLaunchGame.ps1                  # builds + launches the editor
 Plugins/VibeUE/BuildAndLaunchGame.ps1 -StrictRebuild   # full recompile (warnings-as-errors)
 Plugins/VibeUE/BuildAndLaunchGame.ps1 -Map /Game/Maps/MyMap   # open a specific map (issue #554)
+Plugins/VibeUE/BuildAndLaunchGame.ps1 -AllUnrealProcesses      # also close other projects' editors (old behaviour)
 ```
+The Windows script closes only the editors of THIS project (their command line names its `.uproject`); an
+editor of another project on the same machine keeps running. Because UBT's Live Coding guard is keyed on the
+engine's `UnrealEditor.exe`, not the project, the script then builds with `-NoHotReloadFromIDE` so that
+editor's Live Coding session does not fail the build ("Unable to build while Live Coding is active").
 On Linux or macOS, use the platform-detecting shell script:
 ```bash
 Plugins/VibeUE/BuildAndLaunchGame.sh --engine /path/to/UE5
