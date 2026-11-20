@@ -281,6 +281,31 @@ namespace
 				AddScenarioStepResult(Scenario, Action, bOk, bOk ? FString() : TEXT("numeric Python assertion failed"), Command.CommandResult,
 					FString::Printf(TEXT("%s %.17g (tolerance %.17g)"), *Op, Expected, Tolerance));
 			}
+			else if (Action == TEXT("python"))
+			{
+				// Runs in the shared console globals, so later expressions can read what this code sets
+				FPythonCommandEx Command; Command.Command = Step->GetStringField(TEXT("code"));
+				Command.ExecutionMode = EPythonCommandExecutionMode::ExecuteFile;
+				Command.FileExecutionScope = EPythonFileExecutionScope::Public;
+				IPythonScriptPlugin* Python = IPythonScriptPlugin::Get(); const bool bOk = Python && Python->ExecPythonCommandEx(Command);
+				AddScenarioStepResult(Scenario, Action, bOk, bOk ? FString() : TEXT("Python step raised: ") + Command.CommandResult.Right(2000));
+			}
+			else if (Action == TEXT("wait_until"))
+			{
+				// Polls without blocking the game thread, so async work (HTTP replies, timers) can finish meanwhile
+				double Timeout = 30.0, Poll = 0.25; Step->TryGetNumberField(TEXT("timeout_seconds"), Timeout); Step->TryGetNumberField(TEXT("poll_seconds"), Poll);
+				if (Now >= Scenario->WaitUntil)
+				{
+					Scenario->WaitUntil = Now + FMath::Clamp(Poll, 0.01, 10.0);
+					FPythonCommandEx Command; Command.Command = TEXT("bool(") + Step->GetStringField(TEXT("expression")) + TEXT(")");
+					Command.ExecutionMode = EPythonCommandExecutionMode::EvaluateStatement;
+					IPythonScriptPlugin* Python = IPythonScriptPlugin::Get(); const bool bExecuted = Python && Python->ExecPythonCommandEx(Command);
+					if (!bExecuted) { AddScenarioStepResult(Scenario, Action, false, TEXT("wait_until expression raised: ") + Command.CommandResult.Right(2000)); }
+					else if (Command.CommandResult == TEXT("True")) { AddScenarioStepResult(Scenario, Action, true); }
+					else if (Now - Scenario->StepStartedSeconds > FMath::Clamp(Timeout, 0.0, 600.0))
+					{ AddScenarioStepResult(Scenario, Action, false, TEXT("timed out waiting for expression"), Command.CommandResult); }
+				}
+			}
 			else if (Action == TEXT("capture_game"))
 			{
 				FString Name = FString::Printf(TEXT("scenario-%s-step-%d"), *Scenario->Id, Scenario->StepIndex); Step->TryGetStringField(TEXT("name"), Name);
@@ -322,6 +347,9 @@ FString UWorkflowService::RunScenario(const FString& ScenarioJson)
 		const auto Step = Value->AsObject(); FString Action;
 		if (!Step || !Step->TryGetStringField(TEXT("action"), Action)) { return ScenarioError(TEXT("each step requires an action")); }
 		Action = Action.ToLower();
+		FString Text;
+		if (Action == TEXT("python") && (!Step->TryGetStringField(TEXT("code"), Text) || Text.TrimStartAndEnd().IsEmpty())) { return ScenarioError(TEXT("python step requires code")); }
+		if (Action == TEXT("wait_until") && (!Step->TryGetStringField(TEXT("expression"), Text) || Text.TrimStartAndEnd().IsEmpty())) { return ScenarioError(TEXT("wait_until requires expression")); }
 		if (!IsAssertion(Action)) { continue; }
 		++AssertionsDeclared;
 		FString Expression, Expected, Contains, NotContains;

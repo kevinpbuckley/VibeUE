@@ -84,6 +84,25 @@ queued = json.loads(unreal.WorkflowService.run_scenario(json.dumps(spec)))
 Use the lower-level primitives below for interactive investigation, one-off probes, or actions not in
 the scenario schema. Never spin/sleep inside one editor Python call while waiting for a scenario.
 
+### Driving async gameplay: `python` and `wait_until`
+
+For flows that wait on something asynchronous (an HTTP/AI reply, a timer, an actor reaching a spot),
+combine a `python` step that triggers it with a `wait_until` step that polls for the result between
+editor ticks — the game thread keeps running, so the awaited work can actually complete:
+
+```json
+{"action":"python", "code":"import unreal\nnpc = unreal.MyNPCComponent.get_npc(unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_game_world())\nnpc.send_message('Hello')"},
+{"action":"wait_until", "expression":"not npc.is_waiting_for_reply()", "timeout_seconds":45, "poll_seconds":0.5},
+{"action":"python_assert_number", "expression":"len(npc.get_editor_property('history'))", "operator":"ge", "expected":2}
+```
+
+- `python` runs `code` (multi-line allowed) in the shared console globals, so names it defines are
+  visible to later `python`, `wait_until` and assertion expressions. A raised exception fails the step.
+- `wait_until` evaluates `bool(expression)` every `poll_seconds` (default 0.25) until it is `True`;
+  it fails after `timeout_seconds` (default 30) or if the expression raises.
+- Neither counts as an assertion: still declare at least one assertion (or `smoke: true`).
+- Re-fetch PIE objects inside each scenario (never from an earlier session's globals).
+
 ### Assertions and evidence freshness
 
 A normal scenario must declare at least one `assert_log`, `python_assert`, or
