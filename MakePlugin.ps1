@@ -92,7 +92,9 @@ $ExcludeDevFiles = @(
     "FAB-DESCRIPTION.md",    # Development file not needed by end users
     "FAB_Tech_Details.md",   # FAB submission details not needed by end users
     "FAB-Checklist.md",      # Internal checklist not needed by end users
-    ".gitignore"             # Git-specific file not needed by end users
+    ".gitignore",            # Git-specific file not needed by end users
+    "flake.nix",             # Optional Nix build environment (development only)
+    "flake.lock"
 )
 
 # Note: test_prompts folder is now included for user reference and examples.
