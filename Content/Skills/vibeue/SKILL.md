@@ -220,49 +220,60 @@ and the next `auto_save=true` call would save it. To read the dirty set mid-scri
 list: a never-saved map appears as `/Temp/Untitled_N`, and a dirty unsaved map's MapBuildData package
 can be marked dirty by the enumeration itself. Both lists are empty after a crashed (SEH) run.
 
-## Never leave a map loaded - it crashes the editor on the next level change
+## A map loaded as an asset stays in memory: release it before you open it
 
-Opening a map as an **asset** keeps it resident:
+Opening a map as an **asset** keeps it in memory:
 
 ```python
 w = unreal.load_asset("/Game/Maps/Foo")          # loads and KEEPS Foo
 unreal.EditorAssetLibrary.load_asset("/Game/Maps/Foo")
-unreal.find_object(None, "/Game/Maps/Foo.Foo")
+unreal.find_object(None, "/Game/Maps/Foo.Foo")   # loads nothing, but the variable keeps a loaded Foo alive
 ```
 
-The engine checks on every level load that no other map package is still alive. That check is a
-**fatal, not a warning** - the editor dies with `World Memory Leaks` (`EditorServer.cpp`) and
-`Old level package /Game/Maps/Foo not cleaned up by garbage collection`. The crash lands on whoever
-calls `load_level` next, which may be minutes later and a different tool entirely, and the message
-names neither the script nor the map that caused it.
+A map package loads its world with `RF_Standalone`, so garbage collection keeps it with nothing
+referencing it, and a top-level variable in `execute_python_code` persists across calls and keeps
+alive whatever it holds (the world, its package, an actor in it). **Opening that map later is a
+fatal, not a warning**: the editor dies with `World Memory Leaks` (`EditorServer.cpp`) and `Old level
+package /Game/Maps/Foo not cleaned up by garbage collection`, on whoever opens it, maybe minutes later,
+and the message names neither the script nor the tool that caused it. A load of a different map
+unloads such a leftover itself; a leftover world that is not Inactive fails the engine's world leak
+check at any load (`CheckForWorldGCLeaks`; a Save-As and Level Instances also leave maps behind, with
+types not measured).
 
-`execute_python_code` reports this in every reply so the warning arrives with its cause:
+`execute_python_code` reports such worlds in every reply (not a map's package left without its world),
+so the warning arrives with its cause:
 
 ```json
 "resident_maps": ["/Game/Maps/Foo.Foo"]
 ```
 
-**Non-empty `resident_maps` means the next level load will crash the editor.**
+**In an editor that releases them** (`unreal.PythonTools.host_releases_resident_maps()` is true: the
+host project sets the console variable `VibeUE.HostReleasesResidentMaps`, and the `RESIDENT_MAPS` log
+line says so): every level load through LoadMap
+(`load_level`, `load_map`, File > Open, the Content Browser) releases them first. The variables that
+held them then raise "ObjectInstance is null!". The host refuses the load, and says why in its log,
+when one has unsaved changes it would lose or something outside Python holds one it must release.
+Change level with `unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).load_level(path)`, or
+`vibeue.safe_load_level(path)`, which then checks only that the target exists. A raw `MAP LOAD`
+console command skips the release.
 
-There is no reliable in-process cure. A map package loads with `RF_Standalone`, and **neither
-`unreal.SystemLibrary.collect_garbage()` nor `EditorLoadingAndSavingUtils.unload_packages()`
-releases it** - both were tried against a live editor and the world stayed resident. Once a map is
-stranded, **restart the editor** (`BuildAndLaunchGame.ps1`) before changing levels.
+**In an editor that does not:** `EditorLoadingAndSavingUtils.unload_packages([unreal.find_package(path)])`
+releases the map once nothing holds it (measured in a UE 5.8 host, plain and World Partition maps):
+delete the Python variables that hold it first (`vibeue.python_globals_holding(path)` and
+`vibeue.release_globals(names)` find and drop the direct ones; `collect_garbage()` alone does not
+release it). Change level with `vibeue.safe_load_level(path)`: it reads
+`unreal.PythonTools.get_resident_maps()` (the `resident_maps` list minus streaming sublevels of the
+open level) and raises `vibeue.LevelLoadRefused`, loading nothing, while any map other than the open
+level is resident, when the target itself is resident (unless `allow_resident_target=True`), or when
+the registry has no map at that path; otherwise it calls
+`unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).load_level(path)` and returns its bool.
 
-So treat this as prevention, not repair:
+Either way, to read a map's **metadata**, use the asset registry - it loads nothing:
 
-- To read a map's **metadata**, use the asset registry - it loads nothing:
-  ```python
-  ar = unreal.AssetRegistryHelpers.get_asset_registry()
-  maps = ar.get_assets_by_path("/Game/Maps", recursive=True)
-  ```
-- To **change level**, use `vibeue.safe_load_level(path)`: it reads
-  `unreal.PythonTools.get_resident_maps()` (the `resident_maps` list minus streaming sublevels of the
-  open level) and raises
-  `vibeue.LevelLoadRefused`, loading nothing, while any map other than the open level is resident, when
-  the target itself is resident (unless `allow_resident_target=True`), or when the registry has no map
-  at that path; otherwise it calls `unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).load_level(path)`
-  and returns its bool. Never `load_asset` a map to "look at it".
+```python
+ar = unreal.AssetRegistryHelpers.get_asset_registry()
+maps = ar.get_assets_by_path("/Game/Maps", recursive=True)
+```
 
 The open level is never reported - only stragglers.
 

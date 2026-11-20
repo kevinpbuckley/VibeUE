@@ -150,9 +150,10 @@ public:
 	 * Map worlds currently resident besides the open level, as full object paths.
 	 *
 	 * A map opened as an ASSET (unreal.load_asset("/Game/Maps/Foo"), EditorAssetLibrary.load_asset,
-	 * find_object, ...) stays loaded afterwards. The engine checks on every level load that no other
-	 * map package is still alive, and that check is FATAL, not a warning - so the crash lands on
-	 * whoever loads a level next, naming neither the script nor the tool that left it behind.
+	 * find_object, ...) stays loaded afterwards. Opening such a map later fails the engine's "old level
+	 * package cleaned up?" check, which is FATAL, not a warning, unless the editor releases it first
+	 * (HostReleasesResidentMaps) - so the crash lands on whoever opens it next, naming neither the
+	 * script nor the tool that left it behind.
 	 * execute_python_code reports this after every run so the warning arrives with its cause.
 	 *
 	 * Excludes the open editor world, PIE worlds, and the transient preview worlds the editor keeps
@@ -166,18 +167,31 @@ public:
 	 * of the open level are left out here (a level change unloads them with it, so they are not
 	 * stragglers). The reply field keeps upstream's broader rule.
 	 *
-	 * Non-empty means the NEXT level load fails the engine's stale-world check and FATALS the editor.
-	 * vibeue.safe_load_level() checks this before it loads anything.
+	 * Opening one of them FATALS the editor unless it is released first;
+	 * vibeue.safe_load_level() checks this before it loads anything, unless HostReleasesResidentMaps().
 	 *
 	 * @return Full object paths of the resident map worlds (e.g. "/Game/Maps/Foo.Foo"); empty when none.
 	 *
 	 * Python usage:
 	 *   stranded = unreal.PythonTools.get_resident_maps()
 	 *   if stranded:
-	 *       print("restart the editor before changing level:", list(stranded))
+	 *       print("maps left in memory:", list(stranded))
 	 */
 	UFUNCTION(BlueprintCallable, Category="VibeUE|Python", meta=(AICallable))
 	static TArray<FString> GetResidentMaps();
+
+	/**
+	 * True when the host editor releases maps loaded as assets before every map load through
+	 * FEditorFileUtils::LoadMap (load_level, load_map, File > Open, the Content Browser), and refuses,
+	 * saying why in its log, a load it cannot make safe. Such a host says so by setting the console
+	 * variable VibeUE.HostReleasesResidentMaps to true (off by default), at runtime or under
+	 * [ConsoleVariables]. vibeue.safe_load_level and the RESIDENT_MAPS log line read it.
+	 *
+	 * Python usage:
+	 *   unreal.PythonTools.host_releases_resident_maps()
+	 */
+	UFUNCTION(BlueprintCallable, Category="VibeUE|Python")
+	static bool HostReleasesResidentMaps();
 
 	/**
 	 * Names of the packages that are dirty right now, sorted: the content packages, plus the world
