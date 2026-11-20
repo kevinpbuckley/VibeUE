@@ -82,13 +82,58 @@ unreal.WidgetService.set_property(path, "PlayText", "Font.Size", "24")  # "24", 
 `ColorAndOpacity` on text/image widgets is **FSlateColor**, whose export text is
 `"(SpecifiedColor=(R=1.0,G=0.5,B=0.0,A=1.0))"` — a bare LinearColor string is auto-wrapped
 into that form by `set_property`. `ShadowColorAndOpacity` is a plain **FLinearColor**:
-`"(R=0.0,G=0.0,B=0.0,A=1.0)"`. Named color strings ("red", "orange") are NOT supported on
-either — pass numeric RGBA.
+`"(R=0.0,G=0.0,B=0.0,A=1.0)"`. Named color strings ("red", "orange") and hex are NOT supported by
+`set_property` — use `set_color` for those (below), or pass numeric linear RGBA.
 
-**Always `get_property` after `set_property` and compare.** A struct set can return `True`
-while writing nothing (UE struct import ignores unrecognized member names). If the readback
-still shows the old value, your value string didn't match the struct's member layout — check
-`list_properties` for the property's real type and use its export-text form.
+**Prefer `set_property_verified` over `set_property`.** A struct set can return `True` while
+writing nothing (UE struct import ignores unrecognized member names). `set_property_verified`
+takes the same arguments, reads the value back, and returns `success=False` with the expected
+format in `message` when nothing was written:
+
+```python
+r = unreal.WidgetService.set_property_verified(path, "PlayButton", "Slot.Padding", "(Left=8,Top=8,Right=8,Bottom=8)")
+if not r.success: print(r.message)          # also: r.changed, r.previous_value, r.new_value, r.property_type
+```
+
+**Colours from design specs: `set_color`.** Accepts `"#E53935"`, `"#E53935CC"`, `"sRGB(229,57,53)"`,
+`"rgba(229,57,53,0.5)"`, basic names (`"red"`, `"orange"`, `"grey"`…), `"linear(r,g,b[,a])"` and the
+`"(R=..,G=..,B=..,A=..)"` tuple. Hex/sRGB/names are converted to **linear** for you; it works on
+FSlateColor, FLinearColor and FColor properties and is verified like `set_property_verified`:
+
+```python
+unreal.WidgetService.set_color(path, "Title", "ColorAndOpacity", "#E53935")
+unreal.WidgetService.set_color(path, "Title", "ShadowColorAndOpacity", "rgba(0,0,0,0.6)")
+```
+
+### 🚨 Building or rebuilding a whole tree — `build_layout` / `export_layout`
+
+For more than a handful of widgets, describe the tree as JSON and build it in **one call** instead of
+many `add_component` + `set_property` calls. The layout is validated first (unknown types, duplicate
+names, children under non-panels, >1 child under Button/Border/SizeBox, unknown widget properties) and
+nothing is written if it fails — run with `dry_run=True` to see every problem at once.
+
+```python
+import json
+layout = {"root": {"type": "CanvasPanel", "name": "Root", "is_variable": False, "children": [
+    {"type": "VerticalBox", "name": "Menu", "slot": {"Position X": 100, "Position Y": 200}, "children": [
+        {"type": "Button", "name": "PlayButton", "slot": {"Padding": 8}, "children": [
+            {"type": "TextBlock", "name": "PlayLabel", "properties": {"Text": "Play", "Font.Size": 28}}]}]}]}}
+r = unreal.WidgetService.build_layout(path, json.dumps(layout), "append", False)
+print(r.success, r.widgets_created, r.properties_failed, list(r.errors))
+```
+
+- `"properties"` = widget properties (`set_property` names/paths); `"slot"` = slot properties and slot
+  aliases (`Padding`, `Position X`, `HorizontalAlignment`, `LayoutData`, …). Values may be strings,
+  numbers or booleans; `is_variable` defaults to true.
+- `mode="append"` (default): `{"root": {...}}` on an **empty** WBP, or
+  `{"parent": "Menu", "children": [...]}` to add below an existing panel.
+- `mode="replace"`: `{"root": {...}}` — throws the old tree away and builds the new one.
+- The build is one undo transaction. Property/slot failures don't stop the build; they are counted in
+  `properties_failed` and listed in `errors`.
+
+`export_layout(path)` returns the current tree in exactly that format (only non-default values unless
+`include_defaults=True`). To restructure an existing widget: export → edit the JSON → `build_layout(...,
+"replace")`. Reusing the old widget names keeps animation tracks and MVVM bindings pointing at them.
 
 ### 🚨 Use dedicated style APIs for full font/brush edits
 
@@ -241,6 +286,8 @@ Sample scripts under `scripts/` are **runnable examples** — edit the variables
 |------|----------|-----------------------------------------------|
 | Create a Widget Blueprint | `workflows.md` → Create Widget Blueprint | `scripts/create_widget.txt` |
 | Build a menu (root + panel + buttons) | `workflows.md` → Build a Menu | `scripts/build_menu.txt` |
+| Build / rebuild a whole tree from JSON | SKILL.md → `build_layout` / `export_layout` | — |
+| Set a colour from hex / sRGB / a name | SKILL.md → Color properties (`set_color`) | — |
 | Position widgets on a CanvasPanel | `workflows.md` → Canvas Positioning | — |
 | Inspect a widget (hierarchy + properties) | `workflows.md` → Inspect a Widget | `scripts/inspect_hierarchy.txt` |
 | Apply full font styling | `workflows.md` → Font Styling | `scripts/apply_font.txt` |
@@ -269,7 +316,8 @@ loader that exposes this skill; there is no `vibeue-skills-manager` tool):
 ## Verification (do this before claiming success)
 
 1. After hierarchy edits: re-read with `get_widget_snapshot(path)` and confirm the expected widgets/parents.
-2. After property/style edits: read the value back (`get_property` / `get_font` / `get_brush`).
+2. After property/style edits: read the value back (`get_property` / `get_font` / `get_brush`), or write
+   with `set_property_verified` / `set_color`, which do the read-back for you.
 3. Open/compile the WBP and confirm no errors, then `unreal.EditorAssetLibrary.save_asset(path)`.
 
 Never report a widget as created/configured until it appears in a fresh `get_widget_snapshot` result.

@@ -405,6 +405,83 @@ struct FWidgetPreviewResult
 };
 
 /**
+ * Result of a verified property write (set_property_verified / set_color).
+ * The value is read back after the write, so bSuccess means the property really holds the value.
+ */
+USTRUCT(BlueprintType)
+struct FWidgetPropertyWriteResult
+{
+	GENERATED_BODY()
+
+	/** True only if the write was accepted AND the read-back confirms it took effect. */
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	bool bSuccess = false;
+
+	/** True if the stored value differs from before the write (false when it already held the value). */
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	bool bChanged = false;
+
+	/** Export text of the property before the write. */
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	FString PreviousValue;
+
+	/** Export text of the property after the write (read back from the widget). */
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	FString NewValue;
+
+	/** Resolved C++ type of the property (e.g. "FSlateColor"), to help fix a rejected value. */
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	FString PropertyType;
+
+	/** Human-readable outcome; on failure says why and which value format is expected. */
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	FString Message;
+};
+
+/**
+ * Result of build_layout — full audit of what was (or, on a dry run, would be) created.
+ */
+USTRUCT(BlueprintType)
+struct FWidgetBuildLayoutResult
+{
+	GENERATED_BODY()
+
+	/** True if the layout validated and every widget was created. Property failures are reported in Errors. */
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	bool bSuccess = false;
+
+	/** True if this was a dry run: the layout was validated but nothing was written. */
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	bool bDryRun = false;
+
+	/** Widgets created (on a dry run: widgets that would be created). */
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	int32 WidgetsCreated = 0;
+
+	/** Widgets removed by mode="replace" (on a dry run: widgets that would be removed). */
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	int32 WidgetsRemoved = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	int32 PropertiesSet = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	int32 PropertiesFailed = 0;
+
+	/** Names of the created (on a dry run: to-be-created) widgets in depth-first order. */
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	TArray<FString> CreatedWidgets;
+
+	/** Error messages with the JSON node path they came from (e.g. "root/children[2] 'PlayButton'"). */
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	TArray<FString> Errors;
+
+	/** Non-fatal warnings. */
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	TArray<FString> Warnings;
+};
+
+/**
  * Handle for a widget instance spawned during PIE.
  */
 USTRUCT(BlueprintType)
@@ -425,7 +502,7 @@ struct FPIEWidgetHandle
 /**
  * Widget service exposed directly to Python.
  *
- * Provides 41 widget management actions:
+ * Provides 45 widget management actions:
  * - list_widget_blueprints: List all Widget Blueprints in the project
  * - get_hierarchy: Get widget hierarchy tree
  * - get_root_widget: Get the root widget of a Widget Blueprint
@@ -439,6 +516,10 @@ struct FPIEWidgetHandle
  * - get_property: Get a specific property value
  * - set_property: Set a specific property value
  * - list_properties: List all editable properties of a component
+ * - set_property_verified: Set a property and confirm it by read-back (catches silent struct no-ops)
+ * - set_color: Set a colour property from hex / sRGB / named colours, converted to linear and verified
+ * - export_layout: Export the whole widget tree (types, names, properties, slots) as JSON
+ * - build_layout: Build or append a widget tree from JSON in one call (same format as export_layout)
  * - get_available_events: Get available events for a widget type
  * - bind_event: Bind an event to a function
  * - list_view_models: List all ViewModels registered on a Widget Blueprint
@@ -724,6 +805,130 @@ public:
 		const FString& WidgetPath,
 		const FString& ComponentName,
 		bool bEditableOnly = true);
+
+	/**
+	 * Set a property value and verify it by reading it back.
+	 * Maps to action="set_property_verified"
+	 *
+	 * Same value format and property-name rules as set_property (including "Slot.<Prop>" and the slot
+	 * aliases), but the result reports what the property actually holds afterwards. A struct value whose
+	 * member names don't match (e.g. a bare LinearColor on an FSlateBrush) is imported as a silent no-op
+	 * by Unreal — set_property returns True for it, this returns bSuccess=False with the expected format.
+	 *
+	 * @param WidgetPath - Full path to the Widget Blueprint
+	 * @param ComponentName - Name of the component
+	 * @param PropertyName - Name of the property to set
+	 * @param PropertyValue - Value to set (as string, export-text format)
+	 * @return Write result with previous/new value and a message
+	 *
+	 * Example:
+	 *   r = unreal.WidgetService.set_property_verified("/Game/UI/WBP_Menu", "Title", "Font.Size", "32")
+	 *   if not r.success: print(r.message)
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets")
+	static FWidgetPropertyWriteResult SetPropertyVerified(
+		const FString& WidgetPath,
+		const FString& ComponentName,
+		const FString& PropertyName,
+		const FString& PropertyValue);
+
+	/**
+	 * Set a colour property from a designer-friendly colour string, converted to linear and verified.
+	 * Maps to action="set_color"
+	 *
+	 * Works on FSlateColor (e.g. TextBlock ColorAndOpacity), FLinearColor (e.g. ShadowColorAndOpacity,
+	 * Image ColorAndOpacity) and FColor properties, including nested paths like "Font.OutlineSettings.OutlineColor".
+	 * Accepted colours: "#RRGGBB" / "#RRGGBBAA", "sRGB(r,g,b)" / "rgb(r,g,b)" / "rgba(r,g,b,a)" (0-255),
+	 * "linear(r,g,b[,a])" (0-1, no conversion), "(R=..,G=..,B=..,A=..)" (linear) and basic names
+	 * ("red", "orange", "grey", ...). Everything except linear()/tuple input is treated as sRGB.
+	 *
+	 * @param WidgetPath - Full path to the Widget Blueprint
+	 * @param ComponentName - Name of the component
+	 * @param PropertyName - Colour property (path) to set
+	 * @param Color - Colour string (see above)
+	 * @return Write result with previous/new value and a message
+	 *
+	 * Example:
+	 *   unreal.WidgetService.set_color("/Game/UI/WBP_Menu", "Title", "ColorAndOpacity", "#E53935")
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets")
+	static FWidgetPropertyWriteResult SetColor(
+		const FString& WidgetPath,
+		const FString& ComponentName,
+		const FString& PropertyName,
+		const FString& Color);
+
+	// =================================================================
+	// Layout JSON (export_layout, build_layout)
+	// =================================================================
+
+	/**
+	 * Export the widget tree of a Widget Blueprint as JSON.
+	 * Maps to action="export_layout"
+	 *
+	 * Output is the exact format build_layout reads, so a tree can be exported, edited and rebuilt:
+	 *   {"success": true, "widget_path": "...",
+	 *    "root": {"type": "CanvasPanel", "name": "Root", "is_variable": false,
+	 *             "properties": {"Visibility": "Visible"},
+	 *             "slot": {},
+	 *             "children": [{"type": "TextBlock", "name": "Title", "is_variable": true,
+	 *                           "properties": {"Text": "NSLOCTEXT(...)"},
+	 *                           "slot": {"LayoutData": "(Offsets=(...),Anchors=(...),Alignment=(...))"},
+	 *                           "children": []}]}}
+	 * Property and slot values are export-text strings (the same strings get_property returns).
+	 * Custom Widget Blueprint children export their asset name as "type" (e.g. "WBP_HealthBar").
+	 * On failure returns {"success": false, "error": "..."}.
+	 *
+	 * @param WidgetPath - Full path to the Widget Blueprint
+	 * @param bIncludeDefaults - False (default): only values that differ from the class defaults.
+	 *        True: every editable property (much larger output)
+	 * @return JSON string
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets|Layout")
+	static FString ExportLayout(
+		const FString& WidgetPath,
+		bool bIncludeDefaults = false);
+
+	/**
+	 * Build a widget tree from JSON in a single call, as one undoable transaction.
+	 * Maps to action="build_layout"
+	 *
+	 * Node format (same as export_layout): {"type", "name", "is_variable"?, "properties"?, "slot"?, "children"?}.
+	 * "type" is anything add_component accepts (native type or WBP asset name). "properties" keys are
+	 * set_property names (nested paths like "Font.Size" work); "slot" keys are slot properties or slot
+	 * aliases ("Padding", "LayoutData", "Position X", "Size Y", "HorizontalAlignment", ...). Values may
+	 * be strings, numbers or booleans. "is_variable" defaults to true.
+	 *
+	 * Top-level object, by mode:
+	 *   mode="append"  (default): {"root": {node}} on an empty Widget Blueprint, or
+	 *                             {"parent": "ExistingPanel", "children": [{node}, ...]} to add below a panel
+	 *   mode="replace":           {"root": {node}} — removes the existing tree first, then builds this one
+	 *
+	 * The whole layout is validated before anything is written: unknown types, duplicate or already-used
+	 * names, children under non-panels, more than one child under a single-child panel (Button, Border,
+	 * SizeBox, ...), and unknown widget property names all fail the call with no changes. Slot properties
+	 * and value strings are checked while applying; failures there are reported in Errors/PropertiesFailed
+	 * but the widgets stay created (use TransactionService / Ctrl+Z to roll the whole build back).
+	 *
+	 * @param WidgetPath - Full path to the Widget Blueprint
+	 * @param LayoutJson - Layout JSON (see above)
+	 * @param Mode - "append" (default) or "replace"
+	 * @param bDryRun - If true, only validate and report; nothing is written
+	 * @return Build result with counts, created widget names, errors and warnings
+	 *
+	 * Example:
+	 *   layout = {"root": {"type": "CanvasPanel", "name": "Root", "children": [
+	 *       {"type": "VerticalBox", "name": "Menu", "slot": {"Position X": 100, "Position Y": 200}, "children": [
+	 *           {"type": "Button", "name": "PlayButton", "children": [
+	 *               {"type": "TextBlock", "name": "PlayLabel", "properties": {"Text": "Play", "Font.Size": 28}}]}]}]}}
+	 *   r = unreal.WidgetService.build_layout("/Game/UI/WBP_Menu", json.dumps(layout), "append", False)
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Widgets|Layout")
+	static FWidgetBuildLayoutResult BuildLayout(
+		const FString& WidgetPath,
+		const FString& LayoutJson,
+		const FString& Mode = TEXT("append"),
+		bool bDryRun = false);
 
 	// =================================================================
 	// Font and Brush Access

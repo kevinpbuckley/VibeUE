@@ -18,6 +18,7 @@ All struct names below are the Python names exactly as `unreal` exposes them (no
 - WidgetPreviewResult
 - PIEWidgetHandle
 - WidgetAddComponentResult / WidgetEventInfo
+- WidgetPropertyWriteResult / WidgetBuildLayoutResult
 - Common properties
 - WidgetService actions
 - Event names
@@ -175,6 +176,15 @@ unreal.WidgetService.reorder_component(path, "PlayButton", 0)
 
 `get_available_events()` returns **WidgetEventInfo** list: `event_name`, `event_type`, `description`.
 
+`set_property_verified()` and `set_color()` return **WidgetPropertyWriteResult**: `success` (write accepted
+**and** confirmed by read-back), `changed` (value differs from before), `previous_value`, `new_value`,
+`property_type` (C++ type, e.g. `FSlateColor`), `message` (on failure: why, and the format to use).
+
+`build_layout()` returns **WidgetBuildLayoutResult**: `success`, `dry_run`, `widgets_created` (on a dry run:
+would be created), `widgets_removed` (`replace` mode), `properties_set`, `properties_failed`,
+`created_widgets` (names, depth-first), `errors` (each prefixed with its JSON node path, e.g.
+`root/children[0] 'Menu'`), `warnings`.
+
 ## Common properties
 
 | Widget | Property | Example value (always a string) |
@@ -202,6 +212,10 @@ unreal.WidgetService.reorder_component(path, "PlayButton", 0)
 | `search_types` | Search available widget type names (built-ins + `[WBP]` customs) |
 | `list_widget_blueprints` | List custom WBP asset paths |
 | `set_property` / `get_property` | Read/write a single widget property (string value) |
+| `set_property_verified` | Same args as `set_property` → WidgetPropertyWriteResult (reads the value back) |
+| `set_color` | `(widget_path, component_name, property_name, color)` — hex / sRGB / name → linear, verified |
+| `export_layout` | `(widget_path, include_defaults=False)` → JSON string of the whole tree |
+| `build_layout` | `(widget_path, layout_json, mode="append", dry_run=False)` → WidgetBuildLayoutResult |
 | `list_properties` | All editable properties for a widget |
 | `get_available_events` | List valid events (`WidgetEventInfo`) for a widget |
 | `set_font` / `get_font` | `(..., font_info, property_name="Font")` / `(..., property_name="Font")` |
