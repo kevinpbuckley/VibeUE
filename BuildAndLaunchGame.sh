@@ -7,6 +7,7 @@ engine_root="${UE_ENGINE_ROOT:-}"
 clean=false
 skip_build=false
 strict_rebuild=false
+stop_running=false
 
 usage() {
     cat <<'EOF'
@@ -18,6 +19,8 @@ Options:
   --clean              Remove project and plugin build artifacts before building.
   --strict-rebuild     Remove this plugin's build artifacts before building.
   --skip-build         Launch without building.
+  --stop-editor        Close this project's running editor without asking. Without it the script
+                       asks on a terminal and refuses otherwise. Unsaved changes are lost.
   --map PATH           Map to open on launch (e.g. /Game/Maps/TrainingPool). Without it the
                        editor opens the project default map (issue #554).
   -h, --help           Show this help.
@@ -32,6 +35,7 @@ while (($#)); do
         --clean) clean=true; shift ;;
         --strict-rebuild) strict_rebuild=true; shift ;;
         --skip-build) skip_build=true; shift ;;
+        --stop-editor) stop_running=true; shift ;;
         --map) map="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -86,6 +90,24 @@ fi
 
 project_root="$(dirname -- "$project_path")"
 project_name="$(basename -- "${project_path%.uproject}")"
+
+# Resolve the editor target from Source/*Editor.Target.cs, like BuildAndLaunchGame.ps1. A Blueprint-only
+# project has no target of its own: its plugins build through the engine's UnrealEditor target.
+shopt -s nullglob
+target_files=("$project_root"/Source/*Editor.Target.cs)
+shopt -u nullglob
+editor_target="${project_name}Editor"
+target_args=("$project_path")
+if ((${#target_files[@]} == 0)); then
+    editor_target="UnrealEditor"
+    target_args=(-Project="$project_path")
+fi
+for target_file in "${target_files[@]}"; do
+    if [[ "$(<"$target_file")" =~ class[[:space:]]+([A-Za-z0-9_]+)EditorTarget[[:space:]]*:[[:space:]]*TargetRules ]]; then
+        editor_target="${BASH_REMATCH[1]}Editor"
+        break
+    fi
+done
 build_manifest="$project_root/Saved/VibeUE/last-build.json"
 
 write_build_manifest() {
@@ -94,8 +116,8 @@ write_build_manifest() {
     local completed="null"
     [[ "$status" == "succeeded" || "$status" == "failed" || "$status" == "skipped" ]] && completed="\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\""
     local temp="$build_manifest.tmp"
-    printf '{"schema":"vibeue.build.v1","status":"%s","projectFile":"%s","engineRoot":"%s","target":"%sEditor","platform":"%s","configuration":"%s","completedAtIso":%s,"exitCode":%s,"verdict":"%s","logPath":"","diagnostic":"%s"}\n' \
-        "$status" "$project_path" "$engine_root" "$project_name" "$platform" "$mode" "$completed" "$exit_code" "$status" "$diagnostic" > "$temp"
+    printf '{"schema":"vibeue.build.v1","status":"%s","projectFile":"%s","engineRoot":"%s","target":"%s","platform":"%s","configuration":"%s","completedAtIso":%s,"exitCode":%s,"verdict":"%s","logPath":"","diagnostic":"%s"}\n' \
+        "$status" "$project_path" "$engine_root" "$editor_target" "$platform" "$mode" "$completed" "$exit_code" "$status" "$diagnostic" > "$temp"
     mv -f -- "$temp" "$build_manifest"
 }
 
@@ -103,6 +125,17 @@ stop_editor() {
     local pids
     pids="$(pgrep -f "UnrealEditor.*$project_path" || true)"
     [[ -z "$pids" ]] && return
+
+    if [[ "$stop_running" != true ]]; then
+        local reply=""
+        if [[ -t 0 ]]; then
+            read -r -p "An editor for $project_name is running (PID $(echo $pids)). Close it? Unsaved changes are lost. [y/N] " reply
+        fi
+        if [[ "$reply" != [yY]* ]]; then
+            echo "ERROR: an editor for $project_name is running (PID $(echo $pids)). Close it, or pass --stop-editor." >&2
+            exit 1
+        fi
+    fi
 
     echo "Stopping the running editor for $project_name..."
     while IFS= read -r pid; do
@@ -144,7 +177,7 @@ fi
 
 if [[ "$skip_build" == false ]]; then
     write_build_manifest running null
-    if "$build_script" "${project_name}Editor" "$platform" "$mode" "$project_path" -waitmutex; then
+    if "$build_script" "$editor_target" "$platform" "$mode" "${target_args[@]}" -waitmutex; then
         write_build_manifest succeeded 0
     else
         code=$?
