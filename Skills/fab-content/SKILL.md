@@ -24,9 +24,14 @@ The engine (UE 5.9, plugin `Fab`) owns the Fab account work in `FabToolset.FabTo
 |---|---|
 | `SearchFabMyLibrary` | What the signed-in account owns: `listingId`, `title`, `seller`, `sellerId`, `installable`, `installOptions`, `thumbnailUrl`, `nextCursor` |
 | `SearchFabListings` | The public catalog (`bFreeOnly` for free ones) |
-| `GetFabListingDetails` | Description, licence, `fabUrl` of a LIVE listing |
-| `InstallFabListing` | Starts the download of one install option (fire-and-forget) |
+| `SearchFabSellers(sellerName, count=12, cursor="")` | Sellers by name (3+ characters), for the `sellers=<id>` filter of the two searches. UE 5.9 Preview 2 and later |
+| `GetFabListingDetails` | Description, licence, `fabUrl` of a LIVE listing. Needs a signed-in account since Preview 2 (it signs in silently when it can) |
+| `InstallFabListing` | Starts the download of one install option (fire-and-forget). Since Preview 2 a glb / gltf / fbx / converted-files install can answer `choose-file`: call again with the `fileId` of one listed entry |
 | `FabSignIn` | Opens the browser sign-in (only when a search says nobody is signed in) |
+
+Preview 2 (engine changelist 60738873, Fab plugin 0.0.23) also added tag, rating and date-added filters and more
+sort orders to both searches: read the live parameter list with `get_symbol` before relying on a filter, the
+"Facts" below were measured on Preview 1.
 
 VibeUE adds what those cannot do, `VibeUE.FabPreviewService`, with results that arrive as **real images**
 (an MCP image block; in Python a `ToolsetImage` with base64 `data`, plus `save_image_path` to write a file):

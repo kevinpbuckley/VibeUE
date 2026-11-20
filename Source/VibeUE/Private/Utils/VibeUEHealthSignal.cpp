@@ -94,9 +94,25 @@ namespace
 		}
 	}
 
+	// FSlowTask::IsInSlowTask and FSlowTask::OnProgress are UE_INTERNAL since UE 5.9 Preview 2 ("no public API
+	// compatibility guarantee"), and nothing public says that a slow task is running: GIsSlowTask is only set while
+	// a progress dialog is open. Both calls go through these two functions, so an engine change breaks one place,
+	// and the internal-API warning is silenced here and nowhere else.
+	PRAGMA_DISABLE_INTERNAL_WARNINGS
+	bool IsEngineInSlowTask()
+	{
+		return FSlowTask::IsInSlowTask();
+	}
+
+	FSlowTask::FOnProgress& EngineSlowTaskProgress()
+	{
+		return FSlowTask::OnProgress();
+	}
+	PRAGMA_ENABLE_INTERNAL_WARNINGS
+
 	void OnSlowTaskProgress()
 	{
-		if (IsInGameThread() && FSlowTask::IsInSlowTask())
+		if (IsInGameThread() && IsEngineInSlowTask())
 		{
 			MarkSlowTask(FPlatformTime::Seconds());
 		}
@@ -125,7 +141,7 @@ namespace
 	/** Core-ticker half: the editor is in its normal loop again, so clear what is over (or catch a scope ticking it). */
 	void RefreshBusyStateOnTick(double NowSeconds)
 	{
-		if (FSlowTask::IsInSlowTask())
+		if (IsEngineInSlowTask())
 		{
 			MarkSlowTask(NowSeconds);
 		}
@@ -290,7 +306,7 @@ void FVibeUEHealthSignal::Start()
 
 	GSlowTaskActive.store(false, std::memory_order_relaxed);
 	GModalActive.store(false, std::memory_order_relaxed);
-	GSlowTaskProgressHandle = FSlowTask::OnProgress().AddStatic(&OnSlowTaskProgress);
+	GSlowTaskProgressHandle = EngineSlowTaskProgress().AddStatic(&OnSlowTaskProgress);
 	if (FSlateApplication::IsInitialized())
 	{
 		GModalLoopTickHandle = FSlateApplication::Get().GetOnModalLoopTickEvent().AddStatic(&OnModalLoopTick);
@@ -345,7 +361,7 @@ void FVibeUEHealthSignal::Stop()
 	FTSTicker::GetCoreTicker().RemoveTicker(GTickerHandle);
 	GTickerHandle.Reset();
 
-	FSlowTask::OnProgress().Remove(GSlowTaskProgressHandle);
+	EngineSlowTaskProgress().Remove(GSlowTaskProgressHandle);
 	GSlowTaskProgressHandle.Reset();
 	if (GModalLoopTickHandle.IsValid() && FSlateApplication::IsInitialized())
 	{
