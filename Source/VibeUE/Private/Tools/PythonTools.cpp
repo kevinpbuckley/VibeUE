@@ -5,6 +5,7 @@
 #include "JsonUtilities.h"
 #include "Core/ErrorCodes.h"
 #include "HAL/PlatformProcess.h"
+#include "HAL/IConsoleManager.h"
 #include "UObject/Package.h"
 #include "UObject/UObjectIterator.h" // TObjectIterator<UWorld> for the resident-map check
 #include "Engine/World.h"
@@ -68,6 +69,21 @@ TArray<FString> UPythonTools::GetResidentMapWorlds()
 	}
 
 	return Resident;
+}
+
+// A host editor that releases maps loaded as assets before every map load announces it by setting this variable;
+// VibeUE only reads it. Off by default, so a host that does nothing keeps safe_load_level's refusals. (#613, #685)
+static TAutoConsoleVariable<bool> CVarHostReleasesResidentMaps(
+	TEXT("VibeUE.HostReleasesResidentMaps"),
+	false,
+	TEXT("Set to true by a host editor that releases maps loaded as assets before every map load through FEditorFileUtils::LoadMap ")
+	TEXT("(load_level, load_map, File > Open, the Content Browser) and refuses a load it cannot make safe. ")
+	TEXT("vibeue.safe_load_level then defers to that release and checks only that the target map exists."),
+	ECVF_Default);
+
+bool UPythonTools::HostReleasesResidentMaps()
+{
+	return CVarHostReleasesResidentMaps.GetValueOnAnyThread();
 }
 
 TArray<FString> UPythonTools::GetResidentMaps()
