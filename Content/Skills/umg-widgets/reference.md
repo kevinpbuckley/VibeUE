@@ -191,7 +191,7 @@ unreal.WidgetService.reorder_component(path, "PlayButton", 0)
 | Action | Signature notes |
 |--------|-----------------|
 | `add_component` | `(widget_path, type, name, parent, is_variable, child_index)` → WidgetAddComponentResult |
-| `remove_component` | Remove a widget (and optionally its children) |
+| `remove_component` | `(widget_path, name, remove_children)` → WidgetRemoveComponentResult. Runs the engine's widget delete: the widget and its children leave the Blueprint either way (`remove_children` only sorts the children's names into `removed_components` or `orphaned_children`). Refuses, removing nothing, when a graph node uses the widget or a child, and names those nodes: remove or rewire them first. |
 | `rename_widget` | `(widget_path, old_name, new_name)` |
 | `reparent_widget` | `(widget_path, widget_name, new_parent_name)` — move a widget to a new parent panel |
 | `reorder_component` | `(widget_path, component_name, new_index)` → bool — move a widget within its **current** parent |

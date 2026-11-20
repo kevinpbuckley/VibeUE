@@ -56,6 +56,7 @@
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "K2Node_ComponentBoundEvent.h"
+#include "WidgetBlueprintEditorUtils.h"
 #include "K2Node_CallFunction.h"
 #include "EdGraphSchema_K2.h"
 #include "Animation/WidgetAnimation.h"
@@ -1828,6 +1829,39 @@ bool UWidgetService::ReorderComponent(
 	return true;
 }
 
+// Names, per widget the graph uses, the nodes that use it, for RemoveComponent's refusal.
+// The gate itself is FBlueprintEditorUtils::IsVariableUsed, in RemoveComponent; this only lists what a caller has to
+// remove or rewire first.
+static FString DescribeGraphUses(UWidgetBlueprint* WidgetBP, const TArray<UWidget*>& UsedWidgets)
+{
+	TArray<UEdGraph*> Graphs;
+	WidgetBP->GetAllGraphs(Graphs);
+	TArray<FString> Parts;
+	for (const UWidget* Widget : UsedWidgets)
+	{
+		const FName Name = Widget->GetFName();
+		TArray<FString> Nodes;
+		for (const UEdGraph* Graph : Graphs)
+		{
+			for (const UEdGraphNode* Node : Graph->Nodes)
+			{
+				const UK2Node* K2Node = Cast<UK2Node>(Node);
+				const UK2Node_ComponentBoundEvent* BoundEvent = Cast<UK2Node_ComponentBoundEvent>(Node);
+				if ((K2Node && K2Node->ReferencesVariable(Name, nullptr))
+					|| (BoundEvent && BoundEvent->GetComponentPropertyName() == Name))
+				{
+					Nodes.Add(FString::Printf(TEXT("%s: %s"), *Graph->GetName(),
+						*Node->GetNodeTitle(ENodeTitleType::ListView).ToString()));
+				}
+			}
+		}
+		Parts.Add(FString::Printf(TEXT("'%s' (%s)"), *Name.ToString(),
+			Nodes.Num() > 0 ? *FString::Join(Nodes, TEXT("; ")) : TEXT("a Get Class Defaults pin")));
+	}
+	return FString::Printf(TEXT("Not removed: graph nodes use %s. Remove or rewire those nodes first, then remove the widget."),
+		*FString::Join(Parts, TEXT(", ")));
+}
+
 FWidgetRemoveComponentResult UWidgetService::RemoveComponent(
 	const FString& WidgetPath,
 	const FString& ComponentName,
@@ -1862,6 +1896,29 @@ FWidgetRemoveComponentResult UWidgetService::RemoveComponent(
 		return Result;
 	}
 
+	// Refuse, removing nothing, when a graph node uses the widget or one of its children;
+	// the engine's own delete would otherwise delete those nodes silently.
+	// The test is the engine's own, as its private FindUsedVariablesForWidgets runs it: the widget and every child,
+	// each checked with FBlueprintEditorUtils::IsVariableUsed.
+	const TSet<UWidget*> ToDelete = { WidgetToRemove };
+	{
+		TArray<UWidget*> Candidates = { WidgetToRemove };
+		UWidgetTree::GetChildWidgets(WidgetToRemove, Candidates);
+		TArray<UWidget*> UsedWidgets;
+		for (UWidget* Candidate : Candidates)
+		{
+			if (Candidate && FBlueprintEditorUtils::IsVariableUsed(WidgetBP, Candidate->GetFName()))
+			{
+				UsedWidgets.Add(Candidate);
+			}
+		}
+		if (UsedWidgets.Num() > 0)
+		{
+			Result.ErrorMessage = DescribeGraphUses(WidgetBP, UsedWidgets);
+			return Result;
+		}
+	}
+
 	// Collect children if needed
 	if (UPanelWidget* Panel = Cast<UPanelWidget>(WidgetToRemove))
 	{
@@ -1881,14 +1938,12 @@ FWidgetRemoveComponentResult UWidgetService::RemoveComponent(
 		}
 	}
 
-	// Remove from parent
-	if (UPanelWidget* Parent = WidgetToRemove->GetParent())
-	{
-		Parent->RemoveChild(WidgetToRemove);
-	}
-
-	// Remove from widget tree
-	WidgetBP->WidgetTree->RemoveWidget(WidgetToRemove);
+	// The engine's own widget delete, as the designer runs it. Besides taking the widget out of its parent and the
+	// tree, it drops the WidgetVariableNameToGuidMap entries of the widget and every child (left behind, the next
+	// compile hits WidgetBlueprintCompiler's "was deleted but still has a GUID" ensure), drops their bindings and
+	// desired focus, and moves them to the transient package, so a later add of the same name as another class
+	// cannot hit NewObject's fatal "Cannot replace existing object".
+	FWidgetBlueprintEditorUtils::DeleteWidgets(WidgetBP, ToDelete, FWidgetBlueprintEditorUtils::EDeleteWidgetWarningType::DeleteSilently);
 	Result.RemovedComponents.Add(ComponentName);
 
 	// Mark blueprint as modified
