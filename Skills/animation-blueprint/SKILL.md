@@ -68,12 +68,13 @@ machine will never move. You MUST set a rule on every transition:
 import unreal
 abp = "/Game/ABP_Character"
 BT  = "BlueprintToolsets.BlueprintToolset"
+abp_ref = {"refPath": abp + "." + abp.rsplit("/", 1)[-1]}   # engine tools need the OBJECT path
 
 # 1) Add the bool/float variable the rule reads, then COMPILE so it resolves.
-#    Variable creation + compile are ENGINE BlueprintTools (call_tool), not VibeUE:
-call_tool(BT, "add_variable", {"blueprint": {"refPath": abp}, "variable_name": "bIsDead", "variable_type": "bool"})
-call_tool(BT, "compile_blueprint", {"blueprint": {"refPath": abp}})
-# (Run describe_toolset(BT) for exact arg names.)
+#    Variable creation + compile are ENGINE BlueprintTools (call_tool), not VibeUE.
+#    call_tool takes ONE full "Toolset.Tool" name plus camelCase keyword arguments, and must be awaited.
+await call_tool(BT + ".AddVariable", blueprint=abp_ref, name="bIsDead", typeName="bool")
+await call_tool(BT + ".CompileBlueprint", blueprint=abp_ref)
 
 # 2) Draw the transition (VibeUE AnimGraphService)
 unreal.AnimGraphService.add_transition(abp, "Locomotion", "Idle", "Dead", 0.2)
@@ -271,12 +272,13 @@ import unreal, json
 
 abp = "/Game/ABP_Character"
 BT  = "BlueprintToolsets.BlueprintToolset"
+abp_ref = {"refPath": abp + "." + abp.rsplit("/", 1)[-1]}   # engine tools need the OBJECT path
 
 # Add the variables the rules read FIRST, then compile so the rules can resolve them.
 # Variable creation + compile are ENGINE BlueprintTools (call_tool), not VibeUE:
-call_tool(BT, "add_variable", {"blueprint": {"refPath": abp}, "variable_name": "Speed",   "variable_type": "float"})
-call_tool(BT, "add_variable", {"blueprint": {"refPath": abp}, "variable_name": "bAttack", "variable_type": "bool"})
-call_tool(BT, "compile_blueprint", {"blueprint": {"refPath": abp}})
+await call_tool(BT + ".AddVariable", blueprint=abp_ref, name="Speed",   typeName="float")
+await call_tool(BT + ".AddVariable", blueprint=abp_ref, name="bAttack", typeName="bool")
+await call_tool(BT + ".CompileBlueprint", blueprint=abp_ref)
 
 spec = {
     "states": [
@@ -324,7 +326,7 @@ unreal.AnimGraphService.set_transition_rule_comparison(abp, "Locomotion", "Idle"
 unreal.AnimGraphService.set_transition_priority(abp, "Locomotion", "Idle", "Walk", 1)
 
 # Compile via engine BlueprintTools:
-call_tool("BlueprintToolsets.BlueprintToolset", "CompileBlueprint", {"blueprint": {"refPath": abp}})
+await call_tool(BT + ".CompileBlueprint", blueprint=abp_ref)
 ```
 
 ### Verify before claiming success — `validate_state_machine`

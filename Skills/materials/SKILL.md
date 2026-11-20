@@ -138,7 +138,7 @@ signal that the texture branch never reaches an output. `GetStatistics` also wor
 MaterialInstance (it takes a `UMaterialInterface`), so an instance's static-switch permutation can be
 measured the same way.
 
-Visual confirmation: `call_tool("OpenEditorForAsset", "EditorToolset.EditorAppToolset", {"assetPath": path})`,
+Visual confirmation: `await call_tool("EditorToolset.EditorAppToolset.OpenEditorForAsset", assetPath=path)`,
 then capture with `EditorAppToolset` and `attach_image(...)` the result.
 
 > ⚠️ Best-effort focus: with many asset editors open as tabs, the editor tab may not switch
