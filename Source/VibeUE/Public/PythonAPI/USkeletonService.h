@@ -369,17 +369,18 @@ public:
 	 * Get detailed information about a Skeleton asset.
 	 *
 	 * @param SkeletonPath - Full path to the Skeleton asset
-	 * @param OutInfo - Output skeleton info
-	 * @return True if skeleton was found
+	 * @return Skeleton info. Raises a script error (a Python exception, an MCP tool error) when it cannot be read
 	 *
 	 * Example:
 	 *   info = unreal.SkeletonService.get_skeleton_info("/Game/SK_Mannequin")
 	 *   print(f"Bones: {info.bone_count}")
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Discovery")
-	static bool GetSkeletonInfo(
-		const FString& SkeletonPath,
-		FSkeletonAssetInfo& OutInfo);
+	static FSkeletonAssetInfo GetSkeletonInfo(const FString& SkeletonPath);
+
+	/** C++ form of GetSkeletonInfo: false on failure, the result through the reference. Not reflected: an output reference
+	 *  would become a required input of the MCP tool and its value would be dropped (#687). */
+	static bool GetSkeletonInfo(const FString& SkeletonPath, FSkeletonAssetInfo& OutInfo);
 
 
 
@@ -690,17 +691,17 @@ public:
 	 *
 	 * @param SkeletonPath - Path to the Skeleton asset
 	 * @param ProfileName - Name of the blend profile
-	 * @param OutInfo - Output blend profile data
-	 * @return True if profile was found
+	 * @return Blend profile data. Raises a script error (a Python exception, an MCP tool error) when it cannot be read
 	 *
 	 * Example:
 	 *   profile = unreal.SkeletonService.get_blend_profile("/Game/SK_Mannequin", "UpperBody")
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|BlendProfiles")
-	static bool GetBlendProfile(
-		const FString& SkeletonPath,
-		const FString& ProfileName,
-		FBlendProfileData& OutInfo);
+	static FBlendProfileData GetBlendProfile(const FString& SkeletonPath, const FString& ProfileName);
+
+	/** C++ form of GetBlendProfile: false on failure, the result through the reference. Not reflected: an output reference
+	 *  would become a required input of the MCP tool and its value would be dropped (#687). */
+	static bool GetBlendProfile(const FString& SkeletonPath, const FString& ProfileName, FBlendProfileData& OutInfo);
 
 	/**
 	 * Create a new blend profile.
@@ -758,25 +759,25 @@ public:
 	 * Builds a comprehensive profile that can be cached for repeated use.
 	 *
 	 * @param SkeletonPath - Path to the Skeleton asset
-	 * @param OutProfile - Output skeleton profile
-	 * @return True if profile was created successfully
+	 * @return Skeleton profile. Raises a script error (a Python exception, an MCP tool error) when it cannot be read
 	 *
 	 * Example:
 	 *   profile = unreal.SkeletonService.create_skeleton_profile("/Game/SK_Mannequin")
 	 *   print(f"Bones: {profile.bone_count}, Constraints: {len(profile.constraints)}")
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Profiles")
-	static bool CreateSkeletonProfile(
-		const FString& SkeletonPath,
-		FSkeletonProfile& OutProfile);
+	static FSkeletonProfile CreateSkeletonProfile(const FString& SkeletonPath);
+
+	/** C++ form of CreateSkeletonProfile: false on failure, the result through the reference. Not reflected: an output reference
+	 *  would become a required input of the MCP tool and its value would be dropped (#687). */
+	static bool CreateSkeletonProfile(const FString& SkeletonPath, FSkeletonProfile& OutProfile);
 
 	/**
 	 * Get an existing skeleton profile from cache.
 	 * Returns an empty profile if not cached - use CreateSkeletonProfile first.
 	 *
 	 * @param SkeletonPath - Path to the Skeleton asset
-	 * @param OutProfile - Output skeleton profile
-	 * @return True if profile was found in cache
+	 * @return Skeleton profile. Raises a script error (a Python exception, an MCP tool error) when it cannot be read
 	 *
 	 * Example:
 	 *   profile = unreal.SkeletonService.get_skeleton_profile("/Game/SK_Mannequin")
@@ -784,9 +785,11 @@ public:
 	 *       profile = unreal.SkeletonService.create_skeleton_profile("/Game/SK_Mannequin")
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Profiles")
-	static bool GetSkeletonProfile(
-		const FString& SkeletonPath,
-		FSkeletonProfile& OutProfile);
+	static FSkeletonProfile GetSkeletonProfile(const FString& SkeletonPath);
+
+	/** C++ form of GetSkeletonProfile: false on failure, the result through the reference. Not reflected: an output reference
+	 *  would become a required input of the MCP tool and its value would be dropped (#687). */
+	static bool GetSkeletonProfile(const FString& SkeletonPath, FSkeletonProfile& OutProfile);
 
 	/**
 	 * Learn bone rotation constraints from existing animations for this skeleton.
@@ -795,8 +798,7 @@ public:
 	 * @param SkeletonPath - Path to the Skeleton asset
 	 * @param MaxAnimations - Maximum animations to analyze (0 = all)
 	 * @param SamplesPerAnimation - Frames to sample per animation (0 = all frames)
-	 * @param OutConstraints - Output learned constraints info
-	 * @return True if learning was successful
+	 * @return Learned constraints info. Raises a script error (a Python exception, an MCP tool error) when it cannot be read
 	 *
 	 * Example:
 	 *   constraints = unreal.SkeletonService.learn_from_animations("/Game/SK_Mannequin", 50, 10)
@@ -805,26 +807,34 @@ public:
 	 *       print(f"{bone_range.bone_name}: {bone_range.min_rotation} to {bone_range.max_rotation}")
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Profiles")
-	static bool LearnFromAnimations(
+	static FLearnedConstraintsInfo LearnFromAnimations(
 		const FString& SkeletonPath,
 		int32 MaxAnimations,
-		int32 SamplesPerAnimation,
-		FLearnedConstraintsInfo& OutConstraints);
+		int32 SamplesPerAnimation);
+
+	/** C++ form of LearnFromAnimations: false on failure, the result through the reference. Not reflected: an output reference
+	 *  would become a required input of the MCP tool and its value would be dropped (#687). */
+	static bool LearnFromAnimations(const FString& SkeletonPath, int32 MaxAnimations, int32 SamplesPerAnimation, FLearnedConstraintsInfo& OutConstraints);
 
 	/** Learn from an explicit corpus on this exact skeleton. Sort/deduplicate,
 	 * reject missing/mismatched references, retain observed extrema, and update
-	 * the cache atomically. No assets are modified. */
+	 * the cache atomically. No assets are modified.
+	 * @return Learned constraints info. Raises a script error (a Python exception, an MCP tool error) when it cannot be learned */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Profiles")
-	static bool LearnFromAnimationReferences(const FString& SkeletonPath,
-		const TArray<FString>& AnimationPaths, int32 SamplesPerAnimation,
-		FLearnedConstraintsInfo& OutConstraints);
+	static FLearnedConstraintsInfo LearnFromAnimationReferences(
+		const FString& SkeletonPath,
+		const TArray<FString>& AnimationPaths,
+		int32 SamplesPerAnimation);
+
+	/** C++ form of LearnFromAnimationReferences: false on failure, the result through the reference. Not reflected: an output reference
+	 *  would become a required input of the MCP tool and its value would be dropped (#687). */
+	static bool LearnFromAnimationReferences(const FString& SkeletonPath, const TArray<FString>& AnimationPaths, int32 SamplesPerAnimation, FLearnedConstraintsInfo& OutConstraints);
 
 	/**
 	 * Get previously learned constraints for a skeleton.
 	 *
 	 * @param SkeletonPath - Path to the Skeleton asset
-	 * @param OutConstraints - Output learned constraints info
-	 * @return True if learned constraints exist
+	 * @return Learned constraints info. Raises a script error (a Python exception, an MCP tool error) when it cannot be read
 	 *
 	 * Example:
 	 *   constraints = unreal.SkeletonService.get_learned_constraints("/Game/SK_Mannequin")
@@ -833,9 +843,11 @@ public:
 	 *           print(f"{br.bone_name}: samples={br.sample_count}")
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Profiles")
-	static bool GetLearnedConstraints(
-		const FString& SkeletonPath,
-		FLearnedConstraintsInfo& OutConstraints);
+	static FLearnedConstraintsInfo GetLearnedConstraints(const FString& SkeletonPath);
+
+	/** C++ form of GetLearnedConstraints: false on failure, the result through the reference. Not reflected: an output reference
+	 *  would become a required input of the MCP tool and its value would be dropped (#687). */
+	static bool GetLearnedConstraints(const FString& SkeletonPath, FLearnedConstraintsInfo& OutConstraints);
 
 	/**
 	 * Set custom constraints for a bone.
@@ -875,8 +887,7 @@ public:
 	 * @param BoneName - Name of the bone
 	 * @param Rotation - Rotation to validate (local space Euler degrees)
 	 * @param bUseLearnedConstraints - Whether to use learned ranges instead of manual constraints
-	 * @param OutResult - Validation result with clamped values if invalid
-	 * @return True if validation completed (check OutResult.bIsValid for pass/fail)
+	 * @return Validation result with clamped values if invalid. Raises a script error (a Python exception, an MCP tool error) when it cannot be read
 	 *
 	 * Example:
 	 *   result = unreal.SkeletonService.validate_bone_rotation(
@@ -890,12 +901,15 @@ public:
 	 *       print(f"Use clamped value: {result.clamped_rotation}")
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Skeleton|Profiles")
-	static bool ValidateBoneRotation(
+	static FBoneValidationResult ValidateBoneRotation(
 		const FString& SkeletonPath,
 		const FString& BoneName,
 		const FRotator& Rotation,
-		bool bUseLearnedConstraints,
-		FBoneValidationResult& OutResult);
+		bool bUseLearnedConstraints);
+
+	/** C++ form of ValidateBoneRotation: false on failure, the result through the reference. Not reflected: an output reference
+	 *  would become a required input of the MCP tool and its value would be dropped (#687). */
+	static bool ValidateBoneRotation(const FString& SkeletonPath, const FString& BoneName, const FRotator& Rotation, bool bUseLearnedConstraints, FBoneValidationResult& OutResult);
 
 private:
 	// ============================================================================

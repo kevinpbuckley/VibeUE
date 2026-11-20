@@ -78,8 +78,8 @@ print("after:\n" + after["dsl"])
 vibeue.exec_tool(BT, "CompileBlueprint", {"blueprint": ref(BP)})
 
 # analyze_graph_layout is one of VibeUE's 19 survivors: Epic's tools write a layout, nothing
-# there reads one back. The bool return is folded away, so the out-strings come back as a tuple.
-report, err = unreal.BlueprintService.analyze_graph_layout(BP, GRAPH)
-print("layout issues:", json.loads(report)["issues"] if report else err)
+# there reads one back. It returns the report as a JSON string and raises if the graph is not found.
+report = unreal.BlueprintService.analyze_graph_layout(BP, GRAPH)
+print("layout issues:", json.loads(report)["issues"])
 
 unreal.EditorAssetLibrary.save_asset(BP)

@@ -1,6 +1,7 @@
 ﻿// Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UActorService.h"
+#include "Utils/VibeUEToolError.h"
 #include "GameFramework/Actor.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
@@ -100,4 +101,22 @@ bool UActorService::GetActorLockLocation(const FString& ActorNameOrLabel, bool& 
 
 	OutLocked = Prop->GetPropertyValue_InContainer(Actor);
 	return true;
+}
+
+// =================================================================================================
+// Reflected forms (Python and MCP) of the functions that hand their result back through a reference.
+// Epic's ToolsetRegistry publishes an output reference parameter as a required INPUT of the MCP tool
+// and returns only the return value, so each of these returns its result instead, and fails the way
+// Epic's own toolsets do: with a script error (a Python exception, an MCP tool error). Issue #687.
+// =================================================================================================
+
+bool UActorService::GetActorLockLocation(const FString& ActorNameOrLabel)
+{
+	bool Result = false;
+	const VibeUE::FToolFailureLog FailureLog;
+	if (!GetActorLockLocation(ActorNameOrLabel, Result))
+	{
+		VibeUE::RaiseToolError(TEXT("GetActorLockLocation"), FString::Printf(TEXT("no actor named or labelled '%s' was found in the editor level"), *ActorNameOrLabel), FailureLog);
+	}
+	return Result;
 }

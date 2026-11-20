@@ -25,7 +25,7 @@ real API is below; you rarely need a discovery call at all:
 |------|---------|
 | Reflection | `discover_types()`, `get_available_keys(filter="")`, `get_available_modifier_types()`, `get_available_trigger_types()` |
 | Actions | `create_action(name, path, value_type="Axis1D")` |
-| Contexts | `create_mapping_context(name, path, priority=0)`, `get_mapping_context_info(context_path)` → info or None |
+| Contexts | `create_mapping_context(name, path, priority=0)`, `get_mapping_context_info(context_path)` → info (raises if the context does not load) |
 | Mappings | `get_mappings(context_path)`, `add_key_mapping(context_path, action_path, key_name)`, `remove_mapping(context_path, mapping_index)`, `key_mapping_exists(context_path, action_path)` |
 | Modifiers | `add_modifier(context_path, mapping_index, modifier_type)`, `remove_modifier(context_path, mapping_index, modifier_index)`, `get_modifiers(context_path, mapping_index)` |
 | Triggers | `add_trigger(context_path, mapping_index, trigger_type, properties_json="")`, `add_action_trigger(action_path, trigger_type, properties_json="")` → JSON, `remove_trigger(context_path, mapping_index, trigger_index)`, `get_triggers(context_path, mapping_index)` |

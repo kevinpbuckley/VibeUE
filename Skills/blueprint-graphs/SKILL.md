@@ -457,7 +457,7 @@ away by UE Python, so the two out-strings come back as a tuple.
 
 ```python
 import json, unreal
-report, err = unreal.BlueprintService.analyze_graph_layout("/Game/BP/BP_Door", "EventGraph")
+report = unreal.BlueprintService.analyze_graph_layout("/Game/BP/BP_Door", "EventGraph")   # raises if the graph is not found
 data = json.loads(report)
 if data["issues"]:
     print(data["issues"])   # e.g. ["2 overlapping node pair(s)", "1 backward exec wire(s) — ..."]

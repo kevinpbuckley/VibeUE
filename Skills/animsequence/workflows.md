@@ -233,10 +233,8 @@ result = unreal.AnimSequenceService.retarget_preview(
     "/Game/MetaHumans/SK_MetaHuman"
 )
 
-# A bool UFUNCTION with an out-param returns the out struct on success and None on failure.
-if result is None:
-    print("Retarget preview could not be set up (check both paths)")
-elif result.success:
+# Always an AnimationEditResult: check success; on failure error_message says why.
+if result.success:
     print("Retarget preview active - check Animation Editor")
 else:
     print(f"Retarget failed: {result.error_message}")

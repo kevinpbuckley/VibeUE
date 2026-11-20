@@ -214,22 +214,19 @@ public:
 	 *
 	 * @param AssetPath         - Content path or object path of the asset to reimport
 	 * @param NewSourcePath     - Optional replacement source file; empty uses the stored source
-	 * @param OutSourceFileUsed - Receives the resolved source file selected for reimport
-	 * @param OutError          - Receives a human-readable error message on failure
-	 * @return True when Unreal's registered reimport handler completed successfully
+	 * @return The source file the reimport read. Raises a script error (a Python exception, an MCP tool error) that
+	 *         says why when it fails: asset or source file not found, no reimport handler, or the reimport failed
 	 *
-	 * Python usage (Unreal maps a false bool plus out parameters to None):
-	 *   result = unreal.AssetDiscoveryService.reimport_asset(
+	 * Python usage:
+	 *   source_file = unreal.AssetDiscoveryService.reimport_asset(
 	 *       "/Game/Characters/SKM_Player", "D:/Source/SKM_Player.fbx")
-	 *   if result is not None:
-	 *       source_file, error = result
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable, CPP_Default_NewSourcePath = ""), Category = "VibeUE|Assets")
-	static bool ReimportAsset(
-		const FString& AssetPath,
-		const FString& NewSourcePath,
-		FString& OutSourceFileUsed,
-		FString& OutError);
+	static FString ReimportAsset(const FString& AssetPath, const FString& NewSourcePath);
+
+	/** C++ form of ReimportAsset: false on failure, the result through the reference. Not reflected: an output reference
+	 *  would become a required input of the MCP tool and its value would be dropped (#687). */
+	static bool ReimportAsset(const FString& AssetPath, const FString& NewSourcePath, FString& OutSourceFileUsed, FString& OutError);
 
 	/**
 	 * Export a texture to the file system for external analysis, through the asset's registered

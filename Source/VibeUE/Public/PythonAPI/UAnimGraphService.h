@@ -378,17 +378,17 @@ public:
 	 *
 	 * @param AnimBlueprintPath - Full path to the Animation Blueprint
 	 * @param StateMachineName - Name of the state machine
-	 * @param OutInfo - Output state machine info
-	 * @return True if the state machine was found
+	 * @return State machine info. Raises a script error (a Python exception, an MCP tool error) when it cannot be read
 	 *
 	 * Example:
 	 *   info = unreal.AnimGraphService.get_state_machine_info("/Game/ABP_Character", "Locomotion")
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Introspection")
-	static bool GetStateMachineInfo(
-		const FString& AnimBlueprintPath,
-		const FString& StateMachineName,
-		FAnimStateMachineInfo& OutInfo);
+	static FAnimStateMachineInfo GetStateMachineInfo(const FString& AnimBlueprintPath, const FString& StateMachineName);
+
+	/** C++ form of GetStateMachineInfo: false on failure, the result through the reference. Not reflected: an output reference
+	 *  would become a required input of the MCP tool and its value would be dropped (#687). */
+	static bool GetStateMachineInfo(const FString& AnimBlueprintPath, const FString& StateMachineName, FAnimStateMachineInfo& OutInfo);
 
 	/**
 	 * Get detailed information about a specific state.
@@ -396,18 +396,20 @@ public:
 	 * @param AnimBlueprintPath - Full path to the Animation Blueprint
 	 * @param StateMachineName - Name of the state machine
 	 * @param StateName - Name of the state
-	 * @param OutInfo - Output state info
-	 * @return True if the state was found
+	 * @return State info. Raises a script error (a Python exception, an MCP tool error) when it cannot be read
 	 *
 	 * Example:
 	 *   info = unreal.AnimGraphService.get_state_info("/Game/ABP_Character", "Locomotion", "Idle")
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Introspection")
-	static bool GetStateInfo(
+	static FAnimStateInfo GetStateInfo(
 		const FString& AnimBlueprintPath,
 		const FString& StateMachineName,
-		const FString& StateName,
-		FAnimStateInfo& OutInfo);
+		const FString& StateName);
+
+	/** C++ form of GetStateInfo: false on failure, the result through the reference. Not reflected: an output reference
+	 *  would become a required input of the MCP tool and its value would be dropped (#687). */
+	static bool GetStateInfo(const FString& AnimBlueprintPath, const FString& StateMachineName, const FString& StateName, FAnimStateInfo& OutInfo);
 
 	// ============================================================================
 	// ANIMATION ASSET ANALYSIS

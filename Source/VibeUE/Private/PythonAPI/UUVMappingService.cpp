@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UUVMappingService.h"
+#include "Utils/VibeUEToolError.h"
 
 #include "Engine/StaticMesh.h"
 #include "Engine/SkeletalMesh.h"
@@ -1514,4 +1515,44 @@ bool UUVMappingService::MeshHasUVChannel(const FString& MeshPath, int32 LODIndex
 		return ChannelIndex >= 0 && ChannelIndex < GetSkeletalMeshNumUVChannels(SkM, LODIndex);
 	}
 	return false;
+}
+
+// =================================================================================================
+// Reflected forms (Python and MCP) of the functions that hand their result back through a reference.
+// Epic's ToolsetRegistry publishes an output reference parameter as a required INPUT of the MCP tool
+// and returns only the return value, so each of these returns its result instead, and fails the way
+// Epic's own toolsets do: with a script error (a Python exception, an MCP tool error). Issue #687.
+// =================================================================================================
+
+FUVChannelInfo UUVMappingService::GetUVChannelInfo(const FString& MeshPath, int32 LODIndex, int32 ChannelIndex)
+{
+	FUVChannelInfo Result;
+	const VibeUE::FToolFailureLog FailureLog;
+	if (!GetUVChannelInfo(MeshPath, LODIndex, ChannelIndex, Result))
+	{
+		VibeUE::RaiseToolError(TEXT("GetUVChannelInfo"), FString::Printf(TEXT("UV channel %d of LOD %d could not be read from '%s'"), ChannelIndex, LODIndex, *MeshPath), FailureLog);
+	}
+	return Result;
+}
+
+FUVHealthReport UUVMappingService::GetUVHealth(const FString& MeshPath)
+{
+	FUVHealthReport Result;
+	const VibeUE::FToolFailureLog FailureLog;
+	if (!GetUVHealth(MeshPath, Result))
+	{
+		VibeUE::RaiseToolError(TEXT("GetUVHealth"), FString::Printf(TEXT("UVs could not be read from '%s'"), *MeshPath), FailureLog);
+	}
+	return Result;
+}
+
+FUVLightmapSettings UUVMappingService::GetLightmapSettings(const FString& MeshPath)
+{
+	FUVLightmapSettings Result;
+	const VibeUE::FToolFailureLog FailureLog;
+	if (!GetLightmapSettings(MeshPath, Result))
+	{
+		VibeUE::RaiseToolError(TEXT("GetLightmapSettings"), FString::Printf(TEXT("lightmap settings could not be read from '%s'"), *MeshPath), FailureLog);
+	}
+	return Result;
 }

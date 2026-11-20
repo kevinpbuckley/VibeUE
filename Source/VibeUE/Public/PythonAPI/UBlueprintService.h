@@ -583,18 +583,22 @@ public:
 	 * (BlueprintToolset.ArrangeNodes on the offenders, or SetNodePosition) and re-check. Comment
 	 * boxes are ignored (decoration, not structure).
 	 *
-	 * Python Usage (bool return is folded away — the two out-strings come back as a tuple):
-	 *   report, err = unreal.BlueprintService.analyze_graph_layout("/Game/BP_Player", "EventGraph")
+	 * @param BlueprintPath - Blueprint that owns the graph
+	 * @param GraphName - Graph to measure, e.g. "EventGraph"
+	 * @return The layout report as a JSON string. Raises a script error (a Python exception, an MCP tool error) that
+	 *         says why when it fails: the Blueprint did not load, or it has no graph of that name
+	 *
+	 * Python Usage:
+	 *   report = unreal.BlueprintService.analyze_graph_layout("/Game/BP_Player", "EventGraph")
 	 *   data = json.loads(report)
 	 *   assert data["nodeOverlaps"] == 0 and data["backwardExecWires"] == 0
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints|BatchGraph")
-	static bool AnalyzeGraphLayout(
-		const FString& BlueprintPath,
-		const FString& GraphName,
-		FString& OutReportJson,
-		FString& OutError
-	);
+	static FString AnalyzeGraphLayout(const FString& BlueprintPath, const FString& GraphName);
+
+	/** C++ form of AnalyzeGraphLayout: false on failure, the result through the reference. Not reflected: an output reference
+	 *  would become a required input of the MCP tool and its value would be dropped (#687). */
+	static bool AnalyzeGraphLayout(const FString& BlueprintPath, const FString& GraphName, FString& OutReportJson, FString& OutError);
 
 
 

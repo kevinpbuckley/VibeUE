@@ -188,9 +188,11 @@ The exception is **string-keyed** property access: `ObjectToolset.GetProperties`
 prefix there — `"bReplicates"`, `"bCanBeDamaged"`, `"bCanEverAffectNavigation"`. A stripped name
 is simply not found.
 
-Likewise, UE Python collapses `bool Func(..., Out&)` into a **single** return value. VibeUE's
-`analyze_graph_layout` has two out-strings and so comes back as a 2-tuple; a method with one
-out-param returns that value (or `None`) and **never** a `(success, value)` pair.
+Likewise, UE Python collapses an engine `bool Func(..., Out&)` into a **single** return value: the
+out value (or `None`), **never** a `(success, value)` pair. No VibeUE tool has that shape any more:
+each returns its result directly (`analyze_graph_layout` returns the JSON report, `get_montage_info`
+the info struct) and raises when it has nothing to return, because an output reference parameter
+becomes a required input of the MCP tool and its value is dropped.
 
 ## Material parameters
 

@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UAnimMontageService.h"
+#include "Utils/VibeUEToolError.h"
 
 #include "Animation/AnimMontage.h"
 #include "Animation/AnimSequence.h"
@@ -1677,4 +1678,66 @@ bool UAnimMontageService::PlayPreview(const FString& MontagePath, const FString&
 	}
 
 	return OpenMontageEditor(MontagePath);
+}
+
+// =================================================================================================
+// Reflected forms (Python and MCP) of the functions that hand their result back through a reference.
+// Epic's ToolsetRegistry publishes an output reference parameter as a required INPUT of the MCP tool
+// and returns only the return value, so each of these returns its result instead, and fails the way
+// Epic's own toolsets do: with a script error (a Python exception, an MCP tool error). Issue #687.
+// =================================================================================================
+
+FMontageInfo UAnimMontageService::GetMontageInfo(const FString& MontagePath)
+{
+	FMontageInfo Result;
+	const VibeUE::FToolFailureLog FailureLog;
+	if (!GetMontageInfo(MontagePath, Result))
+	{
+		VibeUE::RaiseToolError(TEXT("GetMontageInfo"), FString::Printf(TEXT("no AnimMontage could be loaded from '%s'"), *MontagePath), FailureLog);
+	}
+	return Result;
+}
+
+FMontageSectionInfo UAnimMontageService::GetSectionInfo(const FString& MontagePath, const FString& SectionName)
+{
+	FMontageSectionInfo Result;
+	const VibeUE::FToolFailureLog FailureLog;
+	if (!GetSectionInfo(MontagePath, SectionName, Result))
+	{
+		VibeUE::RaiseToolError(TEXT("GetSectionInfo"), FString::Printf(TEXT("section '%s' was not found in '%s'"), *SectionName, *MontagePath), FailureLog);
+	}
+	return Result;
+}
+
+FSlotTrackInfo UAnimMontageService::GetSlotTrackInfo(const FString& MontagePath, int32 TrackIndex)
+{
+	FSlotTrackInfo Result;
+	const VibeUE::FToolFailureLog FailureLog;
+	if (!GetSlotTrackInfo(MontagePath, TrackIndex, Result))
+	{
+		VibeUE::RaiseToolError(TEXT("GetSlotTrackInfo"), FString::Printf(TEXT("slot track %d was not found in '%s'"), TrackIndex, *MontagePath), FailureLog);
+	}
+	return Result;
+}
+
+FAnimSegmentInfo UAnimMontageService::GetAnimSegmentInfo(const FString& MontagePath, int32 TrackIndex, int32 SegmentIndex)
+{
+	FAnimSegmentInfo Result;
+	const VibeUE::FToolFailureLog FailureLog;
+	if (!GetAnimSegmentInfo(MontagePath, TrackIndex, SegmentIndex, Result))
+	{
+		VibeUE::RaiseToolError(TEXT("GetAnimSegmentInfo"), FString::Printf(TEXT("segment %d of slot track %d was not found in '%s'"), SegmentIndex, TrackIndex, *MontagePath), FailureLog);
+	}
+	return Result;
+}
+
+FTransform UAnimMontageService::GetRootMotionAtTime(const FString& MontagePath, float Time)
+{
+	FTransform Result = FTransform::Identity;
+	const VibeUE::FToolFailureLog FailureLog;
+	if (!GetRootMotionAtTime(MontagePath, Time, Result))
+	{
+		VibeUE::RaiseToolError(TEXT("GetRootMotionAtTime"), FString::Printf(TEXT("root motion could not be read from '%s'"), *MontagePath), FailureLog);
+	}
+	return Result;
 }

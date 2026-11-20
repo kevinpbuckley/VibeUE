@@ -272,7 +272,7 @@ import unreal
 mesh = "/Game/Meshes/SM_Wall"
 
 # 1. Health check
-ok, health = unreal.UVMappingService.get_uv_health(mesh)
+health = unreal.UVMappingService.get_uv_health(mesh)   # raises if the mesh cannot be read
 print(f"Channels found: {len(health.channels)}, lightmap idx: {health.lightmap_coordinate_index}")
 
 # 2. Generate the lightmap channel (creates channel 1 if needed, sets LightMapCoordinateIndex=1)
@@ -291,7 +291,7 @@ unreal.UVMappingService.set_lightmap_settings(mesh, 1, 0, 128, True)
 unreal.EditorAssetLibrary.save_asset(mesh)
 
 # 5. Verify
-ok, health = unreal.UVMappingService.get_uv_health(mesh)
+health = unreal.UVMappingService.get_uv_health(mesh)   # raises if the mesh cannot be read
 assert not health.lightmap_has_overlaps, "Lightmap still has overlaps after generation"
 ```
 
@@ -371,7 +371,7 @@ for object_path in unreal.EditorAssetLibrary.list_assets("/Game/Meshes/Architect
         continue
     path = object_path.rsplit(".", 1)[0]
 
-    ok, health = unreal.UVMappingService.get_uv_health(path)
+    health = unreal.UVMappingService.get_uv_health(path)
     if health.lightmap_has_overlaps or not health.generate_lightmap_u_vs:
         unreal.UVMappingService.generate_lightmap_u_vs(path, 0, 1, 1.0)
         unreal.UVMappingService.set_lightmap_settings(path, 1, 0, 128, True)
@@ -410,8 +410,7 @@ Power of two preferred:
 For lightmap-related changes, **always re-run `get_uv_health`** after the save to verify:
 
 ```python
-ok, health = unreal.UVMappingService.get_uv_health(mesh)
-assert ok
+health = unreal.UVMappingService.get_uv_health(mesh)   # raises if the mesh cannot be read
 assert not health.lightmap_has_overlaps
 assert health.lightmap_coordinate_index == 1
 ```

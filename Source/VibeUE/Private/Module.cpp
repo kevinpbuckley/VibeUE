@@ -378,6 +378,46 @@ static void GatherVibeUEToolsetClasses(TArray<UClass*>& OutClasses)
 	}
 }
 
+// A tool must hand its result back as its return value. ToolsetRegistry publishes an output reference parameter
+// (FString& OutX, FInfo& OutInfo) as a required INPUT of the MCP tool and returns only the return value, so such a
+// tool cannot be called the natural way and loses its data when it is called (issue #687: 44 tools shipped like
+// that). Name every offender in the log at startup, as an Error, so the next one is caught on the first launch.
+static int32 ReportToolsWithOutputParameters(const TArray<UClass*>& ToolsetClasses)
+{
+	int32 NumOffenders = 0;
+	for (UClass* Class : ToolsetClasses)
+	{
+		for (TFieldIterator<UFunction> FuncIt(Class); FuncIt; ++FuncIt)
+		{
+			const TValueOrError<bool, FString> Callable = UToolsetDefinition::IsFunctionAICallable(*FuncIt);
+			if (!Callable.HasValue() || !Callable.GetValue())
+			{
+				continue;
+			}
+
+			TArray<FString> OutputParams;
+			for (TFieldIterator<FProperty> ParamIt(*FuncIt); ParamIt; ++ParamIt)
+			{
+				// T& is OutParm alone; a const T& input adds ConstParm | ReferenceParm, UPARAM(ref) adds ReferenceParm.
+				if (ParamIt->HasAllPropertyFlags(CPF_Parm | CPF_OutParm)
+					&& !ParamIt->HasAnyPropertyFlags(CPF_ReturnParm | CPF_ConstParm | CPF_ReferenceParm))
+				{
+					OutputParams.Add(ParamIt->GetName());
+				}
+			}
+			if (OutputParams.Num() > 0)
+			{
+				++NumOffenders;
+				UE_LOG(LogTemp, Error,
+					TEXT("VibeUE: tool %s.%s returns through output parameter(s) [%s]. Over MCP they are required inputs and their ")
+					TEXT("values are dropped: return the value instead (see Private/Utils/VibeUEToolError.h)."),
+					*Class->GetName(), *FuncIt->GetName(), *FString::Join(OutputParams, TEXT(", ")));
+			}
+		}
+	}
+	return NumOffenders;
+}
+
 void FModule::RegisterToolsets()
 {
 	// A reused process ID must not inherit a stale signal from an unclean Editor exit. This runs late
@@ -393,7 +433,9 @@ void FModule::RegisterToolsets()
 		{
 			UToolsetRegistry::RegisterToolsetClass(Class);
 		}
-		UE_LOG(LogTemp, Display, TEXT("VibeUE: registered %d service toolset(s) with ToolsetRegistry."), ToolsetClasses.Num());
+		const int32 NumOutputParamTools = ReportToolsWithOutputParameters(ToolsetClasses);
+		UE_LOG(LogTemp, Display, TEXT("VibeUE: registered %d service toolset(s) with ToolsetRegistry (%d tool(s) with output parameters)."),
+			ToolsetClasses.Num(), NumOutputParamTools);
 	}
 	else
 	{

@@ -40,7 +40,18 @@ public:
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
 	static bool SetActorLockLocation(const FString& ActorNameOrLabel, bool bLocked);
 
+	/**
+	 * Read an actor's location lock (see SetActorLockLocation).
+	 *
+	 * @param ActorNameOrLabel - Name or label of an actor in the editor level
+	 * @return True when the actor's location is locked. Raises a script error (a Python exception, an MCP tool error)
+	 *         when no such actor is found
+	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
+	static bool GetActorLockLocation(const FString& ActorNameOrLabel);
+
+	/** C++ form of GetActorLockLocation: false on failure, the result through the reference. Not reflected: an output reference
+	 *  would become a required input of the MCP tool and its value would be dropped (#687). */
 	static bool GetActorLockLocation(const FString& ActorNameOrLabel, bool& OutLocked);
 
 	/**

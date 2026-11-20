@@ -272,10 +272,13 @@ public:
 	 * Get Mapping Context information including all mapped actions.
 	 *
 	 * @param ContextPath - Full path to the Mapping Context
-	 * @param OutInfo - Structure containing context and mappings
-	 * @return True if successful
+	 * @return Structure containing context and mappings. Raises a script error (a Python exception, an MCP tool error) when it cannot be read
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Input")
+	static FMappingContextDetailedInfo GetMappingContextInfo(const FString& ContextPath);
+
+	/** C++ form of GetMappingContextInfo: false on failure, the result through the reference. Not reflected: an output reference
+	 *  would become a required input of the MCP tool and its value would be dropped (#687). */
 	static bool GetMappingContextInfo(const FString& ContextPath, FMappingContextDetailedInfo& OutInfo);
 
 	/**

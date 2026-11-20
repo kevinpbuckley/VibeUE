@@ -360,13 +360,14 @@ public:
 	 * Get detailed information about a montage.
 	 *
 	 * @param MontagePath - Full path to the montage asset
-	 * @param OutInfo - Output montage info
-	 * @return True if montage was found
+	 * @return Montage info. Raises a script error (a Python exception, an MCP tool error) when it cannot be read
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage")
-	static bool GetMontageInfo(
-		const FString& MontagePath,
-		FMontageInfo& OutInfo);
+	static FMontageInfo GetMontageInfo(const FString& MontagePath);
+
+	/** C++ form of GetMontageInfo: false on failure, the result through the reference. Not reflected: an output reference
+	 *  would become a required input of the MCP tool and its value would be dropped (#687). */
+	static bool GetMontageInfo(const FString& MontagePath, FMontageInfo& OutInfo);
 
 	/**
 	 * Find all montages compatible with a specific skeleton.
@@ -404,14 +405,14 @@ public:
 	 *
 	 * @param MontagePath - Path to montage
 	 * @param SectionName - Name of the section
-	 * @param OutInfo - Output section info
-	 * @return True if section was found
+	 * @return Section info. Raises a script error (a Python exception, an MCP tool error) when it cannot be read
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Sections")
-	static bool GetSectionInfo(
-		const FString& MontagePath,
-		const FString& SectionName,
-		FMontageSectionInfo& OutInfo);
+	static FMontageSectionInfo GetSectionInfo(const FString& MontagePath, const FString& SectionName);
+
+	/** C++ form of GetSectionInfo: false on failure, the result through the reference. Not reflected: an output reference
+	 *  would become a required input of the MCP tool and its value would be dropped (#687). */
+	static bool GetSectionInfo(const FString& MontagePath, const FString& SectionName, FMontageSectionInfo& OutInfo);
 
 	/**
 	 * Get section index at a specific time.
@@ -575,14 +576,14 @@ public:
 	 *
 	 * @param MontagePath - Path to montage
 	 * @param TrackIndex - Index of the track
-	 * @param OutInfo - Output track info
-	 * @return True if successful
+	 * @return Track info. Raises a script error (a Python exception, an MCP tool error) when it cannot be read
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Slots")
-	static bool GetSlotTrackInfo(
-		const FString& MontagePath,
-		int32 TrackIndex,
-		FSlotTrackInfo& OutInfo);
+	static FSlotTrackInfo GetSlotTrackInfo(const FString& MontagePath, int32 TrackIndex);
+
+	/** C++ form of GetSlotTrackInfo: false on failure, the result through the reference. Not reflected: an output reference
+	 *  would become a required input of the MCP tool and its value would be dropped (#687). */
+	static bool GetSlotTrackInfo(const FString& MontagePath, int32 TrackIndex, FSlotTrackInfo& OutInfo);
 
 	/**
 	 * Add a new slot track to the montage.
@@ -648,15 +649,14 @@ public:
 	 * @param MontagePath - Path to montage
 	 * @param TrackIndex - Index of the slot track
 	 * @param SegmentIndex - Index of the segment
-	 * @param OutInfo - Output segment info
-	 * @return True if successful
+	 * @return Segment info. Raises a script error (a Python exception, an MCP tool error) when it cannot be read
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|Segments")
-	static bool GetAnimSegmentInfo(
-		const FString& MontagePath,
-		int32 TrackIndex,
-		int32 SegmentIndex,
-		FAnimSegmentInfo& OutInfo);
+	static FAnimSegmentInfo GetAnimSegmentInfo(const FString& MontagePath, int32 TrackIndex, int32 SegmentIndex);
+
+	/** C++ form of GetAnimSegmentInfo: false on failure, the result through the reference. Not reflected: an output reference
+	 *  would become a required input of the MCP tool and its value would be dropped (#687). */
+	static bool GetAnimSegmentInfo(const FString& MontagePath, int32 TrackIndex, int32 SegmentIndex, FAnimSegmentInfo& OutInfo);
 
 	/**
 	 * Add an animation segment to a slot track.
@@ -950,14 +950,14 @@ public:
 	 *
 	 * @param MontagePath - Path to montage
 	 * @param Time - Time in seconds
-	 * @param OutTransform - Output root motion transform
-	 * @return True if successful
+	 * @return Root motion transform. Raises a script error (a Python exception, an MCP tool error) when it cannot be read
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Montage|RootMotion")
-	static bool GetRootMotionAtTime(
-		const FString& MontagePath,
-		float Time,
-		FTransform& OutTransform);
+	static FTransform GetRootMotionAtTime(const FString& MontagePath, float Time);
+
+	/** C++ form of GetRootMotionAtTime: false on failure, the result through the reference. Not reflected: an output reference
+	 *  would become a required input of the MCP tool and its value would be dropped (#687). */
+	static bool GetRootMotionAtTime(const FString& MontagePath, float Time, FTransform& OutTransform);
 
 	// ============================================================================
 	// MONTAGE CREATION

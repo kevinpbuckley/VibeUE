@@ -835,10 +835,13 @@ public:
 	 * Maps to action="get_landscape_info"
 	 *
 	 * @param LandscapeNameOrLabel - Name or label of the landscape actor
-	 * @param OutInfo - Structure containing landscape details
-	 * @return True if landscape found
+	 * @return Structure containing landscape details. Raises a script error (a Python exception, an MCP tool error) when it cannot be read
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
+	static FLandscapeInfo_Custom GetLandscapeInfo(const FString& LandscapeNameOrLabel);
+
+	/** C++ form of GetLandscapeInfo: false on failure, the result through the reference. Not reflected: an output reference
+	 *  would become a required input of the MCP tool and its value would be dropped (#687). */
 	static bool GetLandscapeInfo(const FString& LandscapeNameOrLabel, FLandscapeInfo_Custom& OutInfo);
 
 	// =================================================================

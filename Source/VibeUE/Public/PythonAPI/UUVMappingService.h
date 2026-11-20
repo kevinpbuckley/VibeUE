@@ -270,19 +270,25 @@ public:
 	/**
 	 * Get diagnostic stats for a single (LOD, channel) pair.
 	 * Maps to action="get_uv_channel_info".
+	 * @return Stats of that UV channel. Raises a script error (a Python exception, an MCP tool error) when it cannot be read
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Get UV Channel Info"))
-	static bool GetUVChannelInfo(
-		const FString& MeshPath,
-		int32 LODIndex,
-		int32 ChannelIndex,
-		FUVChannelInfo& OutInfo);
+	static FUVChannelInfo GetUVChannelInfo(const FString& MeshPath, int32 LODIndex, int32 ChannelIndex);
+
+	/** C++ form of GetUVChannelInfo: false on failure, the result through the reference. Not reflected: an output reference
+	 *  would become a required input of the MCP tool and its value would be dropped (#687). */
+	static bool GetUVChannelInfo(const FString& MeshPath, int32 LODIndex, int32 ChannelIndex, FUVChannelInfo& OutInfo);
 
 	/**
 	 * Build an aggregate UV health report. Single call to judge ship-readiness.
 	 * Maps to action="get_uv_health".
+	 * @return The aggregate UV health report. Raises a script error (a Python exception, an MCP tool error) when it cannot be read
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Get UV Health"))
+	static FUVHealthReport GetUVHealth(const FString& MeshPath);
+
+	/** C++ form of GetUVHealth: false on failure, the result through the reference. Not reflected: an output reference
+	 *  would become a required input of the MCP tool and its value would be dropped (#687). */
 	static bool GetUVHealth(const FString& MeshPath, FUVHealthReport& OutReport);
 
 	// =================================================================
@@ -552,8 +558,13 @@ public:
 	/**
 	 * Read lightmap-related fields from a static mesh.
 	 * Maps to action="get_lightmap_settings".
+	 * @return The mesh's lightmap settings. Raises a script error (a Python exception, an MCP tool error) when it cannot be read
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Get Lightmap Settings"))
+	static FUVLightmapSettings GetLightmapSettings(const FString& MeshPath);
+
+	/** C++ form of GetLightmapSettings: false on failure, the result through the reference. Not reflected: an output reference
+	 *  would become a required input of the MCP tool and its value would be dropped (#687). */
 	static bool GetLightmapSettings(const FString& MeshPath, FUVLightmapSettings& OutSettings);
 
 	/**

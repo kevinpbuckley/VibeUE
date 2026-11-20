@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UBlueprintService.h"
+#include "Utils/VibeUEToolError.h"
 #include "PythonAPI/BlueprintTypeParser.h"
 #include "Engine/CollisionProfile.h"     // Custom collision channel names (set_collision_settings)
 #include "PythonAPI/BlueprintClassResolve.h" // Short-name ambiguity policy (VibeBlueprintClassResolve)
@@ -4406,5 +4407,20 @@ bool UBlueprintService::AnalyzeGraphLayout(
 // GetGraphDefinition
 // ────────────────────────────────────────────────────────────────
 
+// =================================================================================================
+// Reflected forms (Python and MCP) of the functions that hand their result back through a reference.
+// Epic's ToolsetRegistry publishes an output reference parameter as a required INPUT of the MCP tool
+// and returns only the return value, so each of these returns its result instead, and fails the way
+// Epic's own toolsets do: with a script error (a Python exception, an MCP tool error). Issue #687.
+// =================================================================================================
 
-
+FString UBlueprintService::AnalyzeGraphLayout(const FString& BlueprintPath, const FString& GraphName)
+{
+	FString Result;
+	FString Error;
+	if (!AnalyzeGraphLayout(BlueprintPath, GraphName, Result, Error))
+	{
+		VibeUE::RaiseToolError(TEXT("AnalyzeGraphLayout"), Error.IsEmpty() ? FString(TEXT("it failed without giving a reason")) : Error);
+	}
+	return Result;
+}

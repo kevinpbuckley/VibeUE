@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/ULandscapeService.h"
+#include "Utils/VibeUEToolError.h"
 #include "Landscape.h"
 #include "LandscapeBlueprintBrushBase.h"
 #include "LandscapeProxy.h"
@@ -6498,4 +6499,22 @@ bool ULandscapeService::BlendTerrainFeatures(
 
 	UpdateLandscapeAfterHeightEdit(Landscape);
 	return true;
+}
+
+// =================================================================================================
+// Reflected forms (Python and MCP) of the functions that hand their result back through a reference.
+// Epic's ToolsetRegistry publishes an output reference parameter as a required INPUT of the MCP tool
+// and returns only the return value, so each of these returns its result instead, and fails the way
+// Epic's own toolsets do: with a script error (a Python exception, an MCP tool error). Issue #687.
+// =================================================================================================
+
+FLandscapeInfo_Custom ULandscapeService::GetLandscapeInfo(const FString& LandscapeNameOrLabel)
+{
+	FLandscapeInfo_Custom Result;
+	const VibeUE::FToolFailureLog FailureLog;
+	if (!GetLandscapeInfo(LandscapeNameOrLabel, Result))
+	{
+		VibeUE::RaiseToolError(TEXT("GetLandscapeInfo"), FString::Printf(TEXT("no landscape named or labelled '%s' was found in the editor level"), *LandscapeNameOrLabel), FailureLog);
+	}
+	return Result;
 }

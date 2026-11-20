@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UAssetDiscoveryService.h"
+#include "Utils/VibeUEToolError.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "EditorAssetLibrary.h"
@@ -705,5 +706,23 @@ FUnattendedDeleteResult UAssetDiscoveryService::DeleteAssetUnattended(const FStr
 	UE_LOG(LogTemp, Log, TEXT("UAssetDiscoveryService::DeleteAssetUnattended: deleted %s (%d referencer(s) reported, file: %s)"),
 		*AssetPath, Result.Referencers.Num(), *Result.FileStatus);
 	Result.bSuccess = true;
+	return Result;
+}
+
+// =================================================================================================
+// Reflected forms (Python and MCP) of the functions that hand their result back through a reference.
+// Epic's ToolsetRegistry publishes an output reference parameter as a required INPUT of the MCP tool
+// and returns only the return value, so each of these returns its result instead, and fails the way
+// Epic's own toolsets do: with a script error (a Python exception, an MCP tool error). Issue #687.
+// =================================================================================================
+
+FString UAssetDiscoveryService::ReimportAsset(const FString& AssetPath, const FString& NewSourcePath)
+{
+	FString Result;
+	FString Error;
+	if (!ReimportAsset(AssetPath, NewSourcePath, Result, Error))
+	{
+		VibeUE::RaiseToolError(TEXT("ReimportAsset"), Error.IsEmpty() ? FString(TEXT("it failed without giving a reason")) : Error);
+	}
 	return Result;
 }

@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/USkeletonService.h"
+#include "Utils/VibeUEToolError.h"
 #include "PythonAPI/UAnimSequenceService.h"
 
 #include "Animation/Skeleton.h"
@@ -1466,4 +1467,99 @@ bool USkeletonService::ValidateBoneRotation(
 	}
 
 	return true;
+}
+
+// =================================================================================================
+// Reflected forms (Python and MCP) of the functions that hand their result back through a reference.
+// Epic's ToolsetRegistry publishes an output reference parameter as a required INPUT of the MCP tool
+// and returns only the return value, so each of these returns its result instead, and fails the way
+// Epic's own toolsets do: with a script error (a Python exception, an MCP tool error). Issue #687.
+// =================================================================================================
+
+FSkeletonAssetInfo USkeletonService::GetSkeletonInfo(const FString& SkeletonPath)
+{
+	FSkeletonAssetInfo Result;
+	const VibeUE::FToolFailureLog FailureLog;
+	if (!GetSkeletonInfo(SkeletonPath, Result))
+	{
+		VibeUE::RaiseToolError(TEXT("GetSkeletonInfo"), FString::Printf(TEXT("no Skeleton could be loaded from '%s'"), *SkeletonPath), FailureLog);
+	}
+	return Result;
+}
+
+FBlendProfileData USkeletonService::GetBlendProfile(const FString& SkeletonPath, const FString& ProfileName)
+{
+	FBlendProfileData Result;
+	const VibeUE::FToolFailureLog FailureLog;
+	if (!GetBlendProfile(SkeletonPath, ProfileName, Result))
+	{
+		VibeUE::RaiseToolError(TEXT("GetBlendProfile"), FString::Printf(TEXT("blend profile '%s' was not found on '%s'"), *ProfileName, *SkeletonPath), FailureLog);
+	}
+	return Result;
+}
+
+FSkeletonProfile USkeletonService::CreateSkeletonProfile(const FString& SkeletonPath)
+{
+	FSkeletonProfile Result;
+	const VibeUE::FToolFailureLog FailureLog;
+	if (!CreateSkeletonProfile(SkeletonPath, Result))
+	{
+		VibeUE::RaiseToolError(TEXT("CreateSkeletonProfile"), FString::Printf(TEXT("no profile could be built for '%s' (the skeleton did not load)"), *SkeletonPath), FailureLog);
+	}
+	return Result;
+}
+
+FSkeletonProfile USkeletonService::GetSkeletonProfile(const FString& SkeletonPath)
+{
+	FSkeletonProfile Result;
+	const VibeUE::FToolFailureLog FailureLog;
+	if (!GetSkeletonProfile(SkeletonPath, Result))
+	{
+		VibeUE::RaiseToolError(TEXT("GetSkeletonProfile"), FString::Printf(TEXT("no profile is cached for '%s': call CreateSkeletonProfile first"), *SkeletonPath), FailureLog);
+	}
+	return Result;
+}
+
+FLearnedConstraintsInfo USkeletonService::LearnFromAnimations(const FString& SkeletonPath, int32 MaxAnimations, int32 SamplesPerAnimation)
+{
+	FLearnedConstraintsInfo Result;
+	const VibeUE::FToolFailureLog FailureLog;
+	if (!LearnFromAnimations(SkeletonPath, MaxAnimations, SamplesPerAnimation, Result))
+	{
+		VibeUE::RaiseToolError(TEXT("LearnFromAnimations"), FString::Printf(TEXT("constraints could not be learned for '%s' (the skeleton did not load, or no animation uses it)"), *SkeletonPath), FailureLog);
+	}
+	return Result;
+}
+
+FLearnedConstraintsInfo USkeletonService::LearnFromAnimationReferences(const FString& SkeletonPath, const TArray<FString>& AnimationPaths, int32 SamplesPerAnimation)
+{
+	FLearnedConstraintsInfo Result;
+	const VibeUE::FToolFailureLog FailureLog;
+	if (!LearnFromAnimationReferences(SkeletonPath, AnimationPaths, SamplesPerAnimation, Result))
+	{
+		VibeUE::RaiseToolError(TEXT("LearnFromAnimationReferences"), FString::Printf(TEXT("constraints could not be learned for '%s' (the skeleton did not load, or none of the animations could be sampled)"), *SkeletonPath), FailureLog);
+	}
+	return Result;
+}
+
+FLearnedConstraintsInfo USkeletonService::GetLearnedConstraints(const FString& SkeletonPath)
+{
+	FLearnedConstraintsInfo Result;
+	const VibeUE::FToolFailureLog FailureLog;
+	if (!GetLearnedConstraints(SkeletonPath, Result))
+	{
+		VibeUE::RaiseToolError(TEXT("GetLearnedConstraints"), FString::Printf(TEXT("no learned constraints are cached for '%s': call LearnFromAnimations first"), *SkeletonPath), FailureLog);
+	}
+	return Result;
+}
+
+FBoneValidationResult USkeletonService::ValidateBoneRotation(const FString& SkeletonPath, const FString& BoneName, const FRotator& Rotation, bool bUseLearnedConstraints)
+{
+	FBoneValidationResult Result;
+	const VibeUE::FToolFailureLog FailureLog;
+	if (!ValidateBoneRotation(SkeletonPath, BoneName, Rotation, bUseLearnedConstraints, Result))
+	{
+		VibeUE::RaiseToolError(TEXT("ValidateBoneRotation"), FString::Printf(TEXT("bone '%s' could not be validated on '%s' (the skeleton did not load, or it has no such bone)"), *BoneName, *SkeletonPath), FailureLog);
+	}
+	return Result;
 }

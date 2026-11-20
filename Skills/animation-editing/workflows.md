@@ -122,5 +122,5 @@ Preview only, nothing is written. To create retargeted clips use the engine's IK
 ```python
 import unreal
 r = unreal.AnimSequenceService.retarget_preview("/Game/Anims/AS_Run", "/Game/MetaHumans/SK_MetaHuman")
-None if r is None else (r.success, list(r.messages))    # None = the preview could not be set up
+(r.success, r.error_message, list(r.messages))    # success False + error_message = the preview could not be set up
 ```

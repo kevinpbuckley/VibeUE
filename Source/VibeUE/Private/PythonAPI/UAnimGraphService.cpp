@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UAnimGraphService.h"
+#include "Utils/VibeUEToolError.h"
 
 #include "Animation/AnimBlueprint.h"
 #include "Animation/AnimBlueprintGeneratedClass.h"
@@ -3112,5 +3113,34 @@ FAnimStateMachineValidationResult UAnimGraphService::ValidateStateMachine(const 
 	}
 
 	Result.bIsValid = (Result.Errors.Num() == 0);
+	return Result;
+}
+
+// =================================================================================================
+// Reflected forms (Python and MCP) of the functions that hand their result back through a reference.
+// Epic's ToolsetRegistry publishes an output reference parameter as a required INPUT of the MCP tool
+// and returns only the return value, so each of these returns its result instead, and fails the way
+// Epic's own toolsets do: with a script error (a Python exception, an MCP tool error). Issue #687.
+// =================================================================================================
+
+FAnimStateMachineInfo UAnimGraphService::GetStateMachineInfo(const FString& AnimBlueprintPath, const FString& StateMachineName)
+{
+	FAnimStateMachineInfo Result;
+	const VibeUE::FToolFailureLog FailureLog;
+	if (!GetStateMachineInfo(AnimBlueprintPath, StateMachineName, Result))
+	{
+		VibeUE::RaiseToolError(TEXT("GetStateMachineInfo"), FString::Printf(TEXT("state machine '%s' was not found in '%s', or that Animation Blueprint could not be loaded"), *StateMachineName, *AnimBlueprintPath), FailureLog);
+	}
+	return Result;
+}
+
+FAnimStateInfo UAnimGraphService::GetStateInfo(const FString& AnimBlueprintPath, const FString& StateMachineName, const FString& StateName)
+{
+	FAnimStateInfo Result;
+	const VibeUE::FToolFailureLog FailureLog;
+	if (!GetStateInfo(AnimBlueprintPath, StateMachineName, StateName, Result))
+	{
+		VibeUE::RaiseToolError(TEXT("GetStateInfo"), FString::Printf(TEXT("state '%s' was not found in state machine '%s' of '%s'"), *StateName, *StateMachineName, *AnimBlueprintPath), FailureLog);
+	}
 	return Result;
 }

@@ -476,7 +476,7 @@ for t in bs.get_timelines("/Game/Blueprints/BP_Door"):
 bs.create_macro_graph("/Game/Macros/ML_Doors", "SwingOpen")
 
 # Measure a layout (Epic's ArrangeGraphLayered / ArrangeNodes only write one).
-report, err = bs.analyze_graph_layout("/Game/Blueprints/BP_Door", "EventGraph")
+report = bs.analyze_graph_layout("/Game/Blueprints/BP_Door", "EventGraph")   # JSON string; raises if the graph is not found
 
 # Make an open editor re-run its construction script and redraw. False = no editor open,
 # which is not an error: the on-disk asset is already current.

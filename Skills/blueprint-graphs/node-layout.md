@@ -31,9 +31,9 @@ def ref(p):
 graph = vibeue.exec_tool(BT, "GetGraph", {"blueprint": ref(bp), "graphName": graph_name})
 vibeue.exec_tool(BT, "ArrangeGraphLayered", {"graph": graph})
 
-# 2. Measure it (VibeUE). The bool return is folded away by UE Python, so the two
-#    out-strings come back as a tuple.
-report, err = unreal.BlueprintService.analyze_graph_layout(bp, graph_name)
+# 2. Measure it (VibeUE). Returns the report as a JSON string; raises if the Blueprint
+#    or the graph is not found.
+report = unreal.BlueprintService.analyze_graph_layout(bp, graph_name)
 data = json.loads(report)
 print(data["issues"])    # [] means clean
 
@@ -46,7 +46,7 @@ if data["issues"]:
     # cheapest way to get a handle back for a node you identified by title.
     bad = vibeue.exec_tool(BT, "FindNodes", {"graph": graph, "title": "Print String"})
     vibeue.exec_tool(BT, "ArrangeNodes", {"graph": graph, "nodes": bad})
-    report, err = unreal.BlueprintService.analyze_graph_layout(bp, graph_name)
+    report = unreal.BlueprintService.analyze_graph_layout(bp, graph_name)
     print(json.loads(report)["issues"])
 ```
 

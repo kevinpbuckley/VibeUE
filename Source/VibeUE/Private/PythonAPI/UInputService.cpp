@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UInputService.h"
+#include "Utils/VibeUEToolError.h"
 #include "EditorAssetLibrary.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
@@ -1445,3 +1446,20 @@ FString UInputService::StopInjection(const FString& ActionPath, int32 PieInstanc
 	return InjectionOkJson(R);
 }
 
+// =================================================================================================
+// Reflected forms (Python and MCP) of the functions that hand their result back through a reference.
+// Epic's ToolsetRegistry publishes an output reference parameter as a required INPUT of the MCP tool
+// and returns only the return value, so each of these returns its result instead, and fails the way
+// Epic's own toolsets do: with a script error (a Python exception, an MCP tool error). Issue #687.
+// =================================================================================================
+
+FMappingContextDetailedInfo UInputService::GetMappingContextInfo(const FString& ContextPath)
+{
+	FMappingContextDetailedInfo Result;
+	const VibeUE::FToolFailureLog FailureLog;
+	if (!GetMappingContextInfo(ContextPath, Result))
+	{
+		VibeUE::RaiseToolError(TEXT("GetMappingContextInfo"), FString::Printf(TEXT("no Input Mapping Context could be loaded from '%s'"), *ContextPath), FailureLog);
+	}
+	return Result;
+}
