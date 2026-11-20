@@ -184,25 +184,25 @@ level. Non-Blueprint assets you never loaded (textures, meshes written by a fact
 ### 🔀 ALL open assets / ALL selections / open an asset — use Epic's `EditorAppToolset`
 
 VibeUE covers the **single/primary** queries above; the **list-all** and **open** operations live on
-Epic's native `EditorToolset.EditorAppToolset` (call via `call_tool`; returns `{"returnValue": [...]}`
-of package-path strings). These are NOT Python-bound — they only work through `call_tool`:
+Epic's native `EditorToolset.EditorAppToolset` (in a script, `await call_tool(...)` returns the list
+directly — no `returnValue` envelope — of object-path strings such as `/Game/BP/BP_X.BP_X`). These are
+NOT Python-bound — they only work through `call_tool`:
 
 | Need | Call |
 |---|---|
-| All assets open in editors | `call_tool("GetOpenAssets", "EditorToolset.EditorAppToolset")` |
-| All Content Browser selections | `call_tool("GetSelectedAssets", "EditorToolset.EditorAppToolset")` |
-| Open an asset in its editor | `call_tool("OpenEditorForAsset", "EditorToolset.EditorAppToolset", {"assetPath": "/Game/.../BP_X"})` |
+| All assets open in editors | `await call_tool("EditorToolset.EditorAppToolset.GetOpenAssets")` |
+| All Content Browser selections | `await call_tool("EditorToolset.EditorAppToolset.GetSelectedAssets")` |
+| Open an asset in its editor | `await call_tool("EditorToolset.EditorAppToolset.OpenEditorForAsset", assetPath="/Game/.../BP_X")` |
 
 ```python
 # "Show me all open Blueprints" = Epic GetOpenAssets + a type filter
-opens = call_tool("GetOpenAssets", "EditorToolset.EditorAppToolset")["returnValue"]
+opens = await call_tool("EditorToolset.EditorAppToolset.GetOpenAssets")
 bps = [p for p in opens if isinstance(unreal.load_asset(p), unreal.Blueprint)]
 
-# "Open the selected asset" = VibeUE primary-selection + Epic OpenEditorForAsset
-sel = vibeue.exec_tool("EditorToolset.EditorAppToolset", "GetSelectedAssets")
+# "Open the selected asset" = Epic GetSelectedAssets + OpenEditorForAsset
+sel = await call_tool("EditorToolset.EditorAppToolset.GetSelectedAssets")
 if sel:
-    call_tool("OpenEditorForAsset", "EditorToolset.EditorAppToolset",
-              {"assetPath": str(sel.package_name)})
+    await call_tool("EditorToolset.EditorAppToolset.OpenEditorForAsset", assetPath=sel[0])
 ```
 
 ### 🚨 Never list broad paths — a `/Game` listing can return 30,000+ assets

@@ -328,8 +328,8 @@ unreal.EditorAssetLibrary.save_asset(skeleton_path)
 There is no `find_bones` — get the full list from the engine `GetBoneNames` and filter in Python:
 
 ```python
-names = call_tool("EditorToolset.SkeletalMeshToolset",
-                  "GetBoneNames", {"mesh": {"refPath": "/Game/Characters/SKM_Mannequin"}})
+names = await call_tool("EditorToolset.SkeletalMeshToolset.GetBoneNames",
+                        mesh={"refPath": "/Game/Characters/SKM_Mannequin.SKM_Mannequin"})
 hand_bones  = [n for n in names if "hand"  in n.lower()]
 twist_bones = [n for n in names if "twist" in n.lower()]
 ik_bones    = [n for n in names if n.lower().startswith("ik_")]

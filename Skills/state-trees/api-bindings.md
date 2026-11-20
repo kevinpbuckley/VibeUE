@@ -225,11 +225,11 @@ transition_index = 0  # index within the state's Transitions array (read it with
 # object types and AddStructVariable for structs, so a struct variable is now engine work.
 # ListVariables is the existence check (variable_exists is gone too).
 #
-#   call_tool ListVariables      {"blueprint": {"refPath": bp_path}}
-#   call_tool AddStructVariable  {"blueprint": {"refPath": bp_path},
+#   call_tool ListVariables      {"blueprint": {"refPath": bp_path + ".STT_Rotate"}}
+#   call_tool AddStructVariable  {"blueprint": {"refPath": bp_path + ".STT_Rotate"},
 #                                 "name": "FinishRotatingDispatcher",
 #                                 "structType": {"refPath": "/Script/StateTreeModule.StateTreeDelegateDispatcher"}}
-#   call_tool CompileBlueprint   {"blueprint": {"refPath": bp_path}}
+#   call_tool CompileBlueprint   {"blueprint": {"refPath": bp_path + ".STT_Rotate"}}
 #   call_tool SaveAsset          {"assetPath": bp_path}               # EditorToolset.AssetToolset
 #
 # Parameters are blueprint, name, structType, options. Check structType's exact form with

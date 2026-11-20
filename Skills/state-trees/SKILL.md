@@ -313,7 +313,8 @@ If the request mentions timers, delayed completion, event callbacks, or screensh
 also load the `blueprint-graphs` skill:
 
 ```
-call_tool(toolset="ToolsetRegistry.AgentSkillToolset", tool="GetSkills", args={"skills": ["blueprint-graphs"]})
+call_tool(toolset_name="ToolsetRegistry.AgentSkillToolset", tool_name="GetSkills",
+          arguments={"skillPaths": ["/Skills/VibeUE/blueprint-graphs"]})
 ```
 
 ## ⚠️ STT Graph Editing Rules
@@ -733,16 +734,16 @@ name is what matters:
 
 ```
 # WRONG — deprecated, will fail to compile
-call_tool AddEvent {"blueprint": {"refPath": "/Game/StateTree/STT_MyTask"}, "eventName": "ReceiveTick"}
+call_tool AddEvent {"blueprint": {"refPath": "/Game/StateTree/STT_MyTask.STT_MyTask"}, "eventName": "ReceiveTick"}
 
 # CORRECT — the latent Tick, no return value
-call_tool AddEvent {"blueprint": {"refPath": "/Game/StateTree/STT_MyTask"}, "eventName": "ReceiveLatentTick"}
+call_tool AddEvent {"blueprint": {"refPath": "/Game/StateTree/STT_MyTask.STT_MyTask"}, "eventName": "ReceiveLatentTick"}
 
 # WRONG — deprecated Enter State
-call_tool AddEvent {"blueprint": {"refPath": "/Game/StateTree/STT_MyTask"}, "eventName": "ReceiveEnterState"}
+call_tool AddEvent {"blueprint": {"refPath": "/Game/StateTree/STT_MyTask.STT_MyTask"}, "eventName": "ReceiveEnterState"}
 
 # CORRECT — the latent Enter State
-call_tool AddEvent {"blueprint": {"refPath": "/Game/StateTree/STT_MyTask"}, "eventName": "ReceiveLatentEnterState"}
+call_tool AddEvent {"blueprint": {"refPath": "/Game/StateTree/STT_MyTask.STT_MyTask"}, "eventName": "ReceiveLatentEnterState"}
 ```
 
 `ListCompatibleEventFunctions` on the same toolset lists what the Blueprint will actually accept.
