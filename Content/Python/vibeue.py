@@ -30,9 +30,11 @@ Also provides (agent helpers for PIE, async tools, and asset GC):
   globals that root an asset (a GCObjectReferencer root), so delete_asset_unattended can proceed.
 - safe_load_level(level_path, *, allow_resident_target=False) — LevelEditorSubsystem.load_level
   behind a resident-map check: a map loaded as an ASSET (Save-As, a Level Instance, load_asset on a
-  map) stays resident, and the next load_level then FATALS the editor ("World Memory Leaks").
+  map) stays resident, and opening it then FATALS the editor ("World Memory Leaks").
   Raises LevelLoadRefused instead of loading while any map other than the open level is resident,
-  or when the target does not exist. Returns load_level's bool.
+  or when the target does not exist. Returns load_level's bool. When the host editor releases those
+  maps before the load (unreal.PythonTools.host_releases_resident_maps() is true; it refuses, in its
+  log, a load it cannot make safe), only the target's existence is checked.
 - wait_for() / wait_until() / wait_for_players() / waits() / cancel_all_waits() — non-blocking
   waits for gate harnesses (a Slate post-tick callback with a wall-clock deadline; never sleep on
   the game thread), and player_ids() for the PIE server's PlayerState ids.
@@ -569,9 +571,12 @@ def release_globals(names, namespace=None):
 #
 # A map that is loaded as an ASSET (EditorLoadingAndSavingUtils.save_map Save-As, placed Level
 # Instances, unreal.load_asset on a map path) stays resident, and the engine's stale-world check on
-# the NEXT level load is a FATAL, not a warning ("World Memory Leaks", EditorServer.cpp). Nothing in
-# process releases such a map (collect_garbage and unload_packages both leave it), so the only safe
-# move is to not load a level while one is resident, and to restart the editor instead.
+# the NEXT level load is a FATAL, not a warning ("World Memory Leaks", EditorServer.cpp).
+# collect_garbage alone leaves such a map; unload_packages releases it once no Python variable holds
+# it (python_globals_holding, release_globals). So the safe move is to not load a level while one is
+# resident: release it first, or restart the editor. An editor whose
+# host releases such maps before every load (PythonTools.HostReleasesResidentMaps, set through the
+# console variable VibeUE.HostReleasesResidentMaps) makes that load safe, so the check defers to it.
 
 class LevelLoadRefused(RuntimeError):
     """safe_load_level() refused to load: a map is resident, or the target does not exist."""
@@ -594,11 +599,15 @@ def safe_load_level(level_path, *, allow_resident_target=False):
     with it) and raises LevelLoadRefused, loading
     nothing, when:
       - any resident map is NOT the target (that is the fatal "World Memory Leaks" shape); the
-        message lists them; restart the editor first;
+        message lists them and how to release them;
       - the TARGET itself is resident, unless allow_resident_target=True (issue #613 shape: loading
         a map that is already resident as an asset);
       - level_path is empty, or the asset registry has no map at that package path.
     Otherwise calls load_level(level_path) and returns its bool.
+    With unreal.PythonTools.host_releases_resident_maps() true, the two resident checks are skipped:
+    the host releases those maps before the load, and when it cannot, load_level returns False and the
+    editor log says why. Without it, release a resident map with
+    unreal.EditorLoadingAndSavingUtils.unload_packages once no Python variable holds it.
 
         import unreal, vibeue
         vibeue.safe_load_level("/Game/Maps/RunMap_01")
@@ -609,19 +618,23 @@ def safe_load_level(level_path, *, allow_resident_target=False):
     if not target_pkg.startswith("/"):
         raise LevelLoadRefused("safe_load_level: '{}' is not a long package path (expected /Game/...)".format(level_path))
 
-    resident = [str(m) for m in unreal.PythonTools.get_resident_maps()]
+    host_releases = unreal.PythonTools.host_releases_resident_maps()
+    resident = [] if host_releases else [str(m) for m in unreal.PythonTools.get_resident_maps()]
     others = [m for m in resident if _map_package_name(m) != target_pkg]
+    # each refusal says how to release the map, not only to restart
+    release = ("Release a map first: drop the Python variables that hold it (vibeue.python_globals_holding, "
+               "vibeue.release_globals), then unreal.EditorLoadingAndSavingUtils.unload_packages("
+               "[unreal.find_package(path)]); or restart the editor.")
     if others:
         raise LevelLoadRefused(
             "safe_load_level: refusing to load '{}': {} map(s) other than the open level are resident "
-            "({}). Loading any level now FATALS the editor (World Memory Leaks). Nothing in process "
-            "releases them: restart the editor, then load the level.".format(
-                target_pkg, len(others), ", ".join(others)))
+            "({}). Loading any level now FATALS the editor (World Memory Leaks). {}".format(
+                target_pkg, len(others), ", ".join(others), release))
     if resident and not allow_resident_target:
         raise LevelLoadRefused(
             "safe_load_level: refusing to load '{}': the target map is itself resident as an asset ({}). "
-            "Restart the editor first, or pass allow_resident_target=True if you know this load is "
-            "safe.".format(target_pkg, ", ".join(resident)))
+            "{} Or pass allow_resident_target=True if you know this load is safe.".format(
+                target_pkg, ", ".join(resident), release))
 
     registry = unreal.AssetRegistryHelpers.get_asset_registry()
     # A bool UFUNCTION with an out-param comes back as the list on success and None on failure;

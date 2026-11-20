@@ -19,6 +19,7 @@
 #include "HAL/PlatformTime.h"
 #include "Misc/DateTime.h"
 #include "UObject/GarbageCollection.h"
+#include "HAL/IConsoleManager.h"
 
 // Include service headers after PythonTypes
 #include "Tools/PythonExecutionService.h"
@@ -32,14 +33,14 @@ DEFINE_LOG_CATEGORY_STATIC(LogPythonTools, Log, All);
 TArray<FString> UPythonTools::GetResidentMapWorlds()
 {
 	// A map opened as an ASSET (unreal.load_asset("/Game/Maps/Foo"), EditorAssetLibrary.load_asset,
-	// find_object, ...) stays resident afterwards, and a resident map that is not the one currently
-	// open makes the engine's own "old level package cleaned up?" check fail the NEXT time any level
-	// is loaded. That check is a fatal, not a warning:
+	// find_object, ...) stays resident afterwards. Opening that map later makes the engine's own
+	// "old level package cleaned up?" check fail unless the editor releases it first
+	// (HostReleasesResidentMaps). That check is a fatal, not a warning:
 	//
 	//   EditorServer.cpp:2544  World Memory Leaks: N leaks objects and packages
 	//   LogEditorServer: Error: Old level package /Game/Maps/Foo not cleaned up by garbage collection
 	//
-	// The crash therefore lands minutes later, on whoever calls load_level next, with nothing in the
+	// The crash therefore lands minutes later, on whoever opens it next, with nothing in the
 	// message pointing at the script that actually caused it. Listing the stragglers in the reply of
 	// the run that created them turns that into an immediate, attributable warning.
 	TArray<FString> Resident;
@@ -81,6 +82,20 @@ TArray<FString> UPythonTools::GetResidentMapWorlds()
 	}
 
 	return Resident;
+}
+
+// The host editor's release of maps loaded as assets, which the host announces by setting this variable
+static TAutoConsoleVariable<bool> CVarHostReleasesResidentMaps(
+	TEXT("VibeUE.HostReleasesResidentMaps"),
+	false,
+	TEXT("Set to true by a host editor that releases maps loaded as assets before every map load through FEditorFileUtils::LoadMap ")
+	TEXT("(load_level, load_map, File > Open, the Content Browser) and refuses a load it cannot make safe. ")
+	TEXT("vibeue.safe_load_level and the RESIDENT_MAPS log line then defer to that release."),
+	ECVF_Default);
+
+bool UPythonTools::HostReleasesResidentMaps()
+{
+	return CVarHostReleasesResidentMaps.GetValueOnAnyThread();
 }
 
 TArray<FString> UPythonTools::GetResidentMaps()
@@ -561,7 +576,15 @@ static FString FinishPythonRun(const FPythonRunContext& Run, const TResult<FPyth
 	// branch, because the run that strands a map is frequently the same run that raised - that was
 	// the shape of the crash this check exists to prevent - so the failing reply must carry it too.
 	const TArray<FString> ResidentMaps = UPythonTools::GetResidentMapWorlds();
-	if (ResidentMaps.Num() > 0)
+	if (ResidentMaps.Num() > 0 && UPythonTools::HostReleasesResidentMaps()) // the host releases them
+	{
+		UE_LOG(LogPythonTools, Display,
+			TEXT("RESIDENT_MAPS: %d map(s) other than the open level are loaded in memory (%s). This editor releases them before the next level load ")
+			TEXT("through LoadMap (load_level, load_map, File > Open, the Content Browser), and refuses that load, saying why in its log, when one ")
+			TEXT("has unsaved changes it would lose or stop at, or something outside Python holds one it must release. A raw MAP LOAD console command skips the release."),
+			ResidentMaps.Num(), *FString::Join(ResidentMaps, TEXT(", ")));
+	}
+	else if (ResidentMaps.Num() > 0)
 	{
 		UE_LOG(LogPythonTools, Warning,
 			TEXT("RESIDENT_MAPS: %d map(s) other than the open level are loaded in memory (%s). Loading any level while they are resident ")
