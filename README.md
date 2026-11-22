@@ -179,7 +179,12 @@ On Linux or macOS, use the platform-detecting shell script:
 Plugins/VibeUE/BuildAndLaunchGame.sh --engine /path/to/UE5
 Plugins/VibeUE/BuildAndLaunchGame.sh --engine /path/to/UE5 --strict-rebuild
 Plugins/VibeUE/BuildAndLaunchGame.sh --engine /path/to/UE5 --map /Game/Maps/MyMap
+Plugins/VibeUE/BuildAndLaunchGame.sh --engine /path/to/UE5 --stop-editor   # close this project's editor without asking
 ```
+If an editor of this project is running, the shell script asks before closing it and refuses when there is no
+terminal to ask on (an agent, CI); `--stop-editor` gives that consent up front. A Blueprint-only project (no
+`Source/*Editor.Target.cs`) is built through the engine's `UnrealEditor` target with `-Project=`, which
+compiles the project's plugins, so it works with the Epic binary install as well as a source build.
 Then **Edit → Plugins** → enable **VibeUE** and restart. Its services, tools, and skills now register
 onto the same endpoint, alongside the engine's own.
 
