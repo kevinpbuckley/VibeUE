@@ -44,7 +44,7 @@ Use `terrain_data` with the VibeUE API key configured in **Editor Preferences �
 
 ## Aligned workflow at Enchanted Rock
 
-Use longitude **−98.819936**, latitude **30.505025** and a **3 km** square for every step. Heightmaps are now centred exactly on the requested point, and water coordinates use the landscape's own axes (+Y south). Pass `exact_center=false` for what older builds returned: the old off-centre crop on preview and heightmap (up to half a source tile away, about 1 km here), and `get_water_features` coordinates with +Y north. Check the returned `alignment` (`exact` or `legacy`) before overlaying imagery or geometry.
+Use longitude **−98.819936**, latitude **30.505025** and a **3 km** square for every step. Heightmaps are now centred exactly on the requested point. Pass `exact_center=false` for the old off-centre crop on preview and heightmap (up to half a source tile away, about 1 km here). Check the returned `alignment` (`exact` or `legacy`) before overlaying imagery or geometry. **Pass `landscape_space=true` to `get_water_features`**: without it the water coordinates are the ones older builds wrote, with +Y north, mirrored north-south on the landscape.
 
 | Step | Tool call | What to use |
 | --- | --- | --- |
@@ -53,7 +53,7 @@ Use longitude **−98.819936**, latitude **30.505025** and a **3 km** square for
 | 3. Orthophoto | `terrain_data(action="get_ortho_image", lng=-98.819936, lat=30.505025, map_size=3, size=4096, source="auto", band="both")` | `files.rgb` is one stitched quality-92 JPEG. `files.canopy` is a linear 8-bit PNG vegetation proxy. `manifest_file` is the saved server manifest (bounds, credit). The result also has `size`, `metres_per_pixel` (ground metres per texel: 0.732600733 at 4096), `source` (`naip` or `mapbox`), `source_reason`, `acquisition_years`, `attribution`, `license_note`, `import_hints` and `uv_formula` (and `fallback_reason` when NAIP failed and the image was restarted from Mapbox). Canopy requires NAIP (United States); elsewhere `auto` picks Mapbox and only `rgb` exists. |
 | 4. Masks | `terrain_data(action="get_feature_masks", lng=-98.819936, lat=30.505025, map_size=3, resolution=1009, layers="surface,landcover,parking,road_distance", prefer="auto")` | `files` (layer → PNG path), `resolutions` (layer → actual side), `layers` (layer → channel → meaning), `counts`, `notes`, `source`, `import_hints`, `uv_formula` and the saved `manifest_file`. Surface and landcover are 8-bit RGBA, parking is 8-bit grey, road distance is 16-bit grey in centimetres. Keep all channels linear, preserve RGB under zero alpha, and use lossless compression. |
 | 5. Map features | `terrain_data(action="get_map_features", lng=-98.819936, lat=30.505025, map_size=3, categories=["roads","buildings","pois"], min_spacing_m=0, max_features=500, prefer="auto")` | `file` holds full vectors, tags, IDs and provenance. The reply gives `counts`, `truncated`, `notes`, `source`, `attribution`, `license`, `alignment` and `first_names` (up to five distinct names per category). In the file read `ue5_point`, `ue5_points` or `ue5_rings` for point, line or polygon geometry (`{x, y, z}` in centimetres, z 0). The first ring is the exterior and subsequent rings are holes. |
-| 6. Water | `terrain_data(action="get_water_features", lng=-98.819936, lat=30.505025, map_size=3, detail="high", min_spacing_m=0)` | Read the saved JSON at `file` for complete lines and rings. The reply lists water bodies, waterways and point counts. Omit both options for the original server detail and spacing (at Enchanted Rock: 14 waterways / 223 points by default, 36 / 439 with `detail="high", min_spacing_m=3`). Water comes from whole source tiles, so some of it lies outside the landscape square. |
+| 6. Water | `terrain_data(action="get_water_features", lng=-98.819936, lat=30.505025, map_size=3, landscape_space=true, detail="high", min_spacing_m=0)` | Read the saved JSON at `file` for complete lines and rings (`ue5_points`, `ue5_rings`: with `landscape_space=true` on the landscape's axes, north negative Y). The reply lists water bodies, waterways and point counts. Omit both options for the original server detail and spacing (at Enchanted Rock: 14 waterways / 223 points by default, 36 / 439 with `detail="high", min_spacing_m=3`). Water comes from whole source tiles, so some of it lies outside the landscape square. |
 | 7. Vista | `terrain_data(action="generate_vista_heightmap", lng=-98.819936, lat=30.505025, map_size=3, resolution=1009, base_level=0, height_scale=100, vista_factor=8)` | `file` and `alignment_file` (the same numbers as a JSON sidecar) describe a 24 km backdrop (`map_size_km`). Use `suggested_xy_scale` (2380.952381 cm), `suggested_z_scale` (200), fractional `inner_rect`, and `clipped` / `clipping`. Match the playable landscape's centre, Z location and processing settings. |
 
 Keep the returned **attribution** and **license** (or **license_note**) with the saved files and derived assets (map features, masks and orthophotos return them; heightmaps, vistas and water do not). Display imagery attribution when presenting the imagery. `get_map_image` provides a quick reference picture and `list_styles` lists its available styles.
@@ -67,7 +67,7 @@ Keep the returned **attribution** and **license** (or **license_note**) with the
 
 ### Registration and request options
 
-- Import north-first rows with **+X east and +Y south**, centred at the world origin: north is **negative Y**. Map features and (by default) water features use these axes. Water JSON saved by older builds, and `get_water_features(exact_center=false)`, use +Y north instead: fetch it again, or negate Y, for use on the landscape. Add the landscape centre offset to vector XY for a translated landscape.
+- Import north-first rows with **+X east and +Y south**, centred at the world origin: north is **negative Y**. Map features always use these axes; water features do with `landscape_space=true`. Without that parameter `get_water_features` writes what it always wrote, +Y north (kept so that existing scripts get the same file): fetch the water again with `landscape_space=true`, or negate Y, for use on the landscape. Add the landscape centre offset to vector XY for a translated landscape.
 - On a 1009-vertex landscape, the summit at (−98.818824, 30.506464) falls at fractional vertex (539.835480, 450.176183), or (+10665.32, −16018.99) cm. Use unrounded XY scale `100000 * map_size / (N - 1)` for alignment.
 - At landscape vertex (i,j), sample a mask or orthophoto of actual side M at `((0.5+i*(M-1)/(N-1))/M, (0.5+j*(M-1)/(N-1))/M)`, where N is the landscape vertex count per side. Road distance caps M at 2017.
 - Map features and masks accept up to 40 km and `prefer="auto" | "openstreetmap" | "tiles"`. Vector categories can be a comma list or JSON array of roads, tracks_paths, railways, buildings, parking, landcover, barriers, pois and water. Omit categories for the server's extent-dependent default. An explicit empty array selects none.
@@ -338,7 +338,7 @@ If you get a terrain that looks jagged/spiky when the real place is smooth:
 Fetches waterways and water bodies from Mapbox vector tiles. Use the **exact same `lng`, `lat`, and `map_size`** as your heightmap call.
 
 ```
-terrain_data(action="get_water_features", lng=-105.0, lat=39.7, map_size=17.28)
+terrain_data(action="get_water_features", lng=-105.0, lat=39.7, map_size=17.28, landscape_space=true)
 ```
 
 Response includes:
@@ -362,9 +362,9 @@ The **saved JSON file** contains the full data with:
 ### Coordinate system
 
 `ue5_points` and `ue5_rings` are **landscape-center-relative** (origin-centered):
-- Map geographic center = **(0, 0, Z)** in UE5 space
-- **+X = East, +Y = South** (north is negative Y, as on a landscape imported from the heightmap), 1 meter = 100 UU, `z` is 0
-- With `exact_center=false` the file is the one older builds wrote: **+Y = North** (mirrored north-south on the landscape), and the reply's `ue5_coordinate_note` says which convention the file uses
+- Map geographic center = **(0, 0, Z)** in UE5 space, 1 meter = 100 UU, `z` is 0
+- With `landscape_space=true`: **+X = East, +Y = South** (north is negative Y, as on a landscape imported from the heightmap), the contract's projection, the same axes as map features, masks and orthophotos
+- Without it (the default, unchanged from older builds): **+X = East, +Y = North**, which is mirrored north-south on the landscape. The reply's and the file's `ue5_coordinate_note` say which convention a file uses
 
 ---
 

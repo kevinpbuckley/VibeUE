@@ -392,9 +392,9 @@ bool Terrain::SaveText(const FString& Text, const FString& FilePath)
 }
 
 // ---------------------------------------------------------------------------
-// The coordinates get_water_features wrote before exact alignment existed (exact_center=false): an equirectangular
-// approximation with +Y NORTH, which is mirrored north-south on a landscape imported north-first (row zero at minimum
-// Y). Kept bit for bit, float rounding included, so a saved script that relies on it gets the file it always got.
+// The coordinates get_water_features has always written, and still writes unless landscape_space=true: an
+// equirectangular approximation with +Y NORTH, which is mirrored north-south on a landscape imported north-first (row
+// zero at minimum Y). Kept bit for bit, float rounding included, so a saved script gets the file it always got.
 // ---------------------------------------------------------------------------
 static TSharedRef<FJsonObject> TerrainLegacyWaterPoint(const TSharedPtr<FJsonObject>& Pt, double CenterLng, double CenterLat)
 {
@@ -505,9 +505,9 @@ static FString ActionGetWaterFeatures(const TMap<FString, FString>& Params)
 	if (!FJsonSerializer::Deserialize(Reader, ApiJson) || !ApiJson.IsValid())
 		return Terrain::Error(TEXT("PARSE_ERROR"), TEXT("Failed to parse server response."));
 
-	// exact_center (default true): the landscape's own axes, the same conversion get_map_features uses, so water lies
-	// where an exact heightmap, its masks and its orthophoto put it. exact_center=false: the file older builds wrote.
-	const bool bLandscapeAxes = Terrain::Boolean(Params, TEXT("exact_center"), true);
+	// landscape_space=true: the landscape's own axes, the same conversion get_map_features uses, so water lies where an
+	// exact heightmap, its masks and its orthophoto put it. Default (false): the file every older build wrote.
+	const bool bLandscapeAxes = Terrain::Boolean(Params, TEXT("landscape_space"), false);
 	if (bLandscapeAxes)
 	{
 		for (const TCHAR* Field : {TEXT("waterways"), TEXT("water_bodies")})
@@ -648,10 +648,10 @@ static FString ActionGetWaterFeatures(const TMap<FString, FString>& Params)
 
 	Result->SetStringField(TEXT("ue5_coordinate_note"), bLandscapeAxes
 		? TEXT("COORDINATE SYSTEM: +X=East +Y=South (north is negative Y), map center at world origin (0,0,0). "
-			   "All ue5_points and ue5_rings are in this origin-centered space, the one get_map_features uses. "
-			   "exact_center=false returns the older +Y=North coordinates.")
+			   "All ue5_points and ue5_rings are in this origin-centered space, the one get_map_features uses.")
 		: TEXT("COORDINATE SYSTEM: +X=East +Y=North, map center at world origin (0,0,0). "
-			   "All ue5_points and ue5_rings are in this origin-centered space."));
+			   "All ue5_points and ue5_rings are in this origin-centered space. "
+			   "On a landscape imported from the heightmap north is NEGATIVE Y: pass landscape_space=true for coordinates on the landscape's axes (+Y=South)."));
 
 	FString Out;
 	TSharedRef<TJsonWriter<>> OutWriter = TJsonWriterFactory<>::Create(&Out);
@@ -873,8 +873,9 @@ REGISTER_VIBEUE_TOOL(terrain_data,
 	"download aligned orthophotos, canopy, masks and map vectors, fetch water geometry, or generate a vista backdrop. "
 	"get_map_image and list_styles provide quick reference maps. Use matching lng, lat and map_size. "
 	"Match resolution to the landscape. XY scale is 100000 * map_size / (resolution - 1) cm per quad, Z scale is 20000 / height_scale. "
-	"Files default to Saved/Terrain/. Vector summaries link to full geometry in origin-centred cm (+X east, +Y south). "
-	"exact_center=false gives what older builds returned (off-centre heightmap crop, water coordinates with +Y north). "
+	"Files default to Saved/Terrain/. Vector summaries link to full geometry in origin-centred cm: get_map_features uses the landscape's axes (+X east, +Y south); "
+	"get_water_features does with landscape_space=true (its default keeps the older +Y north output). "
+	"exact_center=false gives the off-centre heightmap crop older builds returned. "
 	"Keep returned attribution and license with derived assets.",
 	"Terrain",
 	TOOL_PARAMS(
@@ -897,7 +898,8 @@ REGISTER_VIBEUE_TOOL(terrain_data,
 		TOOL_PARAM("draw_streams",    "Request stream processing (default true, reserved by the current encoder)", "boolean", false),
 		TOOL_PARAM("stream_depth",    "Stream depth in meters (default 7)", "number", false),
 		TOOL_PARAM("plains_height",   "Height threshold for plains smoothing in meters (default 140)", "number", false),
-		TOOL_PARAM("exact_center", "Default true: preview and heightmap are centred exactly on lng/lat, and get_water_features writes coordinates on the landscape's axes (+X east, +Y south). False reproduces older builds: the legacy off-centre crop, and water coordinates with +Y north. Vista, masks, map features and orthophotos are always exact.", "boolean", false),
+		TOOL_PARAM("exact_center", "Exact geographic centre for preview and heightmap (default true; the reply says alignment exact). False selects the off-centre legacy crop older builds returned. Vista, masks, map features and orthophotos are always exact.", "boolean", false),
+		TOOL_PARAM("landscape_space", "get_water_features only. Default false: ue5_points / ue5_rings exactly as older builds wrote them (+X east, +Y NORTH: mirrored north-south on a landscape imported from the heightmap). True: the landscape's own axes (+X east, +Y south, north is negative Y), the convention get_map_features, the masks and the orthophoto use. Pass true whenever the water has to line up with the landscape.", "boolean", false),
 		TOOL_PARAM("min_spacing_m", "Minimum vertex spacing in metres for water and map features. Zero keeps full detail.", "number", false),
 		TOOL_PARAM("detail", "Water feature detail: standard (default) or high.", "string", false),
 		TOOL_PARAM("categories", "Comma list or string array: roads, tracks_paths, railways, buildings, parking, landcover, barriers, pois, water. Omit for server defaults.", "string_or_array", false),
@@ -925,8 +927,8 @@ FString Terrain::RunWithoutKey(const FParams& Params)
 	return DispatchTerrainAction(Params);
 }
 
-// get_water_features has two coordinate conventions: the landscape's axes (default) and the older +Y north one
-// (exact_center=false), which must stay what it was. The point is Enchanted Rock's summit, north-east of the centre.
+// get_water_features has two coordinate conventions: the older +Y north one (the default, which must stay what it
+// was) and the landscape's axes (landscape_space=true). The point is Enchanted Rock's summit, north-east of the centre.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeUETerrainDataWaterAxesTest, "VibeUE.TerrainData.WaterAxes",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
