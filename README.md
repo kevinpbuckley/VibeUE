@@ -188,6 +188,14 @@ compiles the project's plugins, so it works with the Epic binary install as well
 Then **Edit → Plugins** → enable **VibeUE** and restart. Its services, tools, and skills now register
 onto the same endpoint, alongside the engine's own.
 
+On NixOS (or any Linux with Nix), the optional `flake.nix` builds the plugin inside an FHS environment with the
+libraries the Epic Linux build loads, against an engine you unpacked yourself; Unreal is not packaged:
+```bash
+cd Plugins/VibeUE
+UE_ENGINE_ROOT=/path/to/UE5 nix run . -- /tmp/VibeUE-Linux   # RunUAT BuildPlugin into that folder
+nix run .#shell                                              # a shell for BuildAndLaunchGame.sh or the editor
+```
+
 ### Step 3 — Connect your agent
 
 Two console commands from the editor (open the console with `` ` ``):
