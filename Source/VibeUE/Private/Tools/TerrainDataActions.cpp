@@ -238,6 +238,14 @@ static FTerrainReply RequestTerrain(const TCHAR* Path, const FBody& Body, const 
 		Reply.Failure = Error(Http.bNoApiKey ? TEXT("NO_API_KEY") : TEXT("HTTP_ERROR"), Http.ErrorMessage);
 		return Reply;
 	}
+	// What a failed request said, for the message when the body is not the contract's {"error": "..."} (a gateway's
+	// own 502 / 504 page, for example): the start of the body as text.
+	FString ErrorBody;
+	if (Http.ResponseCode != 200 && Http.Content.Num())
+	{
+		const FUTF8ToTCHAR BodyText(reinterpret_cast<const ANSICHAR*>(Http.Content.GetData()), FMath::Min(Http.Content.Num(), 300));
+		ErrorBody = FString::ConstructFromPtrSize(BodyText.Get(), BodyText.Length()).Replace(TEXT("\r"), TEXT(" ")).Replace(TEXT("\n"), TEXT(" ")).TrimStartAndEnd();
+	}
 	if (Http.HasContentType(TEXT("application/json")) && Http.Content.Num())
 	{
 		Reply.Http.Content.Add(0);
@@ -247,6 +255,13 @@ static FTerrainReply RequestTerrain(const TCHAR* Path, const FBody& Body, const 
 	if (Http.ResponseCode != 200)
 	{
 		FString Message = FString::Printf(TEXT("Server returned %d"), Http.ResponseCode);
+		if (!Reply.Json || !Reply.Json->HasTypedField<EJson::String>(TEXT("error")))
+		{
+			if (ErrorBody.StartsWith(TEXT("<")))
+				Message += TEXT(" with an HTML error page instead of the API's JSON error: an upstream source or a gateway failed. Try again");
+			else if (!ErrorBody.IsEmpty())
+				Message += TEXT(": ") + ErrorBody;
+		}
 		if (Reply.Json)
 		{
 			Reply.Json->TryGetStringField(TEXT("error"), Message);
@@ -453,7 +468,14 @@ static FTerrainReply FetchTerrainTile(const FBody& Body, const FString& Band, in
 	{
 		UE_LOG(LogVibeTerrain, Log, TEXT("Ortho %s tile %d/%d, attempt %d/3"), *Band, Index, Count, Attempt);
 		FTerrainReply Tile = RequestTerrain(TerrainOrthoRoute, Body, Band == TEXT("rgb") ? TEXT("image/jpeg") : TEXT("image/png"));
-		if (Attempt == 3 || (Tile.Http.ResponseCode != 502 && Tile.Http.ResponseCode != 504)) return Tile;
+		// Worth another try: the server's 502 / 504 (an upstream render failed or ran out of time), and a request that
+		// never got an answer (the connection dropped, or the wait ran out while the upstream was still rendering).
+		const FVibeUEToolCancel* CancelNow = FVibeUEToolCancel::GetCurrent();
+		const bool bNoAnswer = !Tile.Http.bSuccess && !Tile.Http.bNoApiKey && !(CancelNow && CancelNow->IsCancelled());
+		if (Attempt == 3 || (!bNoAnswer && Tile.Http.ResponseCode != 502 && Tile.Http.ResponseCode != 504)) return Tile;
+		UE_LOG(LogVibeTerrain, Log, TEXT("Ortho %s tile %d/%d: %s. Trying again in %.0f s"), *Band, Index, Count,
+			bNoAnswer ? *Tile.Http.ErrorMessage : *FString::Printf(TEXT("HTTP %d"), Tile.Http.ResponseCode), bNoAnswer ? 5.0 : Tile.RetryAfter);
+		if (bNoAnswer) Tile.RetryAfter = 5;
 		if (!WaitTerrainRetry(Tile.RetryAfter))
 		{
 			Tile.Http.ResponseCode = 0;

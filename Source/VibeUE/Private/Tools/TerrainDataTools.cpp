@@ -216,6 +216,10 @@ static void StartTerrainRequest(const FTerrainHttpStateRef& State, const FTerrai
 	if (!ApiKey.IsEmpty())
 		Request->SetHeader(TEXT("X-API-Key"), ApiKey);
 	Request->SetTimeout(Spec.TimeoutSeconds + Spec.TransportGraceSeconds);
+	// The engine also fails a request that receives nothing for [HTTP] HttpActivityTimeout seconds (30 by default) with
+	// "Connection failed", whatever its total timeout: a cold orthophoto tile, a vista or a slow vector query sends its
+	// first byte later than that. The silence allowed is the request's whole time.
+	Request->SetActivityTimeout(Spec.TimeoutSeconds + Spec.TransportGraceSeconds);
 
 	const TWeakPtr<FTerrainHttpState, ESPMode::ThreadSafe> WeakState = State;
 	const bool bKeepTerrainHeaders = Spec.bKeepTerrainHeaders;
@@ -366,7 +370,9 @@ FString Terrain::SavePath(const FString& RequestedPath, const FString& Filename)
 	FString Dir = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("Terrain"));
 	IPlatformFile& PF = FPlatformFileManager::Get().GetPlatformFile();
 	if (!PF.DirectoryExists(*Dir)) PF.CreateDirectory(*Dir);
-	return FPaths::Combine(Dir, Filename);
+	// A full path: ProjectSavedDir is relative to the engine's Binaries folder, which means nothing to an MCP client
+	// that opens the file with its own tools from outside the editor.
+	return FPaths::ConvertRelativePathToFull(FPaths::Combine(Dir, Filename));
 }
 
 // Off the game thread two terrain_data calls run at once, and two for the same place share a default file name: one
@@ -866,8 +872,9 @@ REGISTER_VIBEUE_TOOL(terrain_data,
 	"Fetch real-world terrain using one VibeUE API key. Preview elevation, generate an exact-centred heightmap, "
 	"download aligned orthophotos, canopy, masks and map vectors, fetch water geometry, or generate a vista backdrop. "
 	"get_map_image and list_styles provide quick reference maps. Use matching lng, lat and map_size. "
-	"Match resolution to the landscape. XY scale is 100000 * map_size / (resolution - 1) cm per quad. "
+	"Match resolution to the landscape. XY scale is 100000 * map_size / (resolution - 1) cm per quad, Z scale is 20000 / height_scale. "
 	"Files default to Saved/Terrain/. Vector summaries link to full geometry in origin-centred cm (+X east, +Y south). "
+	"exact_center=false gives what older builds returned (off-centre heightmap crop, water coordinates with +Y north). "
 	"Keep returned attribution and license with derived assets.",
 	"Terrain",
 	TOOL_PARAMS(

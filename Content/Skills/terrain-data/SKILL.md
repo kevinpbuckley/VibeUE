@@ -44,23 +44,30 @@ Use `terrain_data` with the VibeUE API key configured in **Editor Preferences �
 
 ## Aligned workflow at Enchanted Rock
 
-Use longitude **−98.819936**, latitude **30.505025** and a **3 km** square for every step. Heightmaps are now centred exactly on the requested point. Pass `exact_center=false` for the old crop on both preview and heightmap. Check the returned `alignment` before overlaying imagery or geometry.
+Use longitude **−98.819936**, latitude **30.505025** and a **3 km** square for every step. Heightmaps are now centred exactly on the requested point, and water coordinates use the landscape's own axes (+Y south). Pass `exact_center=false` for what older builds returned: the old off-centre crop on preview and heightmap (up to half a source tile away, about 1 km here), and `get_water_features` coordinates with +Y north. Check the returned `alignment` (`exact` or `legacy`) before overlaying imagery or geometry.
 
 | Step | Tool call | What to use |
 | --- | --- | --- |
 | 1. Preview | `terrain_data(action="preview_elevation", lng=-98.819936, lat=30.505025, map_size=3)` | Read `minHeight`, `maxHeight`, `suggestedBaseLevel`, `suggestedHeightScale` and `alignment`. |
 | 2. Heightmap | `terrain_data(action="generate_heightmap", lng=-98.819936, lat=30.505025, map_size=3, resolution=1009, base_level=0, height_scale=100)` | Import the 16-bit PNG at `file`. For this example the XY scale is 297.619048 cm per quad and Z scale is 200. Use the preview settings if you need a different vertical mapping, and repeat them for the vista. |
-| 3. Orthophoto | `terrain_data(action="get_ortho_image", lng=-98.819936, lat=30.505025, map_size=3, size=4096, source="auto", band="both")` | `files.rgb` is a quality-92 JPEG. `files.canopy` is a linear 8-bit vegetation proxy. The saved manifest preserves the imagery credit. The result includes source, reason, acquisition years, attribution and ground spacing (0.732600733 m at 4096). Canopy requires NAIP. |
-| 4. Masks | `terrain_data(action="get_feature_masks", lng=-98.819936, lat=30.505025, map_size=3, resolution=1009, layers="surface,landcover,parking,road_distance", prefer="auto")` | Read the manifest and `files`, `resolutions` and `layers` dictionaries. Use the manifest's channel meanings. Keep all channels linear, preserve RGB under zero alpha, and use lossless compression. Preserve the 16-bit road distance in centimetres. |
-| 5. Map features | `terrain_data(action="get_map_features", lng=-98.819936, lat=30.505025, map_size=3, categories=["roads","buildings","pois"], min_spacing_m=0, max_features=500, prefer="auto")` | `file` holds full vectors, tags, IDs and provenance. The reply gives counts, truncation, notes and up to three nonempty names per category. Read `ue5_point`, `ue5_points` or `ue5_rings` for point, line or polygon geometry. The first ring is the exterior and subsequent rings are holes. |
-| 6. Water | `terrain_data(action="get_water_features", lng=-98.819936, lat=30.505025, map_size=3, detail="high", min_spacing_m=0)` | Read the saved JSON at `file` for complete lines and rings. The reply lists water bodies, waterways and point counts. Omit both options for the original server detail and spacing. |
+| 3. Orthophoto | `terrain_data(action="get_ortho_image", lng=-98.819936, lat=30.505025, map_size=3, size=4096, source="auto", band="both")` | `files.rgb` is one stitched quality-92 JPEG. `files.canopy` is a linear 8-bit PNG vegetation proxy. `manifest` is the saved server manifest (bounds, credit). The result also has `size`, `source` (`naip` or `mapbox`), `source_reason`, `acquisition_years`, `attribution`, `license_note`, `ground_metres_per_pixel` (0.732600733 at 4096) and `import_hints`. Canopy requires NAIP (United States); elsewhere `auto` picks Mapbox and only `rgb` exists. |
+| 4. Masks | `terrain_data(action="get_feature_masks", lng=-98.819936, lat=30.505025, map_size=3, resolution=1009, layers="surface,landcover,parking,road_distance", prefer="auto")` | `files` (layer → PNG path), `resolutions` (layer → actual side), `layers` (layer → channel → meaning), `counts`, `notes`, `source` and the saved `manifest`. Surface and landcover are 8-bit RGBA, parking is 8-bit grey, road distance is 16-bit grey in centimetres. Keep all channels linear, preserve RGB under zero alpha, and use lossless compression. |
+| 5. Map features | `terrain_data(action="get_map_features", lng=-98.819936, lat=30.505025, map_size=3, categories=["roads","buildings","pois"], min_spacing_m=0, max_features=500, prefer="auto")` | `file` holds full vectors, tags, IDs and provenance. The reply gives `counts`, `truncated`, `notes`, `source`, `attribution`, `license` and `sample_names` (up to three nonempty names per category). In the file read `ue5_point`, `ue5_points` or `ue5_rings` for point, line or polygon geometry (`{x, y, z}` in centimetres, z 0). The first ring is the exterior and subsequent rings are holes. |
+| 6. Water | `terrain_data(action="get_water_features", lng=-98.819936, lat=30.505025, map_size=3, detail="high", min_spacing_m=0)` | Read the saved JSON at `file` for complete lines and rings. The reply lists water bodies, waterways and point counts. Omit both options for the original server detail and spacing (at Enchanted Rock: 14 waterways / 223 points by default, 36 / 439 with `detail="high", min_spacing_m=3`). Water comes from whole source tiles, so some of it lies outside the landscape square. |
 | 7. Vista | `terrain_data(action="generate_vista_heightmap", lng=-98.819936, lat=30.505025, map_size=3, resolution=1009, base_level=0, height_scale=100, vista_factor=8)` | `file` and `alignment_file` describe a 24 km backdrop. Use `suggested_xy_scale` (2380.952381 cm), `suggested_z_scale` (200), fractional `inner_rect`, and `clipped` / `clipping`. Match the playable landscape's centre, Z location and processing settings. |
 
-Keep the returned **attribution** and **license** (or **license_note**) with the saved files and derived assets. Display imagery attribution when presenting the imagery. `get_map_image` provides a quick reference picture and `list_styles` lists its available styles.
+Keep the returned **attribution** and **license** (or **license_note**) with the saved files and derived assets (map features, masks and orthophotos return them; heightmaps, vistas and water do not). Display imagery attribution when presenting the imagery. `get_map_image` provides a quick reference picture and `list_styles` lists its available styles.
+
+### Files, sources and waiting
+
+- Every `file` path in a reply is a full path under the project's `Saved/Terrain/`.
+- The default names of heightmap (`heightmap_<lat>_<lng>.png`), water (`water_features_<lat>_<lng>_<size>km.json`) and map features (`mapfeatures_<lat>_<lng>_<size>km.json`) depend only on the place: a second call with other options (an exact and a legacy heightmap, default and high-detail water) overwrites the first. Pass `save_path` to keep both. Masks, orthophotos and vistas get a unique id in their names, and masks and orthophotos ignore `save_path`.
+- `source` says where vectors and masks came from: `openstreetmap`, or `mapbox-streets-v8` when the OpenStreetMap servers do not answer (then `notes` says so: generalised geometry, roads cut into tile fragments, no building names, no OSM ids). `prefer="openstreetmap"` fails with `HTTP_502` instead of falling back; `prefer="tiles"` asks for the fallback directly.
+- The first orthophoto of a new area is slow: each 2048-pixel NAIP tile can take 20-30 s to render (a 4096 image has four per band, an 8192 image sixteen), later calls for the same tiles answer in a second or two. A tile that answers 502 or 504 is retried up to three times. If your client gives up waiting, call again.
 
 ### Registration and request options
 
-- Import north-first rows with **+X east and +Y south**, centred at the world origin. Older saved water JSON used +Y north. Fetch it again for use with an exact heightmap. Add the landscape centre offset to vector XY for a translated landscape.
+- Import north-first rows with **+X east and +Y south**, centred at the world origin: north is **negative Y**. Map features and (by default) water features use these axes. Water JSON saved by older builds, and `get_water_features(exact_center=false)`, use +Y north instead: fetch it again, or negate Y, for use on the landscape. Add the landscape centre offset to vector XY for a translated landscape.
 - On a 1009-vertex landscape, the summit at (−98.818824, 30.506464) falls at fractional vertex (539.835480, 450.176183), or (+10665.32, −16018.99) cm. Use unrounded XY scale `100000 * map_size / (N - 1)` for alignment.
 - At landscape vertex (i,j), sample a mask or orthophoto of actual side M at `((0.5+i*(M-1)/(N-1))/M, (0.5+j*(M-1)/(N-1))/M)`, where N is the landscape vertex count per side. Road distance caps M at 2017.
 - Map features and masks accept up to 40 km and `prefer="auto" | "openstreetmap" | "tiles"`. Vector categories can be a comma list or JSON array of roads, tracks_paths, railways, buildings, parking, landcover, barriers, pois and water. Omit categories for the server's extent-dependent default. An explicit empty array selects none.
@@ -109,7 +116,8 @@ Response:
   "suggestedZScale": 741,
   "suggestedXYScales": { "505": 3429, "1009": 1714, "2017": 857, "4033": 429, "8129": 213 },
   "tileZoom": 13,
-  "tileCount": 9
+  "tileCount": 9,
+  "alignment": "exact"
 }
 ```
 
@@ -179,7 +187,7 @@ After attaching, you will see the satellite image in your next response. Use it 
 
 Use the `landscape` skill to import the heightmap file:
 - Component setup: `QuadsPerSection=63, SectionsPerComponent=2, ComponentCount=8x8` → 1009×1009 resolution
-- **X and Y scale**: Use `suggestedXYScales["1009"]` from preview (e.g. 1714 for a 17.28km map). **Do NOT use the default 100** — that makes the landscape ~17x too small!
+- **X and Y scale**: `100000 * map_size / (resolution - 1)` (1714.2857 for a 17.28 km map at 1009; `suggestedXYScales["1009"]` from preview is the same value rounded to 1714, which is fine until vectors have to line up). **Do NOT use the default 100** — that makes the landscape ~17x too small!
 - **Z scale**: Use `suggestedZScale` from preview (e.g. 741 for Mount Fuji)
 - File: the `.png` path returned in step 2
 
@@ -188,7 +196,7 @@ Example:
 result = unreal.LandscapeService.create_landscape(
     location=unreal.Vector(0, 0, 0),
     rotation=unreal.Rotator(0, 0, 0),
-    scale=unreal.Vector(1714, 1714, 741),  # XY from suggestedXYScales["1009"], Z from suggestedZScale
+    scale=unreal.Vector(1714.2857, 1714.2857, 741),  # XY = 100000 * map_size / (resolution - 1), Z from suggestedZScale
     sections_per_component=2,
     quads_per_section=63,
     component_count_x=8,
@@ -208,6 +216,8 @@ result = unreal.LandscapeService.create_landscape(
 | `lng` / `lat` | required | Decimal degrees. Positive = East/North |
 | `format` | `png` | 16-bit grayscale PNG, big-endian uint16 RAW (byte-swap for native little-endian import), or ZIP containing PNG and info |
 | `map_size` | `17.28` | km — Cities: Skylines standard |
+| `resolution` | `1081` | Samples per side, 33–4097. Pass the landscape's vertex count (505, 1009, 2017, ...) |
+| `exact_center` | `true` | Centre the square exactly on `lng` / `lat`; the reply says `alignment: "exact"`. `false` = the crop older builds returned (`alignment: "legacy"`), which does not line up with masks, orthophotos or vectors |
 | `base_level` | `0` | Use `suggestedBaseLevel` from preview |
 | `height_scale` | `100` | Use `suggestedHeightScale` from preview |
 | `water_depth` | `40` | Cities: Skylines water units |
@@ -353,7 +363,8 @@ The **saved JSON file** contains the full data with:
 
 `ue5_points` and `ue5_rings` are **landscape-center-relative** (origin-centered):
 - Map geographic center = **(0, 0, Z)** in UE5 space
-- **+X = East, +Y = South**, 1 meter = 100 UU
+- **+X = East, +Y = South** (north is negative Y, as on a landscape imported from the heightmap), 1 meter = 100 UU, `z` is 0
+- With `exact_center=false` the file is the one older builds wrote: **+Y = North** (mirrored north-south on the landscape), and the reply's `ue5_coordinate_note` says which convention the file uses
 
 ---
 
@@ -362,6 +373,7 @@ The **saved JSON file** contains the full data with:
 | Issue | Fix |
 |-------|-----|
 | `429` rate limit | Read the error for the daily request quota or hourly tile/layer allowance and its UTC reset |
+| `HTTP_502` / `HTTP_504` | An upstream source (OpenStreetMap, NAIP, Mapbox) failed or was too slow. Call again; for vectors use `prefer="auto"` |
 | Flat heightmap | `heightRange` < 50m — use `height_scale: 250` for detail |
 | Clipped mountains | Lower `height_scale` or increase `base_level` |
 | Jagged/spiky terrain | Increase `blur_passes` (20–40 for smooth terrain) and check Z scale formula |
