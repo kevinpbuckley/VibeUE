@@ -255,17 +255,23 @@ static FTerrainReply RequestTerrain(const TCHAR* Path, const FBody& Body, const 
 	if (Http.ResponseCode != 200)
 	{
 		FString Message = FString::Printf(TEXT("Server returned %d"), Http.ResponseCode);
+		// The wait before another try, from the status alone: a 502 / 504 can reach the client without the server's JSON
+		// (the gateway in front of it answers with its own page), and a 504 means an upstream render ran out of time.
+		Reply.RetryAfter = Http.ResponseCode == 504 ? 5 : 2;
 		if (!Reply.Json || !Reply.Json->HasTypedField<EJson::String>(TEXT("error")))
 		{
-			if (ErrorBody.StartsWith(TEXT("<")))
-				Message += TEXT(" with an HTML error page instead of the API's JSON error: an upstream source or a gateway failed. Try again");
-			else if (!ErrorBody.IsEmpty())
+			if (Http.ResponseCode == 502 || Http.ResponseCode == 504)
+				Message += Http.ResponseCode == 502
+					? TEXT(": an upstream source (OpenStreetMap, NAIP or Mapbox) failed and the answer carried no detail. Try again; for map features and masks use prefer=auto")
+					: TEXT(": an upstream source ran out of time and the answer carried no detail. Try again, or ask for less (a smaller map_size, resolution or size)");
+			else if (!ErrorBody.IsEmpty() && !ErrorBody.StartsWith(TEXT("<")))
 				Message += TEXT(": ") + ErrorBody;
 		}
 		if (Reply.Json)
 		{
 			Reply.Json->TryGetStringField(TEXT("error"), Message);
 			Reply.Json->TryGetNumberField(TEXT("retry_after_s"), Reply.RetryAfter);
+			Reply.RetryAfter = FMath::Clamp(Reply.RetryAfter, 1.0, 30.0);
 		}
 		FBody Failure = MakeShared<FJsonObject>();
 		Failure->SetBoolField(TEXT("success"), false);
@@ -341,29 +347,41 @@ FString GetMapFeatures(const FParams& Params)
 		const FValues* Items;
 		if (!Category.Value->TryGetArray(Items))
 			return Error(TEXT("INVALID_RESPONSE"), TEXT("Invalid map feature category."));
+		// The first five DISTINCT names: the tile source returns one road as several fragments of the same name.
 		FValues Examples;
+		TSet<FString> SeenNames;
 		for (const auto& Item : *Items)
 		{
 			const TSharedPtr<FJsonObject>* Feature;
 			if (!Item->TryGetObject(Feature)) return Error(TEXT("INVALID_RESPONSE"), TEXT("Invalid map feature."));
 			AddCoordinates(**Feature, CenterLng, CenterLat, SideKm);
 			FString Name;
-			if (Examples.Num() < 3 && (*Feature)->TryGetStringField(TEXT("name"), Name) && !Name.IsEmpty())
+			if (Examples.Num() < 5 && (*Feature)->HasTypedField<EJson::String>(TEXT("name")) &&
+				(*Feature)->TryGetStringField(TEXT("name"), Name) && !Name.IsEmpty() && !SeenNames.Contains(Name))
+			{
+				SeenNames.Add(Name);
 				Examples.Add(MakeShared<FJsonValueString>(Name));
+			}
 		}
 		Names->SetArrayField(*Category.Key, MoveTemp(Examples));
 	}
 	const FString Path = SavePath(Param(Params, TEXT("save_path")), TerrainStem(TEXT("mapfeatures"), *Body) + TEXT(".json"));
 	if (!SaveText(Serialize(Reply.Json.ToSharedRef()), Path)) return TerrainSaveError(Path);
 	FBody Summary = MakeShared<FJsonObject>();
-	for (const TCHAR* Field : {TEXT("counts"), TEXT("source"), TEXT("notes"), TEXT("attribution"), TEXT("license"), TEXT("truncated")})
+	// Result field names are the ones the UE 5.9 line returns (first_names, manifest_file, metres_per_pixel,
+	// uv_formula ...), so a prompt or script written against one line reads the other's replies.
+	for (const TCHAR* Field : {TEXT("counts"), TEXT("source"), TEXT("notes"), TEXT("attribution"), TEXT("license"), TEXT("truncated"), TEXT("alignment")})
 		CopyTerrainField(*Summary, *Reply.Json, Field);
 	Summary->SetBoolField(TEXT("success"), true);
 	Summary->SetStringField(TEXT("file"), Path);
-	Summary->SetObjectField(TEXT("sample_names"), Names);
+	Summary->SetObjectField(TEXT("first_names"), Names);
 	Summary->SetStringField(TEXT("ue5_coordinate_note"), TEXT("In the file each feature has ue5_point, ue5_points or ue5_rings: origin-centred centimetres, +X east, +Y south (north is negative Y), z 0. Add the landscape actor's location if it is not at the origin."));
 	return Serialize(Summary);
 }
+
+static constexpr const TCHAR* TerrainTextureUV =
+	TEXT("For landscape vertex (i,j), N vertices and actual texture side M, UV = ")
+	TEXT("((0.5+i*(M-1)/(N-1))/M, (0.5+j*(M-1)/(N-1))/M). Row zero is north (minimum Y).");
 
 // Verify the PNG IHDR without expanding or colour-converting independent mask channels.
 static bool TerrainMaskMatches(const TArray<uint8>& Png, const FString& Layer, int32 Side)
@@ -419,13 +437,14 @@ FString GetFeatureMasks(const FParams& Params)
 	Output.bComplete = true;
 	FBody Result = MakeShared<FJsonObject>();
 	Result->SetBoolField(TEXT("success"), true);
-	Result->SetStringField(TEXT("manifest"), ManifestPath);
+	Result->SetStringField(TEXT("manifest_file"), ManifestPath);
 	Result->SetObjectField(TEXT("files"), Paths);
 	Result->SetObjectField(TEXT("resolutions"), Resolutions);
 	Result->SetObjectField(TEXT("layers"), *Channels);
 	for (const TCHAR* Field : {TEXT("source"), TEXT("counts"), TEXT("notes"), TEXT("truncated"), TEXT("attribution"), TEXT("license")})
 		CopyTerrainField(*Result, *Manifest.Json, Field);
 	Result->SetStringField(TEXT("import_hints"), TEXT("Import linear with sRGB off and lossless compression. Preserve RGB at zero alpha. Keep road_distance at 16 bits (centimetres)."));
+	Result->SetStringField(TEXT("uv_formula"), TerrainTextureUV);
 	return Serialize(Result);
 }
 
@@ -601,16 +620,16 @@ FString GetOrthoImage(const FParams& Params)
 		FBody Result = MakeShared<FJsonObject>();
 		Result->SetBoolField(TEXT("success"), true);
 		Result->SetObjectField(TEXT("files"), Files);
-		for (const TCHAR* Field : {TEXT("size"), TEXT("source"), TEXT("source_reason"), TEXT("acquisition_years"), TEXT("attribution"), TEXT("license_note")})
+		// metres_per_pixel is the manifest's: ground metres per texel interval, 1000 * map_size / (size - 1)
+		for (const TCHAR* Field : {TEXT("size"), TEXT("metres_per_pixel"), TEXT("source"), TEXT("source_reason"), TEXT("acquisition_years"), TEXT("attribution"), TEXT("license_note")})
 			CopyTerrainField(*Result, Info, Field);
 		if (Source != RequestedSource)
-			Result->SetStringField(TEXT("source_reason"), TEXT("NAIP tile retries exhausted. Restarted the complete RGB image with Mapbox. ") + Info.GetStringField(TEXT("source_reason")));
-		const double GroundSide = 1000.0 * FMath::Clamp(Body->GetNumberField(TEXT("map_size")), 1.0, 100.0);
-		Result->SetNumberField(TEXT("ground_metres_per_pixel"), GroundSide / (Side - 1));
-		Result->SetStringField(TEXT("import_hints"), TEXT("Import RGB as sRGB and canopy as linear. For N landscape vertices and M texture pixels per side, sample vertex (i,j) at UV=((0.5+i*(M-1)/(N-1))/M,(0.5+j*(M-1)/(N-1))/M), with row zero at minimum Y."));
+			Result->SetStringField(TEXT("fallback_reason"), TEXT("NAIP tile failed three times. RGB restarted from a new Mapbox manifest."));
+		Result->SetStringField(TEXT("import_hints"), TEXT("Import RGB as sRGB and canopy as linear grayscale with sRGB disabled."));
+		Result->SetStringField(TEXT("uv_formula"), TerrainTextureUV);
 		const FString ManifestPath = Output.Path(TEXT("_manifest.json"));
 		if (!SaveText(Serialize(Manifest.Json.ToSharedRef()), ManifestPath)) return TerrainSaveError(ManifestPath);
-		Result->SetStringField(TEXT("manifest"), ManifestPath);
+		Result->SetStringField(TEXT("manifest_file"), ManifestPath);
 		Output.bComplete = true;
 		return Serialize(Result);
 	}
@@ -693,6 +712,10 @@ FString GenerateVista(const FParams& Params)
 	FBody Result = MakeShared<FJsonObject>(*Alignment);
 	Result->SetBoolField(TEXT("success"), true);
 	Result->SetStringField(TEXT("file"), Path);
+	Result->SetStringField(TEXT("format"), Format);
+	Result->SetNumberField(TEXT("size_bytes"), Reply.Http.Content.Num());
+	const FString Dimensions = Reply.Http.Headers.FindRef(TEXT("X-Heightmap-Size"));
+	if (!Dimensions.IsEmpty()) Result->SetStringField(TEXT("dimensions"), Dimensions);
 	Result->SetStringField(TEXT("alignment_file"), Metadata);
 	Result->SetNumberField(TEXT("suggested_xy_scale"), Spacing * 100.0);
 	Result->SetNumberField(TEXT("suggested_z_scale"), 20000.0 / HeightScale);
