@@ -26,5 +26,6 @@ t = ag.add_transition(ABP, MACHINE, "Idle", "Run", 0.2)
 print("transition:", t)
 
 # Compile is an engine BlueprintTools operation (call_tool), not VibeUE BlueprintService:
-call_tool("BlueprintToolsets.BlueprintToolset", "CompileBlueprint", {"blueprint": {"refPath": ABP}})
+await call_tool("BlueprintToolsets.BlueprintToolset.CompileBlueprint",
+                blueprint={"refPath": ABP + "." + ABP.rsplit("/", 1)[-1]})   # object path, not package path
 unreal.EditorAssetLibrary.save_asset(ABP)

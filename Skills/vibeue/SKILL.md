@@ -53,6 +53,10 @@ The rules the runner enforces, and what it returns:
   in the namespace. It returns the tool's value **directly**: there is no `returnValue` envelope to unwrap.
   Object references come back as `{"refPath": path}`; pass Unreal objects, classes, structs and enums as
   they are. Reading a field the tool does not declare raises a KeyError that lists the fields it does.
+  The signature is `call_tool(name, /, **arguments)`: a `(toolset, tool, {args})` or `(tool, toolset)` call
+  raises `TypeError: ... takes 2 positional arguments`, and a call without `await` never runs.
+  A `{"refPath": ...}` you pass needs the **object** path (`/Game/BP/BP_X.BP_X`); the bare package path
+  is rejected with "is not a valid object path".
 
 ```python
 import unreal
