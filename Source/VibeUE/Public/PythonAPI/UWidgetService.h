@@ -811,9 +811,8 @@ public:
 	 * Maps to action="set_property_verified"
 	 *
 	 * Same value format and property-name rules as set_property (including "Slot.<Prop>" and the slot
-	 * aliases), but the result reports what the property actually holds afterwards. A struct value whose
-	 * member names don't match (e.g. a bare LinearColor on an FSlateBrush) is imported as a silent no-op
-	 * by Unreal — set_property returns True for it, this returns bSuccess=False with the expected format.
+	 * aliases). Unknown struct members fail validation before import and the message lists valid names.
+	 * NewValue and bChanged reflect the stored value even if a parse error occurs after a partial write.
 	 *
 	 * @param WidgetPath - Full path to the Widget Blueprint
 	 * @param ComponentName - Name of the component
@@ -876,6 +875,7 @@ public:
 	 *                           "slot": {"LayoutData": "(Offsets=(...),Anchors=(...),Alignment=(...))"},
 	 *                           "children": []}]}}
 	 * Property and slot values are export-text strings (the same strings get_property returns).
+	 * Export follows panel children and skips instanced references such as navigation and accessibility.
 	 * Custom Widget Blueprint children export their asset name as "type" (e.g. "WBP_HealthBar").
 	 * On failure returns {"success": false, "error": "..."}.
 	 *
@@ -914,6 +914,8 @@ public:
 	 * @param LayoutJson - Layout JSON (see above)
 	 * @param Mode - "append" (default) or "replace"
 	 * @param bDryRun - If true, only validate and report; nothing is written
+	 * @param bDropUnexportedWidgets - Allow replace to discard widgets outside the exported panel hierarchy.
+	 *        Graph and binding references still guard dropped or retyped widgets. Maximum input depth is 64 widget levels.
 	 * @return Build result with counts, created widget names, errors and warnings
 	 *
 	 * Example:
@@ -928,7 +930,8 @@ public:
 		const FString& WidgetPath,
 		const FString& LayoutJson,
 		const FString& Mode = TEXT("append"),
-		bool bDryRun = false);
+		bool bDryRun = false,
+		bool bDropUnexportedWidgets = false);
 
 	// =================================================================
 	// Font and Brush Access
@@ -1314,7 +1317,7 @@ private:
 	static class UWidget* FindWidgetByName(class UWidgetBlueprint* WidgetBP, const FString& ComponentName);
 	
 	/** Helper to create a widget class from type name */
-	static TSubclassOf<class UWidget> FindWidgetClass(const FString& TypeName);
+	static TSubclassOf<class UWidget> FindWidgetClass(const FString& TypeName, const UWidgetBlueprint* ValidationTarget = nullptr);
 
 	/** Helper to find a ViewModel class by name (C++ or Blueprint ViewModel) */
 	static UClass* FindViewModelClass(const FString& ClassName);

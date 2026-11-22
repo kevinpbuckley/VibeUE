@@ -8,13 +8,13 @@ Tests for build_layout, export_layout, set_property_verified and set_color. Run 
 
 ## Setup
 
-Create a widget blueprint called WBP_LayoutTest in the Blueprints folder. If it already exists delete it silently and create a new one.
+Create a widget blueprint in the Blueprints folder using an unused name of the form `WBP_LayoutTest_<GUID>`. Record its asset path and use that path throughout this test.
 
 ---
 
 ## Build in one call
 
-Using a single build_layout call, give WBP_LayoutTest a CanvasPanel root with a VerticalBox at position 100, 200 that contains a Play button, an Options button and a Quit button, each with a text label at font size 28.
+Using a single build_layout call, give the new widget blueprint a CanvasPanel root with a VerticalBox at position 100, 200 that contains a Play button, an Options button and a Quit button, each with a text label at font size 28.
 
 ---
 

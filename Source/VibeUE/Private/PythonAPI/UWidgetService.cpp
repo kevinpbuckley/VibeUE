@@ -53,6 +53,7 @@
 #include "Components/ExpandableArea.h"
 #include "Components/MenuAnchor.h"
 #include "Components/NativeWidgetHost.h"
+#include "Components/NamedSlotInterface.h"
 #include "Components/PanelSlot.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
@@ -75,6 +76,7 @@
 #include "ImageUtils.h"
 #include "Materials/MaterialInterface.h"
 #include "Misc/FileHelper.h"
+#include "Misc/Parse.h"
 #include "Misc/Paths.h"
 #include "MovieScene.h"
 #include "MovieSceneBinding.h"
@@ -89,7 +91,11 @@
 #include "UObject/PropertyIterator.h"
 #include "UObject/UnrealType.h"
 #include "MVVMBlueprintView.h"
+#include "MVVMBlueprintPin.h"
 #include "MVVMBlueprintViewBinding.h"
+#include "MVVMBlueprintViewCondition.h"
+#include "MVVMBlueprintViewConversionFunction.h"
+#include "MVVMBlueprintViewEvent.h"
 #include "MVVMBlueprintViewModelContext.h"
 #include "MVVMWidgetBlueprintExtension_View.h"
 #include "MVVMPropertyPath.h"
@@ -1272,7 +1278,7 @@ UWidget* UWidgetService::FindWidgetByName(UWidgetBlueprint* WidgetBP, const FStr
 	return nullptr;
 }
 
-TSubclassOf<UWidget> UWidgetService::FindWidgetClass(const FString& TypeName)
+TSubclassOf<UWidget> UWidgetService::FindWidgetClass(const FString& TypeName, const UWidgetBlueprint* ValidationTarget)
 {
 	// Map type names to widget classes
 	static TMap<FString, TSubclassOf<UWidget>> WidgetClassMap;
@@ -1371,6 +1377,9 @@ TSubclassOf<UWidget> UWidgetService::FindWidgetClass(const FString& TypeName)
 		{
 			if (UWidgetBlueprint* WBP = Cast<UWidgetBlueprint>(AssetData.GetAsset()))
 			{
+				// BuildLayout will reject a self-reference. Its preflight must not compile the
+				// Blueprint being edited just to diagnose that request.
+				if (WBP == ValidationTarget) { return WBP->GeneratedClass.Get(); }
 				// Ensure the WBP is compiled before using its GeneratedClass
 				if (!WBP->GeneratedClass || WBP->Status == BS_Dirty)
 				{
@@ -2108,7 +2117,7 @@ namespace
 		if (const FStructProperty* StructProp = CastField<FStructProperty>(Resolved.Property))
 		{
 			if (StructProp->Struct && StructProp->Struct->GetFName() == FName(TEXT("SlateColor")) &&
-				!OutValue.Contains(TEXT("SpecifiedColor")))
+				!OutValue.Contains(TEXT("SpecifiedColor")) && !OutValue.Contains(TEXT("ColorUseRule")))
 			{
 				const FString Trimmed = OutValue.TrimStartAndEnd();
 				// Reject non-tuple values (named colors, hex) — wrapping them would survive the
@@ -2124,9 +2133,104 @@ namespace
 		return true;
 	}
 
-	// Write one property on a design-time widget (or its slot). Does not mark the blueprint modified —
-	// the caller does, once, so a batch of writes (build_layout) doesn't re-mark per property.
-	bool WriteWidgetPropertyText(const TCHAR* Func, UWidget* Widget, const FString& ComponentName, const FString& PropertyName, const FString& PropertyValue, bool& bOutWroteToSlot, FString& OutError)
+	const FProperty* ResolveWidgetTupleKey(const UStruct* Type, const FString& Key, TArray<FString>& Errors)
+	{
+		const TCHAR* Cursor = *Key;
+		for (;;)
+		{
+			FString Member;
+			if (*Cursor == '"')
+			{
+				int32 Length = 0;
+				if (!FParse::QuotedString(Cursor, Member, &Length)) { return nullptr; }
+				Cursor += Length;
+			}
+			else
+			{
+				const TCHAR* Start = Cursor;
+				while (*Cursor && *Cursor != '.' && *Cursor != '[' && *Cursor != '(' && *Cursor != '<') { ++Cursor; }
+				Member = FString::ConstructFromPtrSize(Start, static_cast<int32>(Cursor - Start)).TrimStartAndEnd();
+			}
+
+			const FName Name(*Member);
+			const FProperty* Field = Type->FindPropertyByName(Name);
+			if (!Field)
+			{
+				const FName Redirect = FProperty::FindRedirectedPropertyName(Type, Name);
+				if (!Redirect.IsNone()) { Field = Type->FindPropertyByName(Redirect); }
+				if (!Field) { Field = Type->CustomFindProperty(Name); }
+			}
+			if (!Field)
+			{
+				TArray<FString> Valid;
+				for (TFieldIterator<FProperty> It(Type); It; ++It) { Valid.Add(It->GetName()); }
+				Errors.AddUnique(FString::Printf(TEXT("Unknown member '%s' of %s (valid members: %s)"),
+					*Member, *Type->GetName(), *FString::Join(Valid, TEXT(", "))));
+				return nullptr;
+			}
+
+			// ImportSingleProperty also accepts dotted struct paths and array subscripts.
+			const auto* Nested = CastField<FStructProperty>(Field);
+			if (*Cursor != '.' || !Nested) { return Field; }
+			Type = Nested->Struct;
+			++Cursor;
+		}
+	}
+
+	FString ValidateWidgetStructAssignments(const FStructProperty* StructProperty, const FString& Text)
+	{
+		if (!StructProperty || !Text.StartsWith(TEXT("(")))
+		{
+			return {};
+		}
+
+		// Only '=' at the current tuple level introduces a member. Quoted strings, text macros,
+		// and nested tuples may all contain commas. Track nested struct types without recursion.
+		struct FTuple
+		{
+			const UStruct* Type;
+			int32 KeyStart;
+			const FProperty* ValueProperty;
+		};
+		TArray<FTuple> Tuples = {{StructProperty->Struct, 1, nullptr}};
+		TArray<FString> Errors;
+		for (int32 Index = 1; Index < Text.Len() && !Tuples.IsEmpty(); ++Index)
+		{
+			FTuple& Tuple = Tuples.Last();
+			const TCHAR Ch = Text[Index];
+			if (Ch == '"')
+			{
+				while (++Index < Text.Len() && Text[Index] != '"')
+				{
+					if (Text[Index] == '\\') { ++Index; }
+				}
+			}
+			else if (Ch == '(')
+			{
+				const auto* Nested = CastField<FStructProperty>(Tuple.ValueProperty);
+				const auto* Array = CastField<FArrayProperty>(Tuple.ValueProperty);
+				Tuples.Add({Nested ? Nested->Struct.Get() : nullptr, Index + 1, Array ? Array->Inner : nullptr});
+			}
+			else if (Ch == ')')
+			{
+				Tuples.Pop();
+			}
+			else if (Ch == ',')
+			{
+				Tuple.KeyStart = Index + 1;
+				if (Tuple.Type) { Tuple.ValueProperty = nullptr; }
+			}
+			else if (Ch == '=' && Tuple.Type && Tuple.KeyStart != INDEX_NONE)
+			{
+				const FString Key = Text.Mid(Tuple.KeyStart, Index - Tuple.KeyStart).TrimStartAndEnd();
+				Tuple.KeyStart = INDEX_NONE;
+				Tuple.ValueProperty = ResolveWidgetTupleKey(Tuple.Type, Key, Errors);
+			}
+		}
+		return FString::Join(Errors, TEXT("; "));
+	}
+
+	bool WriteWidgetPropertyText(const TCHAR* Func, UWidget* Widget, const FString& ComponentName, const FString& PropertyName, const FString& PropertyValue, bool& bOutWroteToSlot, FString& OutError, bool bVerifyMembers = false)
 	{
 		bOutWroteToSlot = false;
 
@@ -2150,6 +2254,13 @@ namespace
 			return false;
 		}
 
+		if (bVerifyMembers)
+		{
+			OutError = ValidateWidgetStructAssignments(CastField<FStructProperty>(Resolved.Property), NormalizedValue);
+			if (!OutError.IsEmpty()) { return false; }
+		}
+
+		bOutWroteToSlot = (Resolved.TargetObject == Widget->Slot);
 		Resolved.TargetObject->Modify();
 		// Delegate export uses this sentinel for an unbound value, but delegate text
 		// import does not accept it. Clear through the reflected delegate API instead.
@@ -2178,9 +2289,6 @@ namespace
 		// value takes effect (e.g. SizeBox WidthOverride actually clamps instead of no-op'ing).
 		RaiseOverrideCompanionIfPresent(Resolved.TargetObject, Resolved.Property);
 
-		// If we wrote to the widget's slot (layout/alignment/z-order), the change is structural —
-		// the caller marks it so the editor refreshes the layout.
-		bOutWroteToSlot = (Resolved.TargetObject == Widget->Slot);
 		return true;
 	}
 
@@ -2227,12 +2335,8 @@ namespace
 		Result.PreviousValue = ExportResolvedProperty(Resolved);
 
 		FString Error;
-		if (!WriteWidgetPropertyText(Func, Widget, ComponentName, PropertyName, PropertyValue, bOutWroteToSlot, Error))
-		{
-			Result.Message = Error;
-			Result.NewValue = Result.PreviousValue;
-			return Result;
-		}
+		const bool bImported = WriteWidgetPropertyText(Func, Widget, ComponentName, PropertyName, PropertyValue,
+			bOutWroteToSlot, Error, /*bVerifyMembers=*/true);
 
 		// Re-resolve: the write can't move the value, but read back exactly as get_property would.
 		if (!ResolveWidgetProperty(Widget, PropertyName, Resolved))
@@ -2242,6 +2346,12 @@ namespace
 		}
 		Result.NewValue = ExportResolvedProperty(Resolved);
 		Result.bChanged = !Result.NewValue.Equals(Result.PreviousValue, ESearchCase::CaseSensitive);
+		if (!bImported)
+		{
+			// ImportText may have assigned earlier members before a syntax error.
+			Result.Message = Error;
+			return Result;
+		}
 
 		if (Result.bChanged)
 		{
@@ -4570,10 +4680,38 @@ namespace
 		return bOk;
 	}
 
-	// Parse one node and its subtree. Collects every error rather than stopping at the first, so one
-	// dry run reports everything that needs fixing.
-	bool ParseLayoutNode(const TSharedPtr<FJsonObject>& NodeObj, const FString& Path, FLayoutNodeSpec& OutSpec, TArray<FString>& OutErrors)
+	constexpr int32 MaxWidgetLayoutDepth = 64;
+
+	// Bound the DOM too: destroying an arbitrarily deep chain of JSON shared pointers can
+	// recurse before a bad request ever reaches validation. Each widget contributes a node
+	// object and a children array, plus the request wrapper and a final properties/slot object.
+	bool WidgetLayoutJsonExceedsDepth(const FString& LayoutJson)
 	{
+		const auto Reader = TJsonReaderFactory<>::Create(LayoutJson);
+		int32 Containers = 0;
+		EJsonNotation Token;
+		while (Reader->ReadNext(Token))
+		{
+			if (Token == EJsonNotation::ObjectStart || Token == EJsonNotation::ArrayStart)
+			{
+				if (++Containers > 2 * MaxWidgetLayoutDepth + 2) { return true; }
+			}
+			else if (Token == EJsonNotation::ObjectEnd || Token == EJsonNotation::ArrayEnd)
+			{
+				--Containers;
+			}
+		}
+		return false;
+	}
+
+	// Only successfully parsed trees reach validation, counting and creation, bounding all three.
+	bool ParseLayoutNode(const TSharedPtr<FJsonObject>& NodeObj, const FString& Path, int32 Depth, FLayoutNodeSpec& OutSpec, TArray<FString>& OutErrors)
+	{
+		if (Depth > MaxWidgetLayoutDepth)
+		{
+			OutErrors.Add(FString::Printf(TEXT("%s: layout exceeds the maximum depth of %d widget levels"), *Path, MaxWidgetLayoutDepth));
+			return false;
+		}
 		OutSpec.Path = Path;
 		bool bOk = true;
 
@@ -4612,7 +4750,7 @@ namespace
 					continue;
 				}
 				FLayoutNodeSpec& Child = OutSpec.Children.AddDefaulted_GetRef();
-				bOk &= ParseLayoutNode(*ChildObj, ChildPath, Child, OutErrors);
+				bOk &= ParseLayoutNode(*ChildObj, ChildPath, Depth + 1, Child, OutErrors);
 			}
 		}
 		return bOk;
@@ -4648,6 +4786,102 @@ namespace
 			Stale->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors);
 		}
 	}
+
+	TSet<UWidget*> FindPanelLayoutWidgets(UWidget* Root)
+	{
+		TSet<UWidget*> Reachable;
+		TArray<UWidget*> Pending;
+		if (Root) { Pending.Add(Root); }
+		while (!Pending.IsEmpty())
+		{
+			UWidget* Current = Pending.Pop(EAllowShrinking::No);
+			if (Reachable.Contains(Current)) { continue; }
+			Reachable.Add(Current);
+			if (UPanelWidget* Panel = Cast<UPanelWidget>(Current))
+			{
+				for (int32 Index = 0; Index < Panel->GetChildrenCount(); ++Index)
+				{
+					if (UWidget* Child = Panel->GetChildAt(Index)) { Pending.Add(Child); }
+				}
+			}
+		}
+		return Reachable;
+	}
+
+	TSet<FName> CollectWidgetLayoutBindingNames(UWidgetBlueprint* Blueprint)
+	{
+		TSet<FName> Names;
+		for (const FDelegateEditorBinding& Binding : Blueprint->Bindings)
+		{
+			Names.Add(FName(*Binding.ObjectName));
+			Names.Add(Binding.SourceProperty);
+			if (!Binding.SourcePath.Segments.IsEmpty())
+			{
+				Names.Add(Binding.SourcePath.Segments[0].GetMemberName());
+			}
+		}
+		for (const UWidgetAnimation* Animation : Blueprint->Animations)
+		{
+			if (!Animation) { continue; }
+			for (const FWidgetAnimationBinding& Binding : Animation->GetBindings())
+			{
+				if (!Binding.bIsRootWidget) { Names.Add(Binding.WidgetName); }
+			}
+		}
+		const auto* Extension = FindMVVMExtension(Blueprint);
+		const UMVVMBlueprintView* View = Extension ? Extension->GetBlueprintView() : nullptr;
+		if (!View) { return Names; }
+
+		// GetSource migrates legacy paths on first access. Inspect a copy during preflight.
+		auto AddPath = [&](FMVVMBlueprintPropertyPath Path)
+		{
+			const auto Source = Path.GetSource(Blueprint);
+			if (Source == EMVVMBlueprintFieldPathSource::Widget)
+			{
+				Names.Add(Path.GetWidgetName());
+			}
+			else if (Source == EMVVMBlueprintFieldPathSource::SelfContext && !Path.GetFieldPaths().IsEmpty())
+			{
+				Names.Add(Path.GetFieldPaths()[0].GetFieldName(Blueprint->SkeletonGeneratedClass));
+			}
+		};
+		auto AddDestinationAndPins = [&](const auto* Target)
+		{
+			if (!Target) { return; }
+			AddPath(Target->GetDestinationPath());
+			for (const FMVVMBlueprintPin& Pin : Target->GetPins()) { AddPath(Pin.GetPath()); }
+		};
+		for (const FMVVMBlueprintViewBinding& Binding : View->GetBindings())
+		{
+			AddPath(Binding.SourcePath);
+			AddPath(Binding.DestinationPath);
+			AddDestinationAndPins(Binding.Conversion.GetConversionFunction(true));
+			AddDestinationAndPins(Binding.Conversion.GetConversionFunction(false));
+		}
+		for (const UMVVMBlueprintViewEvent* Event : View->GetEvents())
+		{
+			if (!Event) { continue; }
+			AddPath(Event->GetEventPath());
+			AddDestinationAndPins(Event);
+		}
+		for (const UMVVMBlueprintViewCondition* Condition : View->GetConditions())
+		{
+			if (!Condition) { continue; }
+			AddPath(Condition->GetConditionPath());
+			AddDestinationAndPins(Condition);
+		}
+		return Names;
+	}
+
+	void DetachWidgetLayoutSlots(INamedSlotInterface* Host)
+	{
+		TArray<FName> Names;
+		Host->GetSlotNames(Names);
+		for (FName Name : Names)
+		{
+			if (Host->GetContentForSlot(Name)) { Host->SetContentForSlot(Name, nullptr); }
+		}
+	}
 }
 
 FString UWidgetService::ExportLayout(const FString& WidgetPath, bool bIncludeDefaults)
@@ -4680,7 +4914,8 @@ FWidgetBuildLayoutResult UWidgetService::BuildLayout(
 	const FString& WidgetPath,
 	const FString& LayoutJson,
 	const FString& Mode,
-	bool bDryRun)
+	bool bDryRun,
+	bool bDropUnexportedWidgets)
 {
 	FWidgetBuildLayoutResult Result;
 	Result.bDryRun = bDryRun;
@@ -4700,6 +4935,11 @@ FWidgetBuildLayoutResult UWidgetService::BuildLayout(
 	}
 	UWidgetTree* WidgetTree = WidgetBP->WidgetTree;
 
+	if (WidgetLayoutJsonExceedsDepth(LayoutJson))
+	{
+		Result.Errors.Add(FString::Printf(TEXT("Layout JSON is too deeply nested (maximum %d widget levels)"), MaxWidgetLayoutDepth));
+		return Result;
+	}
 	TSharedPtr<FJsonObject> Request;
 	const TSharedRef<TJsonReader<TCHAR>> Reader = TJsonReaderFactory<TCHAR>::Create(LayoutJson);
 	if (!FJsonSerializer::Deserialize(Reader, Request) || !Request.IsValid())
@@ -4734,7 +4974,7 @@ FWidgetBuildLayoutResult UWidgetService::BuildLayout(
 			Result.Errors.Add(TEXT("\"root\" must be a node object"));
 			return Result;
 		}
-		bParsed = ParseLayoutNode(*RootObj, TEXT("root"), TopNodes.AddDefaulted_GetRef(), Result.Errors);
+		bParsed = ParseLayoutNode(*RootObj, TEXT("root"), 1, TopNodes.AddDefaulted_GetRef(), Result.Errors);
 	}
 	else
 	{
@@ -4754,7 +4994,7 @@ FWidgetBuildLayoutResult UWidgetService::BuildLayout(
 				bParsed = false;
 				continue;
 			}
-			bParsed &= ParseLayoutNode(*ChildObj, ChildPath, TopNodes.AddDefaulted_GetRef(), Result.Errors);
+			bParsed &= ParseLayoutNode(*ChildObj, ChildPath, 1, TopNodes.AddDefaulted_GetRef(), Result.Errors);
 		}
 	}
 	if (!bParsed)
@@ -4764,7 +5004,14 @@ FWidgetBuildLayoutResult UWidgetService::BuildLayout(
 
 	// ---- Validate against the Widget Blueprint ------------------------------------------------
 	TArray<UWidget*> ExistingWidgets;
-	WidgetTree->GetAllWidgets(ExistingWidgets);
+	if (bReplace)
+	{
+		ExistingWidgets = WidgetBP->GetAllSourceWidgets();
+	}
+	else
+	{
+		WidgetTree->GetAllWidgets(ExistingWidgets);
+	}
 
 	UPanelWidget* AppendParent = nullptr;
 	if (bHasParent)
@@ -4803,6 +5050,7 @@ FWidgetBuildLayoutResult UWidgetService::BuildLayout(
 	}
 
 	bool bHasUserWidgets = false;
+	TMap<FName, const FLayoutNodeSpec*> ReplacementNodes;
 	TFunction<void(FLayoutNodeSpec&)> ValidateNode;
 	ValidateNode = [&](FLayoutNodeSpec& Spec)
 	{
@@ -4819,7 +5067,8 @@ FWidgetBuildLayoutResult UWidgetService::BuildLayout(
 		}
 		UsedNames.Add(Spec.Name.ToLower());
 
-		Spec.WidgetClass = FindWidgetClass(Spec.Type);
+		Spec.WidgetClass = FindWidgetClass(Spec.Type, WidgetBP);
+		if (bReplace) { ReplacementNodes.Add(FName(*Spec.Name), &Spec); }
 		if (!Spec.WidgetClass)
 		{
 			Result.Errors.Add(FString::Printf(TEXT("%s: unknown widget type '%s' (see search_types() / list_widget_blueprints())"), *NodeLabel, *Spec.Type));
@@ -4889,9 +5138,46 @@ FWidgetBuildLayoutResult UWidgetService::BuildLayout(
 		return Result;
 	}
 
-	if (bReplace && (WidgetBP->Animations.Num() > 0 || FindMVVMExtension(WidgetBP)))
+	TSet<UWidget*> ToDelete;
+	if (bReplace)
 	{
-		Result.Warnings.Add(TEXT("This Widget Blueprint has animations and/or MVVM bindings — tracks and bindings that target widgets missing from the new layout will break; reuse the old widget names to keep them"));
+		const TSet<UWidget*> ExportedWidgets = FindPanelLayoutWidgets(WidgetTree->RootWidget);
+		const TSet<FName> BindingNames = CollectWidgetLayoutBindingNames(WidgetBP);
+		TArray<FString> Unexported, Bound;
+		TArray<UWidget*> GraphUses;
+		for (UWidget* Old : ExistingWidgets)
+		{
+			const FName Name = Old->GetFName();
+			if (!bDropUnexportedWidgets && !ExportedWidgets.Contains(Old)) { Unexported.Add(Old->GetName()); }
+			const FLayoutNodeSpec* Replacement = ReplacementNodes.FindRef(Name);
+			const bool bSameClass = Replacement && Replacement->WidgetClass.Get() == Old->GetClass();
+			if (!bSameClass) { ToDelete.Add(Old); }
+			if (!bSameClass || (Old->bIsVariable && !Replacement->bIsVariable))
+			{
+				if (FBlueprintEditorUtils::IsVariableUsed(WidgetBP, Name) || FKismetEditorUtilities::PropertyHasBoundEvents(WidgetBP, Name))
+				{
+					GraphUses.Add(Old);
+				}
+				if (BindingNames.Contains(Name) || (WidgetBP->ParentClass &&
+					FWidgetBlueprintEditorUtils::IsBindWidgetProperty(WidgetBP->ParentClass->FindPropertyByName(Name))))
+				{
+					Bound.Add(Old->GetName());
+				}
+			}
+		}
+		if (!Unexported.IsEmpty())
+		{
+			Unexported.Sort();
+			Result.Errors.Add(FString::Printf(TEXT("export_layout omits these widgets: %s. Set drop_unexported_widgets=True to discard their unexported content."),
+				*FString::Join(Unexported, TEXT(", "))));
+		}
+		if (!GraphUses.IsEmpty()) { Result.Errors.Add(DescribeGraphUses(WidgetBP, GraphUses)); }
+		if (!Bound.IsEmpty())
+		{
+			Bound.Sort();
+			Result.Errors.Add(TEXT("Bindings reference these widgets: ") + FString::Join(Bound, TEXT(", ")));
+		}
+		if (!Result.Errors.IsEmpty()) { return Result; }
 	}
 
 	if (bDryRun)
@@ -4913,20 +5199,27 @@ FWidgetBuildLayoutResult UWidgetService::BuildLayout(
 
 	if (bReplace)
 	{
-		// Detach the whole old tree and move its widgets out of the WidgetTree's namespace, so the new
-		// layout can reuse their names (the usual case when an exported layout is edited and rebuilt).
-		WidgetTree->RootWidget = nullptr;
+		// DeleteWidgets also removes descendants. Separate the old nodes first so it only cleans
+		// up the names actually being retired, even when a kept widget had a dropped parent.
+		DetachWidgetLayoutSlots(WidgetTree);
 		for (UWidget* Old : ExistingWidgets)
 		{
-			if (!Old)
-			{
-				continue;
-			}
-			WidgetBP->WidgetVariableNameToGuidMap.Remove(Old->GetFName());
 			Old->Modify();
-			Old->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors);
-			++Result.WidgetsRemoved;
+			if (UPanelWidget* Parent = Old->GetParent())
+			{
+				Parent->Modify();
+				Old->Slot->Modify();
+			}
+			WidgetTree->RemoveWidget(Old);
+			if (INamedSlotInterface* Host = Cast<INamedSlotInterface>(Old)) { DetachWidgetLayoutSlots(Host); }
 		}
+		FWidgetBlueprintEditorUtils::DeleteWidgets(WidgetBP, ToDelete, FWidgetBlueprintEditorUtils::EDeleteWidgetWarningType::DeleteSilently);
+		for (UWidget* Old : ExistingWidgets)
+		{
+			// Only the templates change for a reused name and class. Keep the GUID, focus and bindings.
+			if (!ToDelete.Contains(Old)) { Old->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors); }
+		}
+		Result.WidgetsRemoved = ExistingWidgets.Num();
 	}
 
 	bool bAllCreated = true;
@@ -4948,7 +5241,7 @@ FWidgetBuildLayoutResult UWidgetService::BuildLayout(
 		// Register widget with GUID map (required for UMG compilation)
 		if (!WidgetBP->WidgetVariableNameToGuidMap.Contains(NewWidget->GetFName()))
 		{
-			WidgetBP->WidgetVariableNameToGuidMap.Add(NewWidget->GetFName(), FGuid::NewGuid());
+			WidgetBP->OnVariableAdded(NewWidget->GetFName());
 		}
 
 		if (Parent)

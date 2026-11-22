@@ -87,8 +87,10 @@ into that form by `set_property`. `ShadowColorAndOpacity` is a plain **FLinearCo
 
 **Prefer `set_property_verified` over `set_property`.** A struct set can return `True` while
 writing nothing (UE struct import ignores unrecognized member names). `set_property_verified`
-takes the same arguments, reads the value back, and returns `success=False` with the expected
-format in `message` when nothing was written:
+takes the same arguments and checks struct member names case-insensitively before writing.
+An unknown member returns `success=False` and lists the valid names, even when the property
+still has its default value. After a parse failure, `new_value` and `changed` report what UE
+actually stored, including any partial write.
 
 ```python
 r = unreal.WidgetService.set_property_verified(path, "PlayButton", "Slot.Padding", "(Left=8,Top=8,Right=8,Bottom=8)")
@@ -127,13 +129,21 @@ print(r.success, r.widgets_created, r.properties_failed, list(r.errors))
   numbers or booleans; `is_variable` defaults to true.
 - `mode="append"` (default): `{"root": {...}}` on an **empty** WBP, or
   `{"parent": "Menu", "children": [...]}` to add below an existing panel.
-- `mode="replace"`: `{"root": {...}}` — throws the old tree away and builds the new one.
+- `mode="replace"` takes `{"root": {...}}`. A reused name and class keep the widget variable's GUID.
+  Dry runs and writes both list graph or binding references that prevent dropping or retyping a widget.
+- Each input subtree can contain up to 64 widget levels, counting its top node as level 1.
 - The build is one undo transaction. Property/slot failures don't stop the build; they are counted in
   `properties_failed` and listed in `errors`.
 
-`export_layout(path)` returns the current tree in exactly that format (only non-default values unless
-`include_defaults=True`). To restructure an existing widget: export → edit the JSON → `build_layout(...,
-"replace")`. Reusing the old widget names keeps animation tracks and MVVM bindings pointing at them.
+`export_layout(path)` follows panel children from the root and writes non-default editable values.
+`include_defaults=True` also writes eligible default values. Both modes skip delegates, transient and
+edit-const properties, and instanced object references such as navigation and accessibility settings.
+Recreated widgets start with class defaults for omitted properties.
+
+An ExpandableArea's header and body, a child user widget's named-slot content, and top-level inherited
+slot content sit outside the panel hierarchy. Replace lists omitted widgets and refuses the request.
+To intentionally discard that content, pass `drop_unexported_widgets=True`. Graph and binding checks
+still apply. To restructure a panel layout, export it, edit the JSON, and dry-run the replacement first.
 
 ### 🚨 Use dedicated style APIs for full font/brush edits
 

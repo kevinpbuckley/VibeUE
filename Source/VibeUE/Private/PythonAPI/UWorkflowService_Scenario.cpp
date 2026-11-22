@@ -22,6 +22,7 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
+#include "Tools/PythonExecutionService.h"
 #include "UnrealClient.h"
 
 namespace
@@ -284,7 +285,8 @@ namespace
 			else if (Action == TEXT("python"))
 			{
 				// Runs in the shared console globals, so later expressions can read what this code sets
-				FPythonCommandEx Command; Command.Command = Step->GetStringField(TEXT("code"));
+				FPythonCommandEx Command;
+				Command.Command = VibeUE::FPythonExecutionService::MakeCodeCommand(Step->GetStringField(TEXT("code")));
 				Command.ExecutionMode = EPythonCommandExecutionMode::ExecuteFile;
 				Command.FileExecutionScope = EPythonFileExecutionScope::Public;
 				IPythonScriptPlugin* Python = IPythonScriptPlugin::Get(); const bool bOk = Python && Python->ExecPythonCommandEx(Command);
@@ -297,7 +299,7 @@ namespace
 				if (Now >= Scenario->WaitUntil)
 				{
 					Scenario->WaitUntil = Now + FMath::Clamp(Poll, 0.01, 10.0);
-					FPythonCommandEx Command; Command.Command = TEXT("bool(") + Step->GetStringField(TEXT("expression")) + TEXT(")");
+					FPythonCommandEx Command; Command.Command = TEXT("bool(") + Step->GetStringField(TEXT("expression")) + TEXT("\n)");
 					Command.ExecutionMode = EPythonCommandExecutionMode::EvaluateStatement;
 					IPythonScriptPlugin* Python = IPythonScriptPlugin::Get(); const bool bExecuted = Python && Python->ExecPythonCommandEx(Command);
 					if (!bExecuted) { AddScenarioStepResult(Scenario, Action, false, TEXT("wait_until expression raised: ") + Command.CommandResult.Right(2000)); }
@@ -350,6 +352,14 @@ FString UWorkflowService::RunScenario(const FString& ScenarioJson)
 		FString Text;
 		if (Action == TEXT("python") && (!Step->TryGetStringField(TEXT("code"), Text) || Text.TrimStartAndEnd().IsEmpty())) { return ScenarioError(TEXT("python step requires code")); }
 		if (Action == TEXT("wait_until") && (!Step->TryGetStringField(TEXT("expression"), Text) || Text.TrimStartAndEnd().IsEmpty())) { return ScenarioError(TEXT("wait_until requires expression")); }
+		if (Action == TEXT("python") || Action == TEXT("wait_until"))
+		{
+			FString BlockedPattern, BlockedReason;
+			if (VibeUE::FPythonExecutionService::ContainsUnsafePattern(Text, BlockedPattern, BlockedReason))
+			{
+				return ScenarioError(FString::Printf(TEXT("Blocked unsafe Python code: %s. %s"), *BlockedPattern, *BlockedReason));
+			}
+		}
 		if (!IsAssertion(Action)) { continue; }
 		++AssertionsDeclared;
 		FString Expression, Expected, Contains, NotContains;

@@ -214,8 +214,8 @@ would be created), `widgets_removed` (`replace` mode), `properties_set`, `proper
 | `set_property` / `get_property` | Read/write a single widget property (string value) |
 | `set_property_verified` | Same args as `set_property` → WidgetPropertyWriteResult (reads the value back) |
 | `set_color` | `(widget_path, component_name, property_name, color)` — hex / sRGB / name → linear, verified |
-| `export_layout` | `(widget_path, include_defaults=False)` → JSON string of the whole tree |
-| `build_layout` | `(widget_path, layout_json, mode="append", dry_run=False)` → WidgetBuildLayoutResult |
+| `export_layout` | `(widget_path, include_defaults=False)` → JSON of the root and its panel descendants. Skips instanced references, including navigation and accessibility settings. |
+| `build_layout` | `(widget_path, layout_json, mode="append", dry_run=False, drop_unexported_widgets=False)` → WidgetBuildLayoutResult. Input depth limit is 64 widget levels. Replace requires explicit opt-in to drop named-slot or other unexported content and checks graph and binding references. |
 | `list_properties` | All editable properties for a widget |
 | `get_available_events` | List valid events (`WidgetEventInfo`) for a widget |
 | `set_font` / `get_font` | `(..., font_info, property_name="Font")` / `(..., property_name="Font")` |

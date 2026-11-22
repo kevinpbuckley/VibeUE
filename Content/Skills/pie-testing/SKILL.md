@@ -98,8 +98,11 @@ editor ticks — the game thread keeps running, so the awaited work can actually
 
 - `python` runs `code` (multi-line allowed) in the shared console globals, so names it defines are
   visible to later `python`, `wait_until` and assertion expressions. A raised exception fails the step.
-- `wait_until` evaluates `bool(expression)` every `poll_seconds` (default 0.25) until it is `True`;
-  it fails after `timeout_seconds` (default 30) or if the expression raises.
+- `wait_until` evaluates `bool(expression)` every `poll_seconds` (default 0.25, clamped to 0.01–10 seconds)
+  until it is `True`. It fails on an exception or a false poll after `timeout_seconds` (default 30,
+  clamped to 0–600 seconds). Both steps accept trailing Python comments, including mentions of `.py` files.
+- Scenario validation checks `python` code and `wait_until` expressions against the execution service's
+  unsafe-pattern rules. A match rejects the entire scenario before preflight or execution.
 - Neither counts as an assertion: still declare at least one assertion (or `smoke: true`).
 - Re-fetch PIE objects inside each scenario (never from an earlier session's globals).
 
