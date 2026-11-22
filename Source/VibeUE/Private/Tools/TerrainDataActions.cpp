@@ -346,6 +346,7 @@ FString GetMapFeatures(const FParams& Params)
 	Summary->SetBoolField(TEXT("success"), true);
 	Summary->SetStringField(TEXT("file"), Path);
 	Summary->SetObjectField(TEXT("sample_names"), Names);
+	Summary->SetStringField(TEXT("ue5_coordinate_note"), TEXT("In the file each feature has ue5_point, ue5_points or ue5_rings: origin-centred centimetres, +X east, +Y south (north is negative Y), z 0. Add the landscape actor's location if it is not at the origin."));
 	return Serialize(Summary);
 }
 
@@ -407,7 +408,7 @@ FString GetFeatureMasks(const FParams& Params)
 	Result->SetObjectField(TEXT("files"), Paths);
 	Result->SetObjectField(TEXT("resolutions"), Resolutions);
 	Result->SetObjectField(TEXT("layers"), *Channels);
-	for (const TCHAR* Field : {TEXT("source"), TEXT("attribution"), TEXT("license")})
+	for (const TCHAR* Field : {TEXT("source"), TEXT("counts"), TEXT("notes"), TEXT("truncated"), TEXT("attribution"), TEXT("license")})
 		CopyTerrainField(*Result, *Manifest.Json, Field);
 	Result->SetStringField(TEXT("import_hints"), TEXT("Import linear with sRGB off and lossless compression. Preserve RGB at zero alpha. Keep road_distance at 16 bits (centimetres)."));
 	return Serialize(Result);
@@ -535,9 +536,9 @@ FString GetOrthoImage(const FParams& Params)
 		const FTerrainReply Manifest = RequestTerrain(TerrainOrthoRoute, Body, TEXT("application/json"));
 		if (!Manifest.Failure.IsEmpty()) return Manifest.Failure;
 		const FJsonObject& Info = *Manifest.Json;
-		const TSharedPtr<FJsonObject>* Grid;
-		const TSharedPtr<FJsonObject>* Request;
-		const TSharedPtr<FJsonObject>* Template;
+		const TSharedPtr<FJsonObject>* Grid = nullptr;
+		const TSharedPtr<FJsonObject>* Request = nullptr;
+		const TSharedPtr<FJsonObject>* Template = nullptr;
 		FString Resolved;
 		TArray<FString> Available;
 		const int32 TileSide = FMath::Min(Side, 2048);

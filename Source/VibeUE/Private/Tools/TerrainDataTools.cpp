@@ -386,6 +386,75 @@ bool Terrain::SaveText(const FString& Text, const FString& FilePath)
 }
 
 // ---------------------------------------------------------------------------
+// The coordinates get_water_features wrote before exact alignment existed (exact_center=false): an equirectangular
+// approximation with +Y NORTH, which is mirrored north-south on a landscape imported north-first (row zero at minimum
+// Y). Kept bit for bit, float rounding included, so a saved script that relies on it gets the file it always got.
+// ---------------------------------------------------------------------------
+static TSharedRef<FJsonObject> TerrainLegacyWaterPoint(const TSharedPtr<FJsonObject>& Pt, double CenterLng, double CenterLat)
+{
+	double PtLng = 0.0, PtLat = 0.0;
+	Pt->TryGetNumberField(TEXT("lng"), PtLng);
+	Pt->TryGetNumberField(TEXT("lat"), PtLat);
+	const double MetersPerDegree = 111320.0;
+	const double CosLat = FMath::Cos(FMath::DegreesToRadians(CenterLat));
+	const FVector V(
+		(float)((PtLng - CenterLng) * MetersPerDegree * CosLat * 100.0),  // +X = East
+		(float)((PtLat - CenterLat) * MetersPerDegree * 100.0),           // +Y = North
+		0.0f);
+	TSharedRef<FJsonObject> UE5Pt = MakeShared<FJsonObject>();
+	UE5Pt->SetNumberField(TEXT("x"), V.X);
+	UE5Pt->SetNumberField(TEXT("y"), V.Y);
+	UE5Pt->SetNumberField(TEXT("z"), V.Z);
+	return UE5Pt;
+}
+
+static TArray<TSharedPtr<FJsonValue>> TerrainLegacyWaterLine(const TArray<TSharedPtr<FJsonValue>>& Points, double CenterLng, double CenterLat)
+{
+	TArray<TSharedPtr<FJsonValue>> Line;
+	Line.Reserve(Points.Num());
+	for (const TSharedPtr<FJsonValue>& PtVal : Points)
+	{
+		const TSharedPtr<FJsonObject> Pt = PtVal->AsObject();
+		if (Pt.IsValid()) Line.Add(MakeShared<FJsonValueObject>(TerrainLegacyWaterPoint(Pt, CenterLng, CenterLat)));
+	}
+	return Line;
+}
+
+static void AddLegacyWaterCoordinates(FJsonObject& ApiJson, double CenterLng, double CenterLat)
+{
+	const TArray<TSharedPtr<FJsonValue>>* Waterways;
+	if (ApiJson.TryGetArrayField(TEXT("waterways"), Waterways))
+	{
+		for (const TSharedPtr<FJsonValue>& WwVal : *Waterways)
+		{
+			const TSharedPtr<FJsonObject> Ww = WwVal->AsObject();
+			const TArray<TSharedPtr<FJsonValue>>* Points;
+			if (!Ww.IsValid() || !Ww->TryGetArrayField(TEXT("points"), Points)) continue;
+			Ww->SetArrayField(TEXT("ue5_points"), TerrainLegacyWaterLine(*Points, CenterLng, CenterLat));
+		}
+	}
+	const TArray<TSharedPtr<FJsonValue>>* Bodies;
+	if (ApiJson.TryGetArrayField(TEXT("water_bodies"), Bodies))
+	{
+		for (const TSharedPtr<FJsonValue>& BdVal : *Bodies)
+		{
+			const TSharedPtr<FJsonObject> Bd = BdVal->AsObject();
+			const TArray<TSharedPtr<FJsonValue>>* Rings;
+			if (!Bd.IsValid() || !Bd->TryGetArrayField(TEXT("rings"), Rings)) continue;
+			TArray<TSharedPtr<FJsonValue>> UE5Rings;
+			UE5Rings.Reserve(Rings->Num());
+			for (const TSharedPtr<FJsonValue>& RingVal : *Rings)
+			{
+				const TArray<TSharedPtr<FJsonValue>>* Points;
+				if (!RingVal->TryGetArray(Points)) continue;
+				UE5Rings.Add(MakeShared<FJsonValueArray>(TerrainLegacyWaterLine(*Points, CenterLng, CenterLat)));
+			}
+			Bd->SetArrayField(TEXT("ue5_rings"), UE5Rings);
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Action: get_water_features
 // ---------------------------------------------------------------------------
 static FString ActionGetWaterFeatures(const TMap<FString, FString>& Params)
@@ -430,21 +499,34 @@ static FString ActionGetWaterFeatures(const TMap<FString, FString>& Params)
 	if (!FJsonSerializer::Deserialize(Reader, ApiJson) || !ApiJson.IsValid())
 		return Terrain::Error(TEXT("PARSE_ERROR"), TEXT("Failed to parse server response."));
 
-	for (const TCHAR* Field : {TEXT("waterways"), TEXT("water_bodies")})
+	// exact_center (default true): the landscape's own axes, the same conversion get_map_features uses, so water lies
+	// where an exact heightmap, its masks and its orthophoto put it. exact_center=false: the file older builds wrote.
+	const bool bLandscapeAxes = Terrain::Boolean(Params, TEXT("exact_center"), true);
+	if (bLandscapeAxes)
 	{
-		const TArray<TSharedPtr<FJsonValue>>* Features;
-		if (!ApiJson->TryGetArrayField(Field, Features)) continue;
-		for (const TSharedPtr<FJsonValue>& Value : *Features)
+		for (const TCHAR* Field : {TEXT("waterways"), TEXT("water_bodies")})
 		{
-			if (const TSharedPtr<FJsonObject> Feature = Value->AsObject())
-				Terrain::AddCoordinates(*Feature, Lng, Lat, FMath::Clamp(MapSize, 1.0, 100.0));
+			const TArray<TSharedPtr<FJsonValue>>* Features;
+			if (!ApiJson->TryGetArrayField(Field, Features)) continue;
+			for (const TSharedPtr<FJsonValue>& Value : *Features)
+			{
+				if (const TSharedPtr<FJsonObject> Feature = Value->AsObject())
+					Terrain::AddCoordinates(*Feature, Lng, Lat, FMath::Clamp(MapSize, 1.0, 100.0));
+			}
 		}
 	}
+	else
+	{
+		AddLegacyWaterCoordinates(*ApiJson, Lng, Lat);
+	}
 
-	ApiJson->SetStringField(TEXT("ue5_coordinate_note"),
-		TEXT("+X=East +Y=South, landscape center at world origin. "
-		     "If landscape actor is offset, add its Location from "
-		     "ULandscapeService.get_landscape_info() to each ue5_point/ue5_ring vertex."));
+	ApiJson->SetStringField(TEXT("ue5_coordinate_note"), bLandscapeAxes
+		? TEXT("+X=East +Y=South (north is negative Y, as on a landscape imported from the heightmap), landscape center at world origin. "
+		       "If landscape actor is offset, add its Location from "
+		       "ULandscapeService.get_landscape_info() to each ue5_point/ue5_ring vertex.")
+		: TEXT("+X=East +Y=North, landscape center at world origin. "
+		       "If landscape actor is offset, add its Location from "
+		       "ULandscapeService.get_landscape_info() to each ue5_point/ue5_ring vertex."));
 
 	// Serialize the full JSON (with injected UE5 coordinates)
 	FString FullJson;
@@ -558,9 +640,12 @@ static FString ActionGetWaterFeatures(const TMap<FString, FString>& Params)
 			 "Water bodies use 'ue5_rings', waterways use 'ue5_points'. Both are origin-centered."),
 		*FilePath, NumWaterways, TotalWaterwayPoints, NumBodies, TotalBodyPoints));
 
-	Result->SetStringField(TEXT("ue5_coordinate_note"),
-		TEXT("COORDINATE SYSTEM: +X=East +Y=South, map center at world origin (0,0,0). "
-			 "All ue5_points and ue5_rings are in this origin-centered space."));
+	Result->SetStringField(TEXT("ue5_coordinate_note"), bLandscapeAxes
+		? TEXT("COORDINATE SYSTEM: +X=East +Y=South (north is negative Y), map center at world origin (0,0,0). "
+			   "All ue5_points and ue5_rings are in this origin-centered space, the one get_map_features uses. "
+			   "exact_center=false returns the older +Y=North coordinates.")
+		: TEXT("COORDINATE SYSTEM: +X=East +Y=North, map center at world origin (0,0,0). "
+			   "All ue5_points and ue5_rings are in this origin-centered space."));
 
 	FString Out;
 	TSharedRef<TJsonWriter<>> OutWriter = TJsonWriterFactory<>::Create(&Out);
@@ -789,7 +874,7 @@ REGISTER_VIBEUE_TOOL(terrain_data,
 		TOOL_PARAM("action",          "Action: generate_heightmap | preview_elevation | get_map_image | list_styles | get_water_features | get_map_features | get_feature_masks | get_ortho_image | generate_vista_heightmap", "string", true),
 		TOOL_PARAM("lng",             "Longitude of center point (e.g. -122.4194 for San Francisco)", "number", false),
 		TOOL_PARAM("lat",             "Latitude of center point (e.g. 37.7749 for San Francisco)", "number", false),
-		TOOL_PARAM("map_size",        "Map size in km (default 17.28). Use the same value for heightmap and get_water_features.", "number", false),
+		TOOL_PARAM("map_size",        "Map size in km (default 17.28). Use the same value for every action of one landscape (for a vista it is the inner, playable side).", "number", false),
 		TOOL_PARAM("format",          "Heightmap or vista output format: png (default), raw, zip", "string", false),
 		TOOL_PARAM("resolution",      "Samples per side for heightmap, vista or masks. Match the playable heightmap to its landscape. "
 		                               "Use ULandscapeService.calculate_landscape_resolution() to compute. "
@@ -805,7 +890,7 @@ REGISTER_VIBEUE_TOOL(terrain_data,
 		TOOL_PARAM("draw_streams",    "Request stream processing (default true, reserved by the current encoder)", "boolean", false),
 		TOOL_PARAM("stream_depth",    "Stream depth in meters (default 7)", "number", false),
 		TOOL_PARAM("plains_height",   "Height threshold for plains smoothing in meters (default 140)", "number", false),
-		TOOL_PARAM("exact_center", "Exact geographic centre for preview and heightmap (default true). False selects the legacy crop. Vista is always exact.", "boolean", false),
+		TOOL_PARAM("exact_center", "Default true: preview and heightmap are centred exactly on lng/lat, and get_water_features writes coordinates on the landscape's axes (+X east, +Y south). False reproduces older builds: the legacy off-centre crop, and water coordinates with +Y north. Vista, masks, map features and orthophotos are always exact.", "boolean", false),
 		TOOL_PARAM("min_spacing_m", "Minimum vertex spacing in metres for water and map features. Zero keeps full detail.", "number", false),
 		TOOL_PARAM("detail", "Water feature detail: standard (default) or high.", "string", false),
 		TOOL_PARAM("categories", "Comma list or string array: roads, tracks_paths, railways, buildings, parking, landcover, barriers, pois, water. Omit for server defaults.", "string_or_array", false),
@@ -831,6 +916,68 @@ FString Terrain::RunWithoutKey(const FParams& Params)
 	check(IsInGameThread());
 	TGuardValue<bool> EmptyKey(GTerrainTestEmptyKey, true);
 	return DispatchTerrainAction(Params);
+}
+
+// get_water_features has two coordinate conventions: the landscape's axes (default) and the older +Y north one
+// (exact_center=false), which must stay what it was. The point is Enchanted Rock's summit, north-east of the centre.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeUETerrainDataWaterAxesTest, "VibeUE.TerrainData.WaterAxes",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVibeUETerrainDataWaterAxesTest::RunTest(const FString& Parameters)
+{
+	const TCHAR* Source = TEXT(R"({"waterways":[{"name":"","points":[{"lng":-98.818824,"lat":30.506464}]}],)")
+		TEXT(R"("water_bodies":[{"name":"","rings":[[{"lng":-98.818824,"lat":30.506464}]]}]})");
+	auto FirstPoint = [](const TSharedPtr<FJsonObject>& Json, bool bBody) -> TSharedPtr<FJsonObject>
+	{
+		const TArray<TSharedPtr<FJsonValue>>* Features = nullptr;
+		if (!Json->TryGetArrayField(bBody ? TEXT("water_bodies") : TEXT("waterways"), Features) || Features->Num() != 1) return nullptr;
+		const TSharedPtr<FJsonObject> Feature = (*Features)[0]->AsObject();
+		const TArray<TSharedPtr<FJsonValue>>* Points = nullptr;
+		if (!Feature || !Feature->TryGetArrayField(bBody ? TEXT("ue5_rings") : TEXT("ue5_points"), Points) || Points->Num() != 1) return nullptr;
+		if (bBody)
+		{
+			const TArray<TSharedPtr<FJsonValue>>* Ring = nullptr;
+			if (!(*Points)[0]->TryGetArray(Ring) || Ring->Num() != 1) return nullptr;
+			return (*Ring)[0]->AsObject();
+		}
+		return (*Points)[0]->AsObject();
+	};
+
+	TSharedPtr<FJsonObject> Legacy;
+	if (!TestTrue(TEXT("the sample parses"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Source), Legacy) && Legacy.IsValid()))
+	{
+		return false;
+	}
+	AddLegacyWaterCoordinates(*Legacy, -98.819936, 30.505025);
+	for (const bool bBody : {false, true})
+	{
+		const TSharedPtr<FJsonObject> Point = FirstPoint(Legacy, bBody);
+		if (!TestTrue(TEXT("legacy coordinates were written"), Point.IsValid())) return false;
+		// 0.001439 degrees of latitude x 111320 m, as a float: north is POSITIVE Y
+		TestEqual(TEXT("legacy Y is north-positive"), Point->GetNumberField(TEXT("y")), 16018.95, 0.01);
+		TestEqual(TEXT("legacy Y keeps its float rounding"), Point->GetNumberField(TEXT("y")),
+			static_cast<double>(static_cast<float>((30.506464 - 30.505025) * 111320.0 * 100.0)), 0.0);
+		TestEqual(TEXT("legacy X is east-positive"), Point->GetNumberField(TEXT("x")), 10665.37, 0.01);
+		TestEqual(TEXT("legacy Z"), Point->GetNumberField(TEXT("z")), 0.0, 0.0);
+	}
+
+	TSharedPtr<FJsonObject> Aligned;
+	if (!TestTrue(TEXT("the sample parses again"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Source), Aligned) && Aligned.IsValid()))
+	{
+		return false;
+	}
+	for (const TCHAR* Field : {TEXT("waterways"), TEXT("water_bodies")})
+	{
+		Terrain::AddCoordinates(*Aligned->GetArrayField(Field)[0]->AsObject(), -98.819936, 30.505025, 3.0);
+	}
+	for (const bool bBody : {false, true})
+	{
+		const TSharedPtr<FJsonObject> Point = FirstPoint(Aligned, bBody);
+		if (!TestTrue(TEXT("aligned coordinates were written"), Point.IsValid())) return false;
+		TestEqual(TEXT("aligned Y is south-positive (the contract's summit)"), Point->GetNumberField(TEXT("y")), -16018.99, 0.01);
+		TestEqual(TEXT("aligned X"), Point->GetNumberField(TEXT("x")), 10665.32, 0.01);
+	}
+	return true;
 }
 
 // The same late-completion hazard as deep_research (VibeUE.Research.TimeoutIsSafe): a timed-out request is cancelled,
