@@ -62,8 +62,8 @@ Keep the returned **attribution** and **license** (or **license_note**) with the
 
 - Every `file` path in a reply is a full path under the project's `Saved/Terrain/`.
 - The default names of heightmap (`heightmap_<lat>_<lng>.png`), water (`water_features_<lat>_<lng>_<size>km.json`) and map features (`mapfeatures_<lat>_<lng>_<size>km.json`) depend only on the place: a second call with other options (an exact and a legacy heightmap, default and high-detail water) overwrites the first. Pass `save_path` to keep both. Masks, orthophotos and vistas get a unique id in their names, and masks and orthophotos ignore `save_path`.
-- `source` says where vectors and masks came from: `openstreetmap`, or `mapbox-streets-v8` when the OpenStreetMap servers do not answer (then `notes` says so: generalised geometry, roads cut into tile fragments, no building names, no OSM ids). `prefer="openstreetmap"` fails with `HTTP_502` instead of falling back; `prefer="tiles"` asks for the fallback directly.
-- Orthophotos take time: a NAIP tile (2048 pixels; a 4096 image has four per band, an 8192 image sixteen) answers in under a second when its render is still warm and in 20-30 s when it is not, so a 4096 image takes about a minute and an 8192 image several. A tile that answers 502 or 504, or does not answer, is retried up to three times. If your client gives up waiting, call again: tiles that finished rendering meanwhile usually come back quickly (measured at Enchanted Rock: 4096 in 45-55 s, 8192 in 3.6 minutes, one tile in each run answered 502 after 30 s and came back on the second try).
+- `source` says where vectors and masks came from: `openstreetmap`, or `mapbox-streets-v8` when the OpenStreetMap servers do not answer (then `notes` says so: generalised geometry, roads cut into tile fragments, no building names, no OSM ids). `prefer="openstreetmap"` fails instead of falling back (`HTTP_503`, "OpenStreetMap detail unavailable", `upstream` "Overpass"); `prefer="tiles"` asks for the fallback directly.
+- Orthophotos take time: a NAIP tile (2048 pixels; a 4096 image has four per band, an 8192 image sixteen) answers in under a second when its render is still warm and in 20-30 s when it is not, so a 4096 image takes about a minute and an 8192 image several. A tile or a mask layer that answers 502, 503 or 504, or does not answer, is asked up to three times. If your client gives up waiting, call again: tiles that finished rendering meanwhile usually come back quickly (measured at Enchanted Rock: 4096 in 45-55 s, 8192 in 3.6 minutes, one tile in each run answered 502 after 30 s and came back on the second try).
 
 ### Registration and request options
 
@@ -72,7 +72,7 @@ Keep the returned **attribution** and **license** (or **license_note**) with the
 - At landscape vertex (i,j), sample a mask or orthophoto of actual side M at `((0.5+i*(M-1)/(N-1))/M, (0.5+j*(M-1)/(N-1))/M)`, where N is the landscape vertex count per side. Road distance caps M at 2017.
 - Map features and masks accept up to 40 km and `prefer="auto" | "openstreetmap" | "tiles"`. Vector categories can be a comma list or JSON array of roads, tracks_paths, railways, buildings, parking, landcover, barriers, pois and water. Omit categories for the server's extent-dependent default. An explicit empty array selects none.
 - Masks default to 1009 samples and all four layers. Surface packs roads, tracks, water and buildings. Landcover packs rock, woodland, scrub/wetland and grass/agriculture. Parking is a single coverage channel.
-- Orthophotos accept sizes 1024, 2048 (default), 4096 and 8192, sources auto, naip or mapbox, and bands rgb (default), canopy or both. Retryable tiles get at most three attempts. Auto RGB can restart the entire image from Mapbox if NAIP repeatedly fails.
+- Orthophotos accept sizes 1024, 2048 (default), 4096 and 8192, sources auto, naip or mapbox, and bands rgb (default), canopy or both. Retryable tiles and mask layers get at most three attempts. Auto RGB can restart the entire image from Mapbox if NAIP repeatedly fails.
 - Vista accepts the heightmap processing and format options. The outer footprint is `min(100, map_size * vista_factor)` km. If applying the clipping report's suggested vertical mapping, regenerate both heightmaps. For a seamless mesh cutout, join the playable perimeter vertices to the first exterior vista row.
 
 ---
@@ -373,7 +373,7 @@ The **saved JSON file** contains the full data with:
 | Issue | Fix |
 |-------|-----|
 | `429` rate limit | Read the error for the daily request quota or hourly tile/layer allowance and its UTC reset |
-| `HTTP_502` / `HTTP_504` | An upstream source (OpenStreetMap, NAIP, Mapbox) failed or was too slow. Call again; for vectors use `prefer="auto"` |
+| `HTTP_503` (or `HTTP_502` / `HTTP_504` without detail) | An upstream source (OpenStreetMap, NAIP, Mapbox) failed or was too slow; `upstream` and `retry_after_s` say which and how long to wait. Call again; for vectors use `prefer="auto"` |
 | Flat heightmap | `heightRange` < 50m — use `height_scale: 250` for detail |
 | Clipped mountains | Lower `height_scale` or increase `base_level` |
 | Jagged/spiky terrain | Increase `blur_passes` (20–40 for smooth terrain) and check Z scale formula |

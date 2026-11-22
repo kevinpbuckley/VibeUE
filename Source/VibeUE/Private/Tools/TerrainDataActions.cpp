@@ -255,15 +255,13 @@ static FTerrainReply RequestTerrain(const TCHAR* Path, const FBody& Body, const 
 	if (Http.ResponseCode != 200)
 	{
 		FString Message = FString::Printf(TEXT("Server returned %d"), Http.ResponseCode);
-		// The wait before another try, from the status alone: a 502 / 504 can reach the client without the server's JSON
-		// (the gateway in front of it answers with its own page), and a 504 means an upstream render ran out of time.
-		Reply.RetryAfter = Http.ResponseCode == 504 ? 5 : 2;
+		// The server answers an upstream failure or an exhausted time budget with 503 and JSON (error, code, upstream,
+		// retry_after_s). A 502 / 504 without JSON is the edge proxy's own page: the contract says wait 5 s and try again.
+		Reply.RetryAfter = (Http.ResponseCode == 502 || Http.ResponseCode == 504) ? 5 : 2;
 		if (!Reply.Json || !Reply.Json->HasTypedField<EJson::String>(TEXT("error")))
 		{
-			if (Http.ResponseCode == 502 || Http.ResponseCode == 504)
-				Message += Http.ResponseCode == 502
-					? TEXT(": an upstream source (OpenStreetMap, NAIP or Mapbox) failed and the answer carried no detail. Try again; for map features and masks use prefer=auto")
-					: TEXT(": an upstream source ran out of time and the answer carried no detail. Try again, or ask for less (a smaller map_size, resolution or size)");
+			if (Http.ResponseCode == 502 || Http.ResponseCode == 503 || Http.ResponseCode == 504)
+				Message += TEXT(": the gateway in front of the terrain server answered without detail (an upstream source failed or ran out of time). Try again in a few seconds");
 			else if (!ErrorBody.IsEmpty() && !ErrorBody.StartsWith(TEXT("<")))
 				Message += TEXT(": ") + ErrorBody;
 		}
@@ -278,7 +276,7 @@ static FTerrainReply RequestTerrain(const TCHAR* Path, const FBody& Body, const 
 		Failure->SetStringField(TEXT("error"), FString::Printf(TEXT("HTTP_%d"), Http.ResponseCode));
 		Failure->SetStringField(TEXT("message"), Message);
 		if (Reply.Json)
-			for (const TCHAR* Field : {TEXT("upstream"), TEXT("upstream_status"), TEXT("retry_after_s"), TEXT("attribution")})
+			for (const TCHAR* Field : {TEXT("code"), TEXT("upstream"), TEXT("upstream_status"), TEXT("retry_after_s"), TEXT("attribution")})
 				if (const auto Value = Reply.Json->TryGetField(Field)) Failure->SetField(Field, Value);
 		Reply.Failure = Serialize(Failure);
 	}
@@ -289,6 +287,8 @@ static FTerrainReply RequestTerrain(const TCHAR* Path, const FBody& Body, const 
 	}
 	return Reply;
 }
+
+static FTerrainReply RequestTerrainUnit(const TCHAR* Route, const FBody& Body, const FString& ExpectedType, const FString& What);
 
 static void CopyTerrainField(FJsonObject& To, const FJsonObject& From, const TCHAR* Field)
 {
@@ -420,7 +420,7 @@ FString GetFeatureMasks(const FParams& Params)
 	for (const FString& Layer : Layers)
 	{
 		if (Paths->HasField(Layer)) continue;
-		const FTerrainReply Raster = RequestTerrain(Route, MaskBody(Params, Layer), TEXT("image/png"));
+		const FTerrainReply Raster = RequestTerrainUnit(Route, MaskBody(Params, Layer), TEXT("image/png"), TEXT("Mask layer ") + Layer);
 		if (!Raster.Failure.IsEmpty()) return Raster.Failure;
 		const int32 Side = FCString::Atoi(*Raster.Http.Headers.FindRef(TEXT("X-Mask-Resolution")));
 		const FString LayerSource = Raster.Http.Headers.FindRef(TEXT("X-Terrain-Source"));
@@ -481,27 +481,40 @@ static bool WaitTerrainRetry(double Seconds)
 	return true;
 }
 
-static FTerrainReply FetchTerrainTile(const FBody& Body, const FString& Band, int32 Index, int32 Count)
+// 503 is the server's "an upstream failed or the time ran out" (JSON, retry_after_s); 502 / 504 the edge proxy's.
+static bool IsTerrainUpstreamFailure(int32 Status)
+{
+	return Status == 502 || Status == 503 || Status == 504;
+}
+
+// One unit of a manifest (an ortho tile, a mask layer), asked up to three times. Worth another try: an upstream
+// failure status, and a request that never got an answer (the connection dropped, or the wait ran out while the
+// upstream was still rendering). Never a cancelled call or a missing key.
+static FTerrainReply RequestTerrainUnit(const TCHAR* Route, const FBody& Body, const FString& ExpectedType, const FString& What)
 {
 	for (int32 Attempt = 1; ; ++Attempt)
 	{
-		UE_LOG(LogVibeTerrain, Log, TEXT("Ortho %s tile %d/%d, attempt %d/3"), *Band, Index, Count, Attempt);
-		FTerrainReply Tile = RequestTerrain(TerrainOrthoRoute, Body, Band == TEXT("rgb") ? TEXT("image/jpeg") : TEXT("image/png"));
-		// Worth another try: the server's 502 / 504 (an upstream render failed or ran out of time), and a request that
-		// never got an answer (the connection dropped, or the wait ran out while the upstream was still rendering).
+		UE_LOG(LogVibeTerrain, Log, TEXT("%s, attempt %d/3"), *What, Attempt);
+		FTerrainReply Unit = RequestTerrain(Route, Body, ExpectedType);
 		const FVibeUEToolCancel* CancelNow = FVibeUEToolCancel::GetCurrent();
-		const bool bNoAnswer = !Tile.Http.bSuccess && !Tile.Http.bNoApiKey && !(CancelNow && CancelNow->IsCancelled());
-		if (Attempt == 3 || (!bNoAnswer && Tile.Http.ResponseCode != 502 && Tile.Http.ResponseCode != 504)) return Tile;
-		UE_LOG(LogVibeTerrain, Log, TEXT("Ortho %s tile %d/%d: %s. Trying again in %.0f s"), *Band, Index, Count,
-			bNoAnswer ? *Tile.Http.ErrorMessage : *FString::Printf(TEXT("HTTP %d"), Tile.Http.ResponseCode), bNoAnswer ? 5.0 : Tile.RetryAfter);
-		if (bNoAnswer) Tile.RetryAfter = 5;
-		if (!WaitTerrainRetry(Tile.RetryAfter))
+		const bool bNoAnswer = !Unit.Http.bSuccess && !Unit.Http.bNoApiKey && !(CancelNow && CancelNow->IsCancelled());
+		if (Attempt == 3 || (!bNoAnswer && !IsTerrainUpstreamFailure(Unit.Http.ResponseCode))) return Unit;
+		if (bNoAnswer) Unit.RetryAfter = 5;
+		UE_LOG(LogVibeTerrain, Log, TEXT("%s: %s. Trying again in %.0f s"), *What,
+			bNoAnswer ? *Unit.Http.ErrorMessage : *FString::Printf(TEXT("HTTP %d"), Unit.Http.ResponseCode), Unit.RetryAfter);
+		if (!WaitTerrainRetry(Unit.RetryAfter))
 		{
-			Tile.Http.ResponseCode = 0;
-			Tile.Failure = Error(TEXT("HTTP_ERROR"), TEXT("Request cancelled"));
-			return Tile;
+			Unit.Http.ResponseCode = 0;
+			Unit.Failure = Error(TEXT("HTTP_ERROR"), TEXT("Request cancelled"));
+			return Unit;
 		}
 	}
+}
+
+static FTerrainReply FetchTerrainTile(const FBody& Body, const FString& Band, int32 Index, int32 Count)
+{
+	return RequestTerrainUnit(TerrainOrthoRoute, Body, Band == TEXT("rgb") ? TEXT("image/jpeg") : TEXT("image/png"),
+		FString::Printf(TEXT("Ortho %s tile %d/%d"), *Band, Index, Count));
 }
 
 struct FTerrainOrthoBand
@@ -535,7 +548,7 @@ static FTerrainOrthoBand StitchTerrainBand(const FJsonObject& Template, const FS
 			if (!Tile.Failure.IsEmpty())
 			{
 				Result.Failure = Tile.Failure;
-				Result.bUpstreamExhausted = Tile.Http.ResponseCode == 502 || Tile.Http.ResponseCode == 504;
+				Result.bUpstreamExhausted = IsTerrainUpstreamFailure(Tile.Http.ResponseCode);
 				return Result;
 			}
 			if (Tile.Http.Headers.FindRef(TEXT("X-Ortho-Source")) != Template.GetStringField(TEXT("source")))
