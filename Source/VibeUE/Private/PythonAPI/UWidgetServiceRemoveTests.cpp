@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "Misc/AutomationTest.h"
+#include "Misc/Guid.h"
 #include "Misc/ScopeExit.h"
 #include "Misc/PackageName.h"
 #include "PythonAPI/UWidgetService.h"
@@ -27,7 +28,9 @@
 // refusal, with nothing removed, when a graph node uses the widget or a child.
 //
 // The Blueprints are in-memory /Game assets registered with the asset registry, so the service resolves them by path;
-// they are never saved. Needs a full editor (EditorContext), like the other service tests.
+// they are never saved. Each run uses a new name: the Blueprint of an earlier run in the same editor session is still
+// alive (the undo buffer holds it), and CreateBlueprint check()s that the name is free. Needs a full editor
+// (EditorContext), like the other service tests.
 
 namespace VibeWidgetRemoveTest
 {
@@ -50,12 +53,25 @@ namespace VibeWidgetRemoveTest
 		return WidgetBP;
 	}
 
+	// A package path no earlier run of this session can have used.
+	static FString MakeScratchPath(const TCHAR* Leaf)
+	{
+		return FString::Printf(TEXT("/Game/__VibeUETest/%s_%s"), Leaf, *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+	}
+
+	// Leaves nothing registered and nothing dirty for a later auto-save sweep (the idiom of AssetDiscoveryServiceTests).
 	static void Unregister(UWidgetBlueprint* WidgetBP)
 	{
 		if (WidgetBP)
 		{
+			UPackage* Package = WidgetBP->GetOutermost();
 			FAssetRegistryModule::AssetDeleted(WidgetBP);
 			WidgetBP->ClearFlags(RF_Standalone | RF_Public);
+			WidgetBP->MarkAsGarbage();
+			if (Package)
+			{
+				Package->SetDirtyFlag(false);
+			}
 		}
 	}
 
@@ -97,7 +113,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeWidgetRemoveDropsGuidsTest, "VibeUE.Widget
 bool FVibeWidgetRemoveDropsGuidsTest::RunTest(const FString&)
 {
 	using namespace VibeWidgetRemoveTest;
-	const FString Path = TEXT("/Game/__VibeUETest/WBP_RemoveDropsGuids");
+	const FString Path = MakeScratchPath(TEXT("WBP_RemoveDropsGuids"));
 	UWidgetBlueprint* WidgetBP = MakeRegisteredWidgetBlueprint(Path);
 	ON_SCOPE_EXIT { Unregister(WidgetBP); };
 	if (!TestNotNull(TEXT("made the in-memory widget Blueprint"), WidgetBP))
@@ -178,7 +194,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeWidgetRemoveRefusesGraphUseTest, "VibeUE.W
 bool FVibeWidgetRemoveRefusesGraphUseTest::RunTest(const FString&)
 {
 	using namespace VibeWidgetRemoveTest;
-	const FString Path = TEXT("/Game/__VibeUETest/WBP_RemoveRefusesGraphUse");
+	const FString Path = MakeScratchPath(TEXT("WBP_RemoveRefusesGraphUse"));
 	UWidgetBlueprint* WidgetBP = MakeRegisteredWidgetBlueprint(Path);
 	ON_SCOPE_EXIT { Unregister(WidgetBP); };
 	if (!TestNotNull(TEXT("made the in-memory widget Blueprint"), WidgetBP))
