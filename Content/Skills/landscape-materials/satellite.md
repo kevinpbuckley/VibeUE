@@ -7,7 +7,17 @@ description: Satellite-guided landscape material + painting workflow — fetch a
 
 When creating landscape materials for **real-world terrain** (from `terrain_data`), use this workflow to analyze satellite imagery and paint layers that match the real terrain.
 
-### Step 1 — Get satellite image and attach for vision
+### Aligned macro texture
+
+Generate the heightmap with `exact_center=true` (the plugin default). Request the orthophoto with the same centre and map size.
+
+```
+terrain_data(action="get_ortho_image", lng=-98.819936, lat=30.505025, map_size=3, size=4096, band="rgb")
+```
+
+Import `files.rgb` with sRGB enabled and use it as the macro colour texture. For N landscape vertices and M image pixels per side, sample vertex (i,j) at `((0.5+i*(M-1)/(N-1))/M, (0.5+j*(M-1)/(N-1))/M)`. Both axes increase east and south from the northwest vertex. Import optional NAIP canopy as a linear grayscale mask. Keep the imagery attribution and license with the material and display the attribution with the imagery.
+
+### Step 1 — Get a quick reference picture and attach it for vision
 
 ```
 terrain_data(action="get_map_image", lng=..., lat=..., style="satellite-v9")

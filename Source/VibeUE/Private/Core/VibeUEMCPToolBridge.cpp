@@ -237,14 +237,23 @@ namespace
 		for (const FToolParameter& Param : Meta.Parameters)
 		{
 			TSharedPtr<FJsonObject> Prop = MakeShared<FJsonObject>();
-			Prop->SetStringField(TEXT("type"), ToJsonSchemaType(Param.Type));
+			const bool bStringOrArray = Param.Type == TEXT("string_or_array");
+			if (bStringOrArray)
+			{
+				Prop->SetArrayField(TEXT("type"), {MakeShared<FJsonValueString>(TEXT("string")),
+					MakeShared<FJsonValueString>(TEXT("array"))});
+			}
+			else
+			{
+				Prop->SetStringField(TEXT("type"), ToJsonSchemaType(Param.Type));
+			}
 
 			if (!Param.Description.IsEmpty())
 			{
 				Prop->SetStringField(TEXT("description"), Param.Description);
 			}
 
-			if (Param.Type == TEXT("array"))
+			if (Param.Type == TEXT("array") || bStringOrArray)
 			{
 				TSharedPtr<FJsonObject> Items = MakeShared<FJsonObject>();
 				Items->SetStringField(TEXT("type"),
@@ -601,6 +610,7 @@ bool FVibeUEBridgeSchemaTypesTest::RunTest(const FString& Parameters)
 	Meta.Parameters.Add(FToolParameter(TEXT("max_items"), TEXT("JSON Schema integer"), TEXT("integer"), false));
 	Meta.Parameters.Add(FToolParameter(TEXT("auto_save"), TEXT("JSON Schema boolean"), TEXT("boolean"), false));
 	Meta.Parameters.Add(FToolParameter(TEXT("label"), TEXT("string"), TEXT("string"), true));
+	Meta.Parameters.Add(FToolParameter(TEXT("categories"), TEXT("Comma list or string array"), TEXT("string_or_array"), false));
 
 	const TSharedPtr<FJsonObject> Schema = BuildInputSchema(Meta);
 	const TSharedPtr<FJsonObject>* Properties = nullptr;
@@ -625,6 +635,15 @@ bool FVibeUEBridgeSchemaTypesTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("integer stays integer"), TypeOf(TEXT("max_items")), FString(TEXT("integer")));
 	TestEqual(TEXT("boolean stays boolean"), TypeOf(TEXT("auto_save")), FString(TEXT("boolean")));
 	TestEqual(TEXT("string stays string"), TypeOf(TEXT("label")), FString(TEXT("string")));
+	const TSharedPtr<FJsonObject>* Categories;
+	const TSharedPtr<FJsonObject>* Items;
+	TArray<FString> Types;
+	TestTrue(TEXT("Categories accept either a string or an array of strings"),
+		(*Properties)->TryGetObjectField(TEXT("categories"), Categories) &&
+		(*Categories)->TryGetStringArrayField(TEXT("type"), Types) &&
+		Types == TArray<FString>({TEXT("string"), TEXT("array")}) &&
+		(*Categories)->TryGetObjectField(TEXT("items"), Items) &&
+		(*Items)->GetStringField(TEXT("type")) == TEXT("string"));
 	return true;
 }
 

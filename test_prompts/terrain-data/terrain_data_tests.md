@@ -347,3 +347,17 @@ Ask for the heightmap of Mount Fuji twice at once (two parallel tool calls, no s
 
 Expected: both succeed and name the same file under Saved/Terrain; neither fails with SAVE_ERROR.
 
+## Enchanted Rock aligned terrain
+
+These prompts use longitude −98.819936, latitude 30.505025 and a 3 km square. Files are under `Saved/Terrain/`. Each result with server attribution should preserve it with its asset.
+
+| Action | Prompt | Expected result |
+| --- | --- | --- |
+| `preview_elevation` and `generate_heightmap` | Preview Enchanted Rock, then generate a 1009-square PNG there. Repeat with exact_center=false. | Both replies report `alignment=exact` by default and `legacy` for the second crop. Prior preview and heightmap fields remain present. |
+| `get_map_features` | Fetch roads, buildings and pois at Enchanted Rock. Request high-detail geometry with min_spacing_m=0. | A mapfeatures JSON path, counts, sample names, source, license, attribution, notes and truncation flags. Open the file to inspect geometry and UE centimetres. North of centre has negative Y. |
+| `get_feature_masks` | Fetch all four masks for Enchanted Rock with resolution=2017. Then request just road_distance at resolution=4033. | Four PNG paths plus the manifest for the first request. The distance-only result reports actual resolution 2017. Inspect the lossless 16-bit distance PNG and the manifest's channel meanings. |
+| `get_ortho_image` | Get a 4096-square NAIP RGB and canopy image for Enchanted Rock. Return the import settings and attribution. | One stitched JPEG and one grayscale PNG, both 4096-square. Ground spacing is about 0.732601 m. Check the source reason, years, attribution and license. On the exact landscape, row zero is north and the roads line up with the surface mask. |
+| `get_water_features` | Fetch Enchanted Rock water with detail=high and min_spacing_m=0. | The existing compact summary and saved geometry are available. North is negative Y, and the response can include water outside the playable bounds. |
+| `generate_vista_heightmap` | Generate a PNG vista at Enchanted Rock with factor 8 and resolution 1009, base_level=0 and height_scale=100 for both landscapes. | A 24 km heightmap with a JSON sidecar. Expect inner_rect (441,441) to (567,567), XY scale 2380.952381 cm per quad, Z scale 200 and a clipping report. |
+
+The offline C++ automation group is `VibeUE.Terrain.`. It covers the summit projection, tile orientation, request bodies, parameter forms and the missing-key path.
