@@ -238,14 +238,23 @@ namespace
 		for (const FToolParameter& Param : Meta.Parameters)
 		{
 			TSharedPtr<FJsonObject> Prop = MakeShared<FJsonObject>();
-			Prop->SetStringField(TEXT("type"), ToJsonSchemaType(Param.Type));
+			const bool bStringOrArray = Param.Type == TEXT("string_or_array");
+			if (bStringOrArray)
+			{
+				Prop->SetArrayField(TEXT("type"), {MakeShared<FJsonValueString>(TEXT("string")),
+					MakeShared<FJsonValueString>(TEXT("array"))});
+			}
+			else
+			{
+				Prop->SetStringField(TEXT("type"), ToJsonSchemaType(Param.Type));
+			}
 
 			if (!Param.Description.IsEmpty())
 			{
 				Prop->SetStringField(TEXT("description"), Param.Description);
 			}
 
-			if (Param.Type == TEXT("array"))
+			if (Param.Type == TEXT("array") || bStringOrArray)
 			{
 				TSharedPtr<FJsonObject> Items = MakeShared<FJsonObject>();
 				Items->SetStringField(TEXT("type"),

@@ -2,6 +2,7 @@
 
 #include "Module.h"
 #include "Modules/ModuleManager.h"
+#include "IImageWrapperModule.h"
 #include "EditorSubsystem.h"
 #include "Editor.h"
 #include "Core/ToolRegistry.h"
@@ -318,6 +319,8 @@ void FModule::StartupModule()
 		return;
 	}
 
+	// Ortho tile decoding runs on MCP workers. Modules must first load on the game thread.
+	FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
 	bServicesInitialized = true;
 	UWorkflowService::InitializeJournal();
 

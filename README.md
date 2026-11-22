@@ -44,7 +44,10 @@ Unreal 5.9 ships its own AI toolsets (Blueprints, materials, actors, assets, mes
 VibeUE **complements** them — it focuses on the domains and depth the engine doesn't cover:
 
 - **Terrain & world** — Landscape sculpting/heightmaps/splines, landscape auto-materials + RVT,
-  Foliage, procedural FPS **Map Blockout**, and **real-world terrain** (heightmaps + water from GPS).
+  Foliage, procedural FPS **Map Blockout**, and **real-world terrain** from GPS coordinates.
+  The `terrain_data` actions are `preview_elevation`, `generate_heightmap`, `get_ortho_image`,
+  `get_feature_masks`, `get_map_features`, `get_water_features`, `generate_vista_heightmap`,
+  `get_map_image` and `list_styles`.
 - **Audio** — SoundCue graph authoring.
 - **Animation assets** — AnimSequence keyframe editing, AnimMontage authoring, AnimBP state machines,
   Skeleton bone/socket/retarget/blend-profile editing.

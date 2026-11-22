@@ -1,7 +1,7 @@
 ---
 name: terrain-data
 display_name: Real-World Terrain
-description: Generate heightmaps, map reference images, and water feature splines (rivers, lakes, oceans) from real-world geographic data (terrain_data tool). Use when the user asks to build terrain from a real location/coordinates, download a real-world heightmap, or add rivers/lakes/oceans from map data. Downloads Mapbox tiles server-side and produces UE5-compatible heightmaps + landscape splines.
+description: Build terrain from geographic coordinates with aligned heightmaps, orthophotos, feature masks, map and water vectors, and vista backdrops using terrain_data.
 keywords:
   - terrain
   - heightmap
@@ -40,29 +40,40 @@ keywords:
 
 # Real-World Terrain Skill
 
-Generates heightmaps and water feature splines from real geographic coordinates via the `terrain_data`
-MCP tool. The tool downloads Mapbox tiles server-side and writes UE5-compatible heightmaps + landscape
-splines into the project's `Saved/Terrain/` folder. It **requires a VibeUE API key** (Editor Preferences ▸
-Plugins ▸ VibeUE ▸ API Key; free at https://www.vibeue.com/login). Without one every action returns
-`NO_API_KEY` and nothing is downloaded. `deep_research` geocoding needs no key.
+Use `terrain_data` with the VibeUE API key configured in **Editor Preferences → Plugins → VibeUE** (free at https://www.vibeue.com/login). Without one every action returns `NO_API_KEY` and nothing is downloaded; `deep_research` geocoding needs no key. Generated files default to the project's `Saved/Terrain/` directory.
 
-## Workflow
+## Aligned workflow at Enchanted Rock
 
-### Heightmap (always run first)
+Use longitude **−98.819936**, latitude **30.505025** and a **3 km** square for every step. Heightmaps are now centred exactly on the requested point. Pass `exact_center=false` for the old off-centre crop on preview and heightmap (up to half a source tile away, about 1 km here). Check the returned `alignment` (`exact` or `legacy`) before overlaying imagery or geometry. **Pass `landscape_space=true` to `get_water_features`**: without it the water coordinates are the ones older builds wrote, with +Y north, mirrored north-south on the landscape.
 
-1. `preview_elevation` — fetch elevation stats + suggested settings. Returns `suggestedZScale`, `suggestedXYScales` (resolution → XY scale), height range.
-2. `generate_heightmap` — generate the 16-bit PNG using suggested settings
-3. *(optional)* `get_map_image` — satellite/topo reference image for the same area
-4. **`attach_image`** — attach the satellite image so you can **see** the terrain colors and features for material/painting decisions
-5. Import into UE5 using the `landscape` skill
+| Step | Tool call | What to use |
+| --- | --- | --- |
+| 1. Preview | `terrain_data(action="preview_elevation", lng=-98.819936, lat=30.505025, map_size=3)` | Read `minHeight`, `maxHeight`, `suggestedBaseLevel`, `suggestedHeightScale` and `alignment`. |
+| 2. Heightmap | `terrain_data(action="generate_heightmap", lng=-98.819936, lat=30.505025, map_size=3, resolution=1009, base_level=0, height_scale=100)` | Import the 16-bit PNG at `file`. For this example the XY scale is 297.619048 cm per quad and Z scale is 200. Use the preview settings if you need a different vertical mapping, and repeat them for the vista. |
+| 3. Orthophoto | `terrain_data(action="get_ortho_image", lng=-98.819936, lat=30.505025, map_size=3, size=4096, source="auto", band="both")` | `files.rgb` is one stitched quality-92 JPEG. `files.canopy` is a linear 8-bit PNG vegetation proxy. `manifest_file` is the saved server manifest (bounds, credit). The result also has `size`, `metres_per_pixel` (ground metres per texel: 0.732600733 at 4096), `source` (`naip` or `mapbox`), `source_reason`, `acquisition_years`, `attribution`, `license_note`, `import_hints` and `uv_formula` (and `fallback_reason` when NAIP failed and the image was restarted from Mapbox). Canopy requires NAIP (United States); elsewhere `auto` picks Mapbox and only `rgb` exists. |
+| 4. Masks | `terrain_data(action="get_feature_masks", lng=-98.819936, lat=30.505025, map_size=3, resolution=1009, layers="surface,landcover,parking,road_distance", prefer="auto")` | `files` (layer → PNG path), `resolutions` (layer → actual side), `layers` (layer → channel → meaning), `counts`, `notes`, `source`, `import_hints`, `uv_formula` and the saved `manifest_file`. Surface and landcover are 8-bit RGBA, parking is 8-bit grey, road distance is 16-bit grey in centimetres. Keep all channels linear, preserve RGB under zero alpha, and use lossless compression. |
+| 5. Map features | `terrain_data(action="get_map_features", lng=-98.819936, lat=30.505025, map_size=3, categories=["roads","buildings","pois"], min_spacing_m=0, max_features=500, prefer="auto")` | `file` holds full vectors, tags, IDs and provenance. The reply gives `counts`, `truncated`, `notes`, `source`, `attribution`, `license`, `alignment` and `first_names` (up to five distinct names per category). In the file read `ue5_point`, `ue5_points` or `ue5_rings` for point, line or polygon geometry (`{x, y, z}` in centimetres, z 0). The first ring is the exterior and subsequent rings are holes. |
+| 6. Water | `terrain_data(action="get_water_features", lng=-98.819936, lat=30.505025, map_size=3, landscape_space=true, detail="high", min_spacing_m=0)` | Read the saved JSON at `file` for complete lines and rings (`ue5_points`, `ue5_rings`: with `landscape_space=true` on the landscape's axes, north negative Y). The reply lists water bodies, waterways and point counts. Omit both options for the original server detail and spacing (at Enchanted Rock: 14 waterways / 223 points by default, 36 / 439 with `detail="high", min_spacing_m=3`). Water comes from whole source tiles, so some of it lies outside the landscape square. |
+| 7. Vista | `terrain_data(action="generate_vista_heightmap", lng=-98.819936, lat=30.505025, map_size=3, resolution=1009, base_level=0, height_scale=100, vista_factor=8)` | `file` and `alignment_file` (the same numbers as a JSON sidecar) describe a 24 km backdrop (`map_size_km`). Use `suggested_xy_scale` (2380.952381 cm), `suggested_z_scale` (200), fractional `inner_rect`, and `clipped` / `clipping`. Match the playable landscape's centre, Z location and processing settings. |
 
-**⚠️ CRITICAL — Landscape Scale:** When creating the landscape, use `suggestedXYScales[resolution]` from step 1 as the X and Y scale. Do NOT use the default value of 100. Use `suggestedZScale` for the Z scale. Example: `scale=unreal.Vector(suggestedXYScales["1009"], suggestedXYScales["1009"], suggestedZScale)`
+Keep the returned **attribution** and **license** (or **license_note**) with the saved files and derived assets (map features, masks and orthophotos return them; heightmaps, vistas and water do not). Display imagery attribution when presenting the imagery. `get_map_image` provides a quick reference picture and `list_styles` lists its available styles.
 
-### Water features (after heightmap is imported)
+### Files, sources and waiting
 
-6. `get_water_features` — fetch rivers, lakes, and oceans for the same lng/lat/map_size. **Saves full JSON to `Saved/Terrain/` and returns a compact summary with the file path.**
-7. Read the saved JSON file: `json_str = open(file_path).read()`
-8. Water bodies use `ue5_rings`, waterways use `ue5_points`. Both are origin-centered.
+- Every `file` path in a reply is a full path under the project's `Saved/Terrain/`.
+- The default names of heightmap (`heightmap_<lat>_<lng>.png`), water (`water_features_<lat>_<lng>_<size>km.json`) and map features (`mapfeatures_<lat>_<lng>_<size>km.json`) depend only on the place: a second call with other options (an exact and a legacy heightmap, default and high-detail water) overwrites the first. Pass `save_path` to keep both. Masks, orthophotos and vistas get a unique id in their names, and masks and orthophotos ignore `save_path`.
+- `source` says where vectors and masks came from: `openstreetmap`, or `mapbox-streets-v8` when the OpenStreetMap servers do not answer (then `notes` says so: generalised geometry, roads cut into tile fragments, no building names, no OSM ids). `prefer="openstreetmap"` fails instead of falling back (`HTTP_503`, "OpenStreetMap detail unavailable", `upstream` "Overpass"); `prefer="tiles"` asks for the fallback directly.
+- Orthophotos take time: a NAIP tile (2048 pixels; a 4096 image has four per band, an 8192 image sixteen) answers in under a second when its render is still warm and in 20-30 s when it is not, so a 4096 image takes about a minute and an 8192 image several. A tile or a mask layer that answers 502, 503 or 504, or does not answer, is asked up to three times. If your client gives up waiting, call again: tiles that finished rendering meanwhile usually come back quickly (measured at Enchanted Rock: 4096 in 45-55 s, 8192 in 3.6 minutes, one tile in each run answered 502 after 30 s and came back on the second try).
+
+### Registration and request options
+
+- Import north-first rows with **+X east and +Y south**, centred at the world origin: north is **negative Y**. Map features always use these axes; water features do with `landscape_space=true`. Without that parameter `get_water_features` writes what it always wrote, +Y north (kept so that existing scripts get the same file): fetch the water again with `landscape_space=true`, or negate Y, for use on the landscape. Add the landscape centre offset to vector XY for a translated landscape.
+- On a 1009-vertex landscape, the summit at (−98.818824, 30.506464) falls at fractional vertex (539.835480, 450.176183), or (+10665.32, −16018.99) cm. Use unrounded XY scale `100000 * map_size / (N - 1)` for alignment.
+- At landscape vertex (i,j), sample a mask or orthophoto of actual side M at `((0.5+i*(M-1)/(N-1))/M, (0.5+j*(M-1)/(N-1))/M)`, where N is the landscape vertex count per side. Road distance caps M at 2017.
+- Map features and masks accept up to 40 km and `prefer="auto" | "openstreetmap" | "tiles"`. Vector categories can be a comma list or JSON array of roads, tracks_paths, railways, buildings, parking, landcover, barriers, pois and water. Omit categories for the server's extent-dependent default. An explicit empty array selects none.
+- Masks default to 1009 samples and all four layers. Surface packs roads, tracks, water and buildings. Landcover packs rock, woodland, scrub/wetland and grass/agriculture. Parking is a single coverage channel.
+- Orthophotos accept sizes 1024, 2048 (default), 4096 and 8192, sources auto, naip or mapbox, and bands rgb (default), canopy or both. Retryable tiles and mask layers get at most three attempts. Auto RGB can restart the entire image from Mapbox if NAIP repeatedly fails.
+- Vista accepts the heightmap processing and format options. The outer footprint is `min(100, map_size * vista_factor)` km. If applying the clipping report's suggested vertical mapping, regenerate both heightmaps. For a seamless mesh cutout, join the playable perimeter vertices to the first exterior vista row.
 
 ---
 
@@ -97,19 +108,20 @@ terrain_data(action="preview_elevation", lng=138.7274, lat=35.3606)
 Response:
 ```json
 {
-  "min_height": 340.0,
-  "max_height": 3776.0,
-  "height_range": 3436.0,
-  "suggested_base_level": 340,
-  "suggested_height_scale": 27,
+  "minHeight": 340.0,
+  "maxHeight": 3776.0,
+  "heightRange": 3436.0,
+  "suggestedBaseLevel": 340,
+  "suggestedHeightScale": 27,
   "suggestedZScale": 741,
   "suggestedXYScales": { "505": 3429, "1009": 1714, "2017": 857, "4033": 429, "8129": 213 },
-  "tile_zoom": 13,
-  "tile_count": 9
+  "tileZoom": 13,
+  "tileCount": 9,
+  "alignment": "exact"
 }
 ```
 
-Use `suggestedXYScales["1009"]` (or whichever resolution you chose) as the X and Y scale when calling `create_landscape`. Use `suggestedZScale` for the Z scale.
+Preview XY scales are rounded. Use `100000 * map_size / (resolution - 1)` for exact registration when calling `create_landscape`. Use `suggestedZScale` for the Z scale.
 
 ### Step 2 — Generate heightmap using suggested values
 
@@ -119,7 +131,7 @@ terrain_data(
   lng=138.7274, lat=35.3606,
   base_level=340,
   height_scale=27,
-  format="png"
+  resolution=1009, format="png"
 )
 ```
 
@@ -130,7 +142,8 @@ Response:
   "file": "C:/Project/Saved/Terrain/heightmap_35.3606_138.7274.png",
   "min_height_m": 340.0,
   "max_height_m": 3776.0,
-  "dimensions": "1081x1081"
+  "dimensions": "1009x1009",
+  "alignment": "exact"
 }
 ```
 
@@ -174,7 +187,7 @@ After attaching, you will see the satellite image in your next response. Use it 
 
 Use the `landscape` skill to import the heightmap file:
 - Component setup: `QuadsPerSection=63, SectionsPerComponent=2, ComponentCount=8x8` → 1009×1009 resolution
-- **X and Y scale**: Use `suggestedXYScales["1009"]` from preview (e.g. 1714 for a 17.28km map). **Do NOT use the default 100** — that makes the landscape ~17x too small!
+- **X and Y scale**: `100000 * map_size / (resolution - 1)` (1714.2857 for a 17.28 km map at 1009; `suggestedXYScales["1009"]` from preview is the same value rounded to 1714, which is fine until vectors have to line up). **Do NOT use the default 100** — that makes the landscape ~17x too small!
 - **Z scale**: Use `suggestedZScale` from preview (e.g. 741 for Mount Fuji)
 - File: the `.png` path returned in step 2
 
@@ -183,7 +196,7 @@ Example:
 result = unreal.LandscapeService.create_landscape(
     location=unreal.Vector(0, 0, 0),
     rotation=unreal.Rotator(0, 0, 0),
-    scale=unreal.Vector(1714, 1714, 741),  # XY from suggestedXYScales["1009"], Z from suggestedZScale
+    scale=unreal.Vector(1714.2857, 1714.2857, 741),  # XY = 100000 * map_size / (resolution - 1), Z from suggestedZScale
     sections_per_component=2,
     quads_per_section=63,
     component_count_x=8,
@@ -201,10 +214,12 @@ result = unreal.LandscapeService.create_landscape(
 | Parameter | Default | Notes |
 |-----------|---------|-------|
 | `lng` / `lat` | required | Decimal degrees. Positive = East/North |
-| `format` | `png` | `png` = 16-bit grayscale, `raw` = binary, `zip` = PNG + info |
+| `format` | `png` | 16-bit grayscale PNG, big-endian uint16 RAW (byte-swap for native little-endian import), or ZIP containing PNG and info |
 | `map_size` | `17.28` | km — Cities: Skylines standard |
-| `base_level` | `0` | Use `suggested_base_level` from preview |
-| `height_scale` | `100` | Use `suggested_height_scale` from preview |
+| `resolution` | `1081` | Samples per side, 33–4097. Pass the landscape's vertex count (505, 1009, 2017, ...) |
+| `exact_center` | `true` | Centre the square exactly on `lng` / `lat`; the reply says `alignment: "exact"`. `false` = the crop older builds returned (`alignment: "legacy"`), which does not line up with masks, orthophotos or vectors |
+| `base_level` | `0` | Use `suggestedBaseLevel` from preview |
+| `height_scale` | `100` | Use `suggestedHeightScale` from preview |
 | `water_depth` | `40` | Cities: Skylines water units |
 | `gravity_center` | `0` | 0=off, 2=N, 4=E, 6=S, 8=W (tilts terrain for water flow) |
 | `level_correction` | `0` | 0=none, 2=flatten coastlines, 3=aggressive |
@@ -216,7 +231,7 @@ result = unreal.LandscapeService.create_landscape(
 
 | Style | Description |
 |-------|-------------|
-| `satellite-v9` | Aerial imagery (best for landscape texturing) |
+| `satellite-v9` | Quick aerial reference |
 | `outdoors-v11` | Topo with trails and contours |
 | `streets-v11` | Street map |
 | `light-v10` / `dark-v10` | Minimal |
@@ -236,7 +251,7 @@ result = unreal.LandscapeService.create_landscape(
 | 1009        | 16×16     | 63    | 1        | ~1.0 km            |
 | 2017        | 16×16     | 63    | 2        | ~2.0 km            |
 | 4033        | 32×32     | 63    | 2        | ~4.0 km            |
-| 8129        | 32×32     | 127   | 2        | ~8.1 km            |
+
 
 > "km at scale=100" is the UE world size when landscape XY scale = 100 cm/quad (default). Adjust scale to match real geography (see below).
 
@@ -263,6 +278,8 @@ Set this as the landscape's X and Y scale when creating it.
 z_scale = 20000 / height_scale
 ```
 
+For absolute elevations, set the actor Z at local zero to `100 * base_level + 32768 * z_scale / 128` cm. Use the same local datum offset for the inner map and vista.
+
 Derivation: pixel encoding is `pixel = elevation_m × heightScale × 64 / 100` and UE interprets `height_cm = pixel × z_scale / 128`. Setting `height_cm = elevation_m × 100` (meters→cm) gives `z_scale = 20000 / heightScale`.
 
 | height_scale | Z Scale | Terrain Type Example |
@@ -280,13 +297,13 @@ For Cities: Skylines, export as PNG and import via the standard heightmap import
 
 ## Terrain Character Guide
 
-**⚠️ CRITICAL: The `suggested_height_scale` from `preview_elevation` maximizes detail, but also amplifies noise. You MUST adjust `blur_passes` based on the terrain character.**
+**⚠️ CRITICAL: The `suggestedHeightScale` from `preview_elevation` maximizes detail, but also amplifies noise. You MUST adjust `blur_passes` based on the terrain character.**
 
 ### Identifying Terrain Character
 
-After `preview_elevation`, look at the `height_range` and think about what the terrain actually looks like:
+After `preview_elevation`, look at the `heightRange` and think about what the terrain actually looks like:
 
-| height_range | suggested_height_scale | Terrain Character | blur_passes |
+| heightRange | suggestedHeightScale | Terrain Character | blur_passes |
 |-------------|----------------------|-------------------|-------------|
 | > 2000m     | Low (< 50)           | **Rugged mountains** — keep default blur | 5–10 |
 | 500–2000m   | Moderate (50–100)    | **Mixed terrain** — moderate smoothing | 10–15 |
@@ -318,10 +335,10 @@ If you get a terrain that looks jagged/spiky when the real place is smooth:
 
 ### get_water_features
 
-Fetches waterways and water bodies for a map area using the same Mapbox Vector Tile source as the heightmap. Use the **exact same `lng`, `lat`, and `map_size`** as your heightmap call.
+Fetches waterways and water bodies from Mapbox vector tiles. Use the **exact same `lng`, `lat`, and `map_size`** as your heightmap call.
 
 ```
-terrain_data(action="get_water_features", lng=-105.0, lat=39.7, map_size=17.28)
+terrain_data(action="get_water_features", lng=-105.0, lat=39.7, map_size=17.28, landscape_space=true)
 ```
 
 Response includes:
@@ -345,8 +362,9 @@ The **saved JSON file** contains the full data with:
 ### Coordinate system
 
 `ue5_points` and `ue5_rings` are **landscape-center-relative** (origin-centered):
-- Map geographic center = **(0, 0, Z)** in UE5 space
-- **+X = East, +Y = North**, 1 meter = 100 UU
+- Map geographic center = **(0, 0, Z)** in UE5 space, 1 meter = 100 UU, `z` is 0
+- With `landscape_space=true`: **+X = East, +Y = South** (north is negative Y, as on a landscape imported from the heightmap), the contract's projection, the same axes as map features, masks and orthophotos
+- Without it (the default, unchanged from older builds): **+X = East, +Y = North**, which is mirrored north-south on the landscape. The reply's and the file's `ue5_coordinate_note` say which convention a file uses
 
 ---
 
@@ -354,12 +372,13 @@ The **saved JSON file** contains the full data with:
 
 | Issue | Fix |
 |-------|-----|
-| `429` rate limit | The Mapbox tile source is rate-limited — wait and retry, or reduce request frequency |
-| Flat heightmap | `height_range` < 50m — use `height_scale: 250` for detail |
+| `429` rate limit | Read the error for the daily request quota or hourly tile/layer allowance and its UTC reset |
+| `HTTP_503` (or `HTTP_502` / `HTTP_504` without detail) | An upstream source (OpenStreetMap, NAIP, Mapbox) failed or was too slow; `upstream` and `retry_after_s` say which and how long to wait. Call again; for vectors use `prefer="auto"` |
+| Flat heightmap | `heightRange` < 50m — use `height_scale: 250` for detail |
 | Clipped mountains | Lower `height_scale` or increase `base_level` |
 | Jagged/spiky terrain | Increase `blur_passes` (20–40 for smooth terrain) and check Z scale formula |
 | Terrain doesn't match real place | Check terrain character guide — smooth places need high blur_passes |
-| Timeout | Large map sizes at high zoom may hit Vercel's 10s limit — try smaller `map_size` |
+| Timeout | Reduce the extent, resolution or filter passes for the operation |
 | No waterways returned | Area may have no mapped water features (desert, urban grid) — check satellite image |
 | Landscape too small | You used XY scale=100 (default) instead of the correct value from `suggestedXYScales`. Recreate with the correct scale |
 | Black screenshots after camera move | Camera inside terrain. Use `EditorAppToolset.FocusOnActors` (after `SelectActors`) to frame from above instead of guessing Z height |
