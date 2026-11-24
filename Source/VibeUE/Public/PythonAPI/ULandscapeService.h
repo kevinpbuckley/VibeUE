@@ -785,6 +785,40 @@ struct FLandscapeWriteReport
 	TArray<FLandscapeProxyWriteInfo> Proxies;
 };
 
+/** Result of ULandscapeService::SetNaniteLandscape. */
+USTRUCT(BlueprintType)
+struct FLandscapeNaniteResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Landscape")
+	bool bSuccess = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Landscape")
+	FString ErrorMessage;
+
+	/** Whether the landscape is a Nanite landscape after the call. */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Landscape")
+	bool bNaniteEnabled = false;
+
+	/** Proxies (the landscape and its streaming proxies) whose Nanite mesh is up to date. */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Landscape")
+	int32 UpToDateProxies = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Landscape")
+	int32 TotalProxies = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Landscape")
+	int32 NumNaniteComponents = 0;
+
+	/** Triangles of the built Nanite meshes. */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Landscape")
+	int64 NumNaniteTriangles = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Landscape")
+	double BuildSeconds = 0.0;
+};
+
 /**
  * Result of save_landscape(): the packages an explicit landscape save wrote to disk.
  */
@@ -2251,6 +2285,28 @@ public:
 		float CenterY,
 		float Radius,
 		float BlendWeight = 0.5f);
+
+	/**
+	 * Turn Nanite on or off for a landscape and build its Nanite meshes now (the details panel's Enable Nanite + Build Data).
+	 * Blocks until the build is done (seconds to minutes). Nothing is saved: the Nanite meshes live in the map, so save it
+	 * yourself. Setting enable_nanite from Python with landscape.Nanite.LiveRebuildOnModification 1 asserts in the engine;
+	 * this call switches live rebuild off while it changes the property.
+	 *
+	 * Displacement on a landscape needs this plus a material with Displacement and Enable Tessellation.
+	 *
+	 * @param LandscapeNameOrLabel - Target landscape
+	 * @param bEnable              - True: Nanite landscape, built. False: the Nanite meshes are removed
+	 * @param bForceRebuild        - Rebuild even when the Nanite meshes are up to date
+	 * @param bSkirt               - Build skirts (hides cracks at component borders and at the landscape's edge)
+	 * @param NaniteLODIndex       - Landscape LOD the Nanite mesh is built from (0 = full resolution)
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
+	static FLandscapeNaniteResult SetNaniteLandscape(
+		const FString& LandscapeNameOrLabel,
+		bool bEnable = true,
+		bool bForceRebuild = false,
+		bool bSkirt = false,
+		int32 NaniteLODIndex = 0);
 
 private:
 	static class ALandscape* FindLandscapeByIdentifier(const FString& NameOrLabel, bool* bOutUnavailable = nullptr, FString* OutUnavailableReason = nullptr);

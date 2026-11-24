@@ -16,6 +16,10 @@
 #include "LandscapeEditLayer.h"
 #include "LandscapeEditorModule.h"
 #include "LandscapeSubsystem.h"
+#include "LandscapeEditTypes.h"
+#include "LandscapeNaniteComponent.h"
+#include "Engine/StaticMesh.h"
+#include "HAL/IConsoleManager.h"
 #include "LandscapeFileFormatInterface.h"
 #include "EditorAssetLibrary.h"
 #include "Editor.h"
@@ -6515,6 +6519,122 @@ FLandscapeInfo_Custom ULandscapeService::GetLandscapeInfo(const FString& Landsca
 	if (!GetLandscapeInfo(LandscapeNameOrLabel, Result))
 	{
 		VibeUE::RaiseToolError(TEXT("GetLandscapeInfo"), FString::Printf(TEXT("no landscape named or labelled '%s' was found in the editor level"), *LandscapeNameOrLabel), FailureLog);
+	}
+	return Result;
+}
+
+// =================================================================
+// Nanite
+// =================================================================
+
+FLandscapeNaniteResult ULandscapeService::SetNaniteLandscape(
+	const FString& LandscapeNameOrLabel,
+	bool bEnable,
+	bool bForceRebuild,
+	bool bSkirt,
+	int32 NaniteLODIndex)
+{
+	FLandscapeNaniteResult Result;
+	const auto Fail = [&Result](const FString& Reason) { Result.ErrorMessage = Reason; return Result; };
+
+	if (!IsInGameThread() || !GEditor || GEditor->PlayWorld)
+	{
+		return Fail(TEXT("Requires the Editor game thread with PIE stopped."));
+	}
+	FString UnavailableReason;
+	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel, nullptr, &UnavailableReason);
+	if (!Landscape)
+	{
+		return Fail(UnavailableReason.IsEmpty() ? FString::Printf(TEXT("Landscape '%s' not found."), *LandscapeNameOrLabel) : UnavailableReason);
+	}
+	ULandscapeInfo* Info = Landscape->GetLandscapeInfo();
+	UWorld* World = Landscape->GetWorld();
+	ULandscapeSubsystem* Subsystem = World ? World->GetSubsystem<ULandscapeSubsystem>() : nullptr;
+	if (!Info || !Subsystem || !Info->AreAllComponentsRegistered())
+	{
+		return Fail(TEXT("The landscape is not fully registered in the editor world."));
+	}
+
+	// A property edit re-registers the actor, and the live rebuild it would start asserts because the proxy is not registered
+	// with the landscape subsystem at that moment. Build explicitly afterwards instead.
+	IConsoleVariable* LiveRebuild = IConsoleManager::Get().FindConsoleVariable(TEXT("landscape.Nanite.LiveRebuildOnModification"));
+	const int32 OldLiveRebuild = LiveRebuild ? LiveRebuild->GetInt() : 0;
+	if (OldLiveRebuild != 0)
+	{
+		LiveRebuild->SetWithCurrentPriority(0);
+	}
+
+	const auto SetProperty = [Landscape](FProperty* Property, TFunctionRef<void()> Apply)
+	{
+		Landscape->PreEditChange(Property);
+		Apply();
+		FPropertyChangedEvent Event(Property, EPropertyChangeType::ValueSet);
+		Landscape->PostEditChangeProperty(Event);
+	};
+	const auto SetBool = [&](const TCHAR* Name, bool bValue)
+	{
+		FBoolProperty* Property = FindFProperty<FBoolProperty>(ALandscapeProxy::StaticClass(), Name);
+		if (Property && Property->GetPropertyValue_InContainer(Landscape) != bValue)
+		{
+			SetProperty(Property, [&]() { Property->SetPropertyValue_InContainer(Landscape, bValue); });
+		}
+	};
+
+	{
+		const FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "SetNaniteLandscape", "Set Nanite Landscape"));
+		Landscape->Modify();
+		if (bEnable)
+		{
+			FIntProperty* LODProperty = FindFProperty<FIntProperty>(ALandscapeProxy::StaticClass(), TEXT("NaniteLODIndex"));
+			if (LODProperty && LODProperty->GetPropertyValue_InContainer(Landscape) != NaniteLODIndex)
+			{
+				SetProperty(LODProperty, [&]() { LODProperty->SetPropertyValue_InContainer(Landscape, NaniteLODIndex); });
+			}
+			SetBool(TEXT("bNaniteSkirtEnabled"), bSkirt);
+		}
+		SetBool(TEXT("bEnableNanite"), bEnable);
+	}
+	if (OldLiveRebuild != 0)
+	{
+		LiveRebuild->SetWithCurrentPriority(OldLiveRebuild);
+	}
+
+	if (bEnable)
+	{
+		const double Start = FPlatformTime::Seconds();
+		TArray<ALandscapeProxy*> ToBuild = { Landscape };
+		const UE::Landscape::EBuildFlags Flags = bForceRebuild
+			? UE::Landscape::EBuildFlags::ForceRebuild | UE::Landscape::EBuildFlags::WriteFinalLog
+			: UE::Landscape::EBuildFlags::WriteFinalLog;
+		Subsystem->BuildNanite(Flags, MakeArrayView(ToBuild));
+		Result.BuildSeconds = FPlatformTime::Seconds() - Start;
+	}
+
+	Result.bNaniteEnabled = Landscape->IsNaniteEnabled();
+	Info->ForEachLandscapeProxy([&Result](ALandscapeProxy* Proxy)
+	{
+		++Result.TotalProxies;
+		if (Proxy->IsNaniteMeshUpToDate())
+		{
+			++Result.UpToDateProxies;
+		}
+		TInlineComponentArray<ULandscapeNaniteComponent*> NaniteComponents(Proxy);
+		for (const ULandscapeNaniteComponent* Component : NaniteComponents)
+		{
+			++Result.NumNaniteComponents;
+			if (const UStaticMesh* Mesh = Component->GetStaticMesh())
+			{
+				Result.NumNaniteTriangles += Mesh->GetNumNaniteTriangles();
+			}
+		}
+		return true;
+	});
+
+	Result.bSuccess = Result.bNaniteEnabled == bEnable
+		&& (bEnable ? Result.UpToDateProxies == Result.TotalProxies && Result.NumNaniteComponents > 0 : Result.NumNaniteComponents == 0);
+	if (!Result.bSuccess)
+	{
+		Result.ErrorMessage = TEXT("The landscape's Nanite state does not match the request; see LogLandscape.");
 	}
 	return Result;
 }

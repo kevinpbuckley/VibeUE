@@ -228,6 +228,17 @@ in order of preference:
 3. Material-level smoothing without touching heights: derive a world-space smoothed normal in the
    landscape material (see `landscape-materials` skill) when height data must stay pixel-exact.
 
+### Nanite landscape and displacement
+
+`unreal.LandscapeService.set_nanite_landscape(label, enable=True, force_rebuild=False, skirt=False, nanite_lod_index=0)`
+enables Nanite and builds the mesh now (about 30 s for 1009 x 1009); save the map afterwards, the mesh lives in it. Do not
+set `enable_nanite` from Python with `landscape.Nanite.LiveRebuildOnModification 1`: the engine asserts.
+
+- Displacement needs the Nanite landscape plus a material with `enable_tessellation`, the Displacement input and
+  `set_base_material_usage(m, unreal.MaterialUsage.MATUSAGE_NANITE)`.
+- **The engine multiplies `displacement_scaling.magnitude` by the landscape's scale.** For 8 cm on a landscape of scale 300
+  write `8 / 300`; a plain 8 draws 24 m spikes. Set `enable_displacement_fade` so distant ground costs nothing.
+
 ### Landscape Scale
 
 - Default scale `(100, 100, 100)` = 1 meter per unit
