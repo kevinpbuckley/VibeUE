@@ -6638,3 +6638,15 @@ FLandscapeNaniteResult ULandscapeService::SetNaniteLandscape(
 	}
 	return Result;
 }
+
+bool ULandscapeService::BuildLandscapeGrassMaps(bool bForceRebuild)
+{
+	if (!IsInGameThread() || !GEditor || GEditor->PlayWorld)
+	{
+		return false;
+	}
+	UE::Landscape::BuildGrassMaps(bForceRebuild
+		? UE::Landscape::EBuildFlags::ForceRebuild | UE::Landscape::EBuildFlags::WriteFinalLog
+		: UE::Landscape::EBuildFlags::WriteFinalLog);
+	return true;
+}

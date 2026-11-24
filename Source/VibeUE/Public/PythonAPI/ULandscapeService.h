@@ -2308,6 +2308,18 @@ public:
 		bool bSkirt = false,
 		int32 NaniteLODIndex = 0);
 
+	/**
+	 * Build the grass maps of every landscape in the editor world now (Build > Build Grass Maps). Grass types in a landscape
+	 * material draw nothing until these exist, and a change of the landscape's material or weights throws them away. They
+	 * are stored in the map: save it afterwards. After a change of the grass types in the material, assign the landscape
+	 * material again first, so that the landscape picks the types up.
+	 *
+	 * @param bForceRebuild - Rebuild maps that are up to date as well
+	 * @return True if the build ran
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
+	static bool BuildLandscapeGrassMaps(bool bForceRebuild = false);
+
 private:
 	static class ALandscape* FindLandscapeByIdentifier(const FString& NameOrLabel, bool* bOutUnavailable = nullptr, FString* OutUnavailableReason = nullptr);
 	static class UWorld* GetEditorWorld();

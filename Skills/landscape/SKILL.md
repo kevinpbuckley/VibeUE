@@ -234,6 +234,8 @@ in order of preference:
 enables Nanite and builds the mesh now (about 30 s for 1009 x 1009); save the map afterwards, the mesh lives in it. Do not
 set `enable_nanite` from Python with `landscape.Nanite.LiveRebuildOnModification 1`: the engine asserts.
 
+- Landscape grass: `build_landscape_grass_maps(force)` builds the grass maps (then save the map). A change of the landscape's
+  material or weights throws them away, and grass silently draws nothing until they are built again.
 - Displacement needs the Nanite landscape plus a material with `enable_tessellation`, the Displacement input and
   `set_base_material_usage(m, unreal.MaterialUsage.MATUSAGE_NANITE)`.
 - **The engine multiplies `displacement_scaling.magnitude` by the landscape's scale.** For 8 cm on a landscape of scale 300
