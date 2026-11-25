@@ -483,7 +483,19 @@ FString FBlueprintTypeParser::GetFriendlyTypeName(const FEdGraphPinType& PinType
 	}
 	else if (PinType.ContainerType == EPinContainerType::Map)
 	{
-		TypeName = FString::Printf(TEXT("TMap<?, %s>"), *TypeName);
+		// The primary pin is the key. PinValueType is the separate value terminal.
+		FEdGraphPinType Key = PinType;
+		Key.ContainerType = EPinContainerType::None;
+		const FEdGraphPinType Value = FEdGraphPinType::GetPinTypeForTerminalType(PinType.PinValueType);
+		auto Label = [](const FEdGraphPinType& Terminal)
+		{
+			if (Terminal.PinCategory == UEdGraphSchema_K2::PC_Byte && Terminal.PinSubCategoryObject.IsValid())
+			{
+				return Terminal.PinSubCategoryObject->GetName();
+			}
+			return GetFriendlyTypeName(Terminal);
+		};
+		TypeName = FString::Printf(TEXT("TMap<%s, %s>"), *Label(Key), *Label(Value));
 	}
 
 	return TypeName;
