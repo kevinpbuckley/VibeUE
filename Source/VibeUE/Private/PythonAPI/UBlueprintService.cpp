@@ -2888,6 +2888,11 @@ bool UBlueprintService::GetVariableInfo(
 		{
 			OutInfo.VariableName = VarDesc.VarName.ToString();
 			OutInfo.VariableType = FBlueprintTypeParser::GetFriendlyTypeName(VarDesc.VarType);
+			OutInfo.MapTypeDescriptor.Reset();
+			if (VarDesc.VarType.IsMap())
+			{
+				FEdGraphPinType::StaticStruct()->ExportText(OutInfo.MapTypeDescriptor, &VarDesc.VarType, nullptr, nullptr, PPF_None, nullptr);
+			}
 			OutInfo.Category = VarDesc.Category.ToString();
 			OutInfo.DefaultValue = VarDesc.DefaultValue;
 
