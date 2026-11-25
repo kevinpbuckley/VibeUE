@@ -57,6 +57,7 @@ this `SKILL.md` on disk) directly:
 | `workflows-creation.md` | Creating landscapes, getting info, importing/exporting heightmaps, recreating splines, copying terrain/paint layers between landscapes, calculating side-by-side offsets, reading height data in a region. |
 | `workflows-editing.md` | Sculpting, direct region editing, procedural noise, painting layers, setting material, querying terrain, LandscapeGrassType creation/cloning, full landscape cloning, existence checks, heightmap sizing utilities. |
 | `intelligent-sculpting.md` | v3 semantic features (mountain/valley/ridge/plateau/crater/terraces/erosion/blend), terrain analysis (slope/normal/flat areas), mesh projection, batch line traces, complete v3 workflow example. |
+| `finishing-order.md` | Post-edit finishing order for height/weight/material changes (re-assign material, rebuild grass maps, build Nanite, save) — reported lessons, verify against your engine. |
 
 ## Critical Rules
 
