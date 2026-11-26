@@ -10,6 +10,9 @@
 #include "AssetToolsModule.h"
 #include "IAssetTools.h"
 #include "EditorFramework/AssetImportData.h"
+#include "InterchangeManager.h"
+#include "InterchangeResult.h"
+#include "InterchangeResultsContainer.h"
 #include "Engine/Texture2D.h"
 #include "HAL/PlatformFileManager.h"
 #include "ContentBrowserModule.h"
@@ -72,7 +75,7 @@ namespace
 	// bReplaceExisting replaces an asset of the requested name, and also any same-named asset in the folder that a
 	// multi-asset file brings along (an FBX's materials and textures). The names of those are only known once the
 	// importer ran, so there is no pre-check; the asset-management skill tells callers to use a dedicated folder.
-	FString ImportThroughAssetTools(const FString& SourceFilePath, const FString& Folder, const FString& FinalName, FString& OutError)
+	FString ImportThroughAssetTools(const FString& SourceFilePath, const FString& Folder, const FString& FinalName, FString& OutError, TArray<FString>* FreshImportPaths = nullptr)
 	{
 		if (!IsInGameThread())
 		{
@@ -92,8 +95,9 @@ namespace
 		Task->DestinationPath = Folder;
 		Task->DestinationName = FinalName;
 		Task->bAutomated = true;  // no option dialogs, unattended for the import's scope
-		Task->bReplaceExisting = true;
-		Task->bSave = true;
+		Task->bReplaceExisting = FreshImportPaths == nullptr;
+		// Fresh imports save only after the caller has inspected the actual output paths.
+		Task->bSave = FreshImportPaths == nullptr;
 		Task->bAsync = false;
 
 		IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
@@ -115,10 +119,27 @@ namespace
 		}
 
 		const TArray<FString> Imported = Task->ImportedObjectPaths;
+		if (FreshImportPaths && Task->AsyncResults && Task->AsyncResults->GetResults())
+		{
+			for (const UInterchangeResult* Message : Task->AsyncResults->GetResults()->GetResults())
+			{
+				if (Message && Message->GetResultType() == EInterchangeResultType::Error)
+				{
+					OutError = Message->GetText().ToString();
+					if (OutError.IsEmpty()) OutError = TEXT("Interchange reported a mesh import error");
+					break;
+				}
+			}
+		}
 		Task->RemoveFromRoot();
+		if (FreshImportPaths)
+		{
+			*FreshImportPaths = Imported;
+		}
 
 		if (Imported.Num() == 0)
 		{
+			if (!OutError.IsEmpty()) return FString();
 			OutError = FString::Printf(TEXT("AssetTools imported nothing from '%s' (unsupported format, or the importer failed: see the Output Log)"), *SourceFilePath);
 			return FString();
 		}
@@ -268,6 +289,103 @@ FString UAssetDiscoveryService::ImportAsset(
 
 	UE_LOG(LogTemp, Log, TEXT("UAssetDiscoveryService::ImportAsset: imported '%s' -> '%s'"), *SourceFilePath, *NewObj->GetPathName());
 	return NewObj->GetPathName();
+}
+
+FFreshMeshImportResult UAssetDiscoveryService::ImportMeshIntoFreshFolder(const FString& SourceFilePath, const FString& DestinationFolder)
+{
+	FFreshMeshImportResult Result;
+	FString Folder = DestinationFolder;
+	Folder.RemoveFromEnd(TEXT("/"));
+	FString DiskFolder;
+	if (!IsInGameThread() || !Folder.StartsWith(TEXT("/Game/")) || !FPackageName::IsValidLongPackageName(Folder)
+		|| !FPackageName::TryConvertLongPackageNameToFilename(Folder, DiskFolder))
+	{
+		Result.ErrorMessage = TEXT("Expected a valid /Game subfolder on the editor game thread");
+		return Result;
+	}
+	const FString Ext = FPaths::GetExtension(SourceFilePath).ToLower();
+	if (!(Ext == TEXT("fbx") || Ext == TEXT("obj") || Ext == TEXT("gltf") || Ext == TEXT("glb")) || !FPaths::FileExists(SourceFilePath))
+	{
+		Result.ErrorMessage = TEXT("Expected an existing FBX, OBJ, glTF or GLB mesh file");
+		return Result;
+	}
+	IAssetRegistry& Registry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
+	TArray<FString> Entries;
+	IFileManager::Get().FindFiles(Entries, *(DiskFolder / TEXT("*")), true, true);
+	if (!Entries.IsEmpty() || Registry.HasAssets(FName(*Folder), true) || FPackageName::DoesPackageExist(Folder))
+	{
+		Result.ErrorMessage = FString::Printf(TEXT("Destination is occupied: %s"), *Folder);
+		return Result;
+	}
+
+	TArray<FString> Imported;
+	Result.MainAsset = ImportThroughAssetTools(SourceFilePath, Folder, FPaths::GetBaseFilename(SourceFilePath), Result.ErrorMessage, &Imported);
+	const FString Prefix = Folder + TEXT("/");
+	for (const FString& Path : Imported)
+	{
+		if (Path.StartsWith(Prefix))
+		{
+			Result.CreatedAssets.AddUnique(Path);
+		}
+		else
+		{
+			Result.ErrorMessage = FString::Printf(TEXT("Importer reported an object outside the destination: %s"), *Path);
+		}
+	}
+	// Include partial package outputs which the factory registered but omitted from the task.
+	TArray<FAssetData> Assets;
+	Registry.GetAssetsByPath(FName(*Folder), Assets, true);
+	for (const FAssetData& Asset : Assets)
+	{
+		Result.CreatedAssets.AddUnique(Asset.GetObjectPathString());
+	}
+	Result.CreatedAssets.Sort();
+	auto RecordMaterial = [&Result](const UMaterialInterface* Material)
+	{
+		if (Material && !Result.CreatedAssets.Contains(Material->GetPathName()))
+		{
+			Result.ExternalMaterials.AddUnique(Material->GetPathName());
+		}
+	};
+	for (const FString& Path : Result.CreatedAssets)
+	{
+		UObject* Object = FSoftObjectPath(Path).ResolveObject();
+		if (const UStaticMesh* Mesh = Cast<UStaticMesh>(Object))
+		{
+			for (const FStaticMaterial& Slot : Mesh->GetStaticMaterials())
+			{
+				RecordMaterial(Slot.MaterialInterface);
+			}
+		}
+		else if (const USkeletalMesh* Skeletal = Cast<USkeletalMesh>(Object))
+		{
+			for (const FSkeletalMaterial& Slot : Skeletal->GetMaterials())
+			{
+				RecordMaterial(Slot.MaterialInterface);
+			}
+		}
+	}
+	Result.ExternalMaterials.Sort();
+	UObject* Main = FSoftObjectPath(Result.MainAsset).ResolveObject();
+	if (Result.ErrorMessage.IsEmpty() && !Cast<UStaticMesh>(Main) && !Cast<USkeletalMesh>(Main))
+	{
+		Result.ErrorMessage = TEXT("Import did not produce a mesh");
+	}
+	if (!Result.ErrorMessage.IsEmpty())
+	{
+		return Result;
+	}
+	for (const FString& Path : Result.CreatedAssets)
+	{
+		UObject* Asset = FSoftObjectPath(Path).ResolveObject();
+		if (!Asset || !UEditorAssetLibrary::SaveLoadedAsset(Asset, false))
+		{
+			Result.ErrorMessage = FString::Printf(TEXT("Could not save imported asset: %s"), *Path);
+			return Result;
+		}
+	}
+	Result.bSuccess = true;
+	return Result;
 }
 
 bool UAssetDiscoveryService::ReimportAsset(

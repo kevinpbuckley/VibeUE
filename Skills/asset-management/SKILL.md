@@ -35,8 +35,17 @@ and remapping through the existing engine Python API; no native service rebuild.
 >
 > **Python-only helpers** (still callable as `unreal.AssetDiscoveryService.*` from `execute_python`,
 > but no longer MCP tools, so don't look for them in `list_toolsets`):
-> `import_asset(src, dest_folder, name)` → `(path, err)` and
+> `import_asset(src, dest_folder, name)` → `(path, err)`,
+> `import_mesh_into_fresh_folder(src, dest_folder)` → result struct, and
 > `delete_asset_unattended(path, force)` → result struct.
+>
+> `import_mesh_into_fresh_folder` imports an FBX, OBJ, glTF or GLB into a `/Game` subfolder that must be
+> empty (on disk and in the asset registry; anything there is refused before the importer runs), with
+> replacement off, and saves only what it created. Read `success`, `main_asset`, `created_assets`
+> (every asset the import made, also on a failure), `external_materials` (existing project materials
+> Interchange bound to the mesh instead of creating new ones) and `error_message`. Epic's
+> `StaticMeshToolset` / `SkeletalMeshToolset` `ImportFile` with `bReplaceExisting` false also refuses to
+> overwrite, but checks only the main asset's name and does not report reused materials.
 >
 > **Everything else now belongs to the engine. Use these:**
 >
