@@ -342,6 +342,88 @@ bool FVibePythonResidentMapsTest::RunTest(const FString&)
 	return true;
 }
 
+// Issue #613 / #614: the resident_maps list must be in EVERY reply, and above all in the reply of a
+// run that RAISED. The first implementation filled it only on the success path, so the failing run
+// (the exact shape of the crash the feature exists to prevent) reported nothing; it was caught only
+// by a live editor, because the detection test above calls GetResidentMapWorlds directly and never
+// reads a reply. A mutation run (#614) confirmed it: dropping the field from the error reply left the
+// whole suite green. This reads the field from real replies, success and failure.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibePythonResidentMapsInEveryReplyTest, "VibeUE.Python.ResidentMapsInEveryReply",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVibePythonResidentMapsInEveryReplyTest::RunTest(const FString&)
+{
+	if (!GEditor)
+	{
+		AddWarning(TEXT("No GEditor; skipping the resident-map reply test."));
+		return true;
+	}
+
+	// Same fixture as VibeUE.Python.ResidentMapDetection: a bare inactive world in a scratch package.
+	const FString Leaf = FString::Printf(TEXT("W_ResidentReply_%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+	UPackage* Package = CreatePackage(*(FString(TEXT("/Game/__VibeUETest/")) + Leaf));
+	if (!TestNotNull(TEXT("created the scratch package"), Package))
+	{
+		return false;
+	}
+	UWorld* Probe = NewObject<UWorld>(Package, *Leaf, RF_Public | RF_Standalone);
+	if (!TestNotNull(TEXT("created the scratch world"), Probe))
+	{
+		return false;
+	}
+	Probe->WorldType = EWorldType::Inactive;
+	const FString ProbePath = Probe->GetPathName();
+	const TWeakObjectPtr<UWorld> WeakProbe(Probe);
+	ON_SCOPE_EXIT
+	{
+		if (UWorld* Leftover = WeakProbe.Get())
+		{
+			Leftover->ClearFlags(RF_Public | RF_Standalone);
+			Leftover->MarkAsGarbage();
+		}
+	};
+
+	// Both runs warn about the probe (RESIDENT_MAPS), and the raising one prints its traceback.
+	AddExpectedMessage(TEXT("RESIDENT_MAPS"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 0, /*IsRegex=*/false);
+	AddExpectedError(TEXT("LogPython"), EAutomationExpectedErrorFlags::Contains, 0);
+
+	TArray<FString> Listed;
+	{
+		const TSharedPtr<FJsonObject> Obj = RunPythonNoSave(TEXT("x = 1\n"));
+		if (TestTrue(TEXT("success run: reply parses"), Obj.IsValid()))
+		{
+			TestTrue(TEXT("success run succeeds"), Obj->GetBoolField(TEXT("success")));
+			TestTrue(TEXT("success reply carries resident_maps"), ReadReplyStringList(Obj, TEXT("resident_maps"), Listed));
+			TestTrue(FString::Printf(TEXT("success reply lists the resident probe %s (got: %s)"), *ProbePath, *FString::Join(Listed, TEXT(", "))),
+				Listed.Contains(ProbePath));
+		}
+	}
+	{
+		const TSharedPtr<FJsonObject> Obj = RunPythonNoSave(TEXT("raise RuntimeError('VibeUEResidentReplyProbe')\n"));
+		if (TestTrue(TEXT("raising run: reply parses"), Obj.IsValid()))
+		{
+			TestFalse(TEXT("the raising run is reported as failed"), Obj->GetBoolField(TEXT("success")));
+			TestTrue(TEXT("the FAILING reply carries resident_maps"), ReadReplyStringList(Obj, TEXT("resident_maps"), Listed));
+			TestTrue(FString::Printf(TEXT("the failing reply lists the resident probe %s (got: %s)"), *ProbePath, *FString::Join(Listed, TEXT(", "))),
+				Listed.Contains(ProbePath));
+		}
+	}
+
+	// Released, it drops out of the next reply instead of sticking.
+	Probe->ClearFlags(RF_Public | RF_Standalone);
+	Probe->MarkAsGarbage();
+	Probe = nullptr;
+	{
+		const TSharedPtr<FJsonObject> Obj = RunPythonNoSave(TEXT("y = 2\n"));
+		if (TestTrue(TEXT("after release: reply parses"), Obj.IsValid()))
+		{
+			TestTrue(TEXT("after release: reply carries resident_maps"), ReadReplyStringList(Obj, TEXT("resident_maps"), Listed));
+			TestFalse(TEXT("after release: the probe is no longer listed"), Listed.Contains(ProbePath));
+		}
+	}
+	return true;
+}
+
 // In ExecuteFile mode the Python plugin takes any command whose first ".py" is followed by
 // whitespace or the end (or, when it starts with a quote, by a closing quote) as a FILE PATH, and
 // RunFile then fails "Could not load Python file". So code that merely mentioned a .py file in a
