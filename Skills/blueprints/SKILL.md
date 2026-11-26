@@ -230,6 +230,31 @@ vibeue.exec_tool(BT, "CompileBlueprint", {"blueprint": bp})
 A variable of a **Blueprint class** type is `AddObjectVariable` with that Blueprint's generated
 class: `{"refPath": "/Game/Blueprints/BP_Enemy.BP_Enemy_C"}`.
 
+**A Map with any key other than `FString`** (`TMap<FName, float>`, an enum key, ...) is not something
+`AddVariable` can make: its MAP container always takes an `FString` key. Build the pin type with the
+engine's Python library and add it with `add_member_variable` (5.9, checked live by
+`scripts/tests/typed_map_variable_regression.py`):
+
+```python
+lib = unreal.BlueprintEditorLibrary
+bp = unreal.load_asset("/Game/Blueprints/BP_Player")
+name_key = lib.get_basic_type_by_name("name")             # "bool" "byte" "int" "int64" "real" "name" "string" "text"
+lib.add_member_variable(bp, "Weights", lib.get_map_type(name_key, lib.get_basic_type_by_name("real")))
+lib.add_member_variable(bp, "Materials", lib.get_map_type(name_key, lib.get_object_reference_type(unreal.MaterialInterface)))
+lib.add_member_variable(bp, "Offsets", lib.get_map_type(lib.get_enum_type(unreal.CollisionChannel.static_enum()),
+                                                        lib.get_struct_type(unreal.Vector.static_struct())))
+vibeue.exec_tool(BT, "CompileBlueprint", {"blueprint": {"refPath": bp.get_path_name()}})
+```
+
+`get_basic_type_by_name` takes the pin category names above (`"real"` is a double); an unknown name
+becomes `int` with only a log warning. **`get_map_type` with a key Blueprints cannot hash (`bool`, ...)
+returns a plain `int` type, not a Map, and `add_member_variable` then adds an `int` variable and reports
+success**: read the type back (below) after adding.
+To read the key and value types back, `ObjectToolset.GetPropertySchema` on the CDO gives the value
+(`additionalProperties`) and an enum key (`propertyNames.title`); it shows `FName` and `FString` keys
+alike, so tell those apart by inserting a key into a copy of the CDO's map
+(`m = cdo.get_editor_property("Weights"); m["a"] = 1.0; type(list(m.keys())[0])` is `unreal.Name` or `str`).
+
 ### Reading variables back
 
 `ListVariables(Blueprint, Scope, Graph, bIncludeInherited)` returns `FBlueprintVariableInfo` —
