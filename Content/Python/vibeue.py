@@ -39,6 +39,10 @@ Also provides (agent helpers for PIE, async tools, and asset GC):
   beyond the call that starts it, on the editor's asyncio loop, and read its progress, result or error
   from any later call (or Saved/VibeUE/Jobs/<key>.json). wait_idle() / editor_busy() — await no slow
   task, no modal, no shader jobs and no asset compiling. (#700)
+- editor_state() / recent_transactions() / preserve_editor() — the first call of a session: world, PIE,
+  dirty and resident maps, selection, viewport camera, throttling and the undo history split into the
+  person's edits ("user_edits") and the scripts'; and a bracket that puts the person's camera,
+  throttling, PIE settings and selection back. (#701)
 - pie_session() / capture_game() / game_world() — `async with vibeue.pie_session(1280, 720) as s:`
   sets throttling, the PIE window size (in both places it must go), starts PIE, waits for the player
   controller and hides screen messages, and restores all of it on exit; `await
@@ -1029,6 +1033,312 @@ async def wait_idle(timeout_s: float = 60.0, *, settle_s: float = 0.5, poll_s: f
         if now >= deadline:
             return {"idle": False, "timed_out": True, "waited_s": round(now - t0, 2), "state": state}
         await asyncio.sleep(poll_s)
+
+
+# --- Editor state in one call, and putting the user's editor back (issue #701) ----------------
+#
+# Agents checked dirty packages in 597 calls and resident maps in 359 of one week's transcripts, with
+# hand-written snippets around every step, and read the undo history to tell the person's edits from
+# their own. editor_state() is all of it in one call. Who made a transaction is recorded by VibeUE as it
+# begins (unreal.TransactionService.get_transaction_origin): "user" when Slate was dispatching an input
+# event at that moment (a gizmo drag, a details-panel edit, a menu entry or hotkey), "script" when it
+# began anywhere else (execute_python, an MCP tool call, a timer), "unknown" when it began before VibeUE
+# started tracking. The labels and undo state come from Epic's EditorToolset.UndoHistoryToolset.
+#
+# Two limits of the input rule: a key or click an agent injects through Slate (SlateInspectorToolset
+# PressKey / Click) counts as "user", because to the editor it is input; and a person's edit that the
+# editor commits later from a timer (rare) counts as "script".
+
+_UNDO_TOOLSET = "EditorToolset.UndoHistoryToolset"
+
+
+def _field(entry, *names, default=None):
+    """The first of names present in a tool result dict (tool field names are camelCase with surprises)."""
+    if isinstance(entry, dict):
+        for name in names:
+            if name in entry:
+                return entry[name]
+    return default
+
+
+def _guid_text(value) -> str:
+    """A transaction id from a tool result as text FGuid::Parse accepts (a string, or {a, b, c, d})."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict) and all(k in value for k in ("a", "b", "c", "d")):
+        return "".join("{:08X}".format(int(value[k]) & 0xFFFFFFFF) for k in ("a", "b", "c", "d"))
+    return str(value)
+
+
+def _path_text(value) -> str:
+    """An object path from a tool result: a plain string or an object reference {"refPath": path}."""
+    if isinstance(value, dict):
+        value = value.get("refPath") or value.get("assetPath") or ""
+    return str(value or "")
+
+
+def recent_transactions(count: int = 20) -> list:
+    """The newest `count` undo-history entries, newest first, each with who made it:
+    [{"label", "id", "origin" ("user" / "script" / "unknown"), "undone", "recency", "objects"}].
+
+    "objects" is up to five object paths the transaction modified (the primary object first). Undone
+    entries (the redo side of the buffer) are listed with undone True.
+    """
+    entries = exec_tool(_UNDO_TOOLSET, "GetRecentTransactions", {"count": int(count), "offset": 0}) or []
+    out = []
+    for recency, entry in enumerate(entries):
+        tid = _guid_text(_field(entry, "transactionId", "TransactionId", default=""))
+        item = {"label": str(_field(entry, "label", "Label", default="")), "id": tid,
+                "origin": unreal.TransactionService.get_transaction_origin(tid), "undone": False,
+                "recency": recency, "objects": []}
+        try:
+            details = exec_tool(_UNDO_TOOLSET, "GetTransactionDetails", {"transactionId": tid, "maxObjects": 5})
+            item["undone"] = bool(_field(details, "bIsUndone", "isUndone", default=False))
+            primary = _path_text(_field(details, "primaryObject", "PrimaryObject", default=""))
+            objects = [_path_text(_field(o, "object", "Object", default="")) for o in
+                       (_field(details, "modifiedObjects", "ModifiedObjects", default=[]) or [])]
+            if primary:
+                objects.insert(0, primary)
+            seen = []
+            for path in objects:
+                if path and path not in seen:
+                    seen.append(path)
+            item["objects"] = seen[:5]
+        except Exception as exc:
+            item["details_error"] = str(exc)
+        out.append(item)
+    return out
+
+
+def _since_recency(entries, since) -> Optional[int]:
+    """How many of `entries` (newest first) are newer than `since` (a previous editor_state() dict or a
+    transaction id). None = no cut-off (since not given or not found in the buffer)."""
+    if since is None:
+        return None
+    marker = since.get("undo", {}).get("newest_id", "") if isinstance(since, dict) else str(since)
+    if not marker:
+        return 0 if isinstance(since, dict) else None   # the earlier state had an empty buffer
+    for index, entry in enumerate(entries):
+        if entry["id"] == marker:
+            return index
+    return None
+
+
+def _viewport_state_dict():
+    try:
+        info = unreal.ViewportService.get_viewport_info()
+    except Exception:
+        return None
+    if not get_prop(info, "viewport_type", ""):
+        return None
+    return _viewport_state_dict_from(info)
+
+
+def _selection_dict() -> dict:
+    out = {"actors": [], "assets": []}
+    try:
+        for actor in unreal.get_editor_subsystem(unreal.EditorActorSubsystem).get_selected_level_actors() or []:
+            out["actors"].append({"label": actor.get_actor_label(), "path": actor.get_path_name()})
+    except Exception:
+        pass
+    try:
+        for data in unreal.EditorUtilityLibrary.get_selected_asset_data() or []:
+            out["assets"].append(str(data.package_name))
+    except Exception:
+        pass
+    return out
+
+
+def _throttling_enabled():
+    reply = _decode_json_reply(unreal.PerformanceService.get_background_throttling())
+    return bool(reply.get("throttling_enabled", True)) if reply.get("success") else None
+
+
+def editor_state(*, undo_count: int = 20, since=None) -> dict:
+    """Everything an agent checks before and after a step, in one call. Call it first in a session.
+
+    Returns {
+      "world": the editor world path, "level": the open level package, "level_dirty": bool,
+      "pie": {"running": bool, "worlds": [PIE world paths]},
+      "dirty": {"maps": [...], "content": [...]}, "resident_maps": [maps a level load would trip over],
+      "selection": {"actors": [{"label", "path"}], "assets": [package names]},
+      "viewport": {"location", "rotation", "fov", "exposure_fixed", "ev100", "type"} or None,
+      "background_throttling": bool or None,
+      "undo": {"from_user": [...], "from_scripts": [...], "unknown": [...], "newest_id": str,
+               "tracking": bool},
+      "user_edits": [{"label", "id", "objects"}],
+      "notes": [...] }
+
+    The undo lists hold the newest undo_count transactions (see recent_transactions()). "user_edits" is
+    the person's transactions that are still applied: after a script-only change it is empty; after a
+    gizmo move it names "Move Actors" (or whatever the editor titled it). Pass since=<an earlier
+    editor_state()> (or a transaction id) to count only what happened after it, e.g. to see whether the
+    person edited anything while your job ran.
+
+        import vibeue
+        s = vibeue.editor_state()
+        if s["pie"]["running"] or s["user_edits"] or s["dirty"]["maps"]:
+            ...   # the person is working: do not reload, discard or load a level
+    """
+    notes = []
+    world = None
+    try:
+        world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()
+    except Exception:
+        pass
+    level = _open_level_package()
+    dirty_maps = _dirty_map_package_names()
+    try:
+        dirty_content = sorted(str(p.get_name()) for p in unreal.EditorLoadingAndSavingUtils.get_dirty_content_packages())
+    except Exception:
+        dirty_content = []
+    worlds = pie_worlds()
+    pie_paths = [w.get_path_name() for w in worlds["all"]]
+    running = bool(pie_paths) or game_world() is not None
+
+    undo = {"from_user": [], "from_scripts": [], "unknown": [], "newest_id": "", "tracking": False}
+    user_edits = []
+    try:
+        undo["tracking"] = bool(unreal.TransactionService.is_tracking_origins())
+        entries = recent_transactions(undo_count)
+        undo["newest_id"] = entries[0]["id"] if entries else ""
+        cut = _since_recency(entries, since)
+        if cut is not None:
+            entries = entries[:cut]
+        bucket = {"user": "from_user", "script": "from_scripts"}
+        for entry in entries:
+            undo[bucket.get(entry["origin"], "unknown")].append(entry)
+            if entry["origin"] == "user" and not entry["undone"]:
+                user_edits.append({"label": entry["label"], "id": entry["id"], "objects": entry["objects"]})
+        if since is not None and cut is None:
+            notes.append("since: that transaction is no longer in the undo buffer; all {} listed".format(undo_count))
+    except Exception as exc:
+        notes.append("undo history unavailable: {}".format(exc))
+
+    return {
+        "world": world.get_path_name() if world is not None else "",
+        "level": level,
+        "level_dirty": level in dirty_maps,
+        "pie": {"running": running, "worlds": pie_paths},
+        "dirty": {"maps": dirty_maps, "content": dirty_content},
+        "resident_maps": [str(m) for m in unreal.PythonTools.get_resident_maps()],
+        "selection": _selection_dict(),
+        "viewport": _viewport_state_dict(),
+        "background_throttling": _throttling_enabled(),
+        "undo": undo,
+        "user_edits": user_edits,
+        "notes": notes,
+    }
+
+
+class PreserveEditor(object):
+    """The person's editor settings, recorded by enter() and put back by exit(); see preserve_editor()."""
+
+    def __init__(self, camera: bool = True, throttling: bool = True, pie_settings: bool = True,
+                 selection: bool = True):
+        self.flags = {"camera": camera, "throttling": throttling, "pie_settings": pie_settings,
+                      "selection": selection}
+        self.state = {"restored": [], "notes": []}
+        self._viewport = None
+        self._throttle = None
+        self._pie = None
+        self._selection = None
+        self.entered = False
+        self.exited = False
+
+    def enter(self) -> dict:
+        if self.entered:
+            return self.state
+        self.entered = True
+        if self.flags["camera"]:
+            try:
+                info = unreal.ViewportService.get_viewport_info()
+                self._viewport = info if get_prop(info, "viewport_type", "") else None
+            except Exception as exc:
+                self.state["notes"].append("camera not recorded: {}".format(exc))
+        if self.flags["throttling"]:
+            self._throttle = _throttling_enabled()
+        if self.flags["pie_settings"]:
+            try:
+                pie = unreal.EngineSettingsService.get_pie_settings()
+                if get_prop(pie, "success", False):
+                    self._pie = (pie.net_mode, int(pie.num_clients), bool(pie.run_under_one_process))
+            except Exception as exc:
+                self.state["notes"].append("PIE settings not recorded: {}".format(exc))
+        if self.flags["selection"]:
+            self._selection = [a["path"] for a in _selection_dict()["actors"]]
+        self.state["recorded"] = {"camera": self._viewport is not None, "throttling": self._throttle,
+                                  "pie_settings": self._pie, "selection": self._selection}
+        return self.state
+
+    def exit(self) -> dict:
+        if self.exited or not self.entered:
+            return self.state
+        self.exited = True
+        restored = self.state["restored"]
+        if self._viewport is not None:
+            if _viewport_state_dict() != _viewport_state_dict_from(self._viewport):
+                _restore_viewport(self._viewport)
+                restored.append("camera")
+        if self._throttle is not None and _throttling_enabled() != self._throttle:
+            unreal.PerformanceService.set_background_throttling(self._throttle)
+            restored.append("throttling")
+        if self._pie is not None:
+            try:
+                now = unreal.EngineSettingsService.get_pie_settings()
+                current = (now.net_mode, int(now.num_clients), bool(now.run_under_one_process))
+                if current != self._pie:
+                    unreal.EngineSettingsService.set_pie_settings(self._pie[0], max(1, self._pie[1]), self._pie[2])
+                    restored.append("pie_settings")
+            except Exception as exc:
+                self.state["notes"].append("PIE settings not restored: {}".format(exc))
+        if self._selection is not None:
+            current = [a["path"] for a in _selection_dict()["actors"]]
+            if current != self._selection:
+                actors = [unreal.find_object(None, path) for path in self._selection]
+                alive = [a for a in actors if a is not None]
+                try:
+                    unreal.get_editor_subsystem(unreal.EditorActorSubsystem).set_selected_level_actors(alive)
+                    restored.append("selection")
+                    if len(alive) < len(self._selection):
+                        self.state["notes"].append("{} selected actor(s) no longer exist".format(
+                            len(self._selection) - len(alive)))
+                except Exception as exc:
+                    self.state["notes"].append("selection not restored: {}".format(exc))
+        return self.state
+
+    def __enter__(self) -> dict:
+        return self.enter()
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        self.exit()
+        return False
+
+
+def _viewport_state_dict_from(info):
+    loc, rot = info.location, info.rotation
+    return {"location": [round(loc.x, 2), round(loc.y, 2), round(loc.z, 2)],
+            "rotation": [round(rot.pitch, 3), round(rot.yaw, 3), round(rot.roll, 3)],
+            "fov": round(float(info.fov), 3), "exposure_fixed": bool(info.exposure_fixed),
+            "ev100": round(float(info.exposure_ev100), 3), "type": str(info.viewport_type)}
+
+
+def preserve_editor(*, camera: bool = True, throttling: bool = True, pie_settings: bool = True,
+                    selection: bool = True) -> PreserveEditor:
+    """Record the person's viewport camera (location, rotation, FOV, exposure), background throttling,
+    PIE settings and actor selection, and put back whatever changed on exit.
+
+        with vibeue.preserve_editor():
+            vibeue.exec_tool("EditorToolset.EditorAppToolset", "SetCameraTransform", {...})
+            unreal.PerformanceService.set_background_throttling(False)
+            # ... captures, a PIE run ...
+        # camera, throttling, PIE settings and selection are as the person left them
+
+    A `with` block stays inside one execute_python call. For work that spans calls (or a start_job job),
+    keep the object: `p = vibeue.preserve_editor(); p.enter()` ... `p.exit()` (idempotent). exit() returns
+    {"restored": [what it put back], "notes": [...]}.
+    """
+    return PreserveEditor(camera=camera, throttling=throttling, pie_settings=pie_settings, selection=selection)
 
 
 # --- Non-blocking waits (gate harnesses) -----------------------------------------------------

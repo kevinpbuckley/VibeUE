@@ -27,6 +27,7 @@
 #include "PythonAPI/UPIEActorService.h"
 #include "PythonAPI/UInputService.h"
 #include "PythonAPI/UPerformanceService.h"
+#include "PythonAPI/UTransactionService.h"
 #include "Misc/CoreDelegates.h"
 #include "CoreGlobals.h"
 #if WITH_VIBEUE_EQS
@@ -466,6 +467,9 @@ void FModule::RegisterToolsets()
 	// agent tell dead / wedged / healthy apart from the filesystem (issue #555).
 	FVibeUEHealthSignal::Start();
 
+	// Record who began each transaction (user input or a script), for vibeue.editor_state() (#701).
+	UTransactionService::StartOriginTracking();
+
 #if WITH_EDITOR
 	// The signal's currentMap field must track map changes, not just the map loaded at startup —
 	// agents gate world edits on it after a relaunch (issue #554).
@@ -525,6 +529,7 @@ void FModule::ShutdownModule()
 	UnregisterWillTerminateHook();
 
 	UWorkflowService::ShutdownJournal();
+	UTransactionService::StopOriginTracking();
 	FVibeUEHealthSignal::Stop();
 	FVibeUEReadinessSignal::Remove();
 
@@ -574,6 +579,7 @@ void FModule::OnPreExit()
 	// Wake the tool calls waiting off the game thread while HTTP still runs, and stop the bridge's worker threads
 	VibeUEMCPToolBridge::CancelAllRunning();
 	UWorkflowService::ShutdownJournal();
+	UTransactionService::StopOriginTracking();
 	FVibeUEHealthSignal::Stop();
 	FVibeUEReadinessSignal::Remove();
 

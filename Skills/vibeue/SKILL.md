@@ -87,6 +87,27 @@ with `unreal.PythonTools.get_dirty_packages()`. Before risky work, save first.
 To run a script FILE, put `runpy.run_path(r"C:/scripts/build.py")` in the content. A path passed as the
 content is compiled as Python and fails.
 
+**The first call of a session: `vibeue.editor_state()`.** One call returns what you otherwise check with
+snippets before and after every step, and whether a person is working in this editor:
+
+```python
+import vibeue
+s = vibeue.editor_state()
+# s["level"], s["level_dirty"], s["pie"]["running"], s["dirty"]["maps"/"content"], s["resident_maps"],
+# s["selection"]["actors"/"assets"], s["viewport"] (camera, FOV, exposure), s["background_throttling"],
+# s["undo"]["from_user"/"from_scripts"/"unknown"], s["user_edits"]
+```
+
+`user_edits` lists the person's undo entries that are still applied (label, id, objects). VibeUE records
+who began each transaction: "user" when it began inside a Slate input event (a gizmo drag, a Details-panel
+edit, a menu entry or hotkey), "script" for execute_python, tool calls and timers, "unknown" for edits from
+before VibeUE was recording. Keys or clicks you inject through `SlateInspectorToolset` count as "user": to
+the editor they are input. If `user_edits` names edits on the open map, or PIE runs, do not reload,
+discard or change the level without asking. Pass `since=<an earlier state>` to see only what happened after
+it (did the person edit anything while my job ran?). Wrap camera, throttling, PIE-settings or selection
+changes in `with vibeue.preserve_editor():` (or `p = vibeue.preserve_editor(); p.enter()` ... `p.exit()`
+across calls) so the person gets their editor back as they left it.
+
 ## 2. Skills: list, load, route
 
 Skills are Markdown packs served by the engine's `ToolsetRegistry.AgentSkillToolset`:
@@ -299,6 +320,8 @@ with vibeue.gate_session(clients=3, net_mode="ListenServer"): ...               
   PIE session, split across calls, first state always restored. Details in `profiling`.
 - `wait_for` / `wait_for_players` / `waits` / `cancel_all_waits`: waits that survive across calls (a Slate
   tick callback with a wall-clock deadline). Inside ONE call, `await asyncio.sleep(...)` is simpler.
+- `editor_state` / `recent_transactions` / `preserve_editor`: the session's first call, who made each undo
+  entry, and restoring the person's camera, throttling, PIE settings and selection. Section 1.
 - `start_job` / `job_status` / `jobs` / `cancel_job` / `wait_job` / `job_progress`, and `wait_idle` /
   `editor_busy`: work that outlives a call, and waiting for compiles. Section 3.
 - `safe_load_level`, `python_globals_holding`, `release_globals`: section 4.

@@ -82,4 +82,34 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Transactions")
 	static bool ResetBuffer(const FString& Reason);
+
+	// =================================================================
+	// Who made a transaction (#701)
+	// =================================================================
+
+	/**
+	 * Where a transaction in the undo history came from, by its id (as EditorToolset.UndoHistoryToolset returns it):
+	 *  - "user": it began while Slate was dispatching an input event (a key, mouse or analog event): a gizmo drag,
+	 *    a details-panel edit, a menu entry, a hotkey. Input an agent injects through Slate (SlateInspectorToolset
+	 *    PressKey / Click) counts too: to the editor it is input.
+	 *  - "script": it began anywhere else: an execute_python script, an MCP tool call, a timer.
+	 *  - "unknown": it began before VibeUE started recording (editor start-up), or the id is not valid.
+	 * vibeue.editor_state() splits the undo history with it ("user_edits").
+	 *
+	 * Python:
+	 *   for t in vibeue.recent_transactions(10): print(t["label"], t["origin"])
+	 *   unreal.TransactionService.get_transaction_origin("<transaction id>")
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Transactions")
+	static FString GetTransactionOrigin(const FString& TransactionId);
+
+	/** True while transaction origins are being recorded (from the end of editor start-up). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Transactions")
+	static bool IsTrackingOrigins();
+
+	/** Start recording transaction origins (module start-up, once GEditor->Trans exists). Idempotent. */
+	static void StartOriginTracking();
+
+	/** Stop recording and forget the records (module shutdown). */
+	static void StopOriginTracking();
 };
