@@ -322,6 +322,28 @@ for inst in query.instances:
     print(f"  [{inst.instance_index}] at {inst.location}")
 ```
 
+### One-Screen Summary of a Foliage Type
+
+`foliage_summary(path)` answers "which mesh, which overrides, what cull distance, does it cast shadows, where does
+wind (WPO) stop, where do Nanite leaves go solid, how many instances" in one small result (about 0.5-0.8 KB), instead
+of reading every property of the type:
+
+```python
+f = unreal.FoliageService.foliage_summary("/Game/Foliage/FT_Oak")   # or the mesh path of a type in the level
+f.mesh, f.mesh_nanite, list(f.override_materials)                  # overrides as "index: path"
+f.cull_distance_min, f.cull_distance_max                             # cm, 0 = no culling
+f.cast_shadow, f.cast_dynamic_shadow, f.cast_static_shadow, f.cast_contact_shadow
+f.evaluate_world_position_offset, f.world_position_offset_disable_distance   # 0 = wind never switched off
+f.nanite_pixel_programmable_distance                                 # 0 = masked Nanite leaves never drawn solid
+f.mobility, f.instance_count                                         # instances in the editor level
+```
+
+Over MCP: `call_tool("VibeUE.FoliageService", "FoliageSummary", {"foliageTypeOrMeshPath": ...})`. It raises for a path
+that is neither a FoliageType nor a StaticMesh, and for a mesh with no foliage type in the level. The mesh itself:
+`AssetDiscoveryService.mesh_summary` (asset-management skill); a material instance's overrides:
+`MaterialNodeService.material_instance_overrides` (materials skill). Everything else on the type:
+`ObjectToolset.GetProperties` (below).
+
 ### Remove Foliage
 
 ```python

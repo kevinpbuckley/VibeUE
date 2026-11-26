@@ -112,6 +112,72 @@ struct FFoliageTypeCreateResult
 };
 
 /**
+ * A one-screen summary of a foliage type (#706)
+ */
+USTRUCT(BlueprintType)
+struct FVibeUEFoliageTypeSummary
+{
+	GENERATED_BODY()
+
+	/** Object path of the foliage type (an asset, or a level-owned type when a mesh path was given) */
+	UPROPERTY(BlueprintReadWrite, Category = "Foliage")
+	FString FoliageType;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Foliage")
+	FString Mesh;
+
+	/** Is the mesh itself Nanite */
+	UPROPERTY(BlueprintReadWrite, Category = "Foliage")
+	bool bMeshNanite = false;
+
+	/** Material overrides set on the foliage type, "index: path" (empty slots left out) */
+	UPROPERTY(BlueprintReadWrite, Category = "Foliage")
+	TArray<FString> OverrideMaterials;
+
+	/** Nanite material overrides set on the foliage type, "index: path" */
+	UPROPERTY(BlueprintReadWrite, Category = "Foliage")
+	TArray<FString> NaniteOverrideMaterials;
+
+	/** Instance cull distances (cm); 0 = no culling */
+	UPROPERTY(BlueprintReadWrite, Category = "Foliage")
+	int32 CullDistanceMin = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Foliage")
+	int32 CullDistanceMax = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Foliage")
+	bool bCastShadow = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Foliage")
+	bool bCastDynamicShadow = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Foliage")
+	bool bCastStaticShadow = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Foliage")
+	bool bCastContactShadow = false;
+
+	/** World position offset (wind) evaluated at all, and the distance (cm) past which it is switched off (0 = never) */
+	UPROPERTY(BlueprintReadWrite, Category = "Foliage")
+	bool bEvaluateWorldPositionOffset = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Foliage")
+	int32 WorldPositionOffsetDisableDistance = 0;
+
+	/** Distance (cm) past which Nanite stops pixel-programmable rasterisation (masked leaves drawn solid); 0 = never */
+	UPROPERTY(BlueprintReadWrite, Category = "Foliage")
+	float NanitePixelProgrammableDistance = 0.0f;
+
+	/** Static, Stationary or Movable */
+	UPROPERTY(BlueprintReadWrite, Category = "Foliage")
+	FString Mobility;
+
+	/** Instances of this type in the editor level (all loaded foliage actors) */
+	UPROPERTY(BlueprintReadWrite, Category = "Foliage")
+	int32 InstanceCount = 0;
+};
+
+/**
  * Query result for foliage instances
  */
 USTRUCT(BlueprintType)
@@ -166,6 +232,7 @@ struct FFoliageQueryResult
  *
  * Query:
  * - get_foliage_in_radius: Get foliage instances in a circular region
+ * - foliage_summary: Mesh, material overrides, cull, shadow, WPO and Nanite distances and instance count of a type
  *
  * Existence (asset existence: EditorToolset.AssetToolset.Exists):
  * - has_foliage_instances: Check if any foliage instances exist for a type
@@ -468,6 +535,17 @@ public:
 		float WorldCenterY,
 		float Radius,
 		int32 MaxResults = 100);
+
+	/**
+	 * A compact summary of a foliage type: its mesh (and whether it is Nanite), material overrides, cull distances,
+	 * shadow flags, world position offset (wind) and Nanite pixel-programmable distances, mobility, and how many
+	 * instances of it the editor level holds. Read the full property set with EditorToolset.ObjectToolset.GetProperties.
+	 *
+	 * @param FoliageTypeOrMeshPath - A FoliageType asset, or a StaticMesh whose foliage type is in the level
+	 * @return The summary. Raises a script error when the path is neither, or a mesh has no foliage type in the level.
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Foliage")
+	static FVibeUEFoliageTypeSummary FoliageSummary(const FString& FoliageTypeOrMeshPath);
 
 	// =================================================================
 	// Existence Checks

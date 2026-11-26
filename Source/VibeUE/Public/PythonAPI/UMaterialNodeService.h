@@ -7,6 +7,7 @@
 #include "UMaterialNodeService.generated.h"
 
 class UMaterial;
+class UMaterialInstance;
 class UMaterialExpression;
 class UMaterialFunction;
 struct FExpressionInput;
@@ -69,6 +70,57 @@ struct FMaterialExpressionInfo
 
 
 
+/**
+ * One parameter a material instance overrides, with the value it would inherit from its parent beside it
+ */
+USTRUCT(BlueprintType)
+struct FVibeUEMaterialParameterOverride
+{
+	GENERATED_BODY()
+
+	/** Parameter name; a layered parameter adds its layer or blend: "Roughness [layer 1]" */
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	FString Name;
+
+	/** Scalar, Vector, DoubleVector, Texture, TextureCollection, Font, RuntimeVirtualTexture, SparseVolumeTexture,
+	 *  StaticSwitch or StaticComponentMask */
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	FString Type;
+
+	/** The instance's value as text: "0.35", "0.2, 0.4, 1, 1" (R, G, B, A), an object path, "true", "RG" (mask channels) */
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	FString Value;
+
+	/** What the parent gives for the same parameter (its own value, override or default), same format */
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	FString ParentValue;
+};
+
+/**
+ * The overrides of a material instance: only what it changes, not every inherited default
+ */
+USTRUCT(BlueprintType)
+struct FVibeUEMaterialInstanceOverrides
+{
+	GENERATED_BODY()
+
+	/** Object path of the material instance */
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	FString Instance;
+
+	/** Object path of its parent (material or material instance) */
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	FString Parent;
+
+	/** Object path of the base material at the root of the chain */
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	FString BaseMaterial;
+
+	/** Parameters this instance overrides itself (overrides made further up the chain are the parent's values) */
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	TArray<FVibeUEMaterialParameterOverride> Overrides;
+};
+
 UCLASS()
 class VIBEUE_API UMaterialNodeService : public UToolsetDefinition
 {
@@ -80,6 +132,24 @@ public:
 	// =================================================================
 	// Discovery Actions
 	// =================================================================
+
+	/**
+	 * The parameters a material instance overrides itself (scalar, vector, texture, font, virtual texture, static
+	 * switch and static component mask), each with the parent's value beside it. Inherited defaults are left out, so
+	 * the answer stays small (Epic's MaterialInstanceToolset.ListParameters lists every parameter name with no value
+	 * and no override flag, and Get*Parameter is one call per parameter).
+	 *
+	 * @param MaterialInstancePath - Path of a MaterialInstanceConstant (or any material instance asset)
+	 * @return Instance, parent, base material and the overrides. Raises a script error (Python exception, MCP tool
+	 *         error) when the path is not a material instance.
+	 *
+	 * Example:
+	 *   o = unreal.MaterialNodeService.material_instance_overrides("/Game/Foliage/MI_Oak_Leaves")
+	 *   for p in o.overrides:
+	 *       print(p.name, p.type, p.value, "parent:", p.parent_value)
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
+	static FVibeUEMaterialInstanceOverrides MaterialInstanceOverrides(const FString& MaterialInstancePath);
 
 
 

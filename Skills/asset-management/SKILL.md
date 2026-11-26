@@ -26,10 +26,11 @@ and remapping through the existing engine Python API; no native service rebuild.
 > The old **`manage_asset` MCP tool is GONE.** VibeUE's `AssetDiscoveryService` was trimmed to only
 > the crash-safe delta the engine doesn't provide:
 >
-> **MCP tools still on `AssetDiscoveryService` (just two):**
+> **MCP tools on `AssetDiscoveryService`:**
 >
 > | Tool | Why it survives |
 > |---|---|
+> | `mesh_summary(mesh_path)` | One small answer (about 0.5-1 KB) to "is it Nanite, how many triangles per LOD, which screen sizes, which slots, what collision": Epic's `StaticMeshToolset` needs one call per number and has nothing for Nanite settings or simple shapes. See "Static mesh summary" below |
 > | `reimport_asset(asset_path, new_source_path)` | Nothing in Epic's toolset surface reimports an asset |
 > | `export_texture(asset_path, file_path)` -> written path | Epic's `TextureToolset.ExportPng` is **PNG-only and `UTexture2D`-only**; this writes exactly `file_path` in the format of its extension (png, tga, bmp, exr, hdr, dds, jpg) through a registered exporter that accepts the texture, and refuses with the formats it CAN be written as. See "Export a texture" below |
 >
@@ -463,6 +464,23 @@ vibeue.exec_tool("EditorToolset.TextureToolset", "import_file", {"file": "C:/Tex
 # Export (project → file system): writes exactly this file, returns its absolute path, raises with the reason
 written = unreal.AssetDiscoveryService.export_texture("/Game/Textures/T_Logo", "C:/Exports/logo.png")
 ```
+
+### Static mesh summary: `mesh_summary`
+
+```python
+s = unreal.AssetDiscoveryService.mesh_summary("/Game/Foliage/SM_Oak_A")
+s.bounds_min, s.bounds_max              # local box, cm (Approx Size = max - min)
+[(l.triangles, l.vertices, l.screen_size, l.sections) for l in s.lods]   # render LODs (a Nanite mesh: its fallback)
+s.auto_compute_lod_screen_size
+s.nanite, s.nanite_triangles, list(s.nanite_settings)   # settings that differ from defaults: "KeepPercentTriangles=0.500000"
+[(x.slot, x.material) for x in s.slots]
+s.collision_complexity, s.collision_profile, s.simple_collision    # "UseDefault", "BlockAll", "1 box, 3 convex"
+```
+
+Over MCP: `call_tool("VibeUE.AssetDiscoveryService", "MeshSummary", {"meshPath": "/Game/..."})`. Screen sizes are the
+render data's (the computed ones while auto compute is on), matching `StaticMeshToolset.GetLodThresholds`. It raises
+for a path that is not a StaticMesh. A foliage type's own settings: `FoliageService.foliage_summary` (foliage skill);
+a material instance's overrides: `MaterialNodeService.material_instance_overrides` (materials skill).
 
 ### Export a texture: use `export_texture`, NOT `AssetExportTask` + `TextureExporterPNG`
 

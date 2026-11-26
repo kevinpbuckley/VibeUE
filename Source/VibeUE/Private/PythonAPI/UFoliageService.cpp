@@ -2395,6 +2395,74 @@ FFoliageQueryResult UFoliageService::GetFoliageInRadius(
 }
 
 // =================================================================
+// Summary
+// =================================================================
+
+FVibeUEFoliageTypeSummary UFoliageService::FoliageSummary(const FString& FoliageTypeOrMeshPath)
+{
+	FVibeUEFoliageTypeSummary Summary;
+	UWorld* World = GetEditorWorld();
+
+	UObject* Source = StaticLoadObject(UObject::StaticClass(), nullptr, *FoliageTypeOrMeshPath, nullptr, LOAD_NoWarn | LOAD_Quiet);
+	UFoliageType* FoliageType = Cast<UFoliageType>(Source);
+	if (!FoliageType && Cast<UStaticMesh>(Source) && World)
+	{
+		// A mesh: the foliage type the level uses for it
+		for (TActorIterator<AInstancedFoliageActor> It(World); It && !FoliageType; ++It)
+		{
+			FoliageType = FindFoliageTypeInIFA(FoliageTypeOrMeshPath, *It);
+		}
+		if (!FoliageType)
+		{
+			VibeUE::RaiseToolError(TEXT("FoliageSummary"), FString::Printf(TEXT("the level has no foliage type for the mesh '%s'"), *FoliageTypeOrMeshPath));
+			return Summary;
+		}
+	}
+	if (!FoliageType)
+	{
+		VibeUE::RaiseToolError(TEXT("FoliageSummary"), Source
+			? FString::Printf(TEXT("'%s' is a %s, not a FoliageType or StaticMesh"), *FoliageTypeOrMeshPath, *Source->GetClass()->GetName())
+			: FString::Printf(TEXT("no FoliageType or StaticMesh at '%s'"), *FoliageTypeOrMeshPath));
+		return Summary;
+	}
+
+	Summary.FoliageType = FoliageType->GetPathName();
+	const auto ListMaterials = [](const TArray<TObjectPtr<UMaterialInterface>>& Materials, TArray<FString>& Out)
+	{
+		for (int32 Index = 0; Index < Materials.Num(); ++Index)
+		{
+			if (Materials[Index])
+			{
+				Out.Add(FString::Printf(TEXT("%d: %s"), Index, *Materials[Index]->GetPathName()));
+			}
+		}
+	};
+	if (const UFoliageType_InstancedStaticMesh* MeshType = Cast<UFoliageType_InstancedStaticMesh>(FoliageType))
+	{
+		if (const UStaticMesh* Mesh = MeshType->GetStaticMesh())
+		{
+			Summary.Mesh = Mesh->GetPathName();
+			Summary.bMeshNanite = Mesh->GetNaniteSettings().bEnabled;
+		}
+		ListMaterials(MeshType->OverrideMaterials, Summary.OverrideMaterials);
+		ListMaterials(MeshType->NaniteOverrideMaterials, Summary.NaniteOverrideMaterials);
+	}
+	Summary.CullDistanceMin = FoliageType->CullDistance.Min;
+	Summary.CullDistanceMax = FoliageType->CullDistance.Max;
+	Summary.bCastShadow = FoliageType->CastShadow;
+	Summary.bCastDynamicShadow = FoliageType->bCastDynamicShadow;
+	Summary.bCastStaticShadow = FoliageType->bCastStaticShadow;
+	Summary.bCastContactShadow = FoliageType->bCastContactShadow;
+	Summary.bEvaluateWorldPositionOffset = FoliageType->bEvaluateWorldPositionOffset;
+	Summary.WorldPositionOffsetDisableDistance = FoliageType->WorldPositionOffsetDisableDistance;
+	Summary.NanitePixelProgrammableDistance = FoliageType->NanitePixelProgrammableDistance;
+	const UEnum* MobilityEnum = StaticEnum<EComponentMobility::Type>();
+	Summary.Mobility = MobilityEnum ? MobilityEnum->GetNameStringByValue(static_cast<int64>(FoliageType->Mobility.GetValue())) : FString();
+	Summary.InstanceCount = World ? CountInstancesOf(World, Summary.FoliageType) : 0;
+	return Summary;
+}
+
+// =================================================================
 // Existence Checks
 // =================================================================
 

@@ -93,6 +93,88 @@ struct FUnattendedDeleteResult
 	FString Message;
 };
 
+/** One LOD of a static mesh's render data (a Nanite mesh: its fallback mesh) */
+USTRUCT(BlueprintType)
+struct FVibeUEMeshLodSummary
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Assets")
+	int32 Triangles = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Assets")
+	int32 Vertices = 0;
+
+	/** Screen size this LOD starts at (the render data's, i.e. the auto-computed one when auto compute is on) */
+	UPROPERTY(BlueprintReadWrite, Category = "Assets")
+	float ScreenSize = 0.0f;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Assets")
+	int32 Sections = 0;
+};
+
+/** One material slot of a static mesh */
+USTRUCT(BlueprintType)
+struct FVibeUEMeshSlotSummary
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Assets")
+	FString Slot;
+
+	/** Object path of the slot's material, "None" when empty */
+	UPROPERTY(BlueprintReadWrite, Category = "Assets")
+	FString Material;
+};
+
+/** A one-screen summary of a static mesh (#706): what agents ask of a mesh, without reading every property */
+USTRUCT(BlueprintType)
+struct FVibeUEMeshSummary
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Assets")
+	FString Mesh;
+
+	/** Local bounding box (cm, rounded to 0.01): the editor's Approx Size is Max - Min */
+	UPROPERTY(BlueprintReadWrite, Category = "Assets")
+	FVector BoundsMin = FVector::ZeroVector;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Assets")
+	FVector BoundsMax = FVector::ZeroVector;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Assets")
+	bool bAutoComputeLodScreenSize = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Assets")
+	TArray<FVibeUEMeshLodSummary> Lods;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Assets")
+	bool bNanite = false;
+
+	/** Nanite triangles (0 when Nanite is off) */
+	UPROPERTY(BlueprintReadWrite, Category = "Assets")
+	int32 NaniteTriangles = 0;
+
+	/** Nanite settings that differ from the defaults, as "Name=Value" (e.g. "KeepPercentTriangles=0.500000") */
+	UPROPERTY(BlueprintReadWrite, Category = "Assets")
+	TArray<FString> NaniteSettings;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Assets")
+	TArray<FVibeUEMeshSlotSummary> Slots;
+
+	/** UseDefault, SimpleAndComplex, UseSimpleAsComplex or UseComplexAsSimple */
+	UPROPERTY(BlueprintReadWrite, Category = "Assets")
+	FString CollisionComplexity;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Assets")
+	FString CollisionProfile;
+
+	/** Simple collision shapes, e.g. "1 box, 3 convex"; "none" when the mesh has none */
+	UPROPERTY(BlueprintReadWrite, Category = "Assets")
+	FString SimpleCollision;
+};
+
 /**
  * Asset Service - reimport, texture export, any-format import, and a dialog-free delete.
  *
@@ -112,7 +194,12 @@ struct FUnattendedDeleteResult
  *    SetContentBrowserPath / GetOpenAssets)
  *  - files on disk: `FileSystemToolset` (ReadTextFile / WriteTextFile / ListDirectory / DeleteFile)
  *
- * What is left is four calls. Two are MCP tools: ReimportAsset, because nothing in the engine
+ * MeshSummary (an MCP tool) answers what agents ask of a static mesh in one small result; Epic's
+ * `EditorToolset.StaticMeshToolset` has the same numbers as one call each (GetBounds, GetLodCount, GetTriangleCount,
+ * GetLodThresholds, GetMaterialSlots, IsNaniteMesh, GetCollisionComplexity) and nothing for Nanite settings or
+ * simple-collision shapes.
+ *
+ * What is left besides is four calls. Two are MCP tools: ReimportAsset, because nothing in the engine
  * surface reimports an asset, and ExportTexture, because the engine's export is PNG-only while
  * this picks a registered exporter that accepts the texture (PNG, TGA, BMP, EXR, HDR, DDS, JPG).
  *
@@ -286,6 +373,21 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Assets")
 	static FString ExportTexture(const FString& AssetPath, const FString& ExportFilePath);
+
+	/**
+	 * A compact summary of a static mesh: bounds, every LOD's triangles / vertices / screen size / sections, Nanite
+	 * (on or off, Nanite triangles, the settings that differ from the defaults), material slots, and collision
+	 * (complexity, profile, simple shapes). About 0.5-1 KB for a typical mesh.
+	 *
+	 * @param MeshPath - StaticMesh asset path
+	 * @return The summary. Raises a script error when the path is not a StaticMesh.
+	 *
+	 * Example:
+	 *   s = unreal.AssetDiscoveryService.mesh_summary("/Game/Foliage/SM_Oak_A")
+	 *   print(s.b_nanite, s.nanite_triangles, [(l.triangles, l.screen_size) for l in s.lods])
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Assets")
+	static FVibeUEMeshSummary MeshSummary(const FString& MeshPath);
 
 	/** C++ form of ExportTexture: false with the reason on failure. Not reflected (#687). */
 	static bool ExportTexture(const FString& AssetPath, const FString& ExportFilePath, FString& OutWrittenPath, FString& OutError);

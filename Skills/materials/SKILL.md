@@ -1,7 +1,7 @@
 ---
 name: materials
 display_name: Material System
-description: Create and edit materials and material instances — graph nodes, parameters, functions, custom HLSL, and instance overrides. In UE 5.9 this is Epic's MaterialToolset / MaterialInstanceToolset / ObjectToolset via `call_tool`; VibeUE keeps exactly two graph calls (create_function_call, create_collection_parameter). Use when the user asks to create or edit a material/material instance, wire material nodes, add material parameters, set blend/shading modes, or recreate a material graph. For landscape materials load landscape-materials.
+description: Create and edit materials and material instances — graph nodes, parameters, functions, custom HLSL, and instance overrides. In UE 5.9 this is Epic's MaterialToolset / MaterialInstanceToolset / ObjectToolset via `call_tool`; VibeUE keeps two graph calls (create_function_call, create_collection_parameter) and one read-back, material_instance_overrides (only what an instance overrides, with the parent's values). Use when the user asks to create or edit a material/material instance, wire material nodes, add material parameters, set blend/shading modes, or recreate a material graph. For landscape materials load landscape-materials.
   Also use for generated organic PBR detail, texture seams, projection coordinates, and surface-normal diagnosis.
 vibeue_classes:
   - MaterialNodeService
@@ -28,7 +28,8 @@ LOD-section mapping helper before changing the shader or buying new textures.
 ## 🚨 Who owns what (read this first — the wrong call style just fails)
 
 `UMaterialService` **no longer exists** (all 16 tools deleted). `UMaterialNodeService` is down to
-**exactly two** calls. Everything else is Epic's, in `EditorToolset`, reached with `call_tool`.
+two graph calls and one read-back (`material_instance_overrides`). Everything else is Epic's, in `EditorToolset`,
+reached with `call_tool`.
 
 | Call style | What it covers |
 |---|---|
@@ -37,7 +38,7 @@ LOD-section mapping helper before changing the shader or buying new textures.
 | **`call_tool`** → `EditorToolset.ObjectToolset` | **any** property on a material, instance or expression — this is how you set `ParameterName`, `DefaultValue`, `Group`, `SortPriority`, `BlendMode`, a Custom node's `Code`/`OutputType`/`Inputs` |
 | **`call_tool`** → `EditorToolset.AssetToolset` | `Exists`, `SaveAsset`, `Duplicate`, `Delete`, `GetReferencers`, `GetDependencies` |
 | **`call_tool`** → `EditorToolset.EditorAppToolset` | `OpenEditorForAsset` |
-| **`execute_python`** → `unreal.MaterialNodeService` | **only** `create_function_call` and `create_collection_parameter` |
+| **`execute_python`** → `unreal.MaterialNodeService` | `create_function_call`, `create_collection_parameter`, and the read-back `material_instance_overrides` (also an MCP tool) |
 
 ```python
 MT  = "EditorToolset.MaterialToolset"
@@ -90,6 +91,30 @@ plus `.input_names` / `.output_names`. To hand one of these nodes to an Epic cal
 gives `TypeError: Nativize: Cannot nativize 'MaterialExpressionInfo' as 'String'`.
 
 Every other node — parameters, math, texture samples, Custom HLSL — is `AddExpression`.
+
+### ✅ What does this instance change? `material_instance_overrides`, not a dump of every parameter
+
+Reading an instance through `ListParameters` + one `Get*Parameter` per name returns every inherited default (four
+foliage instances once came to tens of thousands of characters) and still does not say which values the instance
+overrides. `material_instance_overrides(path)` returns only the parameters THIS instance overrides (scalar, vector,
+texture, font, virtual texture, static switch, static component mask), each with the parent's value beside it:
+
+```python
+o = unreal.MaterialNodeService.material_instance_overrides("/Game/Foliage/MI_Oak_Leaves")
+print(o.parent, o.base_material)
+for p in o.overrides:       # name, type, value, parent_value (all text)
+    print(f"{p.name} [{p.type}] = {p.value}   (parent: {p.parent_value})")
+# Roughness [Scalar] = 0.2   (parent: 0.5)
+# Tint [Vector] = 0.1, 0.2, 0.3, 1   (parent: 1, 1, 1, 1)
+# UseTexture [StaticSwitch] = true   (parent: false)
+```
+
+- Over MCP: `call_tool("VibeUE.MaterialNodeService", "MaterialInstanceOverrides", {"materialInstancePath": ...})`;
+  a typical instance is a few hundred bytes.
+- An override made further up an instance chain is the PARENT's value (`parent_value`), not this instance's override.
+- Values are text: scalars `0.35`, vectors `R, G, B, A`, objects as object paths (`None` when empty), switches
+  `true` / `false`, masks the set channels (`RG`). Layered parameters are named `Name [layer N]` / `[blend N]`.
+- It raises (a Python exception, an MCP tool error) for a path that is not a material instance.
 
 ### ✅ Pin names: what you read is what connect accepts
 

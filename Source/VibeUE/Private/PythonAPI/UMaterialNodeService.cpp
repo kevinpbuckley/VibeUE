@@ -3,6 +3,12 @@
 #include "PythonAPI/UMaterialNodeService.h"
 #include "Core/JsonValueHelper.h"
 #include "Materials/Material.h"
+#include "Materials/MaterialInstance.h"
+#include "Materials/MaterialParameters.h"
+#include "Engine/Texture.h"
+#include "Engine/TextureCollection.h"
+#include "Engine/Font.h"
+#include "Utils/VibeUEToolError.h"
 #include "Materials/MaterialExpression.h"
 #include "Materials/MaterialExpressionParameter.h"
 #include "Materials/MaterialExpressionScalarParameter.h"
@@ -55,6 +61,166 @@
 // =================================================================
 // Helper Methods
 // =================================================================
+
+namespace VibeUEMaterialOverrides
+{
+	const EMaterialParameterType ReportedTypes[] = {
+		EMaterialParameterType::Scalar,
+		EMaterialParameterType::Vector,
+		EMaterialParameterType::DoubleVector,
+		EMaterialParameterType::Texture,
+		EMaterialParameterType::TextureCollection,
+		EMaterialParameterType::Font,
+		EMaterialParameterType::RuntimeVirtualTexture,
+		EMaterialParameterType::SparseVolumeTexture,
+		EMaterialParameterType::StaticSwitch,
+		EMaterialParameterType::StaticComponentMask,
+	};
+
+	const TCHAR* TypeName(EMaterialParameterType Type)
+	{
+		switch (Type)
+		{
+		case EMaterialParameterType::Scalar: return TEXT("Scalar");
+		case EMaterialParameterType::Vector: return TEXT("Vector");
+		case EMaterialParameterType::DoubleVector: return TEXT("DoubleVector");
+		case EMaterialParameterType::Texture: return TEXT("Texture");
+		case EMaterialParameterType::TextureCollection: return TEXT("TextureCollection");
+		case EMaterialParameterType::Font: return TEXT("Font");
+		case EMaterialParameterType::RuntimeVirtualTexture: return TEXT("RuntimeVirtualTexture");
+		case EMaterialParameterType::SparseVolumeTexture: return TEXT("SparseVolumeTexture");
+		case EMaterialParameterType::StaticSwitch: return TEXT("StaticSwitch");
+		case EMaterialParameterType::StaticComponentMask: return TEXT("StaticComponentMask");
+		default: return TEXT("Other");
+		}
+	}
+
+	FString Number(double Value)
+	{
+		return FString::SanitizeFloat(Value, 0);
+	}
+
+	FString ObjectText(const UObject* Object)
+	{
+		return Object ? Object->GetPathName() : FString(TEXT("None"));
+	}
+
+	FString ValueText(const FMaterialParameterValue& Value)
+	{
+		switch (Value.Type)
+		{
+		case EMaterialParameterType::Scalar:
+			return Number(Value.AsScalar());
+		case EMaterialParameterType::Vector:
+		{
+			const FLinearColor C = Value.AsLinearColor();
+			return FString::Printf(TEXT("%s, %s, %s, %s"), *Number(C.R), *Number(C.G), *Number(C.B), *Number(C.A));
+		}
+		case EMaterialParameterType::DoubleVector:
+		{
+			const FVector4d V = Value.AsVector4d();
+			return FString::Printf(TEXT("%s, %s, %s, %s"), *Number(V.X), *Number(V.Y), *Number(V.Z), *Number(V.W));
+		}
+		case EMaterialParameterType::Texture:
+		case EMaterialParameterType::RuntimeVirtualTexture:
+		case EMaterialParameterType::SparseVolumeTexture:
+			return ObjectText(Value.AsTextureObject());
+		case EMaterialParameterType::TextureCollection:
+			return ObjectText(Value.TextureCollection);
+		case EMaterialParameterType::Font:
+			return FString::Printf(TEXT("%s page %d"), *ObjectText(Value.Font.Value), Value.Font.Page);
+		case EMaterialParameterType::StaticSwitch:
+			return Value.AsStaticSwitch() ? TEXT("true") : TEXT("false");
+		case EMaterialParameterType::StaticComponentMask:
+		{
+			const FStaticComponentMaskValue Mask = Value.AsStaticComponentMask();
+			FString Channels;
+			if (Mask.R) { Channels += TEXT("R"); }
+			if (Mask.G) { Channels += TEXT("G"); }
+			if (Mask.B) { Channels += TEXT("B"); }
+			if (Mask.A) { Channels += TEXT("A"); }
+			return Channels.IsEmpty() ? FString(TEXT("none")) : Channels;
+		}
+		default:
+			return TEXT("?");
+		}
+	}
+
+	FString ParameterName(const FMaterialParameterInfo& Info)
+	{
+		switch (Info.Association)
+		{
+		case EMaterialParameterAssociation::LayerParameter:
+			return FString::Printf(TEXT("%s [layer %d]"), *Info.Name.ToString(), Info.Index);
+		case EMaterialParameterAssociation::BlendParameter:
+			return FString::Printf(TEXT("%s [blend %d]"), *Info.Name.ToString(), Info.Index);
+		default:
+			return Info.Name.ToString();
+		}
+	}
+}
+
+FVibeUEMaterialInstanceOverrides UMaterialNodeService::MaterialInstanceOverrides(const FString& MaterialInstancePath)
+{
+	FVibeUEMaterialInstanceOverrides Result;
+
+	UObject* Loaded = UEditorAssetLibrary::DoesAssetExist(MaterialInstancePath) ? UEditorAssetLibrary::LoadAsset(MaterialInstancePath) : nullptr;
+	UMaterialInstance* Instance = Cast<UMaterialInstance>(Loaded);
+	if (!Instance)
+	{
+		VibeUE::RaiseToolError(TEXT("MaterialInstanceOverrides"), Loaded
+			? FString::Printf(TEXT("'%s' is a %s, not a material instance"), *MaterialInstancePath, *Loaded->GetClass()->GetName())
+			: FString::Printf(TEXT("no material instance at '%s'"), *MaterialInstancePath));
+		return Result;
+	}
+
+	Result.Instance = Instance->GetPathName();
+	Result.Parent = Instance->Parent ? Instance->Parent->GetPathName() : FString();
+	if (const UMaterial* Base = Instance->GetMaterial())
+	{
+		Result.BaseMaterial = Base->GetPathName();
+	}
+
+	for (const EMaterialParameterType Type : VibeUEMaterialOverrides::ReportedTypes)
+	{
+		// The instance chain's values with bOverride set on what THIS instance overrides (UMaterialInstance::
+		// GetAllParametersOfType, editor data): exactly the entries the instance editor shows ticked
+		TMap<FMaterialParameterInfo, FMaterialParameterMetadata> Parameters;
+		Instance->GetAllParametersOfType(Type, Parameters);
+		TArray<FMaterialParameterInfo> Overridden;
+		for (const TPair<FMaterialParameterInfo, FMaterialParameterMetadata>& Pair : Parameters)
+		{
+			if (Pair.Value.bOverride)
+			{
+				Overridden.Add(Pair.Key);
+			}
+		}
+		Overridden.Sort([](const FMaterialParameterInfo& A, const FMaterialParameterInfo& B)
+		{
+			return A.Name.LexicalLess(B.Name) || (A.Name == B.Name && (A.Association < B.Association || (A.Association == B.Association && A.Index < B.Index)));
+		});
+
+		for (const FMaterialParameterInfo& Info : Overridden)
+		{
+			FVibeUEMaterialParameterOverride Entry;
+			Entry.Name = VibeUEMaterialOverrides::ParameterName(Info);
+			Entry.Type = VibeUEMaterialOverrides::TypeName(Type);
+			Entry.Value = VibeUEMaterialOverrides::ValueText(Parameters[Info].Value);
+
+			FMaterialParameterMetadata ParentMeta;
+			if (Instance->Parent && Instance->Parent->GetParameterValue(Type, FMemoryImageMaterialParameterInfo(Info), ParentMeta))
+			{
+				Entry.ParentValue = VibeUEMaterialOverrides::ValueText(ParentMeta.Value);
+			}
+			else
+			{
+				Entry.ParentValue = TEXT("(not in parent)");
+			}
+			Result.Overrides.Add(MoveTemp(Entry));
+		}
+	}
+	return Result;
+}
 
 UMaterial* UMaterialNodeService::LoadMaterialAsset(const FString& MaterialPath)
 {

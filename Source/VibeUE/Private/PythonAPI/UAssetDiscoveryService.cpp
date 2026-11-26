@@ -43,6 +43,9 @@
 #include "AssetImportTask.h"           // Meshes and other non-image files through AssetImportTask
 #include "Async/TaskGraphInterfaces.h" // IsThreadProcessingTasks, the RecursionGuard check
 #include "Engine/StaticMesh.h"         // ranking what a multi-asset import returns
+#include "StaticMeshResources.h"       // MeshSummary: LOD render data
+#include "StaticMeshCompiler.h"        // MeshSummary: finish an async build before reading render data
+#include "PhysicsEngine/BodySetup.h"   // MeshSummary: simple collision and profile
 #include "Engine/SkeletalMesh.h"
 #include "Animation/Skeleton.h"
 #include "Animation/AnimSequence.h"    // wait out in-flight async compression before force-deleting a clip
@@ -701,6 +704,141 @@ bool UAssetDiscoveryService::ExportTexture(const FString& AssetPath, const FStri
 	UE_LOG(LogTemp, Log, TEXT("UAssetDiscoveryService::ExportTexture: %s -> %s (%s, %lld bytes)"),
 		*AssetPath, *FilePath, *Chosen->ExporterClass->GetName(), WrittenSize);
 	return true;
+}
+
+namespace VibeUEMeshSummary
+{
+	double Round2(double Value)
+	{
+		return FMath::RoundToDouble(Value * 100.0) / 100.0;
+	}
+
+	FVector Round2(const FVector& Value)
+	{
+		return FVector(Round2(Value.X), Round2(Value.Y), Round2(Value.Z));
+	}
+
+	FString TraceFlagName(ECollisionTraceFlag Flag)
+	{
+		switch (Flag)
+		{
+		case CTF_UseDefault: return TEXT("UseDefault");
+		case CTF_UseSimpleAndComplex: return TEXT("SimpleAndComplex");
+		case CTF_UseSimpleAsComplex: return TEXT("UseSimpleAsComplex");
+		case CTF_UseComplexAsSimple: return TEXT("UseComplexAsSimple");
+		default: return TEXT("?");
+		}
+	}
+
+	/** The Nanite settings that differ from a default FMeshNaniteSettings, as "Name=Value" (reflection, so new
+	 *  engine fields are covered without a code change) */
+	TArray<FString> ChangedNaniteSettings(const FMeshNaniteSettings& Settings)
+	{
+		TArray<FString> Changed;
+		const FMeshNaniteSettings Defaults;
+		const UScriptStruct* Struct = FMeshNaniteSettings::StaticStruct();
+		for (TFieldIterator<FProperty> It(Struct); It; ++It)
+		{
+			const FProperty* Property = *It;
+			if (Property->GetFName() == TEXT("bEnabled"))
+			{
+				continue; // reported as bNanite
+			}
+			const void* Value = Property->ContainerPtrToValuePtr<void>(&Settings);
+			const void* Default = Property->ContainerPtrToValuePtr<void>(&Defaults);
+			if (!Property->Identical(Value, Default))
+			{
+				FString Text;
+				Property->ExportTextItem_Direct(Text, Value, Default, nullptr, PPF_None);
+				if (Text.Len() > 120)
+				{
+					Text = Text.Left(117) + TEXT("...");
+				}
+				Changed.Add(FString::Printf(TEXT("%s=%s"), *Property->GetName(), *Text));
+			}
+		}
+		return Changed;
+	}
+}
+
+FVibeUEMeshSummary UAssetDiscoveryService::MeshSummary(const FString& MeshPath)
+{
+	FVibeUEMeshSummary Summary;
+	UObject* Loaded = UEditorAssetLibrary::DoesAssetExist(MeshPath) ? UEditorAssetLibrary::LoadAsset(MeshPath) : nullptr;
+	UStaticMesh* Mesh = Cast<UStaticMesh>(Loaded);
+	if (!Mesh)
+	{
+		VibeUE::RaiseToolError(TEXT("MeshSummary"), Loaded
+			? FString::Printf(TEXT("'%s' is a %s, not a StaticMesh"), *MeshPath, *Loaded->GetClass()->GetName())
+			: FString::Printf(TEXT("no StaticMesh at '%s'"), *MeshPath));
+		return Summary;
+	}
+
+	// Render data is rebuilt asynchronously after an edit: read it once it is there
+	FStaticMeshCompilingManager::Get().FinishCompilation({ Mesh });
+
+	Summary.Mesh = Mesh->GetPathName();
+	const FBox Box = Mesh->GetBoundingBox();
+	Summary.BoundsMin = VibeUEMeshSummary::Round2(Box.Min);
+	Summary.BoundsMax = VibeUEMeshSummary::Round2(Box.Max);
+	Summary.bAutoComputeLodScreenSize = Mesh->GetAutoComputeLODScreenSize();
+
+	if (const FStaticMeshRenderData* RenderData = Mesh->GetRenderData())
+	{
+		for (int32 LodIndex = 0; LodIndex < RenderData->LODResources.Num(); ++LodIndex)
+		{
+			const FStaticMeshLODResources& Lod = RenderData->LODResources[LodIndex];
+			FVibeUEMeshLodSummary LodSummary;
+			LodSummary.Triangles = Lod.GetNumTriangles();
+			LodSummary.Vertices = Lod.GetNumVertices();
+			LodSummary.Sections = Lod.Sections.Num();
+			LodSummary.ScreenSize = LodIndex < MAX_STATIC_MESH_LODS
+				? static_cast<float>(VibeUEMeshSummary::Round2(RenderData->ScreenSize[LodIndex].Default * 10000.0) / 10000.0)
+				: 0.0f;
+			Summary.Lods.Add(LodSummary);
+		}
+	}
+
+	const FMeshNaniteSettings& Nanite = Mesh->GetNaniteSettings();
+	Summary.bNanite = Nanite.bEnabled;
+	Summary.NaniteTriangles = Nanite.bEnabled ? Mesh->GetNumNaniteTriangles() : 0;
+	Summary.NaniteSettings = VibeUEMeshSummary::ChangedNaniteSettings(Nanite);
+
+	for (const FStaticMaterial& Material : Mesh->GetStaticMaterials())
+	{
+		FVibeUEMeshSlotSummary Slot;
+		Slot.Slot = Material.MaterialSlotName.ToString();
+		Slot.Material = Material.MaterialInterface ? Material.MaterialInterface->GetPathName() : FString(TEXT("None"));
+		Summary.Slots.Add(Slot);
+	}
+
+	if (const UBodySetup* Body = Mesh->GetBodySetup())
+	{
+		Summary.CollisionComplexity = VibeUEMeshSummary::TraceFlagName(Body->CollisionTraceFlag);
+		Summary.CollisionProfile = Body->DefaultInstance.GetCollisionProfileName().ToString();
+		TArray<FString> Shapes;
+		const FKAggregateGeom& Geom = Body->AggGeom;
+		const auto AddShapes = [&Shapes](int32 Count, const TCHAR* Name)
+		{
+			if (Count > 0)
+			{
+				Shapes.Add(FString::Printf(TEXT("%d %s"), Count, Name));
+			}
+		};
+		AddShapes(Geom.BoxElems.Num(), TEXT("box"));
+		AddShapes(Geom.SphereElems.Num(), TEXT("sphere"));
+		AddShapes(Geom.SphylElems.Num(), TEXT("capsule"));
+		AddShapes(Geom.TaperedCapsuleElems.Num(), TEXT("tapered capsule"));
+		AddShapes(Geom.ConvexElems.Num(), TEXT("convex"));
+		AddShapes(Geom.LevelSetElems.Num(), TEXT("level set"));
+		Summary.SimpleCollision = Shapes.Num() > 0 ? FString::Join(Shapes, TEXT(", ")) : FString(TEXT("none"));
+	}
+	else
+	{
+		Summary.CollisionComplexity = TEXT("no body setup");
+		Summary.SimpleCollision = TEXT("none");
+	}
+	return Summary;
 }
 
 FString UAssetDiscoveryService::ExportTexture(const FString& AssetPath, const FString& ExportFilePath)
