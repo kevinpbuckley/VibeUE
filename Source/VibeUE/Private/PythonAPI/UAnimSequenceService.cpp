@@ -4184,7 +4184,62 @@ bool UAnimSequenceService::RetargetPreview(
 // ANIMATION POSE CAPTURE (Visual Feedback)
 // ============================================================================
 
-FAnimationPoseCaptureResult UAnimSequenceService::CaptureAnimationPose(
+USkeletalMesh* UAnimSequenceService::ResolveCaptureMesh(UAnimSequence* Sequence, const FString& MeshPath, FString& Error)
+{
+	USkeleton* Skeleton = Sequence ? Sequence->GetSkeleton() : nullptr;
+	if (!Skeleton)
+	{
+		Error = Sequence ? TEXT("Animation has no skeleton") : TEXT("Failed to load animation");
+		return nullptr;
+	}
+
+	auto CanPlay = [Skeleton](USkeletalMesh* Mesh)
+	{
+		return Mesh && Mesh->GetSkeleton() && Mesh->GetSkeleton()->IsCompatibleForEditor(Skeleton);
+	};
+	if (!MeshPath.IsEmpty())
+	{
+		USkeletalMesh* Mesh = Cast<USkeletalMesh>(LoadAssetAnyState(MeshPath));
+		if (!CanPlay(Mesh))
+		{
+			Error = FString::Printf(TEXT("Cannot play this animation on skeletal mesh '%s'"), *MeshPath);
+			return nullptr;
+		}
+		return Mesh;
+	}
+
+	if (USkeletalMesh* Preview = static_cast<const USkeleton*>(Skeleton)->GetPreviewMesh(); CanPlay(Preview))
+	{
+		return Preview;
+	}
+
+	IAssetRegistry& Registry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
+	TArray<FAssetData> Meshes;
+	Registry.GetAssetsByClass(USkeletalMesh::StaticClass()->GetClassPathName(), Meshes, true);
+	const FSoftObjectPath TargetSkeleton(Skeleton);
+	Meshes.RemoveAll([&TargetSkeleton](const FAssetData& Asset)
+	{
+		FString Tag;
+		return !Asset.GetTagValue(TEXT("Skeleton"), Tag)
+			|| FSoftObjectPath(FPackageName::ExportTextPathToObjectPath(Tag)) != TargetSkeleton;
+	});
+	Meshes.Sort([](const FAssetData& A, const FAssetData& B)
+	{
+		return A.GetSoftObjectPath().LexicalLess(B.GetSoftObjectPath());
+	});
+	for (const FAssetData& Asset : Meshes)
+	{
+		if (USkeletalMesh* Mesh = Cast<USkeletalMesh>(Asset.GetAsset()); CanPlay(Mesh))
+		{
+			return Mesh;
+		}
+	}
+	Error = FString::Printf(TEXT("Could not find a capture mesh for skeleton '%s'"), *Skeleton->GetPathName());
+	return nullptr;
+}
+
+static FAnimationPoseCaptureResult RenderAnimationPose(
+	UAnimSequence* AnimSeq, USkeletalMesh* SkeletalMesh,
 	const FString& AnimPath,
 	float Time,
 	const FString& OutputPath,
@@ -4195,6 +4250,7 @@ FAnimationPoseCaptureResult UAnimSequenceService::CaptureAnimationPose(
 	FAnimationPoseCaptureResult OutResult;
 	OutResult.bSuccess = false;
 	OutResult.AnimPath = AnimPath;
+	OutResult.SkeletalMeshPath = SkeletalMesh->GetPathName();
 	OutResult.CapturedTime = Time;
 
 	// Validate and set defaults
@@ -4209,58 +4265,6 @@ FAnimationPoseCaptureResult UAnimSequenceService::CaptureAnimationPose(
 		FString ScreenshotsDir = FVibeUEPaths::GetScreenshotsDir();
 		FString AnimName = FPaths::GetBaseFilename(AnimPath);
 		ActualOutputPath = ScreenshotsDir / FString::Printf(TEXT("%s_%.2fs.png"), *AnimName, Time);
-	}
-
-	// Load animation
-	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
-	if (!AnimSeq)
-	{
-		OutResult.ErrorMessage = FString::Printf(TEXT("Failed to load animation: %s"), *AnimPath);
-		return OutResult;
-	}
-
-	USkeleton* Skeleton = AnimSeq->GetSkeleton();
-	if (!Skeleton)
-	{
-		OutResult.ErrorMessage = TEXT("Animation has no skeleton");
-		return OutResult;
-	}
-
-	// Find compatible skeletal mesh
-	USkeletalMesh* SkeletalMesh = nullptr;
-	{
-		IAssetRegistry& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
-		FARFilter Filter;
-		Filter.ClassPaths.Add(USkeletalMesh::StaticClass()->GetClassPathName());
-		Filter.bRecursivePaths = true;
-
-		TArray<FAssetData> FoundMeshes;
-		AssetRegistry.GetAssets(Filter, FoundMeshes);
-
-		FString SkeletonPath = Skeleton->GetPathName();
-		for (const FAssetData& AssetData : FoundMeshes)
-		{
-			FAssetDataTagMapSharedView::FFindTagResult SkeletonTag = AssetData.TagsAndValues.FindTag("Skeleton");
-			if (SkeletonTag.IsSet())
-			{
-				FString MeshSkeletonPath = SkeletonTag.GetValue();
-				if (MeshSkeletonPath.Contains(Skeleton->GetName()))
-				{
-					SkeletalMesh = Cast<USkeletalMesh>(AssetData.GetAsset());
-					if (SkeletalMesh)
-					{
-						break;
-					}
-				}
-			}
-		}
-	}
-
-	if (!SkeletalMesh)
-	{
-		OutResult.ErrorMessage = FString::Printf(
-			TEXT("Could not find a compatible skeletal mesh for skeleton %s"), *Skeleton->GetName());
-		return OutResult;
 	}
 
 	// Clamp time to animation duration
@@ -4439,13 +4443,34 @@ FAnimationPoseCaptureResult UAnimSequenceService::CaptureAnimationPose(
 	return OutResult;
 }
 
+FAnimationPoseCaptureResult UAnimSequenceService::CaptureAnimationPose(
+	const FString& AnimPath,
+	float Time,
+	const FString& OutputPath,
+	const FString& CameraAngle,
+	int32 ImageWidth,
+	int32 ImageHeight,
+	const FString& SkeletalMeshPath)
+{
+	UAnimSequence* Sequence = LoadAnimSequence(AnimPath);
+	FAnimationPoseCaptureResult Result;
+	Result.AnimPath = AnimPath;
+	Result.CapturedTime = Time;
+	if (USkeletalMesh* Mesh = ResolveCaptureMesh(Sequence, SkeletalMeshPath, Result.ErrorMessage))
+	{
+		return RenderAnimationPose(Sequence, Mesh, AnimPath, Time, OutputPath, CameraAngle, ImageWidth, ImageHeight);
+	}
+	return Result;
+}
+
 TArray<FAnimationPoseCaptureResult> UAnimSequenceService::CaptureAnimationSequence(
 	const FString& AnimPath,
 	const FString& OutputDirectory,
 	int32 FrameCount,
 	const FString& CameraAngle,
 	int32 ImageWidth,
-	int32 ImageHeight)
+	int32 ImageHeight,
+	const FString& SkeletalMeshPath)
 {
 	TArray<FAnimationPoseCaptureResult> Results;
 
@@ -4465,6 +4490,14 @@ TArray<FAnimationPoseCaptureResult> UAnimSequenceService::CaptureAnimationSequen
 		return Results;
 	}
 
+	FAnimationPoseCaptureResult MeshError;
+	MeshError.AnimPath = AnimPath;
+	USkeletalMesh* Mesh = ResolveCaptureMesh(AnimSeq, SkeletalMeshPath, MeshError.ErrorMessage);
+	if (!Mesh)
+	{
+		Results.Init(MeshError, FrameCount);
+		return Results;
+	}
 	float Duration = AnimSeq->GetPlayLength();
 	float TimeStep = Duration / FMath::Max(1, FrameCount - 1);
 
@@ -4488,7 +4521,7 @@ TArray<FAnimationPoseCaptureResult> UAnimSequenceService::CaptureAnimationSequen
 		float Time = (FrameCount > 1) ? (i * TimeStep) : 0.0f;
 		FString OutputPath = FString::Printf(TEXT("%sframe_%03d.png"), *ActualOutputDir, i);
 
-		Results.Add(CaptureAnimationPose(AnimPath, Time, OutputPath, CameraAngle, ImageWidth, ImageHeight));
+		Results.Add(RenderAnimationPose(AnimSeq, Mesh, AnimPath, Time, OutputPath, CameraAngle, ImageWidth, ImageHeight));
 	}
 
 	return Results;
