@@ -14,6 +14,13 @@
 #include "InterchangeResult.h"
 #include "InterchangeResultsContainer.h"
 #include "Engine/Texture2D.h"
+#include "Engine/TextureRenderTarget.h"     // ExportTexture: render targets have no source and are still exportable
+#include "VT/VirtualTextureBuilder.h"        // ExportTexture: a builder exports its UVirtualTexture2D
+#include "VT/VirtualTexture.h"                // UVirtualTexture2D (a UTexture2D)
+#include "Exporters/Exporter.h"
+#include "Serialization/BufferArchive.h"
+#include "UObject/UObjectIterator.h"
+#include "Misc/FeedbackContext.h"
 #include "HAL/PlatformFileManager.h"
 #include "ContentBrowserModule.h"
 #include "IContentBrowserSingleton.h"
@@ -502,45 +509,210 @@ bool UAssetDiscoveryService::ReimportAsset(
 	return true;
 }
 
-bool UAssetDiscoveryService::ExportTexture(const FString& AssetPath, const FString& ExportFilePath)
+namespace VibeUETextureExport
 {
+	/** The texture whose source an exporter would read (a VirtualTextureBuilder exports its built texture) */
+	UTexture* TextureOf(UObject* Object)
+	{
+		if (UVirtualTextureBuilder* Builder = Cast<UVirtualTextureBuilder>(Object))
+		{
+			return Builder->Texture;
+		}
+		return Cast<UTexture>(Object);
+	}
+
+	struct FFormat
+	{
+		UClass* ExporterClass = nullptr;
+		FString Extension;
+	};
+
+	/**
+	 * Every binary exporter whose SupportsObject accepts Object, with each of its extensions. Callers must have
+	 * ruled out a texture without source data first: UTextureExporterGeneric::SupportsObject does check(0) on a
+	 * UTexture2D whose Source is not valid (EditorFactories.cpp), and UExporter::FindExporter asks every registered
+	 * exporter, so even AssetTools' export of such a texture asserts.
+	 */
+	TArray<FFormat> FindFormats(UObject* Object)
+	{
+		TArray<FFormat> Formats;
+		for (TObjectIterator<UClass> It; It; ++It)
+		{
+			UClass* Class = *It;
+			if (!Class->IsChildOf(UExporter::StaticClass())
+				|| Class->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists))
+			{
+				continue;
+			}
+			const UExporter* Default = Class->GetDefaultObject<UExporter>();
+			if (!Default || Default->bText || !Default->SupportedClass || !Object->IsA(Default->SupportedClass)
+				|| !Default->SupportsObject(Object))
+			{
+				continue;
+			}
+			for (const FString& Extension : Default->FormatExtension)
+			{
+				if (!Extension.IsEmpty() && Extension != TEXT("*"))
+				{
+					Formats.Add({ Class, Extension });
+				}
+			}
+		}
+		return Formats;
+	}
+
+	FString DescribeFormats(const TArray<FFormat>& Formats)
+	{
+		TArray<FString> Names;
+		for (const FFormat& Format : Formats)
+		{
+			Names.AddUnique(Format.Extension.ToLower());
+		}
+		Names.Sort();
+		return Names.Num() > 0 ? FString::Join(Names, TEXT(", ")) : FString(TEXT("none"));
+	}
+
+	FString DescribeSource(const UTexture* Texture)
+	{
+		if (!Texture || !Texture->Source.IsValid())
+		{
+			return TEXT("no source");
+		}
+		const UEnum* FormatEnum = StaticEnum<ETextureSourceFormat>();
+		const FString Format = FormatEnum ? FormatEnum->GetNameStringByValue(static_cast<int64>(Texture->Source.GetFormat())) : FString();
+		return FString::Printf(TEXT("source %s %lldx%lld%s"), *Format, Texture->Source.GetSizeX(), Texture->Source.GetSizeY(),
+			Texture->VirtualTextureStreaming ? TEXT(", virtual texture") : TEXT(""));
+	}
+
+	UObject* LoadExportable(const FString& AssetPath)
+	{
+		// An object path finds in-memory objects too (a texture made in this session); a package path finds the package,
+		// which is not exportable, so fall through to the asset load
+		if (UObject* Found = StaticFindObject(UObject::StaticClass(), nullptr, *AssetPath))
+		{
+			if (TextureOf(Found))
+			{
+				return Found;
+			}
+		}
+		if (UEditorAssetLibrary::DoesAssetExist(AssetPath))
+		{
+			return UEditorAssetLibrary::LoadAsset(AssetPath);
+		}
+		return nullptr;
+	}
+}
+
+bool UAssetDiscoveryService::ExportTexture(const FString& AssetPath, const FString& ExportFilePath, FString& OutWrittenPath, FString& OutError)
+{
+	OutWrittenPath.Reset();
+	OutError.Reset();
 	if (AssetPath.IsEmpty() || ExportFilePath.IsEmpty())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("UAssetDiscoveryService::ExportTexture: AssetPath or ExportFilePath is empty"));
+		OutError = TEXT("AssetPath and ExportFilePath must both be given");
 		return false;
 	}
 
-	// Load the texture
-	UObject* LoadedAsset = UEditorAssetLibrary::LoadAsset(AssetPath);
-	UTexture2D* Texture = Cast<UTexture2D>(LoadedAsset);
+	UObject* Object = VibeUETextureExport::LoadExportable(AssetPath);
+	UTexture* Texture = Object ? VibeUETextureExport::TextureOf(Object) : nullptr;
 	if (!Texture)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("UAssetDiscoveryService::ExportTexture: Failed to load texture: %s"), *AssetPath);
+		OutError = Object
+			? FString::Printf(TEXT("'%s' is a %s, not a texture"), *AssetPath, *Object->GetClass()->GetName())
+			: FString::Printf(TEXT("no texture at '%s'"), *AssetPath);
+		return false;
+	}
+	if (Object->GetPackage()->HasAnyPackageFlags(PKG_DisallowExport))
+	{
+		OutError = FString::Printf(TEXT("'%s' is in a package that disallows export"), *AssetPath);
 		return false;
 	}
 
-	// Use Unreal's built-in export via asset tools
-	FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools");
-	IAssetTools& AssetTools = AssetToolsModule.Get();
-
-	// Get the export path directory
-	FString ExportDir = FPaths::GetPath(ExportFilePath);
-	
-	// Ensure directory exists
-	if (!FPaths::DirectoryExists(ExportDir))
+	// Before any SupportsObject call: the generic texture exporters check(0) on a Texture2D without source data
+	if (!Texture->Source.IsValid() && !Texture->IsA<UTextureRenderTarget>())
 	{
-		IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
-		PlatformFile.CreateDirectoryTree(*ExportDir);
+		OutError = FString::Printf(TEXT("'%s' has no source data to export (made at run time, cooked, or its source was stripped)"), *AssetPath);
+		return false;
 	}
 
-	// Export the asset
-	TArray<UObject*> AssetsToExport;
-	AssetsToExport.Add(Texture);
-	
-	AssetTools.ExportAssets(AssetsToExport, ExportDir);
+	FString FilePath = ExportFilePath;
+	if (FPaths::IsRelative(FilePath))
+	{
+		FilePath = FPaths::Combine(FPaths::ProjectDir(), FilePath);
+	}
+	FilePath = FPaths::ConvertRelativePathToFull(FilePath);
+	FPaths::NormalizeFilename(FilePath);
+	const FString Extension = FPaths::GetExtension(FilePath);
 
-	UE_LOG(LogTemp, Log, TEXT("UAssetDiscoveryService::ExportTexture: Exported texture to %s"), *ExportDir);
+	const TArray<VibeUETextureExport::FFormat> Formats = VibeUETextureExport::FindFormats(Object);
+	if (Extension.IsEmpty())
+	{
+		OutError = FString::Printf(TEXT("'%s' has no extension; this texture (%s) can be written as: %s"),
+			*ExportFilePath, *VibeUETextureExport::DescribeSource(Texture), *VibeUETextureExport::DescribeFormats(Formats));
+		return false;
+	}
+	const VibeUETextureExport::FFormat* Chosen = Formats.FindByPredicate([&Extension](const VibeUETextureExport::FFormat& Format)
+	{
+		return Format.Extension.Equals(Extension, ESearchCase::IgnoreCase);
+	});
+	if (!Chosen)
+	{
+		OutError = FString::Printf(TEXT("no exporter writes this texture (%s) as .%s; it can be written as: %s"),
+			*VibeUETextureExport::DescribeSource(Texture), *Extension.ToLower(), *VibeUETextureExport::DescribeFormats(Formats));
+		return false;
+	}
+
+	UExporter* Exporter = NewObject<UExporter>(GetTransientPackage(), Chosen->ExporterClass);
+	const int32 FileCount = Exporter->GetFileCount(Object);
+	if (FileCount != 1)
+	{
+		OutError = FString::Printf(TEXT("this texture's source is %d images (UDIM blocks x layers) and would need %d files; ExportTexture writes one file"),
+			FileCount, FileCount);
+		return false;
+	}
+
+	FBufferArchive64 Buffer;
+	const bool bExported = Exporter->ExportBinary(Object, *Chosen->Extension, Buffer, GWarn, 0, 0);
+	if (!bExported || Buffer.Num() == 0)
+	{
+		OutError = FString::Printf(TEXT("%s produced no data for '%s'"), *Chosen->ExporterClass->GetName(), *AssetPath);
+		return false;
+	}
+
+	const FString Directory = FPaths::GetPath(FilePath);
+	if (!Directory.IsEmpty() && !IFileManager::Get().DirectoryExists(*Directory) && !IFileManager::Get().MakeDirectory(*Directory, true))
+	{
+		OutError = FString::Printf(TEXT("could not create directory '%s'"), *Directory);
+		return false;
+	}
+	if (!FFileHelper::SaveArrayToFile(Buffer, *FilePath))
+	{
+		OutError = FString::Printf(TEXT("could not write '%s'"), *FilePath);
+		return false;
+	}
+	const int64 WrittenSize = IFileManager::Get().FileSize(*FilePath);
+	if (WrittenSize != Buffer.Num())
+	{
+		OutError = FString::Printf(TEXT("'%s' is %lld bytes on disk after writing %lld"), *FilePath, WrittenSize, static_cast<int64>(Buffer.Num()));
+		return false;
+	}
+
+	OutWrittenPath = FilePath;
+	UE_LOG(LogTemp, Log, TEXT("UAssetDiscoveryService::ExportTexture: %s -> %s (%s, %lld bytes)"),
+		*AssetPath, *FilePath, *Chosen->ExporterClass->GetName(), WrittenSize);
 	return true;
+}
+
+FString UAssetDiscoveryService::ExportTexture(const FString& AssetPath, const FString& ExportFilePath)
+{
+	VibeUE::FToolFailureLog FailureLog;
+	FString WrittenPath;
+	FString Error;
+	if (!ExportTexture(AssetPath, ExportFilePath, WrittenPath, Error))
+	{
+		VibeUE::RaiseToolError(TEXT("ExportTexture"), Error, FailureLog);
+	}
+	return WrittenPath;
 }
 
 // ========== Open Assets & Content Browser ==========

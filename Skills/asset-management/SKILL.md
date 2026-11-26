@@ -31,7 +31,7 @@ and remapping through the existing engine Python API; no native service rebuild.
 > | Tool | Why it survives |
 > |---|---|
 > | `reimport_asset(asset_path, new_source_path)` | Nothing in Epic's toolset surface reimports an asset |
-> | `export_texture(asset_path, file_path)` | Epic's `TextureToolset.ExportPng` is **PNG-only and `UTexture2D`-only**; this goes through `AssetTools::ExportAssets`, so it uses whichever registered exporter matches the asset and format. Use `ExportPng` when a PNG of a 2D texture is all you need. Note only the **directory** part of the path is used -- the exporter names the file |
+> | `export_texture(asset_path, file_path)` -> written path | Epic's `TextureToolset.ExportPng` is **PNG-only and `UTexture2D`-only**; this writes exactly `file_path` in the format of its extension (png, tga, bmp, exr, hdr, dds, jpg) through a registered exporter that accepts the texture, and refuses with the formats it CAN be written as. See "Export a texture" below |
 >
 > **Python-only helpers** (still callable as `unreal.AssetDiscoveryService.*` from `execute_python`,
 > but no longer MCP tools, so don't look for them in `list_toolsets`):
@@ -460,9 +460,46 @@ print(path or err)
 # Textures: the engine importer (args per its schema -- check with get_symbol on the toolset):
 vibeue.exec_tool("EditorToolset.TextureToolset", "import_file", {"file": "C:/Textures/logo.png", "destination": "/Game/Textures"})
 
-# Export (project → file system)
-unreal.AssetDiscoveryService.export_texture("/Game/Textures/T_Logo", "C:/Exports/logo.png")
+# Export (project → file system): writes exactly this file, returns its absolute path, raises with the reason
+written = unreal.AssetDiscoveryService.export_texture("/Game/Textures/T_Logo", "C:/Exports/logo.png")
 ```
+
+### Export a texture: use `export_texture`, NOT `AssetExportTask` + `TextureExporterPNG`
+
+**Never export a texture with `unreal.AssetExportTask` and an explicit exporter (`TextureExporterPNG`,
+`TextureExporterTGA`, ...).** `RunAssetExportTask` calls the exporter without asking whether it takes the texture, and
+`UTextureExporterGeneric::ExportBinary` then hits `check(SupportsTexture(Texture))` (EditorFactories.cpp): an assert
+that **kills the editor**. It happened twice in one week: an HDR-source virtual texture and a texture whose source format
+the PNG exporter does not take. A texture with no source data (made at run time, cooked) asserts even earlier, in the
+generic exporter's `SupportsObject` (`check(0)`), so `AssetTools.export_assets` of such a texture is fatal too.
+
+`unreal.AssetDiscoveryService.export_texture(asset_path, file_path)` asks every registered exporter's
+`SupportsObject` first (after ruling out a texture without source data), writes exactly `file_path`, checks the file
+is on disk and returns its absolute path. Anything else raises a script error that says why:
+
+| Source format of the texture | Extensions it can be written as |
+|---|---|
+| BGRA8, G8 (any compression: BC1-BC7, BC4 / TC_Alpha, Grayscale ...) | png, tga, bmp, dds |
+| 16-bit (RGBA16, G16) | png, dds |
+| HDR float (an .exr import: RGBA16F, RGBA32F, R16F, R32F) | exr, dds |
+| BGRE8 (a Radiance .hdr import, which the importer makes a long-lat TextureCube) | hdr |
+| a JPEG import (stored JPEG bits) | also jpg (no re-compression; read in engine source, not run) |
+| no source data (run-time or cooked texture) | refused |
+
+```python
+try:
+    path = unreal.AssetDiscoveryService.export_texture("/Game/Env/T_Rock_N", "C:/Exports/T_Rock_N.png")
+except Exception as e:      # e.g. "no exporter writes this texture (source RGBA16F 2048x2048) as .png;
+    print(e)                #       it can be written as: dds, exr"
+```
+
+- The table was measured with `scripts/tests/texture_export_regression.py` (30 cases, virtual textures included); the
+  refusal message lists what THIS texture can be written as, so read it instead of guessing.
+- The extension decides the format and is required; an existing file is overwritten; a relative path is under the
+  project directory.
+- A UDIM / multi-layer source would need several files: refused (export it from the Content Browser).
+- Changed on 5-9 (#696): it used to use only the directory of `file_path`, name the file after the asset and return
+  `True` whatever happened.
 
 ### Editor State & Content Browser (VibeUE)
 

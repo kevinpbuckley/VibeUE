@@ -114,7 +114,7 @@ struct FUnattendedDeleteResult
  *
  * What is left is four calls. Two are MCP tools: ReimportAsset, because nothing in the engine
  * surface reimports an asset, and ExportTexture, because the engine's export is PNG-only while
- * this goes through the asset's registered exporter.
+ * this picks a registered exporter that accepts the texture (PNG, TGA, BMP, EXR, HDR, DDS, JPG).
  *
  * Two are DEMOTED -- no longer MCP tools, still callable from execute_python:
  *   path, err = unreal.AssetDiscoveryService.import_asset(
@@ -259,20 +259,35 @@ public:
 	static bool ReimportAsset(const FString& AssetPath, const FString& NewSourcePath, FString& OutSourceFileUsed, FString& OutError);
 
 	/**
-	 * Export a texture to the file system for external analysis, through the asset's registered
-	 * exporter (AssetTools::ExportAssets). For a plain PNG the engine's
-	 * `EditorToolset.TextureToolset` ExportPng does the same job; this one survives because the
-	 * exporter also writes the formats ExportPng cannot.
+	 * Export a texture's source image to exactly the file asked for. The format is the file's extension (png, tga,
+	 * bmp, exr, hdr, dds, jpg); the exporter is a registered one whose SupportsObject accepts THIS texture, so a
+	 * format the texture cannot be written as is refused with the formats it can be written as, instead of reaching
+	 * the engine's check(SupportsTexture(Texture)) in UTextureExporterGeneric::ExportBinary (an editor crash that
+	 * AssetExportTask + TextureExporterPNG hits on an HDR source, e.g. some virtual textures). Which exporter takes
+	 * which source format: PNG every 8 / 16-bit format, TGA and BMP only BGRA8 and G8, EXR every float format, HDR
+	 * only BGRE8, DDS any texture, JPG only a texture imported from a JPEG (its stored bits, no re-compression).
 	 *
-	 * @param AssetPath - Path to the texture asset
-	 * @param ExportFilePath - Absolute path in the target directory. Only its DIRECTORY is used
-	 *        (created if missing); the exporter names the file after the asset and its own format.
-	 * @return True if export was successful
+	 * Refused with a reason (a script error: a Python exception, an MCP tool error): no texture at AssetPath, no
+	 * source data (a texture made at run time or cooked; render targets excepted), no or an unsupported extension,
+	 * a source that would need several files (UDIM blocks or several layers), the exporter producing nothing, or the
+	 * file not being on disk afterwards. Existing files are overwritten.
+	 *
+	 * Changed on 5-9 (#696): it used to take only the directory of ExportFilePath, name the file itself, and return
+	 * true whatever happened.
+	 *
+	 * @param AssetPath - Texture asset (/Game/T_Name or /Game/T_Name.T_Name), an in-memory texture's object path,
+	 *        or a VirtualTextureBuilder asset
+	 * @param ExportFilePath - The file to write, with its extension; absolute, or relative to the project directory.
+	 *        The directory is created when missing.
+	 * @return The absolute path of the file written
 	 *
 	 * Example:
-	 *   unreal.AssetDiscoveryService.export_texture("/Game/Textures/MyTexture", "C:/Exports/texture.png")
+	 *   path = unreal.AssetDiscoveryService.export_texture("/Game/Textures/T_Rock_N", "C:/Exports/T_Rock_N.png")
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Assets")
-	static bool ExportTexture(const FString& AssetPath, const FString& ExportFilePath);
+	static FString ExportTexture(const FString& AssetPath, const FString& ExportFilePath);
+
+	/** C++ form of ExportTexture: false with the reason on failure. Not reflected (#687). */
+	static bool ExportTexture(const FString& AssetPath, const FString& ExportFilePath, FString& OutWrittenPath, FString& OutError);
 
 };
