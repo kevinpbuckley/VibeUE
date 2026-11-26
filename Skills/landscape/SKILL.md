@@ -54,8 +54,8 @@ this `SKILL.md` on disk) directly:
 | Sub-doc | When to load |
 |---------|--------------|
 | `return-types.md` | Exact property names of `LandscapeCreateResult`, `LandscapeInfo_Custom`, `LandscapeLayerInfo_Custom`, `LandscapeSplinePointInfo`, `LandscapeSplineSegmentInfo`, `LandscapeSplineMeshEntryInfo`, plus the `create_landscape` signature. |
-| `workflows-creation.md` | Creating landscapes, getting info, importing/exporting heightmaps, recreating splines, copying terrain/paint layers between landscapes, calculating side-by-side offsets, reading height data in a region. |
-| `workflows-editing.md` | Sculpting, direct region editing, procedural noise, painting layers, setting material, querying terrain, LandscapeGrassType creation/cloning, full landscape cloning, existence checks, heightmap sizing utilities. |
+| `workflows-creation.md` | Creating landscapes, getting info, importing/exporting heightmaps, guarded re-imports (`expected_baseline`, `diff_heightmap`), region imports, recreating splines, copying terrain/paint layers between landscapes, calculating side-by-side offsets, reading height data in a region. |
+| `workflows-editing.md` | Sculpting, direct region editing, procedural noise, painting layers, setting material and checking what renders (`get_render_materials`), querying terrain, LandscapeGrassType creation/cloning, full landscape cloning, existence checks, heightmap sizing utilities. |
 | `intelligent-sculpting.md` | v3 semantic features (mountain/valley/ridge/plateau/crater/terraces/erosion/blend), terrain analysis (slope/normal/flat areas), mesh projection, batch line traces, complete v3 workflow example. |
 | `finishing-order.md` | The order after any height, weight or material change: assign the material again, build grass maps, build Nanite, save. Why grass vanishes after a material edit. |
 
@@ -407,7 +407,8 @@ Do this in separate steps:
 | `layer.name` on list_layers result | `layer.layer_name` (LandscapeLayerInfo_Custom property) |
 | `LandscapeService.create_spline_control_point(...)` (no such method) | `LandscapeService.create_spline_point(...)` -- no "control" in the name |
 | `LandscapeMaterialService.add_material_layer(...)` (no such method) | `LandscapeMaterialService.add_layer_to_blend_node(...)` |
-| `LandscapeService.set_landscape_material` / `set_landscape_property` / `set_landscape_visibility` (cut / demoted) | `ObjectToolset.SetProperties` on the landscape actor (`{"LandscapeMaterial": "<object path>"}`); `LevelToolset.SetActorHidden` — see workflows-editing.md |
+| `LandscapeService.set_landscape_material` / `set_landscape_property` / `set_landscape_visibility` (cut / demoted) | `ObjectToolset.SetProperties` on the landscape actor (`{"LandscapeMaterial": "<object path>"}`), then `get_render_materials(label)` to verify what renders; `LevelToolset.SetActorHidden` — see workflows-editing.md |
+| Judging a landscape material's cost or look from the base material's Stats, or `set_material` on a PIE component | `get_render_materials(label)`: per painted-layer permutation the instruction / sample counts and compile errors, and which components fall back to the default material |
 | `connect_spline_points(..., tangent_length=25.0)` ignoring negative source | Pass `tangent_length=seg.start_tangent_length, end_tangent_length=seg.end_tangent_length` — **both** tangents are needed for exact shape |
 | Only passing `tangent_length` to `connect_spline_points` | Must also pass `end_tangent_length=seg.end_tangent_length` — end tangent is typically negative (UE convention). Omitting it defaults to `-start_tangent` which is usually correct for NEW splines, but when copying, always pass both explicitly |
 | `create_spline_point("L", location=vec)` | Parameter is `world_location`, NOT `location`: `create_spline_point("L", world_location=vec)` |

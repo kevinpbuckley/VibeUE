@@ -53,6 +53,15 @@
 // Read-only landscape access (#694)
 #include "Misc/ITransaction.h"
 #include "Templates/UnrealTemplate.h"
+// Render materials (#704)
+#include "MaterialStatsCommon.h"
+#include "MaterialShared.h"
+#include "VertexFactory.h"
+#include "Materials/Material.h"
+#include "Materials/MaterialInstance.h"
+#include "Materials/MaterialInstanceConstant.h"
+#include "Misc/App.h"
+#include "RHIStrings.h"
 
 // =================================================================
 // Helper Methods
@@ -3692,6 +3701,277 @@ bool ULandscapeService::SetLandscapeMaterial(
 	UE_LOG(LogTemp, Log, TEXT("ULandscapeService::SetLandscapeMaterial: Set material '%s' on landscape '%s'"),
 		*MaterialPath, *LandscapeNameOrLabel);
 	return true;
+}
+
+// =================================================================
+// Render materials (#704)
+// =================================================================
+
+namespace LandscapeRenderMaterials
+{
+	/** The object that owns the shader map an instance draws with: the first instance up the chain with its own static permutation, else the base material. */
+	static UMaterialInterface* PermutationOwner(UMaterialInterface* Material)
+	{
+		UMaterialInterface* Current = Material;
+		while (UMaterialInstance* Instance = Cast<UMaterialInstance>(Current))
+		{
+			if (Instance->bHasStaticPermutationResource || !Instance->Parent)
+			{
+				return Instance;
+			}
+			Current = Instance->Parent;
+		}
+		return Current;
+	}
+
+	static FString PathOf(const UObject* Object)
+	{
+		return Object ? Object->GetPathName() : FString();
+	}
+
+	/** Fills the statistics of one permutation the way UMaterialEditingLibrary::GetStatistics does, without raising. */
+	static void FillStatistics(UMaterialInterface* Material, FLandscapeRenderPermutationInfo& Out)
+	{
+		if (!FApp::CanEverRender())
+		{
+			Out.Note = TEXT("No statistics: this editor has no renderer (-nullrhi), so materials are not compiled.");
+			return;
+		}
+		FMaterialResource* Resource = Material ? Material->GetMaterialResource(GMaxRHIShaderPlatform) : nullptr;
+		if (!Resource)
+		{
+			Out.Note = TEXT("No statistics: the material has no resource for this shader platform.");
+			return;
+		}
+		if (!Resource->IsGameThreadShaderMapComplete())
+		{
+			Resource->SubmitCompileJobs_GameThread(EShaderCompileJobPriority::High);
+		}
+		Resource->FinishCompilation();
+
+		Out.CompileErrors = Resource->GetCompileErrors();
+		if (Out.CompileErrors.Num() > 0 || !Resource->GetGameThreadShaderMap())
+		{
+			Out.bFallsBackToDefaultMaterial = true;
+			Out.Note = Out.CompileErrors.Num() > 0
+				? FString::Printf(TEXT("Fails to compile (%d errors): components using it draw the engine default material."), Out.CompileErrors.Num())
+				: TEXT("No shader map after compiling: components using it draw the engine default material.");
+			return;
+		}
+
+		TArray<FMaterialStatsUtils::FShaderInstructionsInfo> InstructionInfos;
+		FMaterialStatsUtils::GetRepresentativeInstructionCounts(InstructionInfos, Resource);
+		for (const FMaterialStatsUtils::FShaderInstructionsInfo& Info : InstructionInfos)
+		{
+			const int32 ShaderType = (int32)Info.ShaderType;
+			if (ShaderType >= (int32)ERepresentativeShader::FirstFragmentShader && ShaderType <= (int32)ERepresentativeShader::LastFragmentShader)
+			{
+				Out.NumPixelShaderInstructions = FMath::Max(Out.NumPixelShaderInstructions, Info.InstructionCount);
+			}
+			else if (ShaderType >= (int32)ERepresentativeShader::FirstVertexShader && ShaderType <= (int32)ERepresentativeShader::LastVertexShader)
+			{
+				Out.NumVertexShaderInstructions = FMath::Max(Out.NumVertexShaderInstructions, Info.InstructionCount);
+			}
+		}
+		// The material editor's representative shaders are looked up for FLocalVertexFactory, which a landscape
+		// permutation's shader map does not hold (every count above reads 0). Read the base pass shaders of the
+		// landscape vertex factory instead, the worst one of each stage, as the Stats panel reports a worst case.
+		if (const FMaterialShaderMap* ShaderMap = Resource->GetGameThreadShaderMap())
+		{
+			if (const FMeshMaterialShaderMap* LandscapeShaders = ShaderMap->GetMeshShaderMap(FHashedName(TEXT("FLandscapeVertexFactory"))))
+			{
+				TMap<FHashedName, TShaderRef<FShader>> Shaders;
+				LandscapeShaders->GetShaderList(*ShaderMap, Shaders);
+				int32 MaxPixel = 0, MaxVertex = 0;
+				for (const TPair<FHashedName, TShaderRef<FShader>>& Entry : Shaders)
+				{
+					FShaderType* ShaderType = Entry.Value.GetType();
+					const FString TypeName = ShaderType ? FString(ShaderType->GetName()) : FString();
+					const int32 NumInstructions = ShaderType ? (int32)LandscapeShaders->GetMaxNumInstructionsForShader(*ShaderMap, ShaderType) : 0;
+					if (TypeName.StartsWith(TEXT("TBasePassPS")))
+					{
+						MaxPixel = FMath::Max(MaxPixel, NumInstructions);
+					}
+					else if (TypeName.StartsWith(TEXT("TBasePassVS")))
+					{
+						MaxVertex = FMath::Max(MaxVertex, NumInstructions);
+					}
+				}
+				if (MaxPixel > 0 || MaxVertex > 0)
+				{
+					Out.NumPixelShaderInstructions = MaxPixel;
+					Out.NumVertexShaderInstructions = MaxVertex;
+				}
+			}
+		}
+
+		Out.NumSamplers = Resource->GetSamplerUsage();
+		uint32 NumVSTextureSamples = 0, NumPSTextureSamples = 0;
+		Resource->GetEstimatedNumTextureSamples(NumVSTextureSamples, NumPSTextureSamples);
+		Out.NumVertexTextureSamples = (int32)NumVSTextureSamples;
+		Out.NumPixelTextureSamples = (int32)NumPSTextureSamples;
+		Out.NumVirtualTextureSamples = Resource->GetEstimatedNumVirtualTextureLookups();
+		Out.bStatisticsAvailable = true;
+	}
+}
+
+FLandscapeRenderMaterialsResult ULandscapeService::GetRenderMaterials(
+	const FString& LandscapeNameOrLabel,
+	bool bIncludeComponents,
+	bool bIncludeStatistics)
+{
+	using namespace LandscapeRenderMaterials;
+	FLandscapeRenderMaterialsResult Result;
+
+	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel, nullptr, &Result.ErrorMessage);
+	if (!Landscape)
+	{
+		if (Result.ErrorMessage.IsEmpty()) { Result.ErrorMessage = FString::Printf(TEXT("Landscape '%s' not found"), *LandscapeNameOrLabel); }
+		return Result;
+	}
+	ULandscapeInfo* Info = Landscape->GetLandscapeInfo();
+	if (!Info)
+	{
+		Result.ErrorMessage = TEXT("No landscape info");
+		return Result;
+	}
+
+	UMaterialInterface* DefaultMaterial = UMaterial::GetDefaultMaterial(MD_Surface);
+	Result.LandscapeMaterial = PathOf(Landscape->LandscapeMaterial.Get());
+	Result.ShaderPlatform = LexToString(GMaxRHIShaderPlatform, false);
+	if (!Landscape->LandscapeMaterial)
+	{
+		Result.Notes.Add(TEXT("The landscape has no LandscapeMaterial: it draws the engine default material (WorldGridMaterial)."));
+	}
+
+	// Every component of the landscape, in every loaded proxy, sorted by section base so the order is stable.
+	TArray<ULandscapeComponent*> Components;
+	Info->XYtoComponentMap.GenerateValueArray(Components);
+	Components.RemoveAll([](const ULandscapeComponent* C) { return C == nullptr; });
+	Components.Sort([](const ULandscapeComponent& A, const ULandscapeComponent& B)
+	{
+		const FIntPoint BA = A.GetSectionBase(), BB = B.GetSectionBase();
+		return BA.Y != BB.Y ? BA.Y < BB.Y : BA.X < BB.X;
+	});
+	Result.NumComponents = Components.Num();
+
+	TMap<UMaterialInterface*, int32> PermutationIndex;
+	int32 NumNoInstances = 0;
+	for (ULandscapeComponent* Component : Components)
+	{
+		FLandscapeRenderComponentInfo ComponentInfo;
+		ComponentInfo.ComponentName = Component->GetName();
+		ComponentInfo.ProxyLabel = Component->GetLandscapeProxy() ? Component->GetLandscapeProxy()->GetActorLabel() : FString();
+		ComponentInfo.SectionBaseX = Component->GetSectionBase().X;
+		ComponentInfo.SectionBaseY = Component->GetSectionBase().Y;
+		ComponentInfo.NumMaterialInstances = Component->MaterialInstances.Num();
+
+		UMaterialInterface* Assigned = Component->GetLandscapeMaterial(0);
+		ComponentInfo.AssignedMaterial = PathOf(Assigned);
+
+		for (const FWeightmapLayerAllocationInfo& Allocation : Component->GetWeightmapLayerAllocations())
+		{
+			if (Allocation.LayerInfo)
+			{
+				ComponentInfo.PaintedLayers.Add(Allocation.LayerInfo->GetLayerName().ToString());
+			}
+		}
+		ComponentInfo.PaintedLayers.Sort();
+
+		// LOD 0 draws MaterialInstances[LODIndexToMaterialIndex[0]], as FLandscapeComponentSceneProxy does.
+		const int32 MaterialIndex = Component->LODIndexToMaterialIndex.Num() > 0 ? Component->LODIndexToMaterialIndex[0] : 0;
+		UMaterialInterface* Drawn = Component->MaterialInstances.IsValidIndex(MaterialIndex) ? Component->MaterialInstances[MaterialIndex].Get() : nullptr;
+
+		if (!Drawn)
+		{
+			// The scene proxy then has no available material and adds the default one.
+			Drawn = DefaultMaterial;
+			ComponentInfo.bFallsBackToDefaultMaterial = true;
+			ComponentInfo.Note = TEXT("No generated material instance: draws the engine default material until the instances are rebuilt.");
+			++NumNoInstances;
+		}
+		else if (UMaterialInstance* Instance = Cast<UMaterialInstance>(Drawn); Instance && !Instance->IsChildOf(Instance->GetMaterial()))
+		{
+			// The scene proxy's own validity check (a MIC whose parent chain is broken, e.g. force-deleted content).
+			ComponentInfo.bFallsBackToDefaultMaterial = true;
+			ComponentInfo.Note = TEXT("The generated instance has a broken parent chain: draws the engine default material.");
+		}
+
+		ComponentInfo.MaterialInstance = PathOf(Component->MaterialInstances.IsValidIndex(MaterialIndex) ? Component->MaterialInstances[MaterialIndex].Get() : nullptr);
+		ComponentInfo.BaseMaterial = PathOf(Drawn->GetMaterial());
+
+		const UMaterial* AssignedBase = Assigned ? Assigned->GetMaterial() : nullptr;
+		if (!ComponentInfo.bFallsBackToDefaultMaterial && AssignedBase && Drawn->GetMaterial() != AssignedBase)
+		{
+			ComponentInfo.bStaleInstances = true;
+			ComponentInfo.Note = FString::Printf(TEXT("Stale: the generated instances end in %s, but the landscape's material is %s; they were not rebuilt after the change."),
+				*PathOf(Drawn->GetMaterial()), *PathOf(AssignedBase));
+		}
+
+		UMaterialInterface* Owner = ComponentInfo.bFallsBackToDefaultMaterial ? DefaultMaterial : PermutationOwner(Drawn);
+		ComponentInfo.Permutation = PathOf(Owner);
+
+		int32* Existing = PermutationIndex.Find(Owner);
+		if (!Existing)
+		{
+			FLandscapeRenderPermutationInfo& Permutation = Result.Permutations.AddDefaulted_GetRef();
+			Permutation.Permutation = PathOf(Owner);
+			Permutation.BaseMaterial = PathOf(Owner->GetMaterial());
+			Permutation.PaintedLayers = ComponentInfo.PaintedLayers;
+			Existing = &PermutationIndex.Add(Owner, Result.Permutations.Num() - 1);
+		}
+		Result.Permutations[*Existing].ComponentCount++;
+
+		Result.NumComponentsStale += ComponentInfo.bStaleInstances ? 1 : 0;
+		Result.NumComponentsFallingBack += ComponentInfo.bFallsBackToDefaultMaterial ? 1 : 0;
+		if (bIncludeComponents)
+		{
+			Result.Components.Add(MoveTemp(ComponentInfo));
+		}
+	}
+
+	// Statistics and compile errors, once per distinct permutation.
+	for (TPair<UMaterialInterface*, int32>& Pair : PermutationIndex)
+	{
+		FLandscapeRenderPermutationInfo& Permutation = Result.Permutations[Pair.Value];
+		if (Pair.Key == DefaultMaterial)
+		{
+			Permutation.bFallsBackToDefaultMaterial = true;
+			Permutation.Note = TEXT("The engine default material.");
+			continue;
+		}
+		if (bIncludeStatistics)
+		{
+			FillStatistics(Pair.Key, Permutation);
+		}
+		if (Permutation.bFallsBackToDefaultMaterial)
+		{
+			Result.NumComponentsFallingBack += Permutation.ComponentCount;
+			Result.Notes.Add(FString::Printf(TEXT("%d component(s) draw the default material: %s %s"),
+				Permutation.ComponentCount, *Permutation.Permutation, *Permutation.Note));
+			for (FLandscapeRenderComponentInfo& ComponentInfo : Result.Components)
+			{
+				if (ComponentInfo.Permutation == Permutation.Permutation)
+				{
+					ComponentInfo.bFallsBackToDefaultMaterial = true;
+					ComponentInfo.Note = Permutation.Note;
+				}
+			}
+		}
+	}
+
+	if (NumNoInstances > 0)
+	{
+		Result.Notes.Add(FString::Printf(TEXT("%d component(s) have no generated material instance and draw the default material."), NumNoInstances));
+	}
+	if (Result.NumComponentsStale > 0)
+	{
+		Result.Notes.Add(FString::Printf(TEXT("%d component(s) still draw instances of another material than the landscape's: set the material "
+			"through PostEditChangeProperty (ObjectToolset.SetProperties, or Landscape.editor_set_landscape_material) to rebuild them."), Result.NumComponentsStale));
+	}
+
+	Result.bSuccess = true;
+	return Result;
 }
 
 FString ULandscapeService::GetLandscapeProperty(

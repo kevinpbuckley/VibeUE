@@ -471,6 +471,158 @@ struct FHeightmapDiffResult
 	bool bTruncated = false;
 };
 
+/** What one landscape component draws with (GetRenderMaterials) */
+USTRUCT(BlueprintType)
+struct FLandscapeRenderComponentInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString ComponentName;
+
+	/** The proxy (landscape or streaming proxy) actor label that owns the component */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString ProxyLabel;
+
+	/** Section base in landscape vertex indices */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 SectionBaseX = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 SectionBaseY = 0;
+
+	/** The generated material instance LOD 0 draws with (MaterialInstances, protected in Python) */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString MaterialInstance;
+
+	/** The UMaterial that instance chain ends in */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString BaseMaterial;
+
+	/** The material the component is meant to draw (the landscape's material, or the component's override) */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString AssignedMaterial;
+
+	/** The permutation (shared combination instance or material holding the shader map) this component uses */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString Permutation;
+
+	/** Painted layers allocated on this component (final weightmaps), which choose the permutation */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	TArray<FString> PaintedLayers;
+
+	/** Number of generated material instances (more than one with per-LOD materials) */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 NumMaterialInstances = 0;
+
+	/** True when the component draws the engine default material instead (see Note) */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	bool bFallsBackToDefaultMaterial = false;
+
+	/** True when the instances were generated from another material than AssignedMaterial and were not rebuilt */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	bool bStaleInstances = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString Note;
+};
+
+/** One distinct material permutation a landscape renders with, and its shader statistics (GetRenderMaterials) */
+USTRUCT(BlueprintType)
+struct FLandscapeRenderPermutationInfo
+{
+	GENERATED_BODY()
+
+	/** The object holding this permutation's shader map (a combination material instance, or the material itself) */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString Permutation;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString BaseMaterial;
+
+	/** The painted layers of the components using it (the layer set that selects the permutation) */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	TArray<FString> PaintedLayers;
+
+	/** Components drawing with this permutation; the counts of all permutations add up to NumComponents */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 ComponentCount = 0;
+
+	/** False when the shader map could not be had (no renderer, compile error); the counts are then 0 */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	bool bStatisticsAvailable = false;
+
+	/** Instruction counts of the worst base pass pixel / vertex shader compiled for the landscape vertex factory */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 NumPixelShaderInstructions = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 NumVertexShaderInstructions = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 NumPixelTextureSamples = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 NumVertexTextureSamples = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 NumVirtualTextureSamples = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 NumSamplers = 0;
+
+	/** Shader compile errors; non-empty means the components using it draw the default material */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	TArray<FString> CompileErrors;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	bool bFallsBackToDefaultMaterial = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString Note;
+};
+
+/** What a landscape actually renders (GetRenderMaterials) */
+USTRUCT(BlueprintType)
+struct FLandscapeRenderMaterialsResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	bool bSuccess = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString ErrorMessage;
+
+	/** The landscape actor's LandscapeMaterial ("" when none is set) */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString LandscapeMaterial;
+
+	/** The shader platform the statistics are for */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString ShaderPlatform;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 NumComponents = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 NumComponentsFallingBack = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 NumComponentsStale = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	TArray<FLandscapeRenderPermutationInfo> Permutations;
+
+	/** Per component; empty when bIncludeComponents is false */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	TArray<FLandscapeRenderComponentInfo> Components;
+
+	/** One line per problem found (fallbacks, stale instances, compile errors), empty when it renders as assigned */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	TArray<FString> Notes;
+};
+
 /** Dimensions of a heightmap file */
 USTRUCT(BlueprintType)
 struct FHeightmapDimensions
@@ -1564,6 +1716,8 @@ public:
 	/**
 	 * Set the material on a landscape.
 	 * Demoted (not an AI tool): use EditorToolset.ObjectToolset.SetProperties ({"LandscapeMaterial": ...}) instead; kept because ResizeLandscape calls it.
+	 * Unlike SetProperties it fires PostEditChangeProperty even when the value is unchanged, so it rebuilds stale material
+	 * instances (GetRenderMaterials reports them); verify with GetRenderMaterials afterwards.
 	 *
 	 * @param LandscapeNameOrLabel - Name or label of the landscape
 	 * @param MaterialPath - Full path to the material asset
@@ -1586,6 +1740,34 @@ public:
 	static FString GetLandscapeProperty(
 		const FString& LandscapeNameOrLabel,
 		const FString& PropertyName);
+
+	/**
+	 * Report what a landscape actually renders: the generated material instances, their permutations and shader cost.
+	 * Maps to action="get_render_materials"
+	 *
+	 * Per component: the generated instance LOD 0 draws with (Component.MaterialInstances, protected in Python),
+	 * the UMaterial its chain ends in, the material it should draw, its painted layers, and whether it draws the
+	 * engine default material instead (no generated instance, a broken parent chain, a compile error) or still
+	 * draws instances of a previous material (stale: the material was changed without PostEditChangeProperty).
+	 * Per distinct permutation (the combination instance or material that holds the shader map): component count,
+	 * the worst base pass pixel / vertex shader instruction counts of the landscape vertex factory, texture samples,
+	 * samplers and compile errors. The component counts add up to NumComponents.
+	 * Reads the editor world: a PIE landscape draws with the same instances. Needs a renderer for the statistics
+	 * (not -nullrhi); compiles any missing shader map first, which can take a while on the first call.
+	 * Change the material with EditorToolset.ObjectToolset.SetProperties ({"LandscapeMaterial": path}) and call this
+	 * afterwards to verify; stale instances whose property already holds the new value are rebuilt by the Python
+	 * call LandscapeService.set_landscape_material. Read-only.
+	 *
+	 * @param LandscapeNameOrLabel - Name or label of the landscape
+	 * @param bIncludeComponents - List every component (false: the permutations and totals only)
+	 * @param bIncludeStatistics - Compile and measure each permutation (false: skip shader statistics and compile errors)
+	 * @return Components, permutations and notes; Notes is empty when the landscape draws what it is assigned
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
+	static FLandscapeRenderMaterialsResult GetRenderMaterials(
+		const FString& LandscapeNameOrLabel,
+		bool bIncludeComponents = true,
+		bool bIncludeStatistics = true);
 
 	// =================================================================
 	// Collision

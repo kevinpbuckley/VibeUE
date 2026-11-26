@@ -1,6 +1,6 @@
 ---
 name: workflows-creation
-description: Workflows for creating landscapes, querying landscape info, importing/exporting heightmaps (with resolution matching), recreating splines across landscapes, copying terrain heights and paint layers between landscapes, calculating side-by-side offsets, and reading height data in a region
+description: Workflows for creating landscapes, querying landscape info, importing/exporting heightmaps (with resolution matching), guarded re-imports that keep hand sculpting (expected_baseline, diff_heightmap), region imports, recreating splines across landscapes, copying terrain heights and paint layers between landscapes, calculating side-by-side offsets, and reading height data in a region
 ---
 
 # Workflows — Creation, Import, and Copy

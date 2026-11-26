@@ -1,6 +1,6 @@
 ---
 name: workflows-editing
-description: Workflows for sculpting and editing existing terrain — sculpt_at_location, direct region editing, procedural noise, painting layers, setting landscape material, querying terrain info, creating and cloning LandscapeGrassType assets, full landscape cloning, existence checks, and heightmap sizing utilities (dimensions/resize/find-config/calculate-resolution)
+description: Workflows for sculpting and editing existing terrain — sculpt_at_location, direct region editing, procedural noise, painting layers, setting landscape material and verifying what renders (get_render_materials: permutations, shader statistics, fallbacks), querying terrain info, creating and cloning LandscapeGrassType assets, full landscape cloning, existence checks, and heightmap sizing utilities (dimensions/resize/find-config/calculate-resolution)
 ---
 
 # Workflows — Sculpt, Paint, Modify, Clone, Sizing Utilities
@@ -126,6 +126,41 @@ ok
 
 `assign_material_to_landscape` (LandscapeMaterialService) is still the call when layer info objects
 must be mapped at the same time.
+
+### What the landscape actually renders (verify a material change)
+
+The landscape does not draw `LandscapeMaterial` directly: each component draws a generated
+`LandscapeMaterialInstanceConstant` (`MaterialInstances`, protected in Python) whose parent is a shared
+"combination" instance per painted-layer set, each with its own shader permutation. A PIE landscape draws the
+editor landscape's instances, so `set_material` on a PIE component changes nothing on screen, and the base
+material's Stats are not what the painted components cost. Ask instead:
+
+```python
+r = unreal.LandscapeService.get_render_materials("MyTerrain")
+print(r.landscape_material, r.shader_platform, r.num_components, r.notes)   # notes empty = draws what it is assigned
+for p in r.permutations:                                                    # component_count adds up to num_components
+    print(p.component_count, list(p.painted_layers), "PS", p.num_pixel_shader_instructions,
+          "samples", p.num_pixel_texture_samples, "errors", len(p.compile_errors), p.note)
+bad = [c for c in r.components if c.falls_back_to_default_material or c.stale_instances]
+```
+
+- After changing the material (SetProperties above), call it and check `num_components_falling_back == 0`,
+  `num_components_stale == 0` and that every component's `base_material` is the new one. A material that fails to
+  compile shows its `compile_errors` and the components that now draw the engine default material.
+- `stale_instances`: the instances still end in the previous material because `LandscapeMaterial` was changed
+  without `PostEditChangeProperty` (e.g. `set_editor_property(..., PropertyAccessChangeNotifyMode.NEVER)`).
+  `SetProperties` with the value the property already holds does **not** rebuild them (nothing changed, so no
+  PostEditChange); `unreal.LandscapeService.set_landscape_material(label, path)` (Python only) always fires it.
+  Then call `get_render_materials` again.
+- Instruction counts are the worst base pass pixel / vertex shader compiled for the landscape vertex factory (the
+  material editor's own Stats look up the static-mesh vertex factory, which a landscape permutation does not have);
+  samples and samplers are the material's estimates.
+- The statistics need a renderer (not `-nullrhi`) and compile any missing shader map first, which can take a while
+  for a big layered material; `include_statistics=False` skips that. `include_components=False` keeps the result
+  small on a landscape of thousands of components.
+- `set_landscape_material` stays a Python-only call (not an AI tool): Epic's `SetProperties` sets the material and
+  rebuilds the instances through `PostEditChangeProperty`; `get_render_materials` is the check after any setter,
+  including a person's edit in the Details panel.
 
 ### Query Terrain Info
 
