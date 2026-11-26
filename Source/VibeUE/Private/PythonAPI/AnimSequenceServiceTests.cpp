@@ -9,6 +9,9 @@
 #include "Animation/AnimSequence.h"
 #include "Animation/AnimData/IAnimationDataModel.h"
 #include "Animation/Skeleton.h"
+#include "Engine/SkeletalMesh.h"
+#include "Misc/ScopeExit.h"
+#include "HAL/FileManager.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "EditorAssetLibrary.h"
@@ -188,6 +191,55 @@ bool FVibeAnimCaptureErrorReturnsStructTest::RunTest(const FString&)
 		TEXT("/Game/VibeUETests/AS_DoesNotExist"), 0.0f, FString(), FString(), 64, 64);
 	TestFalse(TEXT("missing animation fails"), Result.bSuccess);
 	TestTrue(TEXT("failure carries the reason"), Result.ErrorMessage.Contains(TEXT("Failed to load animation")));
+	return true;
+}
+
+// Two incompatible skeletons with overlapping names: the transient one is called "SkeletalCube", a substring of
+// the engine cube's "SkeletalCube_Skeleton", which the old name-substring match accepted as the same skeleton.
+// Both refusals happen before any render resource is allocated, so this runs under NullRHI.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeCaptureMeshIdentityTest, "VibeUE.Animation.Capture.MeshIdentity",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FVibeCaptureMeshIdentityTest::RunTest(const FString&)
+{
+	USkeletalMesh* Mesh = LoadObject<USkeletalMesh>(nullptr, TEXT("/Engine/EngineMeshes/SkeletalCube.SkeletalCube"));
+	if (!TestNotNull(TEXT("engine skeletal cube fixture"), Mesh))
+	{
+		return false;
+	}
+	USkeleton* Other = NewObject<USkeleton>(GetTransientPackage(), TEXT("SkeletalCube"));
+	UAnimSequence* Clip = NewObject<UAnimSequence>();
+	Clip->SetSkeleton(Other);
+	const FAnimationPoseCaptureResult Wrong = UAnimSequenceService::CaptureAnimationPose(Clip->GetPathName(), 0.f, TEXT(""), TEXT("front"), 32, 32, Mesh->GetPathName());
+	TestFalse(TEXT("incompatible explicit mesh fails"), Wrong.bSuccess);
+	TestTrue(TEXT("error identifies the mesh"), Wrong.ErrorMessage.Contains(Mesh->GetPathName()));
+	const FAnimationPoseCaptureResult Fallback = UAnimSequenceService::CaptureAnimationPose(Clip->GetPathName(), 0.f, TEXT(""), TEXT("front"), 32, 32);
+	TestTrue(TEXT("similar skeleton name is not accepted"), Fallback.ErrorMessage.Contains(TEXT("Could not find a capture mesh")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeCaptureExplicitMeshFramesTest, "VibeUE.Animation.Capture.ExplicitMeshFrames",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter | EAutomationTestFlags::NonNullRHI)
+bool FVibeCaptureExplicitMeshFramesTest::RunTest(const FString&)
+{
+	const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
+	const FString Output = FPaths::ProjectIntermediateDir() / TEXT("VibeUE/CaptureTests") / Suffix;
+	const FString Clip = UAnimSequenceService::CreateAnimSequence(TEXT("/Engine/EngineMeshes/SkeletalCube_Skeleton"), TEXT("AS_Capture_") + Suffix,
+		TEXT("/Game/VibeUETests"), 0.5f, 30.f, {});
+	if (!TestFalse(TEXT("created capture clip"), Clip.IsEmpty())) return false;
+	ON_SCOPE_EXIT
+	{
+		UEditorAssetLibrary::DeleteAsset(Clip);
+		IFileManager::Get().DeleteDirectory(*Output, false, true);
+	};
+	const FString Mesh = TEXT("/Engine/EngineMeshes/SkeletalCube.SkeletalCube");
+	const TArray<FAnimationPoseCaptureResult> Frames = UAnimSequenceService::CaptureAnimationSequence(Clip, Output, 2, TEXT("front"), 64, 64, Mesh);
+	TestEqual(TEXT("two frames returned"), Frames.Num(), 2);
+	for (const FAnimationPoseCaptureResult& Frame : Frames)
+	{
+		TestTrue(*Frame.ErrorMessage, Frame.bSuccess);
+		TestEqual(TEXT("requested mesh captured"), Frame.SkeletalMeshPath, Mesh);
+		TestTrue(TEXT("frame written"), IFileManager::Get().FileSize(*Frame.ImagePath) > 0);
+	}
 	return true;
 }
 

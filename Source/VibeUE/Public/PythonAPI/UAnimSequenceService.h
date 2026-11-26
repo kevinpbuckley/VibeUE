@@ -409,6 +409,10 @@ struct FAnimationPoseCaptureResult
 	UPROPERTY(BlueprintReadWrite, Category = "Animation")
 	FString AnimPath;
 
+	/** Object path of the mesh used for this capture. */
+	UPROPERTY(BlueprintReadOnly, Category = "Animation")
+	FString SkeletalMeshPath;
+
 	/** Time in seconds that was captured */
 	UPROPERTY(BlueprintReadWrite, Category = "Animation")
 	float CapturedTime = 0.0f;
@@ -1956,7 +1960,8 @@ public:
 		const FString& OutputPath,
 		const FString& CameraAngle,
 		int32 ImageWidth,
-		int32 ImageHeight);
+		int32 ImageHeight,
+		const FString& SkeletalMeshPath = TEXT(""));
 
 	/**
 	 * Capture multiple frames of an animation as a sequence of images.
@@ -1988,12 +1993,15 @@ public:
 		int32 FrameCount,
 		const FString& CameraAngle,
 		int32 ImageWidth,
-		int32 ImageHeight);
+		int32 ImageHeight,
+		const FString& SkeletalMeshPath = TEXT(""));
 
 private:
 	// ============================================================================
 	// PRIVATE HELPERS
 	// ============================================================================
+
+	static class USkeletalMesh* ResolveCaptureMesh(class UAnimSequence* Sequence, const FString& MeshPath, FString& Error);
 
 	/** Load an animation sequence from path */
 	static class UAnimSequence* LoadAnimSequence(const FString& AnimPath);
