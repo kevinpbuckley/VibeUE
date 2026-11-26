@@ -28,6 +28,8 @@
 #include "BlueprintAssetHandler.h"     // A13: engine fallback for a non-Blueprint asset that still owns a UBlueprint
 #include "Engine/Blueprint.h"          // A13: complete UBlueprint type for the UBlueprint* -> UObject* base conversion above
 #include "UObject/GCObject.h"          // A13: UGCObjectReferencer — the native GC root a Python global appears as (refusal signal)
+#include "HAL/IConsoleManager.h"
+#include "Misc/App.h"
 #include "AssetImportTask.h"           // Meshes and other non-image files through AssetImportTask
 #include "Async/TaskGraphInterfaces.h" // IsThreadProcessingTasks, the RecursionGuard check
 #include "Engine/StaticMesh.h"         // ranking what a multi-asset import returns
@@ -95,7 +97,22 @@ namespace
 		Task->bAsync = false;
 
 		IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
+		// Syncing the browser can hold Slate's throttle indefinitely under -nullrhi.
+		IConsoleVariable* BrowserSync = nullptr;
+		if (FApp::IsUnattended() || !FApp::CanEverRender())
+		{
+			BrowserSync = IConsoleManager::Get().FindConsoleVariable(TEXT("Interchange.FeatureFlags.Import.SyncToBrowser"));
+		}
+		const bool bRestoreBrowserSync = BrowserSync && BrowserSync->GetBool();
+		if (bRestoreBrowserSync)
+		{
+			BrowserSync->SetWithCurrentPriority(false);
+		}
 		AssetTools.ImportAssetTasks({ Task });
+		if (bRestoreBrowserSync)
+		{
+			BrowserSync->SetWithCurrentPriority(true);
+		}
 
 		const TArray<FString> Imported = Task->ImportedObjectPaths;
 		Task->RemoveFromRoot();
