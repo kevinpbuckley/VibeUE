@@ -116,6 +116,10 @@ struct FBlueprintVariableDetailedInfo
 	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
 	FString VariableType;
 
+	/** Unreal's serialized FEdGraphPinType, including full object paths and both terminals, for a Map member. */
+	UPROPERTY(BlueprintReadOnly, Category = "Blueprint")
+	FString MapTypeDescriptor;
+
 	/** Full type path (e.g., "/Script/CoreUObject.FloatProperty") */
 	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
 	FString TypePath;
