@@ -24,9 +24,12 @@
  *  - Fresh file, small stall                        -> the editor is healthy; an MCP failure is
  *    something else (config, port, transport).
  *
+ *  - `shaderJobs` / `assetCompilations` above 0      -> ready, but still compiling shaders or assets in the
+ *    background (issue #697): captures and frame timings are not representative yet. -1 = not sampled yet.
+ *
  * Fields: signal ("health"), pid, updatedUtc, sessionStartUtc, gameThreadStallSeconds, mcpPort,
- * mcpListening, slowTask, slowTaskText, slowTaskSeconds, modal, modalTitle, modalSeconds. Written to a
- * .tmp sibling and moved into place, so a watcher never observes a half-written file.
+ * mcpListening, shaderJobs, assetCompilations, slowTask, slowTaskText, slowTaskSeconds, modal, modalTitle,
+ * modalSeconds. Written to a .tmp sibling and moved into place, so a watcher never observes a half-written file.
  *
  * Slow-task and modal state is set from FSlowTask::OnProgress and Slate's modal-loop tick, the game-thread
  * callbacks that still run while the editor's normal loop is blocked, and cleared by the core ticker once the

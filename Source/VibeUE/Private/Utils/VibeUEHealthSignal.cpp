@@ -4,6 +4,7 @@
 #include "Utils/VibeUEPaths.h"
 #include "Utils/VibeUEReadinessSignal.h"
 #include "Utils/VibeUEMcpStatus.h"
+#include "AssetCompilingManager.h"
 #include "Containers/Ticker.h"
 #include "Framework/Application/SlateApplication.h"
 #include "HAL/CriticalSection.h"
@@ -20,6 +21,7 @@
 #include "Misc/SlowTaskStack.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
+#include "ShaderCompiler.h"
 
 #include <atomic>
 
@@ -34,6 +36,11 @@ namespace
 	// writer. The module read must stay on the game thread; the writer only touches these atomics.
 	std::atomic<uint32> GMcpPort{ 0 };
 	std::atomic<bool> GMcpListening{ false };
+	// Background compile work (issue #697): what an editor that is "ready" still has to finish before it is idle (shader
+	// jobs, assets compiling asynchronously: textures, static meshes, Niagara...). Sampled on the game-thread ticker,
+	// because the managers are game-thread objects; -1 = not sampled yet.
+	std::atomic<int32> GShaderJobs{ -1 };
+	std::atomic<int32> GAssetCompilations{ -1 };
 	std::atomic<bool> GStopRequested{ false };
 	FTSTicker::FDelegateHandle GTickerHandle;
 
@@ -205,6 +212,9 @@ namespace
 		// MCP endpoint status (issue B6) — snapshot taken on the game-thread ticker below.
 		Root->SetNumberField(TEXT("mcpPort"), static_cast<double>(GMcpPort.load(std::memory_order_relaxed)));
 		Root->SetBoolField(TEXT("mcpListening"), GMcpListening.load(std::memory_order_relaxed));
+		// Background compile work (issue #697): BuildAndLaunchGame -WaitForIdle waits for both to read 0.
+		Root->SetNumberField(TEXT("shaderJobs"), static_cast<double>(GShaderJobs.load(std::memory_order_relaxed)));
+		Root->SetNumberField(TEXT("assetCompilations"), static_cast<double>(GAssetCompilations.load(std::memory_order_relaxed)));
 
 		// Slow task / modal (issue #681): while either is true the MCP server refuses tool calls ("Not run: the Unreal
 		// Editor is running a slow task" / "is showing a modal dialog") and the stall figure grows: wait, do not relaunch.
@@ -300,6 +310,15 @@ void FVibeUEHealthSignal::Start()
 				FVibeUEMcpStatus::Query(McpPort, bMcpListening);
 				GMcpPort.store(McpPort, std::memory_order_relaxed);
 				GMcpListening.store(bMcpListening, std::memory_order_relaxed);
+			}
+
+			// Compile backlog (issue #697), at most once a second: both are cheap counters.
+			static double LastCompileRefreshSeconds = 0.0;
+			if (NowSeconds - LastCompileRefreshSeconds > 1.0)
+			{
+				LastCompileRefreshSeconds = NowSeconds;
+				GShaderJobs.store(GShaderCompilingManager ? GShaderCompilingManager->GetNumRemainingJobs() : 0, std::memory_order_relaxed);
+				GAssetCompilations.store(FAssetCompilingManager::Get().GetNumRemainingAssets(), std::memory_order_relaxed);
 			}
 			return true;
 		});
