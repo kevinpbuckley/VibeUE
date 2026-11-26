@@ -284,41 +284,6 @@ bool FVibeDeleteAssetUnattendedNotifiesRegistryTest::RunTest(const FString&)
 	return true;
 }
 
-// Interchange syncs the Content Browser to what it imported (Interchange.FeatureFlags.Import.SyncToBrowser, on by
-// default; outside commandlets it overrides the bSyncToBrowser = false that ImportAssetTasks passes). With no
-// Content Browser tab open that opens the status bar's drawer, which holds a Slate responsive-mode request until
-// its open animation finishes. Headless nothing runs that animation, so the request is never released, and while
-// one is held UEditorEngine::Tick ticks no PIE world: every PIE test that runs after this one sees a frozen
-// world (VibeUE.Input.HoldInPIE failed in the full suite and passed alone). This test has no browser to sync,
-// so the sync is off for the import and the old value comes back after it.
-namespace
-{
-	class FScopedInterchangeBrowserSyncOff
-	{
-	public:
-		FScopedInterchangeBrowserSyncOff()
-			: Var(IConsoleManager::Get().FindConsoleVariable(TEXT("Interchange.FeatureFlags.Import.SyncToBrowser")))
-		{
-			if (Var)
-			{
-				bWasOn = Var->GetBool();
-				Var->SetWithCurrentPriority(false);
-			}
-		}
-		~FScopedInterchangeBrowserSyncOff()
-		{
-			if (Var)
-			{
-				Var->SetWithCurrentPriority(bWasOn);
-			}
-		}
-
-	private:
-		IConsoleVariable* Var = nullptr;
-		bool bWasOn = false;
-	};
-}
-
 // import_asset takes a mesh through AssetImportTask, and refuses (instead of asserting on TaskGraph's
 // RecursionGuard) when it is called from inside a game-thread task.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeAssetImportMeshTest, "VibeUE.Assets.ImportMesh",
@@ -326,7 +291,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeAssetImportMeshTest, "VibeUE.Assets.Import
 
 bool FVibeAssetImportMeshTest::RunTest(const FString&)
 {
-	const FScopedInterchangeBrowserSyncOff NoBrowserSync;
 	// Only a request this import left is this test's to report; one already held on entry belongs to whoever took it.
 	const bool bThrottleFreeOnEntry = FSlateThrottleManager::Get().IsAllowingExpensiveTasks();
 	const FString TestDirectory = FPaths::Combine(FPaths::ProjectIntermediateDir(), TEXT("VibeUE/ImportMeshTest"));

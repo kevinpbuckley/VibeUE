@@ -111,6 +111,8 @@ public class VibeUE : ModuleRules
 				"RHI",                    // For GMaxRHIShaderPlatform / GShaderPlatformForFeatureLevel (material diagnostics)
 				"EditorStyle",
 				"AssetTools",
+				"InterchangeCore",
+				"InterchangeEngine",
 				"PropertyEditor",         // For property reflection
 				"EnhancedInput",          // For Enhanced Input System support
 				"InputCore",              // For input types

@@ -9,6 +9,8 @@
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Engine/Blueprint.h"
 #include "Misc/Paths.h"
+#include "Misc/PackageName.h"
+#include "Kismet2/BlueprintEditorUtils.h"
 
 const TMap<FString, FName>& FBlueprintTypeParser::GetBasicTypeMap()
 {
@@ -345,6 +347,104 @@ EPinContainerType FBlueprintTypeParser::GetContainerTypeEnum(const FString& Cont
 	return EPinContainerType::None;
 }
 
+namespace
+{
+	// Map terminals need unambiguous identities: retain old scalar parsing outside Maps.
+	bool ParseMapTerminal(FString Name, FEdGraphPinType& Pin, FString& Error)
+	{
+		Name.TrimStartAndEndInline();
+		if (FBlueprintTypeParser::IsBasicType(Name))
+		{
+			return FBlueprintTypeParser::ParseTypeString(Name, Pin, false, FString(), Error);
+		}
+		const bool bClass = Name.RemoveFromStart(TEXT("TSubclassOf<"));
+		if (bClass && !Name.RemoveFromEnd(TEXT(">")))
+		{
+			Error = TEXT("Expected TSubclassOf<Type>");
+			return false;
+		}
+		if (Name.IsEmpty() || Name.Contains(TEXT("<")) || Name.Contains(TEXT(">")) || Name.Contains(TEXT(",")))
+		{
+			Error = TEXT("Expected a single scalar Map terminal");
+			return false;
+		}
+
+		UObject* Object = nullptr;
+		if (Name.StartsWith(TEXT("/")))
+		{
+			Object = FSoftObjectPath(Name).TryLoad();
+		}
+		else
+		{
+			TSet<FString> Paths;
+			for (TObjectIterator<UField> It; It; ++It)
+			{
+				const UField* Field = *It;
+				const UStruct* Struct = Cast<UStruct>(Field);
+				if ((!Field->IsA<UClass>() && !Field->IsA<UScriptStruct>() && !Field->IsA<UEnum>()) ||
+					Field->GetOutermost() == GetTransientPackage())
+				{
+					continue;
+				}
+				if (Field->GetName() == Name || (Struct && Struct->GetPrefixCPP() + Field->GetName() == Name))
+				{
+					Paths.Add(Field->GetPathName());
+				}
+			}
+			// Include unloaded Blueprint classes, user structs and enums before accepting a short name.
+			FARFilter Filter;
+			Filter.ClassPaths = {UBlueprint::StaticClass()->GetClassPathName(), UScriptStruct::StaticClass()->GetClassPathName(), UEnum::StaticClass()->GetClassPathName()};
+			Filter.bRecursiveClasses = true;
+			TArray<FAssetData> Assets;
+			FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get().GetAssets(Filter, Assets);
+			for (const FAssetData& Asset : Assets)
+			{
+				FString Generated;
+				const bool bBlueprint = Asset.GetTagValue(TEXT("GeneratedClass"), Generated);
+				if (Asset.AssetName.ToString() == Name || (bBlueprint && Asset.AssetName.ToString() + TEXT("_C") == Name))
+				{
+					Paths.Add(bBlueprint ? FPackageName::ExportTextPathToObjectPath(Generated) : Asset.GetObjectPathString());
+				}
+			}
+			if (Paths.Num() > 1)
+			{
+				TArray<FString> Sorted = Paths.Array();
+				Sorted.Sort();
+				Error = FString::Printf(TEXT("Ambiguous Map type '%s': %s"), *Name, *FString::Join(Sorted, TEXT(", ")));
+				return false;
+			}
+			if (Paths.Num() == 1)
+			{
+				Object = FSoftObjectPath(*Paths.CreateConstIterator()).TryLoad();
+			}
+		}
+		if (UBlueprint* BP = Cast<UBlueprint>(Object))
+		{
+			Object = BP->GeneratedClass;
+		}
+		if (const UClass* Class = Cast<UClass>(Object))
+		{
+			Pin.PinCategory = bClass ? UEdGraphSchema_K2::PC_Class :
+				(Class->HasAnyClassFlags(CLASS_Interface) ? UEdGraphSchema_K2::PC_Interface : UEdGraphSchema_K2::PC_Object);
+		}
+		else if (!bClass && Cast<UScriptStruct>(Object))
+		{
+			Pin.PinCategory = UEdGraphSchema_K2::PC_Struct;
+		}
+		else if (!bClass && Cast<UEnum>(Object))
+		{
+			Pin.PinCategory = UEdGraphSchema_K2::PC_Byte;
+		}
+		else
+		{
+			Error = FString::Printf(TEXT("Unknown Map terminal '%s'; supply a full type object path"), *Name);
+			return false;
+		}
+		Pin.PinSubCategoryObject = Object;
+		return true;
+	}
+}
+
 bool FBlueprintTypeParser::ParseTypeString(
 	const FString& TypeString,
 	FEdGraphPinType& OutPinType,
@@ -356,6 +456,33 @@ bool FBlueprintTypeParser::ParseTypeString(
 	{
 		OutErrorMessage = TEXT("Type string cannot be empty");
 		return false;
+	}
+
+	if (TypeString.StartsWith(TEXT("TMap<")))
+	{
+		FString Types = TypeString.Mid(5);
+		FString KeyName, ValueName;
+		if (bIsArray || (!ContainerType.IsEmpty() && !ContainerType.Equals(TEXT("Map"), ESearchCase::IgnoreCase))
+			|| !Types.RemoveFromEnd(TEXT(">")) || !Types.Split(TEXT(","), &KeyName, &ValueName))
+		{
+			OutErrorMessage = TEXT("Expected TMap<Key, Value> with no additional container");
+			return false;
+		}
+		FEdGraphPinType Key, Value;
+		if (!ParseMapTerminal(ResolveTypeAlias(KeyName.TrimStartAndEnd()), Key, OutErrorMessage)
+			|| !ParseMapTerminal(ResolveTypeAlias(ValueName.TrimStartAndEnd()), Value, OutErrorMessage))
+		{
+			return false;
+		}
+		if (!FBlueprintEditorUtils::HasGetTypeHash(Key))
+		{
+			OutErrorMessage = FString::Printf(TEXT("Map key type '%s' is not hashable in Blueprints"), *KeyName);
+			return false;
+		}
+		Key.ContainerType = EPinContainerType::Map;
+		Key.PinValueType = FEdGraphTerminalType::FromPinType(Value);
+		OutPinType = Key;
+		return true;
 	}
 
 	// Resolve aliases
@@ -424,7 +551,7 @@ bool FBlueprintTypeParser::ParseTypeString(
 
 		if (Container == EPinContainerType::Map)
 		{
-			OutErrorMessage = TEXT("Map container type requires explicit key and value types (not yet fully supported via this API)");
+			OutErrorMessage = TEXT("Map container type requires explicit key and value types: use TMap<Key, Value>");
 			return false;
 		}
 
@@ -483,7 +610,19 @@ FString FBlueprintTypeParser::GetFriendlyTypeName(const FEdGraphPinType& PinType
 	}
 	else if (PinType.ContainerType == EPinContainerType::Map)
 	{
-		TypeName = FString::Printf(TEXT("TMap<?, %s>"), *TypeName);
+		// The primary pin is the key. PinValueType is the separate value terminal.
+		FEdGraphPinType Key = PinType;
+		Key.ContainerType = EPinContainerType::None;
+		const FEdGraphPinType Value = FEdGraphPinType::GetPinTypeForTerminalType(PinType.PinValueType);
+		auto Label = [](const FEdGraphPinType& Terminal)
+		{
+			if (Terminal.PinCategory == UEdGraphSchema_K2::PC_Byte && Terminal.PinSubCategoryObject.IsValid())
+			{
+				return Terminal.PinSubCategoryObject->GetName();
+			}
+			return GetFriendlyTypeName(Terminal);
+		};
+		TypeName = FString::Printf(TEXT("TMap<%s, %s>"), *Label(Key), *Label(Value));
 	}
 
 	return TypeName;

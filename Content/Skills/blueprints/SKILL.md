@@ -170,6 +170,8 @@ type-string support — structs, objects, enums, and containers — in one batch
 
 ```python
 unreal.BlueprintService.add_member_variable(bp_path, "FinishRotatingDispatcher", "FStateTreeDelegateDispatcher")
+unreal.BlueprintService.add_member_variable(bp_path, "Weights", "TMap<FName, float>")
+unreal.BlueprintService.add_member_variable(bp_path, "Materials", "TMap<FName, /Script/Engine.MaterialInterface>")
 unreal.BlueprintService.add_member_variable(bp_path, "Waypoints", "FVector", "", True)  # FVector array
 unreal.BlueprintEditorLibrary.compile_blueprint(unreal.EditorAssetLibrary.load_asset(bp_path))
 ```

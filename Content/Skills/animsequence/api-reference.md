@@ -136,6 +136,10 @@ results = AnimSequenceService.capture_animation_sequence(
     image_height        # int - Output height (default: 512)
 ) -> Array[AnimationPoseCaptureResult]
 
+# Both calls accept an optional trailing skeletal_mesh_path. When omitted they use the
+# compatible skeleton preview mesh or an exact skeleton match, sorted by object path.
+# result.skeletal_mesh_path identifies the mesh used.
+
 # Example: Capture with default folder
 import unreal
 results = unreal.AnimSequenceService.capture_animation_sequence(

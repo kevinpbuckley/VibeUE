@@ -7,6 +7,29 @@
 #include "AssetRegistry/AssetData.h"
 #include "UAssetDiscoveryService.generated.h"
 
+/** Outcome of importing a mesh into a fresh project folder. Paths survive partial failure. */
+USTRUCT(BlueprintType)
+struct FFreshMeshImportResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category="Assets")
+	bool bSuccess = false;
+
+	UPROPERTY(BlueprintReadOnly, Category="Assets")
+	FString MainAsset;
+
+	UPROPERTY(BlueprintReadOnly, Category="Assets")
+	TArray<FString> CreatedAssets;
+
+	/** Materials assigned to imported meshes which were not created by this import. */
+	UPROPERTY(BlueprintReadOnly, Category="Assets")
+	TArray<FString> ExternalMaterials;
+
+	UPROPERTY(BlueprintReadOnly, Category="Assets")
+	FString ErrorMessage;
+};
+
 /**
  * Result of DeleteAssetUnattended.
  *
@@ -145,6 +168,11 @@ public:
 		const FString& DestinationFolder,
 		const FString& AssetName,
 		FString& OutError);
+
+	/** Import FBX, OBJ or glTF into an empty /Game subfolder, with replacement disabled.
+	 * Refuses occupied destinations, saves only newly created assets, and reports partial output on failure. */
+	UFUNCTION(BlueprintCallable, meta=(AICallable), Category="VibeUE|Assets")
+	static FFreshMeshImportResult ImportMeshIntoFreshFolder(const FString& SourceFilePath, const FString& DestinationFolder);
 
 	/**
 	 * Reimport an existing asset through the same handler used by Content Browser Reimport.
