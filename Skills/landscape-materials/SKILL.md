@@ -169,6 +169,7 @@ Split into separate steps:
 ## Sub-docs
 - **`workflows.md`** — step-by-step landscape-material build workflows (layers, textures, layer info, grass).
 - **`satellite.md`** — satellite-image-guided material creation and slope/height painting.
+- **`distance-artifacts.md`** — lit seams against surrounding meshes (normals), dotted lattices on height blends, tilings with objects, displacement scale.
 
 ## Verification
 `MaterialToolset.Recompile` (slow — keep it in its own code block) then `AssetToolset.SaveAsset`.
@@ -183,6 +184,7 @@ existing landscape material.
 
 Open these with the paths below; UE rewrites them to absolute paths when it serves this skill.
 
+- [distance-artifacts](distance-artifacts.md) - Landscape seams and artifacts at distance: normals at mesh edges, height-blend lattices, object tilings.
 - [satellite](satellite.md) - Satellite-guided landscape material + painting workflow — fetch a satellite image, analyze it, create satellite-informed layers, and paint by slope/he...
 - [workflows](workflows.md) - Landscape material workflows — create a complete landscape material, set up layers with textures, create layer info objects, assign material to landsc...
 - [scripts/create_landscape_material.txt](scripts/create_landscape_material.txt) - runnable sample

@@ -346,6 +346,10 @@ if unreal.FoliageService.has_foliage_instances(path):
     print("Instances exist in level")
 ```
 
+## Sub-docs
+
+- **`distance-breakage.md`** — far LODs losing leaves (material distance masks), wind stretching instances into columns, masked Nanite cards drawn solid.
+
 ## Sample scripts (run via `execute_python`)
 
 - **`scripts/scatter_foliage.txt`** — create a foliage type from a mesh and scatter instances onto the surface.
@@ -354,4 +358,5 @@ if unreal.FoliageService.has_foliage_instances(path):
 
 Open these with the paths below; UE rewrites them to absolute paths when it serves this skill.
 
+- [distance-breakage](distance-breakage.md) - Foliage breaking at distance: leaf distance masks, wind stretching instances, solid masked cards.
 - [scripts/scatter_foliage.txt](scripts/scatter_foliage.txt) - runnable sample

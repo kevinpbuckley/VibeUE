@@ -349,6 +349,7 @@ its own sampler). Feed `TextureSize` from a `Constant3Vector`, or `Multiply(Scal
   set properties, and build a graph node by node.
 - **`reference.md`** — the full tool inventory, parameter expression classes, output names, enum
   formats, reading a graph, duplicate-and-retarget, and Material Function authoring.
+- **`function-rebuild.md`** — rebuilding a Material Function gives its callers new pins ("Missing ... input"); copied `.uasset`s are not a valid "before".
 
 ## Verification
 
@@ -373,6 +374,7 @@ the graph should sample. `AssetToolset.SaveAsset` to persist.
 
 Open these with the paths below; UE rewrites them to absolute paths when it serves this skill.
 
+- [function-rebuild](function-rebuild.md) - Rebuilding a Material Function gives callers new pins; copied assets are not a valid before.
 - [reference](reference.md) - Material reference — the UE 5.9 tool inventory, parameter expression classes, material output names, enum formats, reading a graph, duplicate-and-ret...
 - [workflows](workflows.md) - Step-by-step material authoring workflows — create a material, material instance, texture/math/function-call/custom-HLSL/collection/static-switch node...
 - [scripts/create_instance.txt](scripts/create_instance.txt) - runnable sample

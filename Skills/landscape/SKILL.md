@@ -57,6 +57,7 @@ this `SKILL.md` on disk) directly:
 | `workflows-creation.md` | Creating landscapes, getting info, importing/exporting heightmaps, recreating splines, copying terrain/paint layers between landscapes, calculating side-by-side offsets, reading height data in a region. |
 | `workflows-editing.md` | Sculpting, direct region editing, procedural noise, painting layers, setting material, querying terrain, LandscapeGrassType creation/cloning, full landscape cloning, existence checks, heightmap sizing utilities. |
 | `intelligent-sculpting.md` | v3 semantic features (mountain/valley/ridge/plateau/crater/terraces/erosion/blend), terrain analysis (slope/normal/flat areas), mesh projection, batch line traces, complete v3 workflow example. |
+| `finishing-order.md` | The order after any height, weight or material change: assign the material again, build grass maps, build Nanite, save. Why grass vanishes after a material edit. |
 
 ## Critical Rules
 
@@ -465,6 +466,7 @@ material skill through `GetSkills` (AgentSkillToolset):
 
 Open these with the paths below; UE rewrites them to absolute paths when it serves this skill.
 
+- [finishing-order](finishing-order.md) - Order after a landscape height, weight or material change: material, grass maps, Nanite, save.
 - [intelligent-sculpting](intelligent-sculpting.md) - v3 semantic terrain features (create_mountain/valley/ridge/plateau/crater/terraces, apply_erosion, blend_terrain_features), terrain analysis (analyze_...
 - [return-types](return-types.md) - Exact property names for LandscapeService return types (LandscapeCreateResult, LandscapeInfo_Custom, LandscapeLayerInfo_Custom, LandscapeSplinePointIn...
 - [workflows-creation](workflows-creation.md) - Workflows for creating landscapes, querying landscape info, importing/exporting heightmaps (with resolution matching), recreating splines across lands...
