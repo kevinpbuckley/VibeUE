@@ -1,7 +1,7 @@
 ---
 name: pie-testing
 display_name: Play-In-Editor Testing
-description: Start, stop, and query Play-In-Editor (PIE) sessions for runtime testing of Blueprints, gameplay logic, widgets, AI, and any in-game behavior, and drive the running game's UI - find the PIE window, snapshot it, click, drag, type, wait for and read live UMG widgets with Epic's SlateInspectorToolset and WidgetFinder. Use when the user asks you to "play", "test", "run", "PIE", "start/stop the game", "click the button", "drag the item", "type into the field", "playtest the menu", or otherwise needs a live game world to validate changes.
+description: Start, stop, and query Play-In-Editor (PIE) sessions for runtime testing of Blueprints, gameplay logic, widgets, AI, and any in-game behavior, and drive the running game's UI - find the PIE window, snapshot it, click, drag, type, wait for and read live UMG widgets with Epic's SlateInspectorToolset and WidgetFinder, and capture the game from named camera poses at a fixed size with buffer views and a contact sheet (vibeue.capture_poses / contact_sheet). Use when the user asks you to "play", "test", "run", "PIE", "start/stop the game", "click the button", "drag the item", "type into the field", "playtest the menu", or otherwise needs a live game world to validate changes.
 vibeue_classes:
   - WidgetService
   - InputService
@@ -35,6 +35,11 @@ keywords:
   - type
   - live ui
   - playtest
+  - screenshot
+  - camera pose
+  - fixed resolution
+  - contact sheet
+  - buffer visualization
 ---
 
 > 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "automation-and-testing"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
@@ -175,6 +180,71 @@ async with vibeue.pie_session(1280, 720) as s:          # hide_screen_messages=T
 Tested headless (`scripts/tests/vibeue_helpers_regression.py`): world and controller yielded, the size
 on both objects, the capture 1:1 with the viewport, PIE stopped and every setting restored after the
 block and after an exception inside it.
+
+## Looking at the game from named places, at a fixed size (capture_poses, contact_sheet)
+
+For "how does it look from here, and here, and here?" use `capture_poses`, not a hand-written camera
+loop. It places its own camera, captures at the size you ask for whatever the window size, hides the
+HUD, and puts everything back:
+
+```python
+import unreal, vibeue
+
+POSES = {                                   # name: (location, yaw, pitch[, horizontal FOV])
+    "summit": ((0, 0, 9000), 45, -20),
+    "creek":  ((-3500, 2200, 400), 200, -5, 70),
+    "gate":   ((1200, -300, 400), 135, -15),
+}
+async with vibeue.pie_session(1280, 720):
+    paths = await vibeue.capture_poses(POSES, "C:/Proj/Saved/Shots/pass3",
+                                       size=(1920, 1080), settle=2.0,
+                                       buffers=("BaseColor", "WorldNormal", "Roughness"))
+sheet = vibeue.contact_sheet(paths, "C:/Proj/Saved/Shots/pass3/sheet.png")
+{"sheet": sheet}                            # then open the sheet (and any PNG) and LOOK at it
+```
+
+- **`await vibeue.capture_poses(poses, folder, size=(1920, 1080), hide_ui=True, settle=2.0, buffers=(), *,
+  screen_percentage=100.0, run_up_frames=8, world=None)`** returns the PNG paths: `<folder>/<name>.png`
+  for each pose, then `<folder>/<name>_<buffer>.png` for each buffer. `poses` is a dict (or a list of
+  `(name, pose)` pairs); a pose is `(location, yaw, pitch)`, `(location, yaw, pitch, fov)` or a dict
+  with `location` / `yaw` / `pitch` / `roll` / `fov`. Per pose: the camera moves there, the game runs
+  `settle` seconds (streaming, exposure and temporal history catch up), then the shot.
+- **How the fixed size works.** `CaptureGameViewport` only scales the viewport down. The engine's
+  `HighResShot WxH` draws the game viewport into a separate viewport of exactly that size, after
+  `r.HighResScreenshotDelay` run-up frames: a 1280x688 PIE viewport (what a 1280x720 floating window
+  gives) produced eight 1920x1080 PNGs in one call. It is the GAME's render through a spawned
+  `CameraActor` made the player's view target (exposure, post-process volumes, a sky driven at run
+  time), not an off-screen capture of the editor world (those come back black with a run-time sky).
+- **UI.** HighResShot draws the scene and the AHUD canvas, never Slate, so **UMG is never in these
+  images** (proved with a full-screen red UMG overlay: `capture_game` showed it, `capture_poses` did
+  not). `hide_ui=True` also hides the AHUD (`bShowHUD`) and the on-screen debug messages. Stat
+  overlays (`stat unit`) and `ShowDebug` text are drawn on the canvas and DO appear: turn them off
+  first. For a shot WITH the UI use `capture_game` (viewport size).
+- **Buffers** go through Epic's `SceneCaptureToolset.Capture` (off screen, same camera and size, no
+  game-view cvar touched). Names as `SceneCaptureToolset.ListModes` gives them: `BaseColor`,
+  `WorldNormal` (alias of `Normal`), `SceneDepth`, `Roughness`, `Metallic`, `Specular`, ... Comparing
+  buffers finds what colour comparisons miss: a lighting seam is a jump in `WorldNormal`, a texture
+  seam a jump in `BaseColor`.
+- **Restored on every path, exceptions included:** the player's view target, the HUD, the on-screen
+  messages, `r.ScreenPercentage` (set to 100 for the run so the shot is not an upscale; `None`
+  leaves it) and `r.HighResScreenshotDelay` (written back through the console with their old values),
+  background throttling (off for the run), and the camera is destroyed. PIE not running raises
+  `vibeue.PoseCaptureError` at once ("PIE is not running. Start it first ...").
+- **Budget:** about settle + 1 s per pose plus about 1 s per buffer. Eight poses with `settle=1` and
+  three buffers took 19 s including PIE start and stop. Keep a call under ~45 s.
+- **`vibeue.contact_sheet(paths, out, labels=None, *, columns=None, tile_width=640)`** tiles images
+  into one labelled PNG with the engine (texture import, a Canvas into a render target, export): no
+  Python package is needed, and the editor's Python has no imaging library. Labels default to the
+  file names; each image is fitted into its tile. The colours match the source (mean RGB 108.7 /
+  149.2 / 137.3 against 108.7 / 149.3 / 137.3). Needs a rendering editor.
+- `vibeue.PoseCamera(world, hide_ui)` (`open()` / `set_pose(name, pose)` / `close()`) is the camera
+  part on its own, for a loop of your own; `close()` restores the view target and destroys it.
+
+Tested in a `-RenderOffScreen` host (`scripts/tests/capture_poses_regression.py`, 12 of 12 checks):
+eight 1920x1080 PNGs from a 1280x688 viewport, three buffers at 1920x1080 framed like the lit shot,
+the camera the view target with the HUD hidden and 100 % / 8 run-up frames DURING the run, and view
+target, HUD, `r.ScreenPercentage 80`, `r.HighResScreenshotDelay 3` and the camera count back AFTER it
+and after an exception half-way.
 
 ## Standard Test Loop
 
@@ -530,7 +600,8 @@ call_tool CaptureGameViewport   {"maxResolution": 1600}   # longest edge, aspect
 
 `MaxResolution` is capped by the toolset's configured maximum (reported in `Warnings`). A
 dedicated-server instance has no viewport, and the call raises a script error if no readable
-Game/PIE framebuffer exists.
+Game/PIE framebuffer exists. It never scales UP: for a fixed size (1920x1080 from a smaller window),
+several camera positions, or buffer views, use `await vibeue.capture_poses(...)` (section above).
 
 **"window is minimized"?** A minimized editor also freezes PIE (world time stays 0). Restore it from
 `execute_python` with `unreal.ViewportService.set_editor_window_state("restore")`.

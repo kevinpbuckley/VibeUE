@@ -260,6 +260,9 @@ with vibeue.gate_session(clients=3, net_mode="ListenServer"): ...               
 
 - `pie_session` / `capture_game` / `game_world` / `pie_worlds`: PIE setup, capture to PNG, the PIE world(s)
   by role. Details in `pie-testing`.
+- `capture_poses` / `contact_sheet` / `PoseCamera`: the running game from named camera poses at a fixed
+  size (1920x1080 from any window), buffer views, one labelled sheet; view target, HUD and cvars
+  restored. Details in `pie-testing`.
 - `wait_for` / `wait_for_players` / `waits` / `cancel_all_waits`: waits that survive across calls (a Slate
   tick callback with a wall-clock deadline). Inside ONE call, `await asyncio.sleep(...)` is simpler.
 - `safe_load_level`, `python_globals_holding`, `release_globals`: section 4.

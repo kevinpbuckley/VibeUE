@@ -39,6 +39,11 @@ Also provides (agent helpers for PIE, async tools, and asset GC):
   sets throttling, the PIE window size (in both places it must go), starts PIE, waits for the player
   controller and hides screen messages, and restores all of it on exit; `await
   vibeue.capture_game(path)` writes CaptureGameViewport to a PNG and returns the path.
+- capture_poses() / contact_sheet() / PoseCamera — `await vibeue.capture_poses({name: (location,
+  yaw, pitch)}, folder, size=(1920, 1080))` captures the running game from named camera poses at a
+  fixed size whatever the window size (HighResShot), optionally with buffer views (Epic's
+  SceneCaptureToolset.Capture), and restores the view target, HUD and cvars; contact_sheet() tiles
+  the PNGs into one labelled image with the engine (no Python packages).
 - wait_for() / wait_until() / wait_for_players() / waits() / cancel_all_waits() — non-blocking
   waits for gate harnesses (a Slate post-tick callback with a wall-clock deadline; never sleep on
   the game thread), and player_ids() for the PIE server's PlayerState ids.
@@ -54,6 +59,7 @@ Also provides (agent helpers for PIE, async tools, and asset GC):
 import asyncio
 import base64
 import contextlib
+import gc
 import inspect
 import json
 import math
@@ -1676,6 +1682,527 @@ async def capture_game(path: str, max_res: Optional[int] = None, world=None) -> 
     with open(path, "wb") as handle:
         handle.write(base64.b64decode(data))
     return path
+
+
+# --- Camera poses, fixed-size captures and contact sheets (issue #698) -----------------------
+#
+# A week of agent work on one landscape level made 690 calls to a private capture harness and none
+# to capture_game(): an agent needs to look from named places, at a fixed size, without the HUD,
+# several views per call. capture_poses() is that harness.
+#
+# Why each part is the way it is (read in the 5.9 engine source, then run):
+# - The size. CaptureGameViewport only scales the viewport DOWN. The engine's HighResShot
+#   (FViewport::HighResScreenshot, UnrealClient.cpp) draws the game viewport client into a dummy
+#   viewport of the requested size after r.HighResScreenshotDelay run-up frames (temporal AA and
+#   exposure settle), so "HighResShot 1920x1080 filename=..." gives a 1920x1080 PNG from a 1280x720
+#   window. It draws the scene and the AHUD canvas, never Slate, so UMG is never in the image.
+# - The camera. A CameraActor spawned with PIEActorService (Python cannot spawn into a PIE world
+#   otherwise) and made the player's view target, so the shot is the GAME's render: its view state,
+#   exposure history, post-process volumes and a sky driven at run time. Off-screen captures of the
+#   editor world have none of that (they came back black in levels with a run-time sky).
+# - The buffers. Epic's SceneCaptureToolset.Capture renders GBuffer and buffer-visualization modes
+#   ("BaseColor", "WorldNormal", "Roughness", ...) off screen at any width x height from the same
+#   world and camera, so those go through it: no show flag or cvar of the game view is touched.
+
+class PoseCaptureError(RuntimeError):
+    """capture_poses() could not run (no PIE, no player controller, a capture that never arrived)."""
+
+
+def _vector(value):
+    if isinstance(value, unreal.Vector):
+        return unreal.Vector(value.x, value.y, value.z)
+    x, y, z = value
+    return unreal.Vector(float(x), float(y), float(z))
+
+
+def _parse_pose(name, pose) -> dict:
+    """(location, yaw, pitch[, fov]) or {"location", "yaw", "pitch", "roll", "fov"} -> a dict."""
+    if isinstance(pose, dict):
+        location = pose.get("location")
+        yaw, pitch = pose.get("yaw", 0.0), pose.get("pitch", 0.0)
+        roll, fov = pose.get("roll", 0.0), pose.get("fov")
+    else:
+        pose = tuple(pose)
+        if len(pose) not in (3, 4):
+            raise ValueError("pose {!r}: expected (location, yaw, pitch) or (location, yaw, pitch, fov), "
+                             "got {!r}".format(name, pose))
+        location, yaw, pitch = pose[0], pose[1], pose[2]
+        roll, fov = 0.0, (pose[3] if len(pose) == 4 else None)
+    if location is None:
+        raise ValueError("pose {!r} has no location".format(name))
+    return {"location": _vector(location), "yaw": float(yaw), "pitch": float(pitch),
+            "roll": float(roll), "fov": None if fov is None else float(fov)}
+
+
+def _safe_file_stem(name) -> str:
+    stem = "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in str(name)).strip("._")
+    return stem or "pose"
+
+
+def _png_size(path):
+    """(width, height) from a PNG's IHDR, or None when the file is not a complete PNG."""
+    try:
+        with open(path, "rb") as handle:
+            head = handle.read(24)
+            if len(head) < 24 or head[:8] != b"\x89PNG\r\n\x1a\n" or head[12:16] != b"IHDR":
+                return None
+            handle.seek(-12, os.SEEK_END)
+            if handle.read(12)[4:8] != b"IEND":
+                return None     # still being written
+        return int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
+    except OSError:
+        return None
+
+
+def _png_trim(path) -> int:
+    """Cut anything after a PNG's IEND chunk; returns the bytes removed.
+
+    UE 5.9's FImageUtils::ExportRenderTarget2DAsPNG (ImageUtils.cpp) writes the compressed buffer's
+    GetAllocatedSize(), not its Num(), so export_render_target leaves up to half a megabyte of
+    uninitialised memory after IEND. Readers stop at IEND, but a file that does not end with it
+    looks unfinished. The chunks are walked from the start, so bytes in the junk that happen to
+    spell IEND cannot fool it.
+    """
+    with open(path, "rb") as handle:
+        data = handle.read()
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        return 0
+    pos = 8
+    while pos + 12 <= len(data):
+        length = int.from_bytes(data[pos:pos + 4], "big")
+        kind = data[pos + 4:pos + 8]
+        pos += 12 + length
+        if kind == b"IEND":
+            if pos < len(data):
+                with open(path, "wb") as handle:
+                    handle.write(data[:pos])
+                return len(data) - pos
+            return 0
+    return 0
+
+
+def _cvar_float(name):
+    try:
+        return float(unreal.SystemLibrary.get_console_variable_float_value(name))
+    except Exception:
+        return None
+
+
+def _cvar_int(name):
+    try:
+        return int(unreal.SystemLibrary.get_console_variable_int_value(name))
+    except Exception:
+        return None
+
+
+def _format_cvar(value) -> str:
+    if isinstance(value, float) and value == int(value):
+        return str(int(value))
+    return repr(value) if isinstance(value, float) else str(value)
+
+
+class _CvarBracket(object):
+    """Set console variables and put the values read before back, in reverse order.
+
+    Restoring through the console leaves the variable at the console's set-by priority with its old
+    value (Python cannot restore a lower priority); later scalability changes then no longer move it.
+    """
+
+    def __init__(self, world):
+        self.world = world
+        self.before = []          # [(name, value), ...] in the order they were changed
+
+    def set(self, name, value, read=_cvar_float):
+        old = read(name)
+        if old is None:
+            raise PoseCaptureError("console variable {} does not exist".format(name))
+        if all(n != name for n, _ in self.before):
+            self.before.append((name, old))
+        unreal.SystemLibrary.execute_console_command(self.world, "{} {}".format(name, _format_cvar(value)))
+        return old
+
+    def restore(self, world=None) -> list:
+        notes = []
+        for name, value in reversed(self.before):
+            try:
+                unreal.SystemLibrary.execute_console_command(
+                    world if world is not None else self.world, "{} {}".format(name, _format_cvar(value)))
+            except Exception as exc:
+                notes.append("could not restore {}: {}".format(name, exc))
+        self.before = []
+        return notes
+
+
+def _pie_selector(world):
+    """(PIEActorService selector, is_client) for a PIE world, matched by its path."""
+    want = world.get_path_name()
+    for index in range(0, 9):
+        try:
+            info = json.loads(unreal.PIEActorService.resolve_world("instance:{}".format(index)))
+        except Exception:
+            continue
+        if info.get("success") and info.get("world_path") == want:
+            return "instance:{}".format(index), index > 0 and not info.get("is_authority", True)
+    raise PoseCaptureError("vibeue: {} is not one of the running PIE worlds".format(want))
+
+
+def _pie_session_hides_messages() -> bool:
+    """Whether a live pie_session() has the on-screen messages turned off.
+
+    The engine keeps that switch in a C++ global (GAreScreenMessagesEnabled) that Python cannot read,
+    so the only known owner of a "hidden" state is a PieSession of this module that has not stopped.
+    """
+    try:
+        return any(type(o) is PieSession and o._hid_messages and not o._stopped for o in gc.get_objects())
+    except Exception:
+        return False
+
+
+class PoseCamera(object):
+    """A CameraActor in a PIE world, made the player's view target; see capture_poses().
+
+    open() spawns it and remembers the view target (and, with hide_ui, the HUD and the on-screen
+    debug messages); set_pose() moves it; close() puts all of it back and destroys the camera. close()
+    is idempotent and survives a PIE session that already ended. Used by capture_poses(); usable on
+    its own for a custom loop:
+
+        cam = vibeue.PoseCamera()
+        try:
+            cam.open()
+            cam.set_pose("ridge", ((1200, -300, 400), 135, -15))
+            await asyncio.sleep(2)
+        finally:
+            cam.close()
+    """
+
+    def __init__(self, world=None, hide_ui: bool = False):
+        self.world = world
+        self.hide_ui = bool(hide_ui)
+        self.handle = None
+        self.camera = None
+        self.pc = None
+        self.notes = []
+        self._view_target = None
+        self._hud = None
+        self._hud_shown = None
+        self._messages_were_on = None
+        self._opened = False
+
+    def open(self):
+        if self._opened:
+            return self
+        world = self.world if self.world is not None else game_world()
+        if world is None or not _pie_running():
+            raise PoseCaptureError("vibeue: PIE is not running. Start it first, e.g. "
+                                   "`async with vibeue.pie_session(1280, 720):`")
+        pc = unreal.GameplayStatics.get_player_controller(world, 0)
+        if pc is None:
+            raise PoseCaptureError("vibeue: the PIE world has no player controller (yet)")
+        selector, is_client = _pie_selector(world)
+        self.world, self.pc, self._opened = world, pc, True
+        try:
+            self._view_target = pc.get_view_target()
+            reply = json.loads(unreal.PIEActorService.spawn_actor(
+                selector, "/Script/Engine.CameraActor", unreal.Transform(), "AlwaysSpawn", is_client,
+                "vibeue_pose_camera"))
+            if not reply.get("success"):
+                raise PoseCaptureError("vibeue: could not spawn the pose camera: {} {}".format(
+                    reply.get("error_code"), reply.get("message")))
+            self.handle = reply["handle"]
+            self.camera = unreal.find_object(None, reply["actor_path"])
+            if self.camera is None:
+                raise PoseCaptureError("vibeue: spawned camera {} not found".format(reply["actor_path"]))
+            pc.set_view_target_with_blend(self.camera, 0.0)
+            if self.hide_ui:
+                self._hide_ui()
+        except BaseException:
+            self.close()
+            raise
+        return self
+
+    def _hide_ui(self):
+        hud = self.pc.get_hud()
+        if hud is not None:
+            self._hud = hud
+            self._hud_shown = bool(hud.get_editor_property("show_hud"))
+            set_prop_pie(hud, "show_hud", False)
+        # Python cannot read whether messages are on; a live pie_session() that hid them is the only
+        # known case of "off", and then they stay off. Otherwise they are off for the run and back on
+        # afterwards (the engine default).
+        self._messages_were_on = not _pie_session_hides_messages()
+        if self._messages_were_on:
+            unreal.SystemLibrary.execute_console_command(self.world, "DisableAllScreenMessages")
+
+    def set_pose(self, name, pose) -> dict:
+        """Move the camera to a pose ((location, yaw, pitch[, fov]) or a dict); returns the parsed pose."""
+        parsed = _parse_pose(name, pose)
+        rotation = unreal.Rotator(roll=parsed["roll"], pitch=parsed["pitch"], yaw=parsed["yaw"])
+        self.camera.set_actor_location_and_rotation(parsed["location"], rotation, False, True)
+        component = self.camera.get_editor_property("camera_component")
+        if parsed["fov"] is not None:
+            component.set_field_of_view(parsed["fov"])
+        parsed["fov"] = float(component.get_editor_property("field_of_view"))
+        if self.pc.get_view_target() != self.camera:
+            self.pc.set_view_target_with_blend(self.camera, 0.0)   # something took the view back
+        return parsed
+
+    def close(self) -> list:
+        if not self._opened:
+            return self.notes
+        self._opened = False
+        alive = game_world() is not None
+        if alive and self.pc is not None:
+            try:
+                target = self._view_target
+                if target is None or not unreal.SystemLibrary.is_valid(target):
+                    target = self.pc.get_pawn() or self.pc
+                self.pc.set_view_target_with_blend(target, 0.0)
+            except Exception as exc:
+                self.notes.append("could not restore the view target: {}".format(exc))
+            if self._hud is not None and self._hud_shown is not None:
+                try:
+                    set_prop_pie(self._hud, "show_hud", self._hud_shown)
+                except Exception as exc:
+                    self.notes.append("could not restore the HUD: {}".format(exc))
+            if self.hide_ui and self._messages_were_on:
+                unreal.SystemLibrary.execute_console_command(self.world, "EnableAllScreenMessages")
+        if self.handle is not None and alive:
+            try:
+                unreal.PIEActorService.destroy_actor(self.handle)
+            except Exception as exc:
+                self.notes.append("could not destroy the pose camera: {}".format(exc))
+        # Drop PIE object references: one kept past StopPIE asserts on PIE teardown.
+        self.handle = self.camera = self.pc = self._view_target = self._hud = None
+        self.world = None
+        return self.notes
+
+
+async def _highres_shot(world, path, width, height, timeout_s=30.0):
+    """HighResShot <w>x<h> to an exact file; waits until the PNG is complete. Returns (w, h)."""
+    if os.path.exists(path):
+        os.remove(path)
+    folder = os.path.dirname(path)
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+    unreal.SystemLibrary.execute_console_command(
+        world, 'HighResShot {}x{} filename="{}"'.format(int(width), int(height), path.replace("\\", "/")))
+    size = await _await_until(lambda: _png_size(path), timeout_s, 0.05)
+    if size is None:
+        exr = os.path.splitext(path)[0] + ".exr"
+        if os.path.exists(exr):
+            raise PoseCaptureError("vibeue: HighResShot wrote an HDR .exr ({}): the viewport outputs HDR"
+                                   .format(exr))
+        raise PoseCaptureError("vibeue: HighResShot wrote no PNG to {} within {:.0f} s (is the PIE "
+                               "viewport drawing?)".format(path, timeout_s))
+    return size
+
+
+async def _buffer_capture(world, parsed, mode, path, width, height):
+    """Epic's SceneCaptureToolset.Capture of one buffer mode at width x height, written to path."""
+    rotation = {"pitch": parsed["pitch"], "yaw": parsed["yaw"], "roll": parsed["roll"]}
+    location = parsed["location"]
+    result = await exec_tool_await(_SCENE_CAPTURE, "Capture", {
+        "world": world.get_path_name(),
+        "camera": {"location": {"x": location.x, "y": location.y, "z": location.z},
+                   "rotation": rotation, "projectionMode": "Perspective", "fOV": parsed["fov"]},
+        "mode": mode,
+        "options": {"width": int(width), "height": int(height), "screenPercentage": 1.0,
+                    "visualizationSubMode": ""},
+    })
+    image = result.get("image") if isinstance(result, dict) else None
+    data = image.get("data") if isinstance(image, dict) else None
+    if not data:
+        raise PoseCaptureError("vibeue: Capture({}) came back empty: {}".format(
+            mode, result.get("warnings") if isinstance(result, dict) else result))
+    with open(path, "wb") as handle:
+        handle.write(base64.b64decode(data))
+    return _png_size(path)
+
+
+async def capture_poses(poses, folder: str, size=(1920, 1080), hide_ui: bool = True,
+                        settle: float = 2.0, buffers=(), *, screen_percentage: Optional[float] = 100.0,
+                        run_up_frames: Optional[int] = 8, world=None) -> list:
+    """Capture the running PIE game from named camera poses at a fixed size; returns the PNG paths.
+
+        async with vibeue.pie_session(1280, 720):
+            paths = await vibeue.capture_poses({
+                "summit": ((0, 0, 9000), 45, -20),              # (location, yaw, pitch)
+                "creek":  ((-3500, 2200, 400), 200, -5, 70),    # optional 4th value: horizontal FOV
+            }, "C:/Proj/Saved/Shots/pass3", buffers=("BaseColor", "WorldNormal"))
+            sheet = vibeue.contact_sheet(paths, "C:/Proj/Saved/Shots/pass3/sheet.png")
+
+    poses is {name: (location, yaw, pitch[, fov])} (or a list of (name, pose) pairs, kept in order;
+    a pose may also be a dict with location / yaw / pitch / roll / fov). For each pose, in order: the
+    camera moves there, the game runs `settle` seconds (streaming, exposure, temporal history), then
+    HighResShot writes <folder>/<name>.png at exactly size (from any window size: the engine renders
+    a dummy viewport of that size) and, for each mode in `buffers`, Epic's SceneCaptureToolset.Capture
+    writes <folder>/<name>_<mode>.png at the same size and camera (mode names as SceneCaptureToolset
+    ListModes gives them: "BaseColor", "WorldNormal" / "Normal", "Roughness", "Metallic",
+    "SceneDepth", ...). Returns the paths in that order.
+
+    hide_ui hides the player's AHUD (bShowHUD) and the on-screen debug messages for the run. UMG is
+    never in these images: HighResShot draws the scene and the HUD canvas, not Slate (use
+    capture_game() for a shot with the UI). screen_percentage (default 100) is set for the run so the
+    shot is rendered at its own size, not upscaled from the viewport's setting; None leaves it alone.
+    run_up_frames sets r.HighResScreenshotDelay (engine default 4) for the run.
+
+    Restored on every path, exceptions included: the player's view target, the HUD, the on-screen
+    messages, r.ScreenPercentage and r.HighResScreenshotDelay (written back through the console,
+    so they keep their old values at console priority), the background-throttling setting
+    (turned off for the run so an unfocused editor does not drop to 3 fps), and the spawned camera
+    is destroyed. Raises PoseCaptureError (a RuntimeError) at once when PIE is not running.
+
+    Each pose costs settle + about 1 s; keep a call under about 45 s (the client times out after
+    roughly a minute while the script keeps running): about twelve poses with settle=2.
+    """
+    width, height = int(size[0]), int(size[1])
+    if width <= 0 or height <= 0:
+        raise ValueError("size must be positive, got {!r}".format(size))
+    items = list(poses.items()) if isinstance(poses, dict) else [tuple(p) for p in poses]
+    parsed_all = [(str(n), _parse_pose(n, p)) for n, p in items]     # validate before touching anything
+    if not parsed_all:
+        raise ValueError("capture_poses: no poses given")
+    stems = [_safe_file_stem(n) for n, _ in parsed_all]
+    if len(set(stems)) != len(stems):
+        raise ValueError("capture_poses: pose names must give distinct file names: {}".format(stems))
+    if world is None:
+        world = game_world()
+    if world is None or not _pie_running():
+        raise PoseCaptureError("vibeue.capture_poses: PIE is not running. Start it first, e.g. "
+                               "`async with vibeue.pie_session(1280, 720):`")
+    folder = os.path.abspath(folder)
+    os.makedirs(folder, exist_ok=True)
+
+    gate = GateSession(throttle=False)
+    camera = PoseCamera(world, hide_ui=hide_ui)
+    cvars = _CvarBracket(world)
+    paths = []
+    try:
+        gate.enter()
+        camera.open()
+        if screen_percentage is not None:
+            cvars.set("r.ScreenPercentage", float(screen_percentage))
+        if run_up_frames is not None:
+            cvars.set("r.HighResScreenshotDelay", int(run_up_frames), read=_cvar_int)
+        for (name, pose), stem in zip(items, stems):
+            parsed = camera.set_pose(name, pose)
+            await asyncio.sleep(max(0.0, float(settle)))
+            shot = os.path.join(folder, stem + ".png")
+            got = await _highres_shot(world, shot, width, height)
+            if got != (width, height):
+                raise PoseCaptureError("vibeue: {} is {}x{}, expected {}x{}".format(
+                    shot, got[0], got[1], width, height))
+            paths.append(shot)
+            for mode in buffers:
+                buffer_path = os.path.join(folder, "{}_{}.png".format(stem, _safe_file_stem(mode)))
+                await _buffer_capture(world, parsed, str(mode), buffer_path, width, height)
+                paths.append(buffer_path)
+        return paths
+    finally:
+        notes = cvars.restore(world if game_world() is not None else None)
+        notes += camera.close()
+        gate.exit()
+        for note in notes:
+            unreal.log_warning("vibeue.capture_poses: " + note)
+
+
+def _sheet_world():
+    try:
+        world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()
+    except Exception:
+        world = None
+    return world if world is not None else game_world()
+
+
+def contact_sheet(paths, out: str, labels=None, *, columns: Optional[int] = None,
+                  tile_width: int = 640, background=(0.16, 0.16, 0.16), label_height: int = 34) -> str:
+    """Tile PNG/JPG images into one labelled PNG and return its path.
+
+        vibeue.contact_sheet(paths, "C:/Proj/Saved/Shots/sheet.png")                  # labels = file names
+        vibeue.contact_sheet(paths, out, ["before", "after"], columns=2, tile_width=960)
+
+    The engine does the work, so no Python package is needed (the editor's Python has no imaging
+    library): each image is loaded with RenderingLibrary.import_file_as_texture2d and drawn scaled,
+    with its label (the engine's Roboto font) underneath, on a Canvas into one RGBA8 render target
+    at target gamma 2.2 (which keeps the source colours), and the target is written with
+    export_render_target (whose PNG carries junk after IEND in 5.9; it is cut off). Tiles take the
+    first image's aspect ratio and every image is fitted inside its tile; columns defaults to
+    ceil(sqrt(n)). Needs a rendering editor (not -nullrhi). Raises ValueError for a missing file or
+    a label count that does not match.
+    """
+    paths = [os.path.abspath(p) for p in paths]
+    if not paths:
+        raise ValueError("contact_sheet: no images")
+    missing = [p for p in paths if not os.path.isfile(p)]
+    if missing:
+        raise ValueError("contact_sheet: missing files: {}".format(missing))
+    if labels is None:
+        labels = [os.path.splitext(os.path.basename(p))[0] for p in paths]
+    labels = [str(label) for label in labels]
+    if len(labels) != len(paths):
+        raise ValueError("contact_sheet: {} labels for {} images".format(len(labels), len(paths)))
+    out = os.path.abspath(out)
+    if not out.lower().endswith(".png"):
+        out += ".png"
+    world = _sheet_world()
+    if world is None:
+        raise RuntimeError("contact_sheet: no editor world to draw with")
+
+    textures = []
+    for path in paths:
+        texture = unreal.RenderingLibrary.import_file_as_texture2d(world, path)
+        if texture is None:
+            raise RuntimeError("contact_sheet: the engine could not load {}".format(path))
+        textures.append(texture)
+    first = textures[0]
+    aspect = float(first.blueprint_get_size_y()) / max(1, first.blueprint_get_size_x())
+    columns = int(columns) if columns else int(math.ceil(math.sqrt(len(paths))))
+    rows = int(math.ceil(len(paths) / float(columns)))
+    gap = 8
+    tile_w = int(tile_width)
+    tile_h = int(round(tile_w * aspect))
+    cell_h = tile_h + int(label_height)
+    sheet_w = columns * tile_w + (columns + 1) * gap
+    sheet_h = rows * cell_h + (rows + 1) * gap
+
+    clear = unreal.LinearColor(float(background[0]), float(background[1]), float(background[2]), 1.0)
+    target = unreal.RenderingLibrary.create_render_target2d(
+        world, sheet_w, sheet_h, unreal.TextureRenderTargetFormat.RTF_RGBA8, clear, False)
+    # Measured: an RGBA8 target at TargetGamma 2.2 reproduces the source pixels (mean RGB 108.7 /
+    # 149.2 / 137.3 against 108.7 / 149.2 / 137.2); the defaults (gamma 0, or an sRGB target) came
+    # out darker (72.6 ...) or washed out (134.1 ...).
+    target.set_editor_property("target_gamma", 2.2)
+    font = unreal.load_object(None, "/Engine/EngineFonts/Roboto.Roboto")
+    canvas, _size, context = unreal.RenderingLibrary.begin_draw_canvas_to_render_target(world, target)
+    try:
+        for index, (texture, label) in enumerate(zip(textures, labels)):
+            col, row = index % columns, index // columns
+            x = gap + col * (tile_w + gap)
+            y = gap + row * (cell_h + gap)
+            # Fit each image inside the tile with its own aspect ratio (letterboxed when it differs).
+            tex_w = max(1, texture.blueprint_get_size_x())
+            tex_h = max(1, texture.blueprint_get_size_y())
+            scale = min(tile_w / float(tex_w), tile_h / float(tex_h))
+            draw_w, draw_h = tex_w * scale, tex_h * scale
+            canvas.draw_texture(texture, unreal.Vector2D(x + (tile_w - draw_w) / 2.0, y + (tile_h - draw_h) / 2.0),
+                                unreal.Vector2D(draw_w, draw_h),
+                                unreal.Vector2D(0, 0), unreal.Vector2D(1, 1),
+                                unreal.LinearColor(1, 1, 1, 1), unreal.BlendMode.BLEND_OPAQUE)
+            if font is not None:
+                canvas.draw_text(font, label, unreal.Vector2D(x + 6, y + tile_h + 4),
+                                 unreal.Vector2D(1.0, 1.0), unreal.LinearColor(0.92, 0.92, 0.92, 1.0))
+    finally:
+        unreal.RenderingLibrary.end_draw_canvas_to_render_target(world, context)
+    folder, name = os.path.split(out)
+    os.makedirs(folder, exist_ok=True)
+    if os.path.exists(out):
+        os.remove(out)
+    unreal.RenderingLibrary.export_render_target(world, target, folder, name)
+    unreal.RenderingLibrary.release_render_target2d(target)
+    _png_trim(out)
+    if _png_size(out) is None:
+        raise RuntimeError("contact_sheet: export_render_target wrote no PNG to {}".format(out))
+    return out
 
 
 # --- Small API traps -------------------------------------------------------------------------
