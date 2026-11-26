@@ -44,6 +44,9 @@ Also provides (agent helpers for PIE, async tools, and asset GC):
   fixed size whatever the window size (HighResShot), optionally with buffer views (Epic's
   SceneCaptureToolset.Capture), and restores the view target, HUD and cvars; contact_sheet() tiles
   the PNGs into one labelled image with the engine (no Python packages).
+- measure_ab() / measure_ab_jobs() — GPU, game-thread and render-thread medians, spread and paired
+  differences for two or more states alternated inside one PIE session, split across calls, with
+  the first state, screen percentage and view always restored.
 - wait_for() / wait_until() / wait_for_players() / waits() / cancel_all_waits() — non-blocking
   waits for gate harnesses (a Slate post-tick callback with a wall-clock deadline; never sleep on
   the game thread), and player_ids() for the PIE server's PlayerState ids.
@@ -1863,8 +1866,8 @@ class PoseCamera(object):
 
     open() spawns it and remembers the view target (and, with hide_ui, the HUD and the on-screen
     debug messages); set_pose() moves it; close() puts all of it back and destroys the camera. close()
-    is idempotent and survives a PIE session that already ended. Used by capture_poses(); usable on
-    its own for a custom loop:
+    is idempotent and survives a PIE session that already ended. Used by capture_poses() and
+    measure_ab(); usable on its own for a custom loop:
 
         cam = vibeue.PoseCamera()
         try:
@@ -2203,6 +2206,435 @@ def contact_sheet(paths, out: str, labels=None, *, columns: Optional[int] = None
     if _png_size(out) is None:
         raise RuntimeError("contact_sheet: export_render_target wrote no PNG to {}".format(out))
     return out
+
+
+# --- A/B frame-cost measurement in one PIE session (issue #699) -------------------------------
+#
+# "What does this feature cost?" was answered 259 times in a week by private GetFrameTimings loops.
+# Session-to-session noise is 1-3 ms, so only states alternated INSIDE one PIE session give a usable
+# difference, and the hand-written loops left the level in their last state. measure_ab() alternates
+# the states in each round in ABBA order (drift cancels), samples Epic's
+# PerfToolset.StatsToolset.GetFrameTimings once per frame from a Slate post-tick callback, reports
+# per-round medians, their spread and the paired per-round differences, and always puts the first
+# state, the screen percentage and the view back.
+#
+# Two measurement traps it reports instead of hiding:
+# - A capped frame (t.MaxFPS, vsync, editor smoothing) measures nothing in FrameMs: the frame is the
+#   cap. Thread and GPU times still measure the work; the result says "capped" and why.
+# - GRenderThreadTime is computed per WINDOW by the Slate renderer, so in an editor with a PIE window
+#   the last window drawn leaves about zero behind: RenderThreadMs reads ~0 there. The result marks
+#   the render thread "unreliable" rather than report a difference of zero.
+#
+# Long runs split themselves across calls (each call stays under budget_s, below the ~60 s client
+# timeout): the job's samples live in a registry on the unreal module, and every call ends with the
+# first state, the screen percentage and the view restored, so an abandoned job leaves nothing behind.
+# MeasureAB.run(set_state, budget_s) is the resumable unit a background-job runner can drive.
+
+_STATS_TOOLSET = "PerfToolset.StatsToolset"
+_TIMING_FIELDS = (("frame_ms", "frameMs"), ("game_ms", "gameThreadMs"), ("render_ms", "renderThreadMs"),
+                  ("rhi_ms", "rhiThreadMs"), ("gpu_ms", "gpuMs"))
+_REPORTED = ("gpu_ms", "game_ms", "render_ms", "rhi_ms", "frame_ms")
+
+
+def _median(values):
+    values = sorted(values)
+    n = len(values)
+    if n == 0:
+        return None
+    mid = n // 2
+    return values[mid] if n % 2 else 0.5 * (values[mid - 1] + values[mid])
+
+
+def _frame_timings() -> dict:
+    """One GetFrameTimings reading as {frame_ms, game_ms, render_ms, rhi_ms, gpu_ms}."""
+    res = unreal.ToolsetRegistry.execute_tool(_STATS_TOOLSET, "GetFrameTimings", "{}")
+    if res.error:
+        raise RuntimeError("{}::GetFrameTimings failed: {}".format(_STATS_TOOLSET, res.error))
+    value = _decode_stable(res.get_value_as_json_string())
+    if isinstance(value, dict) and "returnValue" in value:
+        value = _decode_stable(value["returnValue"])
+    lowered = {str(k).lower(): v for k, v in value.items()}
+    return {ours: float(lowered.get(theirs.lower(), 0.0)) for ours, theirs in _TIMING_FIELDS}
+
+
+class _FrameSampler(object):
+    """Reads GetFrameTimings once per engine frame while recording (Slate post-tick callback; a 20 ms
+    await loop when Slate is not running). Keeps its own cost so the report can show it."""
+
+    def __init__(self):
+        self.frames = None
+        self.cost_s = 0.0
+        self.calls = 0
+        self._handle = None
+
+    def start(self):
+        if self._handle is None and _slate_running():
+            self._handle = unreal.register_slate_post_tick_callback(self._tick)
+
+    def _tick(self, _delta):
+        if self.frames is None:
+            return
+        began = time.perf_counter()
+        try:
+            self.frames.append(_frame_timings())
+        except Exception as exc:
+            self.frames.append({"error": str(exc)})
+        self.cost_s += time.perf_counter() - began
+        self.calls += 1
+
+    async def record(self, seconds: float) -> list:
+        self.frames = []
+        deadline = time.monotonic() + max(0.1, float(seconds))
+        try:
+            if self._handle is not None:
+                while time.monotonic() < deadline:
+                    await asyncio.sleep(0.05)
+            else:
+                last = None
+                while time.monotonic() < deadline:
+                    frame = unreal.SystemLibrary.get_frame_count()
+                    if frame != last:
+                        last = frame
+                        self._tick(0.0)
+                    await asyncio.sleep(0.02)
+            return [f for f in self.frames if "error" not in f]
+        finally:
+            self.frames = None
+
+    def stop(self):
+        _unregister_handle(self._handle)
+        self._handle = None
+
+
+def _measure_jobs() -> dict:
+    jobs = getattr(unreal, "_vibeue_measure_jobs", None)
+    if jobs is None:
+        jobs = {}
+        unreal._vibeue_measure_jobs = jobs
+    return jobs
+
+
+async def _call_state(set_state, state):
+    value = set_state(state)
+    if inspect.isawaitable(value):
+        value = await value
+    return value
+
+
+class MeasureAB(object):
+    """One A/B measurement job; made and resumed by measure_ab(), see there.
+
+    run(set_state, budget_s) does as many (round, pose) units as fit in budget_s (at least one),
+    restores everything, and returns a progress dict, or the final result once every unit is done.
+    It keeps only plain numbers between calls, so it is safe to hold across PIE sessions.
+    """
+
+    def __init__(self, job_id, poses, states, rounds, seconds, resolution, warmup_s, settle_s):
+        items = list(poses.items()) if isinstance(poses, dict) else [tuple(p) for p in poses]
+        if not items:
+            raise ValueError("measure_ab: no poses given")
+        self.pose_names = [str(n) for n, _ in items]
+        self.poses = {str(n): _parse_pose(n, p) for n, p in items}
+        if len(set(self.pose_names)) != len(self.pose_names):
+            raise ValueError("measure_ab: duplicate pose names")
+        self.states = [s for s in states]
+        if len(self.states) < 2 or len(set(map(repr, self.states))) != len(self.states):
+            raise ValueError("measure_ab: need at least two distinct states, got {!r}".format(states))
+        self.rounds = int(rounds)
+        if self.rounds < 1:
+            raise ValueError("measure_ab: rounds must be >= 1")
+        self.seconds = float(seconds)
+        self.resolution = None if resolution is None else (int(resolution[0]), int(resolution[1]))
+        self.warmup_s = float(warmup_s)
+        self.settle_s = float(settle_s)
+        self.id = job_id
+        self.units = [(r, name) for r in range(self.rounds) for name in self.pose_names]
+        self.next_unit = 0
+        self.calls = 0
+        # rounds[pose][state] = [per-round summary dict, ...]
+        self.data = {name: {repr(s): [] for s in self.states} for name in self.pose_names}
+        self.notes = []
+        self.environment = {}
+        self.sampler_ms = []
+        self.result = None
+
+    def signature(self):
+        return (self.pose_names, [(self.poses[n]["location"].x, self.poses[n]["location"].y,
+                                   self.poses[n]["location"].z, self.poses[n]["yaw"],
+                                   self.poses[n]["pitch"]) for n in self.pose_names],
+                [repr(s) for s in self.states], self.rounds, self.seconds, self.resolution)
+
+    @property
+    def done(self) -> bool:
+        return self.next_unit >= len(self.units)
+
+    def _order(self, round_index):
+        states = list(self.states)
+        if len(states) == 2:
+            return states if round_index % 2 == 0 else states[::-1]      # ABBA
+        shift = round_index % len(states)
+        return states[shift:] + states[:shift]
+
+    def _apply_resolution(self, world, cvars):
+        if self.resolution is None:
+            return
+        viewport = unreal.WidgetLayoutLibrary.get_viewport_size(world)
+        vw, vh = float(viewport.x), float(viewport.y)
+        if vw <= 0 or vh <= 0:
+            self.notes.append("viewport size unknown; resolution not applied")
+            return
+        rw, rh = self.resolution
+        percentage = 100.0 * rh / vh
+        cvars.set("r.ScreenPercentage", round(percentage, 3))
+        render = (int(round(vw * percentage / 100.0)), int(round(vh * percentage / 100.0)))
+        self.environment.update({"viewport": [int(vw), int(vh)], "screen_percentage": round(percentage, 3),
+                                 "render_resolution": list(render)})
+        if abs(rw / float(rh) - vw / vh) > 0.01:
+            note = ("viewport {}x{} has another aspect ratio than {}x{}: scenes render at {}x{} "
+                    "(height matched)".format(int(vw), int(vh), rw, rh, render[0], render[1]))
+            if note not in self.notes:
+                self.notes.append(note)
+
+    def _read_environment(self):
+        self.environment.update({"t.MaxFPS": _cvar_float("t.MaxFPS"), "r.VSync": _cvar_int("r.VSync"),
+                                 "r.VSyncEditor": _cvar_int("r.VSyncEditor")})
+
+    async def run(self, set_state, budget_s: float = 40.0, world=None) -> dict:
+        if self.done:
+            return self.result
+        if world is None:
+            world = game_world()
+        if world is None or not _pie_running():
+            raise PoseCaptureError("vibeue.measure_ab: PIE is not running. Start it first, e.g. "
+                                   "`async with vibeue.pie_session(1280, 720):`")
+        started = time.monotonic()
+        self.calls += 1
+        gate = GateSession(throttle=False)
+        camera = PoseCamera(world, hide_ui=False)
+        cvars = _CvarBracket(world)
+        sampler = _FrameSampler()
+        touched_state = False
+        failure = None
+        restore_errors = []
+        state_restore_error = None
+        unit_s = self.settle_s + len(self.states) * (self.warmup_s + self.seconds) + 0.5
+        try:
+            gate.enter()
+            camera.open()
+            self._apply_resolution(world, cvars)
+            self._read_environment()
+            sampler.start()
+            done_here = 0
+            while not self.done:
+                if done_here and time.monotonic() - started + unit_s > float(budget_s):
+                    break
+                round_index, name = self.units[self.next_unit]
+                camera.set_pose(name, self.poses[name])
+                await asyncio.sleep(self.settle_s)
+                for state in self._order(round_index):
+                    touched_state = True
+                    await _call_state(set_state, state)
+                    await asyncio.sleep(self.warmup_s)
+                    frames = await sampler.record(self.seconds)
+                    self._store(name, state, round_index, frames)
+                self.next_unit += 1
+                done_here += 1
+        except BaseException as exc:
+            failure = exc
+            raise
+        finally:
+            sampler.stop()
+            if sampler.calls:
+                self.sampler_ms.append(1000.0 * sampler.cost_s / sampler.calls)
+            if touched_state:
+                try:
+                    await _call_state(set_state, self.states[0])
+                except BaseException as exc:
+                    state_restore_error = "set_state({!r}) to restore the first state raised: {!r}".format(
+                        self.states[0], exc)
+                    restore_errors.append(state_restore_error)
+            restore_errors += cvars.restore(world if game_world() is not None else None)
+            restore_errors += camera.close()
+            gate.exit()
+            for note in restore_errors:
+                unreal.log_warning("vibeue.measure_ab: " + note)
+                if note not in self.notes:
+                    self.notes.append(note)
+            if state_restore_error and failure is None:
+                raise RuntimeError("vibeue.measure_ab: " + state_restore_error)
+        if self.done:
+            self.result = self._summarize()
+            return self.result
+        return {"done": False, "job": self.id, "units_done": self.next_unit, "units": len(self.units),
+                "call_seconds": round(time.monotonic() - started, 1),
+                "next": "call measure_ab again with job={!r} (same poses, set_state and settings)"
+                        .format(self.id),
+                "notes": list(self.notes)}
+
+    def _store(self, name, state, round_index, frames):
+        summary = {"round": round_index, "frames": len(frames)}
+        for key in _REPORTED:
+            summary[key] = _median([f[key] for f in frames]) if frames else None
+        self.data[name][repr(state)].append(summary)
+
+    def _summarize(self) -> dict:
+        first, poses_out, warnings = self.states[0], {}, list(self.notes)
+        max_fps = self.environment.get("t.MaxFPS") or 0.0
+        for name in self.pose_names:
+            per_state = {}
+            for state in self.states:
+                rounds = self.data[name][repr(state)]
+                entry = {"frames": sum(r["frames"] for r in rounds)}
+                for key in _REPORTED:
+                    values = [r[key] for r in rounds if r[key] is not None]
+                    entry[key] = {"median": _rnd(_median(values)),
+                                  "spread": _rnd(max(values) - min(values)) if values else None,
+                                  "rounds": [_rnd(v) for v in values]}
+                per_state[str(state)] = entry
+            diffs = {}
+            for state in self.states[1:]:
+                by_round_a = {r["round"]: r for r in self.data[name][repr(first)]}
+                by_round_b = {r["round"]: r for r in self.data[name][repr(state)]}
+                entry = {}
+                for key in _REPORTED:
+                    paired = [by_round_b[i][key] - by_round_a[i][key] for i in sorted(by_round_a)
+                              if i in by_round_b and by_round_a[i][key] is not None
+                              and by_round_b[i][key] is not None]
+                    noise = max([per_state[str(s)][key]["spread"] or 0.0 for s in (first, state)])
+                    median_diff = _median(paired)
+                    diff_spread = (max(paired) - min(paired)) if paired else None
+                    entry[key] = {
+                        "median": _rnd(median_diff),
+                        "rounds": [_rnd(v) for v in paired],
+                        "spread": _rnd(diff_spread),
+                        "noise": _rnd(noise),
+                        "significant": _significant(paired),
+                    }
+                diffs["{} - {}".format(state, first)] = entry
+            # Honest flags: a capped frame, an unmeasured render thread.
+            flags = {}
+            frames = [per_state[str(s)]["frame_ms"]["median"] for s in self.states]
+            busiest = [max(per_state[str(s)][k]["median"] or 0.0 for k in ("game_ms", "gpu_ms", "render_ms",
+                                                                             "rhi_ms")) for s in self.states]
+            capped = [f is not None and b > 0 and f > 1.15 * b for f, b in zip(frames, busiest)]
+            if any(capped):
+                flags["frame_capped"] = True
+                why = ("t.MaxFPS {}".format(_format_cvar(max_fps)) if max_fps else
+                       "a frame limiter (r.VSync / r.VSyncEditor, the editor's or the display's limit)")
+                warnings.append(
+                    "{}: the frame ({} ms) is longer than its busiest thread / the GPU ({} ms): it is "
+                    "held by {}, so frame_ms measures the cap, not the work. Compare gpu_ms, game_ms "
+                    "and rhi_ms.".format(name, frames[0], _rnd(busiest[0]), why))
+            render = [per_state[str(s)]["render_ms"]["median"] or 0.0 for s in self.states]
+            gpu = [per_state[str(s)]["gpu_ms"]["median"] or 0.0 for s in self.states]
+            if all(r < max(0.2, 0.05 * g) for r, g in zip(render, gpu)):
+                flags["render_thread_unreliable"] = True
+                warnings.append(
+                    "{}: render_ms reads ~0 ({}): with an editor and a PIE window the Slate renderer "
+                    "computes GRenderThreadTime per window and the last one drawn leaves ~0, so the "
+                    "render thread is NOT measured here (a packaged single-window game reads it)."
+                    .format(name, render))
+            poses_out[name] = {"states": per_state, "diff": diffs, "flags": flags}
+        if self.sampler_ms:
+            warnings.append("the sampler (one GetFrameTimings call per frame) costs about {} ms of game "
+                            "thread per frame in every state; it cancels in the differences"
+                            .format(_rnd(_median(self.sampler_ms))))
+        seen, unique = set(), []
+        for w in warnings:
+            if w not in seen:
+                seen.add(w)
+                unique.append(w)
+        return {"done": True, "job": self.id, "states": [str(s) for s in self.states],
+                "rounds": self.rounds, "seconds": self.seconds, "warmup_s": self.warmup_s,
+                "resolution": list(self.resolution) if self.resolution else None,
+                "environment": dict(self.environment), "calls": self.calls, "poses": poses_out,
+                "warnings": unique}
+
+
+def _significant(paired):
+    """Whether paired per-round differences show a real change: at least three rounds, every round
+    the same sign, and the median larger than the rounds' own spread. None with fewer rounds.
+
+    The per-state spread ("noise") is NOT the yardstick: it holds the drift between rounds (another
+    process taking the GPU for a while), which pairing a round's states cancels. Measured on a
+    shared GPU: 100 % vs 200 % screen percentage paired +3.07 / +3.36 / +0.92 ms while the states
+    themselves wandered 4 ms from round to round.
+    """
+    if len(paired) < 3:
+        return None
+    same_sign = all(v > 0 for v in paired) or all(v < 0 for v in paired)
+    return bool(same_sign and abs(_median(paired)) > (max(paired) - min(paired)))
+
+
+def _rnd(value, digits=3):
+    return None if value is None else round(float(value), digits)
+
+
+async def measure_ab(poses, set_state, states=("off", "on"), rounds: int = 3, seconds: float = 3.0,
+                     resolution=(1920, 1080), *, warmup_s: float = 1.0, settle_s: float = 1.0,
+                     budget_s: float = 40.0, job: Optional[str] = None, reset: bool = False,
+                     world=None) -> dict:
+    """Measure what a state change costs: GPU, game-thread (and render-thread) medians per pose for
+    each state, alternated inside ONE PIE session, with spread and paired differences.
+
+        def set_state(state):                       # sync or async; called with each entry of states
+            unreal.SystemLibrary.execute_console_command(vibeue.game_world(),
+                "r.Nanite {}".format(1 if state == "on" else 0))
+
+        async with vibeue.pie_session(1280, 720):
+            r = await vibeue.measure_ab({"summit": ((0, 0, 9000), 45, -20)}, set_state, job="nanite")
+        r          # {"done": False, "job": "nanite", ...} -> send the same script again until done
+
+    For every (round, pose): the pose camera moves there (as in capture_poses), the game settles
+    settle_s, then each state in turn is applied with set_state(state), given warmup_s, and sampled
+    for `seconds` with one PerfToolset.StatsToolset.GetFrameTimings reading per frame. Rounds
+    alternate the order (ABBA for two states) so a slow drift cancels. resolution sets
+    r.ScreenPercentage so the scene renders that many pixels (height matched) whatever the window
+    size; None leaves it.
+
+    The result, per pose: states[<state>][gpu_ms|game_ms|render_ms|rhi_ms|frame_ms] = {median of the
+    per-round medians, spread (max - min of them), rounds}, and diff["<state> - <first>"][...] =
+    {median of the paired per-round differences, their rounds and spread, noise (the larger state
+    spread: drift between rounds, which the pairing cancels), significant (three or more rounds, all
+    of one sign, |median| above their spread; None with fewer rounds)}; flags frame_capped /
+    render_thread_unreliable with
+    the reasons in warnings (see the notes above this function); environment (viewport, screen
+    percentage, render resolution, t.MaxFPS, r.VSync). The sampler's own game-thread cost per frame is
+    reported; it is the same in every state.
+
+    Splitting: one call does as many (round, pose) units as fit in budget_s (at least one, each
+    settle_s + len(states) * (warmup_s + seconds)), then returns {"done": False, "job", ...}; call
+    again with job=<id> and the same arguments to continue (set_state is taken from the newest call).
+    A finished job returns its result again; reset=True starts it over. job=None makes a new id.
+    PIE may be stopped and restarted between calls (it is not compared across sessions: each pair
+    of states is measured inside one unit).
+
+    Restored at the end of EVERY call, after success, an exception or cancellation: set_state(states[0])
+    (when any state was applied), r.ScreenPercentage, the view target (the pose camera is destroyed)
+    and background throttling (off during the run). Raises PoseCaptureError when PIE is not running,
+    RuntimeError when restoring the first state fails.
+    """
+    jobs = _measure_jobs()
+    if job is None:
+        job = "measure_ab_{}".format(int(time.time() * 1000) % 100000000)
+    job = str(job)
+    candidate = MeasureAB(job, poses, states, rounds, seconds, resolution, warmup_s, settle_s)
+    existing = jobs.get(job)
+    if existing is not None and not reset:
+        if existing.signature() != candidate.signature():
+            raise ValueError("measure_ab: job {!r} exists with other poses / states / rounds / seconds / "
+                             "resolution; pass reset=True to start it over".format(job))
+        runner = existing
+    else:
+        runner = candidate
+        jobs[job] = runner
+    return await runner.run(set_state, budget_s=budget_s, world=world)
+
+
+def measure_ab_jobs() -> dict:
+    """{job id: "done" or "<units done>/<units>"} for the measure_ab() jobs of this editor session."""
+    return {k: ("done" if v.done else "{}/{}".format(v.next_unit, len(v.units)))
+            for k, v in _measure_jobs().items()}
 
 
 # --- Small API traps -------------------------------------------------------------------------

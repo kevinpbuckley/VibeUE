@@ -1,7 +1,7 @@
 ---
 name: profiling
 display_name: Profiling & Performance
-description: Diagnose frame-rate bottlenecks (CPU vs GPU bound FIRST), read live per-thread frame timings, drive Unreal Insights traces, and capture representative standalone runs. Use when FPS is low/bad, the game is slow, or you need to find what is limiting the frame rate.
+description: Diagnose frame-rate bottlenecks (CPU vs GPU bound FIRST), read live per-thread frame timings, measure what a change costs with an A/B run inside one PIE session (vibeue.measure_ab), drive Unreal Insights traces, and capture representative standalone runs. Use when FPS is low/bad, the game is slow, or you need to find what is limiting the frame rate.
 vibeue_classes:
   - PerformanceService
 unreal_classes:
@@ -36,6 +36,11 @@ keywords:
   - benchmark
   - capture
   - utrace
+  - a/b
+  - ab test
+  - cost of a feature
+  - compare states
+  - measure_ab
 ---
 
 # Profiling Skill
@@ -214,6 +219,82 @@ here is a category error; they will not move the number.
 3. **`stat unit`** is the canonical overlay, but its numbers do **not** go to the log, and PIE
    often runs in a separate window so screenshots are unreliable. Prefer `GetFrameTimings` or
    methods 1–2 over trying to OCR `stat unit`.
+
+## ⚖️ What does this change cost? — `vibeue.measure_ab` (A/B in ONE PIE session)
+
+Do not answer "what does feature X cost?" with two separate `GetFrameTimings` readings, or two PIE
+sessions: session-to-session noise is 1-3 ms, and a hand-written loop tends to leave the level in its
+last state. `measure_ab` alternates the states inside one session, samples every frame and always
+puts the first state back:
+
+```python
+import unreal, vibeue
+
+def set_state(state):                       # sync or async; called with each entry of `states`
+    world = vibeue.game_world()
+    for a in unreal.GameplayStatics.get_all_actors_with_tag(world, "Foliage"):
+        a.set_actor_hidden_in_game(state == "off")
+
+POSES = {"meadow": ((1200, -300, 400), 135, -15), "ridge": ((0, 0, 9000), 45, -20)}
+async with vibeue.pie_session(1280, 720):
+    r = await vibeue.measure_ab(POSES, set_state, states=("off", "on"), rounds=3, seconds=3,
+                                resolution=(1920, 1080), job="foliage")
+r            # {"done": False, "job": "foliage", ...} -> send the SAME script again until "done": True
+```
+
+- **What it does, per (round, pose):** a spawned camera moves to the pose (the same pose format as
+  `capture_poses`), the game settles `settle_s`, then each state in turn: `set_state(state)`,
+  `warmup_s` of nothing, then `seconds` of sampling, one `PerfToolset.StatsToolset.GetFrameTimings`
+  per frame from a Slate post-tick callback (checked: 117 callbacks for 117 engine frames in 2 s).
+  Rounds alternate the order (ABBA for two states), so a slow drift cancels.
+- **Result, per pose:** `states[<s>][gpu_ms|game_ms|render_ms|rhi_ms|frame_ms]` = `{median` of the
+  per-round medians, `spread` (max - min of them), `rounds}`; `diff["<s> - <first>"][...]` =
+  `{median` of the PAIRED per-round differences, `rounds`, `spread`, `noise` (the larger state
+  spread), `significant`}`; `flags`, `warnings`, `environment` (viewport, screen percentage, render
+  resolution, `t.MaxFPS`, `r.VSync`, `r.VSyncEditor`). Quote a difference WITH its rounds and spread,
+  and call it a cost only when `significant` is true: at least three rounds, every round's paired
+  difference of one sign, and the median larger than their spread (`None` with fewer rounds). The
+  per-state `noise` is not the yardstick: it is the drift between rounds (another process on the
+  GPU), which pairing the states of one round cancels.
+- **`resolution=(w, h)`** sets `r.ScreenPercentage` so the scene renders `h` rows whatever the window
+  (a 1280x688 PIE viewport -> 157 % -> 2009x1080; a different aspect ratio is noted). Checked: the
+  same view at 640x360 read 2.2 ms GPU, at 2560x1440 5.9 ms. `None` leaves the screen percentage.
+- **Long runs split themselves.** One call does as many (round, pose) units as fit in `budget_s`
+  (default 40, under the ~60 s client timeout; at least one unit = `settle_s + len(states) *
+  (warmup_s + seconds)`), then returns `{"done": False, "job": ...}`. Call again with the same
+  arguments and `job=<id>` (the newest call's `set_state` is used). Every call ends with the first
+  state, the screen percentage and the view restored, so an abandoned job leaves nothing behind;
+  `reset=True` starts a job over, other poses or states under an existing id are refused,
+  `vibeue.measure_ab_jobs()` lists them. `MeasureAB.run(set_state, budget_s)` is the resumable unit
+  a background-job runner can drive.
+- **Restored after success, an exception (from `set_state` too) and cancellation:**
+  `set_state(states[0])`, `r.ScreenPercentage`, the view target (camera destroyed), background
+  throttling. A failing restore of the first state raises.
+
+**Read the warnings: two traps it reports instead of hiding.**
+
+- **`frame_capped`.** When the frame is longer than its busiest thread / the GPU (by 15 %), a limiter
+  holds it (`t.MaxFPS`, vsync, the editor's or the display's limit): `frame_ms` then measures the
+  cap (an editor PIE window here sat at exactly 16.667 ms with `t.MaxFPS 0`), and in that state the
+  game-thread time also includes waiting. Compare `gpu_ms` (and `game_ms` only between states with
+  the same cap), never `frame_ms`.
+- **`render_thread_unreliable`.** The Slate renderer computes `GRenderThreadTime` once per WINDOW
+  from one timestamp, so with the editor and a PIE window the last window drawn leaves about zero:
+  `RenderThreadMs` read 0.000 in every round here. The render thread is NOT measured in an editor;
+  a packaged single-window game reads it. Do not report "render thread +0.00".
+- The sampler costs about 0.4-0.5 ms of game thread per frame (reported), the same in every state.
+
+**Measured (lane test level, `-RenderOffScreen` editor on a busy shared machine,
+`scripts/tests/measure_ab_regression.py`):** the same state against itself, 4 rounds x 2 s, five
+runs: the median GPU difference inside its reported spread every time (+0.17 / -0.13 / -0.29 / -2.40 /
+-0.23 ms against spreads of 0.60 / 0.57 / 1.15 / 16.1 / 2.36 ms; the 16.1 is a run with a 16 ms
+GPU hitch in one round) and never `significant`, including a run whose four rounds were all
+negative (-0.05 / -0.17 / -0.09 / -0.63: median 0.13 below their spread 0.57). 100 % vs 200 % screen
+percentage (4x the pixels): +3.31 ms GPU (rounds 3.31 / 3.61 / 2.50) in a quiet run, +3.07 ms
+(3.07 / 3.36 / 0.92) and +2.41 ms (2.53 / 2.41 / 0.90) while other processes loaded the GPU and the
+states themselves wandered 3-4 ms between rounds: `significant` every time. Noise of several ms
+per round is normal on a machine that is building or running other editors: run more rounds rather
+than trust one.
 
 ## ⚠️ Gotchas — read before writing any code
 
