@@ -43,6 +43,9 @@ Also provides (agent helpers for PIE, async tools, and asset GC):
   dirty and resident maps, selection, viewport camera, throttling and the undo history split into the
   person's edits ("user_edits") and the scripts'; and a bracket that puts the person's camera,
   throttling, PIE settings and selection back. (#701)
+- safe_reload_level(confirm_discard=True) / python_holders_of_level() — reload the open map from disk
+  without the "World Memory Leaks" fatal: refuses PIE, a /Temp level, the person's unsaved edits, other
+  resident maps; drops or purges the Python references into the map first. (#702)
 - pie_session() / capture_game() / game_world() — `async with vibeue.pie_session(1280, 720) as s:`
   sets throttling, the PIE window size (in both places it must go), starts PIE, waits for the player
   controller and hides screen messages, and restores all of it on exit; `await
@@ -622,6 +625,9 @@ def safe_load_level(level_path, *, allow_resident_target=False, discard_temp=Tru
     is never discarded: the engine still refuses, and the exception names the packages. Save first,
     or call load_level(path, unreal.LevelEditorUnsavedChangesPolicy.SAVE / DISCARD) yourself.
     Otherwise calls load_level and returns its bool.
+
+    To reload the OPEN map from disk (dropping its unsaved changes), use safe_reload_level(confirm_discard=True)
+    instead: this function never discards a dirty real map, and reload_packages() on the open map can fatal.
 
         import unreal, vibeue
         vibeue.safe_load_level("/Game/Maps/RunMap_01")
@@ -1339,6 +1345,204 @@ def preserve_editor(*, camera: bool = True, throttling: bool = True, pie_setting
     {"restored": [what it put back], "notes": [...]}.
     """
     return PreserveEditor(camera=camera, throttling=throttling, pie_settings=pie_settings, selection=selection)
+
+
+# --- Reloading the open level from disk (issue #702) ------------------------------------------
+#
+# Agents reload the open map to drop changes they did not mean to make. A hand-written reload_packages()
+# on the open map's package crashed the editor with "World Memory Leaks" (Python still held a reference
+# into the map). safe_reload_level() reloads through load_level(map, DISCARD), the editor's own map load:
+# it destroys the old world after broadcasting PrepareToCleanseEditorObject, which the Python plugin
+# answers by purging every Python reference into that world (PythonScriptPlugin.cpp
+# OnPrepareToCleanseEditorObject). Before that it refuses what it must not discard, names and drops the
+# script variables that still point into the map, purges the rest itself, and collects garbage.
+
+
+class LevelReloadRefused(LevelLoadRefused):
+    """safe_reload_level() refused: nothing was reloaded or discarded."""
+
+
+def _object_in_package(value, package: str, world_path: str) -> bool:
+    if not isinstance(value, unreal.Object):
+        return False
+    try:
+        path = value.get_path_name()
+    except Exception:
+        return False         # a wrapper whose object is already gone holds nothing
+    if path == world_path or path.startswith(world_path + ":") or path.startswith(world_path + "."):
+        return True
+    try:
+        return str(value.get_outermost().get_name()) == package
+    except Exception:
+        return False
+
+
+def _holds_map_object(value, package: str, world_path: str) -> bool:
+    """value is, or directly contains (a list, tuple, set or dict one level deep), an object of the map."""
+    if _object_in_package(value, package, world_path):
+        return True
+    if isinstance(value, dict):
+        items = list(value.keys()) + list(value.values())
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        items = list(value)
+    else:
+        return False
+    return any(_object_in_package(item, package, world_path) for item in items[:10000])
+
+
+def python_holders_of_level(package: Optional[str] = None) -> list:
+    """Python variables that hold (or directly contain) an object of a map: [{"where", "name", "value"}].
+
+    package defaults to the open level. Looks in the calling script's namespace, __main__, builtins and
+    every imported module (module-level names), one container level deep. "where" is "script",
+    "__main__", "builtins" or "module <name>".
+    """
+    package = _map_package_name(package) if package else _open_level_package()
+    world_path = "{}.{}".format(package, package.rsplit("/", 1)[-1])
+    found = []
+    seen = set()
+
+    def scan(namespace, where):
+        if id(namespace) in seen:
+            return
+        seen.add(id(namespace))
+        for name, value in list(namespace.items()):
+            if name.startswith("__"):
+                continue
+            if _holds_map_object(value, package, world_path):
+                found.append({"where": where, "name": name, "value": _json_safe(value)})
+
+    namespaces = _script_namespaces()
+    if namespaces:
+        scan(namespaces[0], "script")
+    try:
+        scan(sys.modules["__main__"].__dict__, "__main__")
+    except Exception:
+        pass
+    import builtins
+    scan(builtins.__dict__, "builtins")
+    for mod_name, module in list(sys.modules.items()):
+        if module is None or mod_name in ("unreal", "builtins", "__main__") or mod_name == __name__:
+            continue
+        namespace = getattr(module, "__dict__", None)
+        if isinstance(namespace, dict):
+            scan(namespace, "module " + mod_name)
+    return found
+
+
+def _user_edits_on_level(package: str, world_path: str, undo_count: int = 50) -> list:
+    """Applied user transactions (editor_state's rule) that modified an object of the map."""
+    edits = []
+    for entry in recent_transactions(undo_count):
+        if entry["origin"] != "user" or entry["undone"]:
+            continue
+        if any(p == world_path or p.startswith(world_path + ":") or p.startswith(package + ".")
+               for p in entry["objects"]):
+            edits.append({"label": entry["label"], "id": entry["id"], "objects": entry["objects"]})
+    return edits
+
+
+def safe_reload_level(*, confirm_discard: bool = False, force: bool = False) -> dict:
+    """Reload the open map from disk, discarding its unsaved changes, without the "World Memory Leaks" fatal.
+
+    Refuses (vibeue.LevelReloadRefused, nothing changed) when:
+      - PIE is running;
+      - the open level was never saved (a /Temp/ level has nothing on disk to reload);
+      - the map has unsaved changes and confirm_discard is not True (the message lists them);
+      - the undo history holds edits a PERSON made to this map (editor_state()'s "user" origin) and the
+        map is dirty, unless force=True: those may be the person's unsaved work. The message names them;
+      - a map other than the open one is resident (the next level load would fatal; see safe_load_level).
+
+    Then: drops the calling script's, __main__'s and builtins' variables that hold an object of the map
+    (named in "released"), purges Python references to the map that other modules still hold (named in
+    "purged": those variables then raise "ObjectInstance is null" instead of pinning the old world),
+    collects garbage, reloads with LevelEditorSubsystem.load_level(map, DISCARD) and reports:
+
+        {"reloaded": bool, "level", "discarded": [the map packages that were dirty], "released": [...],
+         "purged": [...], "resident_maps": [...], "level_dirty": bool}
+
+        import vibeue
+        actor = unreal.EditorLevelLibrary...          # a variable into the map is fine: it is dropped
+        vibeue.safe_reload_level(confirm_discard=True)
+
+    For loading a DIFFERENT map use safe_load_level(); it never discards a dirty real map.
+    """
+    if _pie_running():
+        raise LevelReloadRefused("safe_reload_level: PIE is running; stop PIE first "
+                                 "(EditorToolset.EditorAppToolset.StopPIE)")
+    package = _open_level_package()
+    if not package:
+        raise LevelReloadRefused("safe_reload_level: no level is open")
+    if package.startswith("/Temp/"):
+        raise LevelReloadRefused(
+            "safe_reload_level: the open level {} was never saved, so there is nothing on disk to reload. Open a "
+            "saved map with vibeue.safe_load_level(path) (it discards a dirty /Temp level).".format(package))
+    world_path = "{}.{}".format(package, package.rsplit("/", 1)[-1])
+    dirty_maps = _dirty_map_package_names()
+    discarded = [p for p in dirty_maps if p == package or not p.startswith("/Temp/")]
+    if discarded and not confirm_discard:
+        raise LevelReloadRefused(
+            "safe_reload_level: refusing to discard unsaved changes in {}. Pass confirm_discard=True to discard "
+            "them, or save first (unreal.EditorLoadingAndSavingUtils.save_dirty_packages(True, False)).".format(
+                ", ".join(discarded)))
+    if discarded and not force:
+        edits = _user_edits_on_level(package, world_path)
+        if edits:
+            raise LevelReloadRefused(
+                "safe_reload_level: the undo history holds {} edit(s) a person made to {} that are not saved: {}. "
+                "Reloading would discard their work. Ask them, or pass force=True if discarding it is "
+                "intended.".format(len(edits), package, "; ".join('"{}"'.format(e["label"]) for e in edits[:8])))
+    resident = [] if unreal.PythonTools.host_releases_resident_maps() else [
+        str(m) for m in unreal.PythonTools.get_resident_maps()]
+    others = [m for m in resident if _map_package_name(m) != package]
+    if others:
+        raise LevelReloadRefused(
+            "safe_reload_level: {} map(s) other than the open level are resident ({}); loading any level now "
+            "FATALS the editor (World Memory Leaks). Release them first (unreal.EditorLoadingAndSavingUtils."
+            "unload_packages) or restart the editor.".format(len(others), ", ".join(others)))
+
+    holders = python_holders_of_level(package)
+    released, purged = [], []
+    namespaces = _script_namespaces()
+    script_ns = namespaces[0] if namespaces else {}
+    import builtins
+    for holder in holders:
+        where, name = holder["where"], holder["name"]
+        target = {"script": script_ns, "builtins": builtins.__dict__}.get(where)
+        if where == "__main__":
+            target = sys.modules["__main__"].__dict__
+        if target is not None and name in target:
+            del target[name]
+            released.append("{} {}".format(where, name))
+        else:
+            purged.append("{}.{}".format(where.replace("module ", ""), name))
+    # Waits and jobs of this module can hold objects too.
+    for wait in waits():
+        if _holds_map_object(wait.result, package, world_path):
+            wait.result = None
+            released.append("vibeue wait #{} result".format(wait.id))
+    world = None
+    try:
+        world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()
+    except Exception:
+        pass
+    if world is not None:
+        purge = getattr(unreal, "purge_object_references", None)
+        if purge is not None:
+            purge(world, True)          # every remaining Python reference into the old world
+    world = None
+    import gc
+    gc.collect()
+    unreal.SystemLibrary.collect_garbage()
+
+    policy = unreal.LevelEditorUnsavedChangesPolicy.DISCARD
+    unreal.log("vibeue.safe_reload_level: reloading {} (discarding {}; released {}; purged {})".format(
+        package, discarded or "nothing", released or "nothing", purged or "nothing"))
+    loaded = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).load_level(package, policy)
+    level = _open_level_package()
+    return {"reloaded": bool(loaded), "level": level, "discarded": discarded, "released": released,
+            "purged": purged, "resident_maps": [str(m) for m in unreal.PythonTools.get_resident_maps()],
+            "level_dirty": level in _dirty_map_package_names()}
 
 
 # --- Non-blocking waits (gate harnesses) -----------------------------------------------------

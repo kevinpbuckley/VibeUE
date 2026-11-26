@@ -263,6 +263,18 @@ Change level with **`vibeue.safe_load_level(path)`**:
   and no real map is dirty. A dirty real map is never discarded: save it, or pass the policy yourself if
   losing the changes is intended.
 
+To drop unsaved changes of the OPEN map, reload it with **`vibeue.safe_reload_level(confirm_discard=True)`**,
+never `reload_packages()` on the open map's package (that crashed an editor with "World Memory Leaks" while
+Python still held one of the map's actors). It raises `vibeue.LevelReloadRefused`, changing nothing, while
+PIE runs, for a never-saved `/Temp/` level, for a dirty map without `confirm_discard=True`, while another map
+is resident, and when the undo history holds edits a PERSON made to this map that are not saved (the
+`user_edits` of `editor_state()`; the message names them; `force=True` overrides, so ask first). Otherwise it
+deletes the calling script's, `__main__`'s and `builtins`' variables that hold the map's objects, purges the
+references other modules keep (`unreal.purge_object_references`: those variables then raise "ObjectInstance
+is null" instead of pinning the old world), collects garbage and reloads with `load_level(map, DISCARD)`. The
+reply lists `discarded`, `released`, `purged`, `resident_maps` and `level_dirty`.
+`vibeue.python_holders_of_level()` lists those variables without reloading.
+
 Do not hold level objects in variables across an `await` or a level change; fetch them again.
 `vibeue.python_globals_holding(asset)` finds a global pinning an asset and `vibeue.release_globals(names)`
 drops it.
@@ -324,7 +336,8 @@ with vibeue.gate_session(clients=3, net_mode="ListenServer"): ...               
   entry, and restoring the person's camera, throttling, PIE settings and selection. Section 1.
 - `start_job` / `job_status` / `jobs` / `cancel_job` / `wait_job` / `job_progress`, and `wait_idle` /
   `editor_busy`: work that outlives a call, and waiting for compiles. Section 3.
-- `safe_load_level`, `python_globals_holding`, `release_globals`: section 4.
+- `safe_load_level`, `safe_reload_level`, `python_holders_of_level`, `python_globals_holding`,
+  `release_globals`: section 4.
 - `set_prop_pie(obj, name, value)` writes without rerunning a live PIE actor's construction script;
   `get_prop(obj, name, default)` returns `default` on a protected property; `set_array_prop` copies, sets
   with notify and calls `modify()` (an in-place `append` marks nothing dirty).
