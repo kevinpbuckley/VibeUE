@@ -7,6 +7,43 @@
 #include "PythonTools.generated.h"
 
 /**
+ * What the editor is busy with right now (#700): read by vibeue.wait_idle() and vibeue.editor_busy().
+ */
+USTRUCT(BlueprintType)
+struct VIBEUE_API FVibeUEEditorBusyState
+{
+	GENERATED_BODY()
+
+	/** A slow task (progress-bar task) is running: the MCP server refuses tool calls meanwhile. */
+	UPROPERTY(BlueprintReadOnly, Category = "VibeUE|Python")
+	bool bSlowTask = false;
+
+	/** The slow task's message, when it has one. */
+	UPROPERTY(BlueprintReadOnly, Category = "VibeUE|Python")
+	FString SlowTaskText;
+
+	/** A Slate modal window is open: the MCP server refuses tool calls until a person closes it. */
+	UPROPERTY(BlueprintReadOnly, Category = "VibeUE|Python")
+	bool bModal = false;
+
+	/** The modal window's title. */
+	UPROPERTY(BlueprintReadOnly, Category = "VibeUE|Python")
+	FString ModalTitle;
+
+	/** Shader compile jobs still outstanding (GShaderCompilingManager->GetNumRemainingJobs()). */
+	UPROPERTY(BlueprintReadOnly, Category = "VibeUE|Python")
+	int32 ShaderJobs = 0;
+
+	/** Assets still compiling: static and skeletal meshes, textures, materials and the rest the asset compiling manager tracks. */
+	UPROPERTY(BlueprintReadOnly, Category = "VibeUE|Python")
+	int32 AssetCompileJobs = 0;
+
+	/** True when none of the above is pending. */
+	UPROPERTY(BlueprintReadOnly, Category = "VibeUE|Python")
+	bool bIdle = true;
+};
+
+/**
  * Editor-safety helpers for scripts run through the engine's execute_python.
  *
  * Registered as AICallable tools via ToolsetRegistry. Python execution and API discovery
@@ -95,5 +132,18 @@ public:
 	 */
 	static void ComputeDirtyPackageDelta(const TArray<FString>& Before, const TArray<FString>& After,
 		TArray<FString>& OutDirtied, TArray<FString>& OutCleaned);
+
+	/**
+	 * What the editor is busy with right now: a slow task, a modal window, shader compile jobs, assets still
+	 * compiling. bIdle is true when none of them is pending. A script cannot run while a slow task or a modal
+	 * blocks the MCP server, but a background job (vibeue.start_job) or a script that awaits can see both. (#700)
+	 *
+	 * Python usage:
+	 *   s = unreal.PythonTools.get_editor_busy_state()
+	 *   s.idle, s.shader_jobs, s.asset_compile_jobs, s.slow_task, s.modal
+	 *   # or: await vibeue.wait_idle(120)
+	 */
+	UFUNCTION(BlueprintCallable, Category="VibeUE|Python", meta=(AICallable))
+	static FVibeUEEditorBusyState GetEditorBusyState();
 
 };

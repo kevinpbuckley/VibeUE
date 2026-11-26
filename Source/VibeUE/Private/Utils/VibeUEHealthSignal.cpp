@@ -424,3 +424,27 @@ bool FVibeUEHealthSignal::IsWriterThreadOwned()
 {
 	return GWriterThread.IsValid();
 }
+
+bool FVibeUEHealthSignal::IsInSlowTask(FString* OutText)
+{
+	const bool bInSlowTask = IsInGameThread() && IsEngineInSlowTask();
+	if (OutText)
+	{
+		*OutText = bInSlowTask ? ReadSlowTaskText() : FString();
+	}
+	return bInSlowTask;
+}
+
+bool FVibeUEHealthSignal::IsModalWindowOpen(FString* OutTitle)
+{
+	TSharedPtr<SWindow> Modal;
+	if (IsInGameThread() && FSlateApplication::IsInitialized())
+	{
+		Modal = FSlateApplication::Get().GetActiveModalWindow();
+	}
+	if (OutTitle)
+	{
+		*OutTitle = Modal.IsValid() ? Modal->GetTitle().ToString() : FString();
+	}
+	return Modal.IsValid();
+}

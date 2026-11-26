@@ -1,6 +1,6 @@
 ---
 name: vibeue
-description: Index for Unreal Engine 5.9 editor work through VibeUE and Epic's native MCP toolsets - the execute_python and call_tool contract, which skill pack to load for a task (blueprints, state trees, materials, actors, landscapes, animation, cinematics, Niagara, widgets, sound, foliage, gameplay tags, enhanced input, skeletons, PCG, PIE testing, profiling and more), editor readiness and health signals, and safe level loading. Load it first when unsure which pack applies, or when a call fails with "unrecognized parameter(s) [code]", "Unable to import JSON value into property script", "imports must be at the top level of the script", a KeyError on returnValue, "There are unsaved level changes in /Temp/", or "the Unreal Editor is running a slow task".
+description: Index for Unreal Engine 5.9 editor work through VibeUE and Epic's native MCP toolsets - the execute_python and call_tool contract, which skill pack to load for a task (blueprints, state trees, materials, actors, landscapes, animation, cinematics, Niagara, widgets, sound, foliage, gameplay tags, enhanced input, skeletons, PCG, PIE testing, profiling and more), editor readiness and health signals, and safe level loading. Load it first when unsure which pack applies, or when a call fails with "unrecognized parameter(s) [code]", "Unable to import JSON value into property script", "imports must be at the top level of the script", a KeyError on returnValue, "There are unsaved level changes in /Temp/", "the Unreal Editor is running a slow task", or "The operation timed out" (long work: vibeue.start_job).
 ---
 
 VibeUE extends Unreal 5.9's **native MCP endpoint** (`http://127.0.0.1:8000/mcp` by default). There is no
@@ -185,6 +185,38 @@ captures show grey materials and frame timings mean nothing yet: wait for both t
 A slow task that reports no progress, or a native OS message box, does not set the flags; then only the
 stall grows.
 
+**Work longer than one call, and waiting for the editor.** A call that outlives the client's timeout ("The
+operation timed out") keeps running in the editor, and nothing tells you whether it finished; a resend can do
+the work twice. Run such work as a job instead, and wait for compiles with `wait_idle`:
+
+```python
+import vibeue
+async def rebuild(job):                       # takes the job (optional) to report progress
+    for i, path in enumerate(paths):
+        ...                                   # one step
+        job.report(i / len(paths), path)
+        await asyncio.sleep(0)                # the editor ticks between steps
+    return {"done": len(paths)}
+vibeue.start_job(rebuild, "rebuild")          # returns at once; the job keeps running after this call
+# any later call (or `python scripts/vibeue_client.py job rebuild` from a shell):
+vibeue.job_status("rebuild")                  # status running/done/failed/cancelled, progress, result, error
+r = await vibeue.wait_idle(45)                # no slow task, no modal, no shader jobs, no asset compiling
+```
+
+A job runs on the editor's own asyncio loop, which the engine polls every frame while it has work, so it
+advances between calls (a 3-minute job started from a 0.5 s call finished and was read afterwards). Its state
+is also written to `Saved/VibeUE/Jobs/<key>.json`; after an editor restart `job_status` reads that file and
+says `lost` for a job that was still running. A job runs only while it awaits: never `time.sleep` in one.
+`cancel_job(key)`, `jobs()`, `await wait_job(key, timeout_s)`, `editor_busy()` (the counters `wait_idle`
+reads) complete the set.
+
+**From a shell, or a session whose MCP tools never connected:** `scripts/vibeue_client.py` (standard library
+only) handles the session, runs `py <file>`, `exec "<code>"`, `call <toolset> <tool> '<json>'` and `job
+<key>`, retries a call refused for a slow task (it made no change) until `--busy-wait` runs out, and stops
+with exit code 3 and the dialog's title on a modal instead of looping. Pass `--project <project folder>` so
+it reads the health file above. Exit codes: 0 ok, 1 the call failed, 2 still busy, 3 modal, 4 no
+connection, 5 no reply within `--timeout` (do not resend: check `job_status` or the Output Log).
+
 ## 4. Levels: resident maps and unsaved changes
 
 A map loaded as an **asset** (`unreal.load_asset` on a map, a Save-As, a Level Instance) stays resident,
@@ -267,6 +299,8 @@ with vibeue.gate_session(clients=3, net_mode="ListenServer"): ...               
   PIE session, split across calls, first state always restored. Details in `profiling`.
 - `wait_for` / `wait_for_players` / `waits` / `cancel_all_waits`: waits that survive across calls (a Slate
   tick callback with a wall-clock deadline). Inside ONE call, `await asyncio.sleep(...)` is simpler.
+- `start_job` / `job_status` / `jobs` / `cancel_job` / `wait_job` / `job_progress`, and `wait_idle` /
+  `editor_busy`: work that outlives a call, and waiting for compiles. Section 3.
 - `safe_load_level`, `python_globals_holding`, `release_globals`: section 4.
 - `set_prop_pie(obj, name, value)` writes without rerunning a live PIE actor's construction script;
   `get_prop(obj, name, default)` returns `default` on a protected property; `set_array_prop` copies, sets
@@ -310,7 +344,7 @@ with vibeue.gate_session(clients=3, net_mode="ListenServer"): ...               
 - A Python traceback proves the MCP link is up; only "Unable to connect" / ECONNREFUSED means it is down.
   A stuck call is usually a slow task or a modal: read the health file (section 3). The client timeout
   does not stop a script, and nothing records an abandoned run, so check the Output Log before re-running
-  a mutation.
+  a mutation; for work that may run long, use `vibeue.start_job` (section 3), whose status you can read.
 - `-run=pythonscript` (a commandlet) works for pure asset work when no editor is running, but not for
   World Partition world edits.
 - Do not change the viewport FOV or exposure without restoring it (`vibeue.viewport_state()`): those

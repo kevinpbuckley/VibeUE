@@ -14,6 +14,9 @@
 #include "FileHelpers.h" // FEditorFileUtils + UEditorLoadingAndSavingUtils (headless SavePackages)
 
 #include "WorldPartition/WorldPartition.h"
+#include "Utils/VibeUEHealthSignal.h"
+#include "ShaderCompiler.h"          // GShaderCompilingManager, for GetEditorBusyState
+#include "AssetCompilingManager.h"   // FAssetCompilingManager, for GetEditorBusyState
 
 DEFINE_LOG_CATEGORY_STATIC(LogPythonTools, Log, All);
 
@@ -178,4 +181,18 @@ void UPythonTools::ComputeDirtyPackageDelta(const TArray<FString>& Before, const
 	}
 	OutDirtied.Sort();
 	OutCleaned.Sort();
+}
+
+FVibeUEEditorBusyState UPythonTools::GetEditorBusyState()
+{
+	FVibeUEEditorBusyState State;
+	State.bSlowTask = FVibeUEHealthSignal::IsInSlowTask(&State.SlowTaskText);
+	State.bModal = FVibeUEHealthSignal::IsModalWindowOpen(&State.ModalTitle);
+	if (GShaderCompilingManager)
+	{
+		State.ShaderJobs = GShaderCompilingManager->GetNumRemainingJobs();
+	}
+	State.AssetCompileJobs = FAssetCompilingManager::Get().GetNumRemainingAssets();
+	State.bIdle = !State.bSlowTask && !State.bModal && State.ShaderJobs == 0 && State.AssetCompileJobs == 0;
+	return State;
 }

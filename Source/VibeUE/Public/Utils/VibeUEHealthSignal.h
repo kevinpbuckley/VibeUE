@@ -65,4 +65,13 @@ public:
 
 	/** True while the game thread owns a writer thread that Stop() has not joined yet (even if it is already stopping). GAME-THREAD ONLY. */
 	static bool IsWriterThreadOwned();
+
+	/**
+	 * Whether the editor is inside a slow task right now (the same test the MCP server uses to refuse tool calls), and
+	 * its text (the outermost non-empty slow-task message) when OutText is given. GAME-THREAD ONLY. (#700)
+	 */
+	static bool IsInSlowTask(FString* OutText = nullptr);
+
+	/** Whether a Slate modal window is open right now, and its title when OutTitle is given. GAME-THREAD ONLY. (#700) */
+	static bool IsModalWindowOpen(FString* OutTitle = nullptr);
 };

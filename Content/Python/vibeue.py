@@ -35,6 +35,10 @@ Also provides (agent helpers for PIE, async tools, and asset GC):
   open level is resident, or when the target does not exist. Discards a dirty never-saved /Temp/
   open level (LevelEditorUnsavedChangesPolicy.DISCARD), never a dirty real map. Returns load_level's
   bool.
+- start_job() / job_status() / jobs() / cancel_job() / wait_job() / job_progress() — run a coroutine
+  beyond the call that starts it, on the editor's asyncio loop, and read its progress, result or error
+  from any later call (or Saved/VibeUE/Jobs/<key>.json). wait_idle() / editor_busy() — await no slow
+  task, no modal, no shader jobs and no asset compiling. (#700)
 - pie_session() / capture_game() / game_world() — `async with vibeue.pie_session(1280, 720) as s:`
   sets throttling, the PIE window size (in both places it must go), starts PIE, waits for the player
   controller and hides screen messages, and restores all of it on exit; `await
@@ -666,6 +670,365 @@ def safe_load_level(level_path, *, allow_resident_target=False, discard_temp=Tru
         return subsystem.load_level(level_path)
     unreal.log("vibeue.safe_load_level: {}".format(note))
     return subsystem.load_level(level_path, policy)
+
+
+# --- Long-running jobs and waiting for an idle editor (issue #700) -----------------------------
+#
+# A call that outlives the MCP client's timeout ("The operation timed out") leaves the agent not knowing
+# whether the work happened, and a resend can do it twice. start_job() runs the work as a task on the
+# editor's own asyncio loop, the loop execute_python scripts run on. The engine polls that loop from its
+# core ticker for as long as the loop has a task, so a job keeps running after the call that started it
+# has returned, between calls and while no script runs (measured on UE 5.9: a task awaiting
+# asyncio.sleep and one awaiting call_tool both advanced between calls). A job's state lives in a registry
+# on the unreal module, so it survives importlib.reload(vibeue) and the fresh namespace of every call, and
+# in Saved/VibeUE/Jobs/<key>.json, which a later editor session (or a shell) can still read.
+#
+# A job shares the game thread with the editor: it runs only while it awaits. Give a long loop an
+# `await asyncio.sleep(0)` per step, or the editor (and every MCP call) waits for the step to finish.
+
+_JOB_LOG_KEPT = 50
+_JOB_FINISHED_KEPT = 50
+_JOB_WRITE_INTERVAL_S = 1.0
+
+
+class JobRefused(RuntimeError):
+    """start_job() refused: a job with that key is already running."""
+
+
+def _job_registry():
+    """The live {"jobs": {key: Job}, "next_id": int, "current": ContextVar}, kept on the unreal module."""
+    reg = getattr(unreal, "_vibeue_job_registry", None)
+    if reg is None:
+        import contextvars
+        reg = {"jobs": {}, "next_id": 1, "current": contextvars.ContextVar("vibeue_current_job", default=None)}
+        unreal._vibeue_job_registry = reg
+    return reg
+
+
+def _editor_loop():
+    """The editor's asyncio loop: the running one inside a script, else the engine's shared editor loop."""
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+    from _editor_asyncio.editor_event_loop_manager import EditorEventLoopManager
+    return EditorEventLoopManager.get_or_create_loop()
+
+
+def _utc_now() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _json_safe(value, depth: int = 0):
+    """A JSON-ready copy: Unreal objects as their path, structs as text, containers recursively."""
+    if depth > 8:
+        return str(value)
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v, depth + 1) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)) or isinstance(value, unreal.Array):
+        return [_json_safe(v, depth + 1) for v in value]
+    if isinstance(value, unreal.Object):
+        try:
+            return value.get_path_name()
+        except Exception:
+            return str(value)
+    if isinstance(value, unreal.StructBase):
+        try:
+            return value.export_text()
+        except Exception:
+            return str(value)
+    return str(value)
+
+
+def _jobs_dir() -> str:
+    saved = unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_saved_dir())
+    return os.path.normpath(os.path.join(saved, "VibeUE", "Jobs"))
+
+
+def _job_file(key: str) -> str:
+    safe = "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in key)
+    return os.path.join(_jobs_dir(), safe + ".json")
+
+
+class Job(object):
+    """One start_job() run. Read it with job_status(key); report from inside with job_progress().
+
+    Attributes: key, description, status ("running", "done", "failed", "cancelled"), progress (any
+    number you report, e.g. 0..1 or a step count), message, result (JSON-ready copy of what the coroutine
+    returned), error (traceback text), started / finished (UTC), elapsed_s, and the last 50 log lines.
+    """
+
+    def __init__(self, key: str, description: str = ""):
+        self.key = key
+        self.description = description
+        self.status = "running"
+        self.progress = None
+        self.message = ""
+        self.result = None
+        self.error = ""
+        self.started = _utc_now()
+        self.finished = ""
+        self.file = _job_file(key)
+        self._t0 = time.monotonic()
+        self._t1 = None
+        self._log = []
+        self._task = None
+        self._last_write = 0.0
+
+    @property
+    def elapsed_s(self) -> float:
+        end = self._t1 if self._t1 is not None else time.monotonic()
+        return round(end - self._t0, 2)
+
+    @property
+    def done(self) -> bool:
+        return self.status != "running"
+
+    def report(self, progress=None, message: Optional[str] = None) -> None:
+        """Record progress and / or a status message (also written to the job file, at most once a second)."""
+        if progress is not None:
+            self.progress = progress
+        if message is not None:
+            self.message = str(message)
+        self._write()
+
+    def log(self, text: str) -> None:
+        """Append a line to the job's log (the last 50 are kept) and to the Output Log."""
+        line = "{} {}".format(time.strftime("%H:%M:%S"), text)
+        self._log.append(line)
+        del self._log[:-_JOB_LOG_KEPT]
+        unreal.log("vibeue job {}: {}".format(self.key, text))
+        self._write()
+
+    def cancel(self) -> bool:
+        """Cancel the job's task (it sees asyncio.CancelledError at its next await). False if already done."""
+        if self.done or self._task is None:
+            return False
+        self._task.cancel()
+        return True
+
+    def to_dict(self, log_lines: int = 10) -> dict:
+        return {"key": self.key, "description": self.description, "status": self.status,
+                "progress": _json_safe(self.progress), "message": self.message, "result": self.result,
+                "error": self.error, "started": self.started, "finished": self.finished,
+                "elapsed_s": self.elapsed_s, "log": list(self._log[-log_lines:]) if log_lines else [],
+                "file": self.file}
+
+    def _write(self, force: bool = False) -> None:
+        now = time.monotonic()
+        if not force and now - self._last_write < _JOB_WRITE_INTERVAL_S:
+            return
+        self._last_write = now
+        try:
+            os.makedirs(os.path.dirname(self.file), exist_ok=True)
+            data = self.to_dict(log_lines=_JOB_LOG_KEPT)
+            data["pid"] = os.getpid()
+            temp = self.file + ".tmp"
+            with open(temp, "w", encoding="utf-8") as handle:
+                json.dump(data, handle, indent=1, default=str)
+            os.replace(temp, self.file)
+        except Exception as exc:
+            unreal.log_warning("vibeue job {}: could not write {}: {}".format(self.key, self.file, exc))
+
+    def __repr__(self) -> str:
+        return "<vibeue.Job {!r} {} after {:.1f}s>".format(self.key, self.status, self.elapsed_s)
+
+
+async def _run_job(job: Job, coro) -> None:
+    reg = _job_registry()
+    reg["current"].set(job)    # the task runs in its own context copy, so this marks only this job
+    unreal.log("vibeue job {}: started".format(job.key))
+    try:
+        value = await coro
+        job.result = _json_safe(value)
+        job.status = "done"
+    except asyncio.CancelledError:
+        job.status = "cancelled"
+        job.error = "cancelled"
+    except Exception:
+        import traceback
+        job.status = "failed"
+        job.error = traceback.format_exc()[-4000:]
+    finally:
+        job._t1 = time.monotonic()
+        job.finished = _utc_now()
+        job._task = None
+        job._write(force=True)
+        unreal.log("vibeue job {}: {} after {:.1f} s".format(job.key, job.status, job.elapsed_s))
+        finished = [k for k, j in reg["jobs"].items() if j.done]
+        for old in finished[:-_JOB_FINISHED_KEPT]:
+            reg["jobs"].pop(old, None)
+
+
+def start_job(work, key: Optional[str] = None, *, description: str = "", replace: bool = False) -> dict:
+    """Run a coroutine in the editor beyond the call that starts it, and return at once.
+
+    work is a coroutine object (`build_level()`), or an async function, called as work(job) when it takes
+    a parameter (so it can report progress) and as work() otherwise. The job runs on the editor's asyncio
+    loop: it keeps running after this call returns, and every later call can read it by key.
+    Returns job_status(key) right after the start. Raises JobRefused when a job with this key is still
+    running, unless replace=True (the old one is cancelled first).
+
+        import vibeue
+        async def rebuild(job):
+            for i, path in enumerate(paths):
+                ...                                    # one step of real work
+                job.report(i / len(paths), path)       # progress, message
+                await asyncio.sleep(0)                 # let the editor tick between steps
+            return {"rebuilt": len(paths)}
+        vibeue.start_job(rebuild, "rebuild-materials")
+        # ... any later call:
+        vibeue.job_status("rebuild-materials")   # {"status": "running", "progress": 0.4, ...}
+
+    From a shell: `python scripts/vibeue_client.py job rebuild-materials`. job_status() also reads
+    Saved/VibeUE/Jobs/<key>.json, so a job's last state is readable after an editor restart (it then
+    reads "lost" if it was still running). The result is kept as a JSON-ready copy (objects as paths),
+    so a finished job never pins Unreal objects. Inside the work, job_progress() / current_job() reach
+    the job without a parameter. A job runs only while it awaits: give long loops an
+    `await asyncio.sleep(0)` per step. Never time.sleep in a job.
+    """
+    reg = _job_registry()
+    if key is None:
+        key = "job-{}".format(reg["next_id"])
+    key = str(key)
+    reg["next_id"] += 1
+    existing = reg["jobs"].get(key)
+    if existing is not None and not existing.done:
+        if not replace:
+            if inspect.iscoroutine(work):
+                work.close()   # never awaited otherwise: Python would warn about it
+            raise JobRefused(
+                "vibeue.start_job: a job '{}' is already running ({:.0f} s, status: {}). Read it with "
+                "vibeue.job_status('{}'), stop it with vibeue.cancel_job('{}'), or pass replace=True.".format(
+                    key, existing.elapsed_s, existing.message or existing.status, key, key))
+        existing.cancel()
+
+    coro = work
+    if not inspect.iscoroutine(work):
+        if not callable(work):
+            raise TypeError("vibeue.start_job: work must be a coroutine or an async function, got {!r}".format(work))
+        job_arg = False
+        try:
+            params = [p for p in inspect.signature(work).parameters.values()
+                      if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
+            job_arg = bool(params)
+        except (TypeError, ValueError):
+            pass
+        job_holder = Job(key, description)
+        coro = work(job_holder) if job_arg else work()
+        if not inspect.iscoroutine(coro):
+            raise TypeError("vibeue.start_job: {!r} did not return a coroutine (is it `async def`?)".format(work))
+        job = job_holder
+    else:
+        job = Job(key, description)
+
+    reg["jobs"][key] = job
+    job._write(force=True)
+    job._task = _editor_loop().create_task(_run_job(job, coro))
+    return job.to_dict()
+
+
+def current_job() -> Optional[Job]:
+    """The Job whose code is running right now (inside start_job work), else None."""
+    return _job_registry()["current"].get()
+
+
+def job_progress(progress=None, message: Optional[str] = None) -> bool:
+    """Report progress on the current job from anywhere in its code; False outside a job."""
+    job = current_job()
+    if job is None:
+        return False
+    job.report(progress, message)
+    return True
+
+
+def job_status(key: str, log_lines: int = 10) -> dict:
+    """The state of a start_job() job: {"key", "status", "progress", "message", "result", "error",
+    "started", "finished", "elapsed_s", "log", "file"}.
+
+    A job this editor session does not know is read from Saved/VibeUE/Jobs/<key>.json; one that was still
+    "running" there reads "lost" (the editor restarted while it ran). Unknown everywhere: status "unknown".
+    """
+    job = _job_registry()["jobs"].get(str(key))
+    if job is not None:
+        return job.to_dict(log_lines=log_lines)
+    path = _job_file(str(key))
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return {"key": key, "status": "unknown", "error": "no job '{}' in this session and no {}".format(key, path)}
+    if data.get("status") == "running":
+        data["status"] = "lost"
+        data["error"] = ("this editor session has no such job running: the editor restarted (pid {} wrote the "
+                         "file) while it ran, or its registry was cleared".format(data.get("pid")))
+    data["log"] = (data.get("log") or [])[-log_lines:] if log_lines else []
+    return data
+
+
+def jobs() -> list:
+    """Every job this session knows (running and the last 50 finished), as short dicts, oldest first."""
+    return [{"key": j.key, "status": j.status, "progress": _json_safe(j.progress), "message": j.message,
+             "elapsed_s": j.elapsed_s} for j in _job_registry()["jobs"].values()]
+
+
+def cancel_job(key: str) -> bool:
+    """Cancel a running job (it gets asyncio.CancelledError at its next await). False if not running."""
+    job = _job_registry()["jobs"].get(str(key))
+    return bool(job and job.cancel())
+
+
+async def wait_job(key: str, timeout_s: float = 45.0, poll_s: float = 0.2) -> dict:
+    """Await a job for up to timeout_s inside one call, then return job_status(key) (done or not)."""
+    deadline = time.monotonic() + max(0.0, float(timeout_s))
+    while True:
+        job = _job_registry()["jobs"].get(str(key))
+        if job is None or job.done or time.monotonic() >= deadline:
+            return job_status(key)
+        await asyncio.sleep(poll_s)
+
+
+def editor_busy() -> dict:
+    """What the editor is busy with right now: {"idle", "slow_task", "slow_task_text", "modal",
+    "modal_title", "shader_jobs", "asset_compile_jobs"} (unreal.PythonTools.get_editor_busy_state)."""
+    state = unreal.PythonTools.get_editor_busy_state()
+    return {"idle": bool(state.idle), "slow_task": bool(state.slow_task), "slow_task_text": str(state.slow_task_text),
+            "modal": bool(state.modal), "modal_title": str(state.modal_title),
+            "shader_jobs": int(state.shader_jobs), "asset_compile_jobs": int(state.asset_compile_jobs)}
+
+
+async def wait_idle(timeout_s: float = 60.0, *, settle_s: float = 0.5, poll_s: float = 0.1,
+                    shaders: bool = True, assets: bool = True) -> dict:
+    """Await until the editor is idle: no slow task, no modal window, no shader compile jobs and no asset
+    still compiling (each of the last two can be ignored), for settle_s in a row (shader jobs arrive in
+    bursts). Gives up after timeout_s. Returns {"idle": bool, "timed_out": bool, "waited_s", "state"}.
+
+        await call_tool("EditorToolset.MaterialToolset.CompileMaterial", ...)
+        r = await vibeue.wait_idle(120)      # shaders done before the capture
+        if not r["idle"]: ...               # r["state"]["shader_jobs"] still pending
+
+    The editor ticks while this awaits, which is what lets the compiles finish. Keep timeout_s under the
+    client's limit (about 50 s per call), or run the wait inside a start_job() job.
+    """
+    t0 = time.monotonic()
+    deadline = t0 + max(0.0, float(timeout_s))
+    idle_since = None
+    while True:
+        state = editor_busy()
+        busy = (state["slow_task"] or state["modal"] or (shaders and state["shader_jobs"] > 0)
+                or (assets and state["asset_compile_jobs"] > 0))
+        now = time.monotonic()
+        if busy:
+            idle_since = None
+        elif idle_since is None:
+            idle_since = now
+        if idle_since is not None and now - idle_since >= settle_s:
+            return {"idle": True, "timed_out": False, "waited_s": round(now - t0, 2), "state": state}
+        if now >= deadline:
+            return {"idle": False, "timed_out": True, "waited_s": round(now - t0, 2), "state": state}
+        await asyncio.sleep(poll_s)
 
 
 # --- Non-blocking waits (gate harnesses) -----------------------------------------------------
