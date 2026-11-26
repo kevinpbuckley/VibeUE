@@ -28,6 +28,7 @@ and remapping through the existing engine Python API; no native service rebuild.
 >
 > | Kept on `AssetDiscoveryService` | Purpose |
 > |---|---|
+> | `import_mesh_into_fresh_folder(src, dest_folder)` | Import FBX, OBJ or glTF into an empty /Game subfolder. Inspect success, main_asset, created_assets, external_materials and error_message even on partial failure. |
 > | `import_asset(src, dest_folder, name)` → `(path, err)` | Import an image, mesh or any importable file (folder + name) |
 > | `import_texture(src, dest_asset_path)` | Same importer, full asset path |
 > | `export_texture(asset_path, file_path)` | Export a texture to disk |
