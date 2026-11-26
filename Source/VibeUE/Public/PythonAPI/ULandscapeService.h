@@ -998,6 +998,7 @@ public:
 	/**
 	 * Export a heightmap to a 16-bit PNG file by default (or RAW if a non-PNG extension is provided).
 	 * Maps to action="export_heightmap"
+	 * Read-only: does not dirty the map or add an undo entry.
 	 *
 	 * @param LandscapeNameOrLabel - Name or label of the landscape
 	 * @param OutputFilePath - Absolute path for the output file
@@ -1087,6 +1088,7 @@ public:
 	/**
 	 * Get the height at a specific world XY location.
 	 * Maps to action="get_height_at_location"
+	 * Read-only: does not dirty the map or add an undo entry.
 	 *
 	 * @param LandscapeNameOrLabel - Name or label of the landscape
 	 * @param WorldX - World X coordinate
@@ -1101,6 +1103,7 @@ public:
 	/**
 	 * Get height values in a rectangular region using landscape-local vertex indices.
 	 * Maps to action="get_height_in_region"
+	 * Read-only: does not dirty the map or add an undo entry.
 	 *
 	 * Returns world-space Z heights for each vertex in the region.
 	 * The array is row-major (SizeX values per row, SizeY rows).
@@ -1344,6 +1347,7 @@ public:
 	/**
 	 * Get layer weights at a world location.
 	 * Maps to action="get_layer_weights_at_location"
+	 * Read-only: does not dirty the map or add an undo entry.
 	 *
 	 * @param LandscapeNameOrLabel - Name or label of the landscape
 	 * @param WorldX - World X coordinate

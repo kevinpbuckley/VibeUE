@@ -218,6 +218,20 @@ else:
     print("save failed:", res.error_message)   # e.g. a read-only / source-controlled file
 ```
 
+### Reads do not dirty the map
+
+Every LandscapeService read leaves the map clean and adds nothing to the undo history: `get_height_at_location`,
+`get_height_in_region`, `get_layer_weights_at_location`, `get_weights_in_region`, `export_heightmap`,
+`export_weight_map`, `get_hole_at_location`, `analyze_terrain`, `get_slope_at_location`, `get_normal_at_location`,
+`get_slope_map`, `find_flat_areas`. So a dirty map after your reads means someone **wrote**:
+a person's unsaved edit or one of your own writes; do not save it without knowing which.
+
+(Before VibeUE 5-9 of 2026-11-25 each of these marked the map dirty and, in an `execute_python` script without a
+top-level `await`, left an "Execute Python script" undo entry holding the heightmap textures' `Source`: the engine's
+`FLandscapeEditDataInterface` calls `Texture->Modify()` on first access, read or write. The service now reads with
+dirtying off and no transaction; the values are the same to the bit. Epic's own `ULandscapeInfo::ExportHeightmap`
+and a bare `FLandscapeEditDataInterface` / `TAlphamapAccessor` in your own C++ still dirty.)
+
 ### Blocky / faceted flat areas (plains)
 
 Low-res source DEMs upsampled to landscape resolution show planar facets on flat terrain. Fixes,

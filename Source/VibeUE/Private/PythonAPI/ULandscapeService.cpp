@@ -50,6 +50,9 @@
 #include "HAL/FileManager.h"
 #include "UObject/Package.h"
 #include "UObject/UObjectGlobals.h"
+// Read-only landscape access (#694)
+#include "Misc/ITransaction.h"
+#include "Templates/UnrealTemplate.h"
 
 // =================================================================
 // Helper Methods
@@ -135,6 +138,39 @@ static FGuid ResolveEditLayerGuid(ALandscape* Landscape)
 	}
 	return LayerGuid;
 }
+
+/**
+ * Read access to landscape heights and weights that neither dirties a package nor records an undo entry (#694).
+ *
+ * FLandscapeEditDataInterface is the engine's read-and-write cache. The first time it touches a heightmap or
+ * weightmap texture it builds an FLandscapeTextureDataInfo, whose constructor calls
+ * Texture->Modify(bShouldDirtyPackage) (LandscapeEditInterface.cpp; the engine's own comment there says the better
+ * fix would be not to call Modify for a read). bShouldDirtyPackage defaults to true, so every read marked the map
+ * dirty, and while a transaction is open (execute_python runs each script inside one) Modify also saved the texture
+ * into it: an undo entry holding the heightmap textures' Source. Every reader of this service goes through this
+ * struct instead of a bare FLandscapeEditDataInterface / TAlphamapAccessor:
+ *  - SetShouldDirtyPackage(false) (what FLandscapeDoNotDirtyScope does) makes that Modify leave the package alone;
+ *  - GUndo is hidden for the struct's lifetime, so Modify finds no transaction to record into;
+ *  - nothing is uploaded to the GPU on destruction (a read queues no update region anyway).
+ * The read calls themselves are the engine's, unchanged, so the values are the same to the bit. Writers must not
+ * use it: they need both the dirty flag and the undo record.
+ */
+struct FLandscapeReadOnlyAccess
+{
+	explicit FLandscapeReadOnlyAccess(ULandscapeInfo* InLandscapeInfo)
+		: UndoGuard(GUndo, nullptr)
+		, Edit(InLandscapeInfo, /*bInUploadTextureChangesToGPU=*/ false)
+	{
+		Edit.SetShouldDirtyPackage(false);
+	}
+
+	FLandscapeReadOnlyAccess(const FLandscapeReadOnlyAccess&) = delete;
+	FLandscapeReadOnlyAccess& operator=(const FLandscapeReadOnlyAccess&) = delete;
+
+	// Declared first so it is released last: Edit unlocks its textures (and runs their destructors) with GUndo still hidden.
+	TGuardValue<ITransaction*> UndoGuard;
+	FLandscapeEditDataInterface Edit;
+};
 
 /**
  * Write a rectangle of uint16 heights through the edit-layer system (issue #524).
@@ -1170,8 +1206,25 @@ bool ULandscapeService::ExportHeightmap(
 		FinalOutputPath += TEXT(".png");
 	}
 
-	// Use the native Landscape export path (same core path used by the editor UI)
-	LandscapeInfo->ExportHeightmap(FinalOutputPath);
+	// The same steps as the editor's ULandscapeInfo::ExportHeightmap (GetHeightDataFast over the extent, then the
+	// LandscapeEditor file format for the extension), but read through FLandscapeReadOnlyAccess: the engine function
+	// builds its own FLandscapeEditDataInterface, whose read dirtied the map and added an undo entry (#694).
+	ILandscapeEditorModule& LandscapeEditorModule = FModuleManager::LoadModuleChecked<ILandscapeEditorModule>(TEXT("LandscapeEditor"));
+	const ILandscapeHeightmapFileFormat* HeightmapFormat = LandscapeEditorModule.GetHeightmapFormatByExtension(*FPaths::GetExtension(FinalOutputPath, true));
+	if (!HeightmapFormat)
+	{
+		UE_LOG(LogTemp, Error, TEXT("ULandscapeService::ExportHeightmap: No heightmap file format for the extension of '%s'"), *FinalOutputPath);
+		return false;
+	}
+
+	TArray<uint16> HeightData;
+	HeightData.AddZeroed(SizeX * SizeY);
+	{
+		FLandscapeReadOnlyAccess Read(LandscapeInfo);
+		Read.Edit.GetHeightDataFast(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
+	}
+	IFileManager::Get().Delete(*FinalOutputPath, /*RequireExists=*/ false, /*EvenReadOnly=*/ true, /*Quiet=*/ true);
+	HeightmapFormat->Export(*FinalOutputPath, NAME_None, HeightData, { (uint32)SizeX, (uint32)SizeY }, LandscapeInfo->DrawScale * FVector(1, 1, LANDSCAPE_ZSCALE));
 	if (!FPaths::FileExists(FinalOutputPath))
 	{
 		UE_LOG(LogTemp, Error, TEXT("ULandscapeService::ExportHeightmap: Native export did not produce file '%s'"), *FinalOutputPath);
@@ -1617,8 +1670,8 @@ FLandscapeHeightSample ULandscapeService::GetHeightAtLocation(
 		TArray<uint16> HeightData;
 		HeightData.SetNumUninitialized(SizeX * SizeY);
 
-		FLandscapeEditDataInterface LandscapeEdit(LandscapeInfo);
-		LandscapeEdit.GetHeightData(X0, Y0, X1, Y1, HeightData.GetData(), 0);
+		FLandscapeReadOnlyAccess Read(LandscapeInfo);
+		Read.Edit.GetHeightData(X0, Y0, X1, Y1, HeightData.GetData(), 0);
 
 		// Bilinear interpolation
 		float FracX = LocalX - FMath::FloorToFloat(LocalX);
@@ -1692,8 +1745,10 @@ TArray<float> ULandscapeService::GetHeightInRegion(
 	TArray<uint16> HeightData;
 	HeightData.SetNumUninitialized(SizeX * SizeY);
 
-	FLandscapeEditDataInterface LandscapeEdit(LandscapeInfo);
-	LandscapeEdit.GetHeightData(StartX, StartY, EndX, EndY, HeightData.GetData(), 0);
+	{
+		FLandscapeReadOnlyAccess Read(LandscapeInfo);
+		Read.Edit.GetHeightData(StartX, StartY, EndX, EndY, HeightData.GetData(), 0);
+	}
 
 	// Convert uint16 to world-space float heights
 	FVector LandscapeLocation = Landscape->GetActorLocation();
@@ -3107,8 +3162,9 @@ TArray<FLandscapeLayerWeightSample> ULandscapeService::GetLayerWeightsAtLocation
 		// Read a single pixel of weight data from the edit layer
 		TArray<uint8> WeightData;
 		WeightData.SetNumZeroed(1);
-		TAlphamapAccessor<true> AlphaAccessor(Info, LayerSettings.LayerInfoObj);
-		AlphaAccessor.GetData(LocalX, LocalY, LocalX, LocalY, WeightData.GetData());
+		int32 X1 = LocalX, Y1 = LocalY, X2 = LocalX, Y2 = LocalY;
+		FLandscapeReadOnlyAccess Read(Info);
+		Read.Edit.GetWeightData(LayerSettings.LayerInfoObj, X1, Y1, X2, Y2, WeightData.GetData(), 0);
 
 		FLandscapeLayerWeightSample Sample;
 		Sample.LayerName = LayerSettings.LayerInfoObj->GetLayerName().ToString();
@@ -3640,8 +3696,10 @@ TArray<float> ULandscapeService::GetWeightsInRegion(
 	FGuid LayerGuid = ResolveEditLayerGuid(Landscape);
 	FScopedSetLandscapeEditingLayer EditLayerScope(Landscape, LayerGuid);
 
-	TAlphamapAccessor<true> AlphaAccessor(Info, TargetLayer);
-	AlphaAccessor.GetData(StartX, StartY, EndX, EndY, WeightData.GetData());
+	{
+		FLandscapeReadOnlyAccess Read(Info);
+		Read.Edit.GetWeightData(TargetLayer, StartX, StartY, EndX, EndY, WeightData.GetData(), 0);
+	}
 
 	Result.SetNumUninitialized(SizeX * SizeY);
 	for (int32 i = 0; i < WeightData.Num(); i++)
@@ -3760,8 +3818,10 @@ FWeightMapExportResult ULandscapeService::ExportWeightMap(
 	TArray<uint8> WeightData;
 	WeightData.SetNumZeroed(SizeX * SizeY);
 
-	FLandscapeEditDataInterface LandscapeEdit(Info);
-	LandscapeEdit.GetWeightData(TargetLayer, MinX, MinY, MaxX, MaxY, WeightData.GetData(), 0);
+	{
+		FLandscapeReadOnlyAccess Read(Info);
+		Read.Edit.GetWeightData(TargetLayer, MinX, MinY, MaxX, MaxY, WeightData.GetData(), 0);
+	}
 
 	// Write as 8-bit grayscale PNG using IImageWrapper
 	IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>(FName("ImageWrapper"));
@@ -4120,12 +4180,12 @@ bool ULandscapeService::GetHoleAtLocation(
 	uint8 FinalVal = 0;
 	{
 		FScopedSetLandscapeEditingLayer EditLayerScope(Landscape, ResolveEditLayerGuid(Landscape));
-		TAlphamapAccessor<false> Acc(Info, VisLayer);
-		Acc.GetDataFast(LocalX, LocalY, LocalX, LocalY, &EditVal);
+		FLandscapeReadOnlyAccess Read(Info);
+		Read.Edit.GetWeightDataFast(VisLayer, LocalX, LocalY, LocalX, LocalY, &EditVal, 0);
 	}
 	{
-		TAlphamapAccessor<false> Acc(Info, VisLayer);
-		Acc.GetDataFast(LocalX, LocalY, LocalX, LocalY, &FinalVal);
+		FLandscapeReadOnlyAccess Read(Info);
+		Read.Edit.GetWeightDataFast(VisLayer, LocalX, LocalY, LocalX, LocalY, &FinalVal, 0);
 	}
 
 	return FMath::Max(EditVal, FinalVal) > 128;
@@ -5626,8 +5686,8 @@ FTerrainAnalysis ULandscapeService::AnalyzeTerrain(
 	HeightData.SetNumUninitialized(SzX * SzY);
 
 	{
-		FLandscapeEditDataInterface Edit(LInfo);
-		Edit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
+		FLandscapeReadOnlyAccess Read(LInfo);
+		Read.Edit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
 	}
 
 	float MinH =  FLT_MAX, MaxH = -FLT_MAX, SumH = 0.0f, SumSlope = 0.0f, MaxSlope = 0.0f;
@@ -5700,8 +5760,8 @@ float ULandscapeService::GetSlopeAtLocation(
 	HeightData.SetNumUninitialized(SzX * SzY);
 
 	{
-		FLandscapeEditDataInterface Edit(LInfo);
-		Edit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
+		FLandscapeReadOnlyAccess Read(LInfo);
+		Read.Edit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
 	}
 
 	int32 CX = VX - MinX;
@@ -5739,8 +5799,8 @@ FVector ULandscapeService::GetNormalAtLocation(
 	TArray<uint16> HeightData;
 	HeightData.SetNumUninitialized(SzX * SzY);
 	{
-		FLandscapeEditDataInterface Edit(LInfo);
-		Edit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
+		FLandscapeReadOnlyAccess Read(LInfo);
+		Read.Edit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
 	}
 
 	int32 CX = VX - MinX;
@@ -5786,8 +5846,8 @@ TArray<float> ULandscapeService::GetSlopeMap(
 	TArray<uint16> HeightData;
 	HeightData.SetNumUninitialized(SzX * SzY);
 	{
-		FLandscapeEditDataInterface Edit(LInfo);
-		Edit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
+		FLandscapeReadOnlyAccess Read(LInfo);
+		Read.Edit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
 	}
 
 	Results.SetNumUninitialized(SzX * SzY);
@@ -5824,8 +5884,8 @@ TArray<FVector> ULandscapeService::FindFlatAreas(
 	TArray<uint16> HeightData;
 	HeightData.SetNumUninitialized(SzX * SzY);
 	{
-		FLandscapeEditDataInterface Edit(LInfo);
-		Edit.GetHeightData(LandMinX, LandMinY, LandMaxX, LandMaxY, HeightData.GetData(), 0);
+		FLandscapeReadOnlyAccess Read(LInfo);
+		Read.Edit.GetHeightData(LandMinX, LandMinY, LandMaxX, LandMaxY, HeightData.GetData(), 0);
 	}
 
 	// Build a boolean mask of flat vertices
