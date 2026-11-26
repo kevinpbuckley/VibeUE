@@ -48,6 +48,9 @@ public:
 	 * smoke:true permits assertion-free runs but never reports passed=true.
 	 * Optional dependencies (project-relative or absolute file paths) bind evidence to file content.
 	 * Teardown is requested on every terminal path.
+	 * Step actions: start_pie, wait_for_pie, wait, inject_action, inject_key, python (code, shared
+	 * console globals), wait_until (expression, timeout_seconds, poll_seconds), assert_log,
+	 * python_assert, python_assert_number, capture_game, console_command, stop_pie.
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Workflow|PIE")
 	static FString RunScenario(const FString& ScenarioJson);

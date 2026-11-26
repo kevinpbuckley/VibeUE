@@ -1,10 +1,15 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 //
 // TerrainDataTools.cpp
-// MCP tool: terrain_data — generate heightmaps and map images from real-world terrain data.
+// MCP tool: terrain_data — fetch and align real-world terrain assets.
 // Calls vibeue.com terrain API endpoints authenticated with the user's VibeUE API key.
 
+#include "Tools/TerrainDataInternal.h"
 #include "Core/ToolRegistry.h"
+#include "HAL/PlatformTime.h"
+#include "GenericPlatform/GenericPlatformFile.h"
+#include "Misc/ConfigCacheIni.h"
+#include "Templates/UnrealTemplate.h"
 #include "Json.h"
 #include "JsonUtilities.h"
 #include "HttpModule.h"
@@ -22,12 +27,15 @@
 #include "HAL/CriticalSection.h"
 #include "Misc/ScopeLock.h"
 #include "Core/VibeUEToolCancel.h"
+#include <atomic>
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-static FString ExtractTerrainParam(const TMap<FString, FString>& Params, const FString& FieldName, const FString& Default = FString())
+namespace Terrain = VibeUE::Terrain;
+
+FString Terrain::Param(const TMap<FString, FString>& Params, const FString& FieldName, const FString& Default)
 {
 	// Check direct key
 	const FString* Direct = Params.Find(FieldName);
@@ -47,6 +55,13 @@ static FString ExtractTerrainParam(const TMap<FString, FString>& Params, const F
 		TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(*ParamsJsonStr);
 		if (FJsonSerializer::Deserialize(Reader, JsonObj) && JsonObj.IsValid())
 		{
+			const TArray<TSharedPtr<FJsonValue>>* List;
+			if (JsonObj->TryGetArrayField(FieldName, List))
+			{
+				FString ArrayText;
+				FJsonSerializer::Serialize(*List, TJsonWriterFactory<>::Create(&ArrayText));
+				return ArrayText;
+			}
 			FString Value;
 			if (JsonObj->TryGetStringField(FieldName, Value))
 				return Value;
@@ -64,27 +79,34 @@ static FString ExtractTerrainParam(const TMap<FString, FString>& Params, const F
 	return Default;
 }
 
-static double ExtractTerrainDouble(const TMap<FString, FString>& Params, const FString& Name, double Default)
+double Terrain::Number(const TMap<FString, FString>& Params, const FString& Name, double Default)
 {
-	FString V = ExtractTerrainParam(Params, Name);
+	FString V = Terrain::Param(Params, Name);
 	return V.IsEmpty() ? Default : FCString::Atod(*V);
 }
 
-static int32 ExtractTerrainInt(const TMap<FString, FString>& Params, const FString& Name, int32 Default)
+int32 Terrain::Integer(const TMap<FString, FString>& Params, const FString& Name, int32 Default)
 {
-	FString V = ExtractTerrainParam(Params, Name);
+	FString V = Terrain::Param(Params, Name);
 	return V.IsEmpty() ? Default : FCString::Atoi(*V);
 }
 
-static bool ExtractTerrainBool(const TMap<FString, FString>& Params, const FString& Name, bool Default)
+bool Terrain::Boolean(const TMap<FString, FString>& Params, const FString& Name, bool Default)
 {
-	FString V = ExtractTerrainParam(Params, Name);
+	FString V = Terrain::Param(Params, Name);
 	if (V.IsEmpty()) return Default;
 	return V.Equals(TEXT("true"), ESearchCase::IgnoreCase) || V.Equals(TEXT("1"));
 }
 
+#if WITH_AUTOMATION_TESTS
+static thread_local bool GTerrainTestEmptyKey = false;
+#endif
+
 static FString GetVibeUEApiKey()
 {
+	#if WITH_AUTOMATION_TESTS
+	if (GTerrainTestEmptyKey) return FString();
+#endif
 	// Primary: Editor Preferences > Plugins > VibeUE (UVibeUEEditorSettings::ApiKey).
 	if (const UVibeUEEditorSettings* Settings = GetDefault<UVibeUEEditorSettings>())
 	{
@@ -105,12 +127,16 @@ static FString GetTerrainBaseUrl()
 	return Url;
 }
 
-static FString BuildErrorJson(const FString& Code, const FString& Message)
+FString Terrain::Error(const FString& Code, const FString& Message)
 {
-	return FString::Printf(TEXT("{\"success\":false,\"error\":\"%s\",\"message\":\"%s\"}"), *Code, *Message);
+	const TSharedRef<FJsonObject> Data = MakeShared<FJsonObject>();
+	Data->SetBoolField(TEXT("success"), false);
+	Data->SetStringField(TEXT("error"), Code);
+	Data->SetStringField(TEXT("message"), Message);
+	return Serialize(Data);
 }
 
-static FString BuildSuccessJson(const TSharedRef<FJsonObject>& Data)
+FString Terrain::Serialize(const TSharedRef<FJsonObject>& Data)
 {
 	FString Out;
 	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Out);
@@ -126,16 +152,13 @@ static const TCHAR* NoApiKeyMessage()
 // ---------------------------------------------------------------------------
 // HTTP helper — blocking POST with JSON body, returns response bytes
 // ---------------------------------------------------------------------------
-struct FTerrainHttpResult
+bool FTerrainHttpResult::HasContentType(const FString& Expected) const
 {
-	bool bSuccess = false;
-	bool bNoApiKey = false; // The key is read where the request starts, on the game thread
-	int32 ResponseCode = 0;
-	TArray<uint8> Content;
-	TMap<FString, FString> Headers;
-	FString ContentType;
-	FString ErrorMessage;
-};
+	FString Mime = ContentType;
+	int32 Separator;
+	if (Mime.FindChar(TEXT(';'), Separator)) Mime.LeftInline(Separator);
+	return Mime.TrimStartAndEnd().Equals(Expected, ESearchCase::IgnoreCase);
+}
 
 // What one request needs, built on any thread. The request itself is made on the game thread, which also reads the
 // API key (a settings CDO field, written there).
@@ -145,8 +168,9 @@ struct FTerrainHttpRequestSpec
 	FString Verb = TEXT("GET");
 	FString JsonBody;           // POST only
 	bool bSendApiKey = false;   // when none is configured, the request is not made and the result says bNoApiKey
-	bool bKeepHeightmapHeaders = false;
+	bool bKeepTerrainHeaders = false;
 	float TimeoutSeconds = 30.0f;
+	float TransportGraceSeconds = 2.0f;
 };
 
 // The request's completion writes into this shared state, which it holds only weakly, never into the helper's
@@ -162,11 +186,8 @@ struct FTerrainHttpState
 };
 using FTerrainHttpStateRef = TSharedRef<FTerrainHttpState, ESPMode::ThreadSafe>;
 
-// The request's own HTTP timeout is this much longer than the helper's deadline (TimeoutSeconds on the game thread,
-// TimeoutSeconds + 1 for a worker's wait), so the helper gives up first and says "Request timed out" rather than
-// HTTP's "Connection failed". The HTTP timeout is only a backstop for a request nobody abandons.
-static constexpr float TerrainHttpTimeoutMargin = 2.0f;
-
+// Existing requests give the wait helper a small head start on the transport timeout.
+// Contract requests use zero transport grace so HTTP itself enforces the 60-second deadline.
 // Builds and starts the request. Game thread only.
 static void StartTerrainRequest(const FTerrainHttpStateRef& State, const FTerrainHttpRequestSpec& Spec)
 {
@@ -194,12 +215,16 @@ static void StartTerrainRequest(const FTerrainHttpStateRef& State, const FTerrai
 	}
 	if (!ApiKey.IsEmpty())
 		Request->SetHeader(TEXT("X-API-Key"), ApiKey);
-	Request->SetTimeout(Spec.TimeoutSeconds + TerrainHttpTimeoutMargin);
+	Request->SetTimeout(Spec.TimeoutSeconds + Spec.TransportGraceSeconds);
+	// The engine also fails a request that receives nothing for [HTTP] HttpActivityTimeout seconds (30 by default) with
+	// "Connection failed", whatever its total timeout: a cold orthophoto tile, a vista or a slow vector query sends its
+	// first byte later than that. The silence allowed is the request's whole time.
+	Request->SetActivityTimeout(Spec.TimeoutSeconds + Spec.TransportGraceSeconds);
 
 	const TWeakPtr<FTerrainHttpState, ESPMode::ThreadSafe> WeakState = State;
-	const bool bKeepHeightmapHeaders = Spec.bKeepHeightmapHeaders;
+	const bool bKeepTerrainHeaders = Spec.bKeepTerrainHeaders;
 	Request->OnProcessRequestComplete().BindLambda(
-		[WeakState, bKeepHeightmapHeaders](FHttpRequestPtr Req, FHttpResponsePtr Resp, bool bConnected)
+		[WeakState, bKeepTerrainHeaders](FHttpRequestPtr Req, FHttpResponsePtr Resp, bool bConnected)
 		{
 			const TSharedPtr<FTerrainHttpState, ESPMode::ThreadSafe> S = WeakState.Pin();
 			if (!S)
@@ -217,11 +242,14 @@ static void StartTerrainRequest(const FTerrainHttpStateRef& State, const FTerrai
 				Result.ResponseCode = Resp->GetResponseCode();
 				Result.Content = Resp->GetContent();
 				Result.ContentType = Resp->GetContentType();
-				if (bKeepHeightmapHeaders)
+				if (bKeepTerrainHeaders)
 				{
-					Result.Headers.Add(TEXT("X-Heightmap-Min-Height"), Resp->GetHeader(TEXT("X-Heightmap-Min-Height")));
-					Result.Headers.Add(TEXT("X-Heightmap-Max-Height"), Resp->GetHeader(TEXT("X-Heightmap-Max-Height")));
-					Result.Headers.Add(TEXT("X-Heightmap-Size"),       Resp->GetHeader(TEXT("X-Heightmap-Size")));
+					for (const TCHAR* Name : {TEXT("X-Heightmap-Min-Height"), TEXT("X-Heightmap-Max-Height"),
+						TEXT("X-Heightmap-Size"), TEXT("X-Heightmap-Alignment"), TEXT("X-Vista-Alignment"),
+						TEXT("X-Mask-Resolution"), TEXT("X-Terrain-Source"), TEXT("X-Ortho-Source"), TEXT("X-Terrain-Attribution")})
+					{
+						Result.Headers.Add(Name, Resp->GetHeader(Name));
+					}
 				}
 			}
 			S->bComplete = true;
@@ -266,7 +294,7 @@ static FTerrainHttpResult TerrainHttpRun(const FTerrainHttpRequestSpec& Spec)
 				return TimedOut;
 			}
 		}
-		return State->Result;
+		return MoveTemp(State->Result);
 	}
 
 	// On a worker thread (the MCP bridge runs terrain_data there) the request is made, started and
@@ -304,7 +332,7 @@ static FTerrainHttpResult TerrainHttpRun(const FTerrainHttpRequestSpec& Spec)
 	}
 	if (bSignalled && State->bComplete && !State->bCancelled)
 	{
-		return State->Result;
+		return MoveTemp(State->Result);
 	}
 	AsyncTask(ENamedThreads::GameThread, [State]() { AbandonTerrainRequest(State); });
 	FTerrainHttpResult Failed;
@@ -312,14 +340,15 @@ static FTerrainHttpResult TerrainHttpRun(const FTerrainHttpRequestSpec& Spec)
 	return Failed;
 }
 
-static FTerrainHttpResult TerrainHttpPost(const FString& Path, const FString& JsonBody, float TimeoutSeconds = 30.0f)
+FTerrainHttpResult Terrain::TerrainHttpPost(const FString& Path, const FString& JsonBody, float TimeoutSeconds, float TransportGraceSeconds)
 {
 	FTerrainHttpRequestSpec Spec;
 	Spec.Url = GetTerrainBaseUrl() + Path; // GConfig reads take the config lock, safe on a worker
 	Spec.Verb = TEXT("POST");
 	Spec.JsonBody = JsonBody;
 	Spec.bSendApiKey = true;
-	Spec.bKeepHeightmapHeaders = true;
+	Spec.bKeepTerrainHeaders = true;
+	Spec.TransportGraceSeconds = TransportGraceSeconds;
 	Spec.TimeoutSeconds = TimeoutSeconds;
 	return TerrainHttpRun(Spec);
 }
@@ -333,50 +362,102 @@ static FTerrainHttpResult TerrainHttpGet(const FString& Path, float TimeoutSecon
 }
 
 // ---------------------------------------------------------------------------
-// Coordinate conversion: lng/lat → UE5 world space
-//
-// Assumptions (standard VibeUE landscape import workflow):
-//   • Landscape actor is centered at world origin (0, 0, Z).
-//   • +X = East, +Y = North, 1 m = 100 UE units.
-// If the landscape actor is not at origin, add its Location from
-// ULandscapeService.get_landscape_info() to every ue5_point.
-// ---------------------------------------------------------------------------
-static FVector TerrainLngLatToUE5(double PointLng, double PointLat, double CenterLng, double CenterLat)
-{
-	const double METERS_PER_DEG = 111320.0;
-	const double CosLat         = FMath::Cos(FMath::DegreesToRadians(CenterLat));
-	return FVector(
-		(float)((PointLng - CenterLng) * METERS_PER_DEG * CosLat * 100.0),  // +X = East
-		(float)((PointLat - CenterLat) * METERS_PER_DEG             * 100.0),  // +Y = North
-		0.0f);
-}
-
-// ---------------------------------------------------------------------------
 // Save path resolution
 // ---------------------------------------------------------------------------
-static FString ResolveSavePath(const FString& RequestedPath, const FString& Filename)
+FString Terrain::SavePath(const FString& RequestedPath, const FString& Filename)
 {
 	if (!RequestedPath.IsEmpty()) return RequestedPath;
 	FString Dir = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("Terrain"));
 	IPlatformFile& PF = FPlatformFileManager::Get().GetPlatformFile();
 	if (!PF.DirectoryExists(*Dir)) PF.CreateDirectory(*Dir);
-	return FPaths::Combine(Dir, Filename);
+	// A full path: ProjectSavedDir is relative to the engine's Binaries folder, which means nothing to an MCP client
+	// that opens the file with its own tools from outside the editor.
+	return FPaths::ConvertRelativePathToFull(FPaths::Combine(Dir, Filename));
 }
 
 // Off the game thread two terrain_data calls run at once, and two for the same place share a default file name: one
 // save at a time, so neither fails on the other's open file (the last one wins, as when the calls ran in turn).
 static FCriticalSection GTerrainDataSaveLock;
 
-static bool SaveTerrainBytes(const TArray<uint8>& Bytes, const FString& FilePath)
+bool Terrain::SaveBytes(TArrayView64<const uint8> Bytes, const FString& FilePath)
 {
 	FScopeLock SaveGuard(&GTerrainDataSaveLock);
 	return FFileHelper::SaveArrayToFile(Bytes, *FilePath);
 }
 
-static bool SaveTerrainText(const FString& Text, const FString& FilePath)
+bool Terrain::SaveText(const FString& Text, const FString& FilePath)
 {
 	FScopeLock SaveGuard(&GTerrainDataSaveLock);
 	return FFileHelper::SaveStringToFile(Text, *FilePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+}
+
+// ---------------------------------------------------------------------------
+// The coordinates get_water_features has always written, and still writes unless landscape_space=true: an
+// equirectangular approximation with +Y NORTH, which is mirrored north-south on a landscape imported north-first (row
+// zero at minimum Y). Kept bit for bit, float rounding included, so a saved script gets the file it always got.
+// ---------------------------------------------------------------------------
+static TSharedRef<FJsonObject> TerrainLegacyWaterPoint(const TSharedPtr<FJsonObject>& Pt, double CenterLng, double CenterLat)
+{
+	double PtLng = 0.0, PtLat = 0.0;
+	Pt->TryGetNumberField(TEXT("lng"), PtLng);
+	Pt->TryGetNumberField(TEXT("lat"), PtLat);
+	const double MetersPerDegree = 111320.0;
+	const double CosLat = FMath::Cos(FMath::DegreesToRadians(CenterLat));
+	const FVector V(
+		(float)((PtLng - CenterLng) * MetersPerDegree * CosLat * 100.0),  // +X = East
+		(float)((PtLat - CenterLat) * MetersPerDegree * 100.0),           // +Y = North
+		0.0f);
+	TSharedRef<FJsonObject> UE5Pt = MakeShared<FJsonObject>();
+	UE5Pt->SetNumberField(TEXT("x"), V.X);
+	UE5Pt->SetNumberField(TEXT("y"), V.Y);
+	UE5Pt->SetNumberField(TEXT("z"), V.Z);
+	return UE5Pt;
+}
+
+static TArray<TSharedPtr<FJsonValue>> TerrainLegacyWaterLine(const TArray<TSharedPtr<FJsonValue>>& Points, double CenterLng, double CenterLat)
+{
+	TArray<TSharedPtr<FJsonValue>> Line;
+	Line.Reserve(Points.Num());
+	for (const TSharedPtr<FJsonValue>& PtVal : Points)
+	{
+		const TSharedPtr<FJsonObject> Pt = PtVal->AsObject();
+		if (Pt.IsValid()) Line.Add(MakeShared<FJsonValueObject>(TerrainLegacyWaterPoint(Pt, CenterLng, CenterLat)));
+	}
+	return Line;
+}
+
+static void AddLegacyWaterCoordinates(FJsonObject& ApiJson, double CenterLng, double CenterLat)
+{
+	const TArray<TSharedPtr<FJsonValue>>* Waterways;
+	if (ApiJson.TryGetArrayField(TEXT("waterways"), Waterways))
+	{
+		for (const TSharedPtr<FJsonValue>& WwVal : *Waterways)
+		{
+			const TSharedPtr<FJsonObject> Ww = WwVal->AsObject();
+			const TArray<TSharedPtr<FJsonValue>>* Points;
+			if (!Ww.IsValid() || !Ww->TryGetArrayField(TEXT("points"), Points)) continue;
+			Ww->SetArrayField(TEXT("ue5_points"), TerrainLegacyWaterLine(*Points, CenterLng, CenterLat));
+		}
+	}
+	const TArray<TSharedPtr<FJsonValue>>* Bodies;
+	if (ApiJson.TryGetArrayField(TEXT("water_bodies"), Bodies))
+	{
+		for (const TSharedPtr<FJsonValue>& BdVal : *Bodies)
+		{
+			const TSharedPtr<FJsonObject> Bd = BdVal->AsObject();
+			const TArray<TSharedPtr<FJsonValue>>* Rings;
+			if (!Bd.IsValid() || !Bd->TryGetArrayField(TEXT("rings"), Rings)) continue;
+			TArray<TSharedPtr<FJsonValue>> UE5Rings;
+			UE5Rings.Reserve(Rings->Num());
+			for (const TSharedPtr<FJsonValue>& RingVal : *Rings)
+			{
+				const TArray<TSharedPtr<FJsonValue>>* Points;
+				if (!RingVal->TryGetArray(Points)) continue;
+				UE5Rings.Add(MakeShared<FJsonValueArray>(TerrainLegacyWaterLine(*Points, CenterLng, CenterLat)));
+			}
+			Bd->SetArrayField(TEXT("ue5_rings"), UE5Rings);
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -384,39 +465,35 @@ static bool SaveTerrainText(const FString& Text, const FString& FilePath)
 // ---------------------------------------------------------------------------
 static FString ActionGetWaterFeatures(const TMap<FString, FString>& Params)
 {
-	const double Lng = ExtractTerrainDouble(Params, TEXT("lng"), 0.0);
-	const double Lat = ExtractTerrainDouble(Params, TEXT("lat"), 0.0);
-	if (ExtractTerrainParam(Params, TEXT("lat")).IsEmpty())
-		return BuildErrorJson(TEXT("MISSING_PARAMS"), TEXT("lat and lng are required."));
+	const double Lng = Terrain::Number(Params, TEXT("lng"), 0.0);
+	const double Lat = Terrain::Number(Params, TEXT("lat"), 0.0);
+	if (Terrain::Param(Params, TEXT("lat")).IsEmpty())
+		return Terrain::Error(TEXT("MISSING_PARAMS"), TEXT("lat and lng are required."));
 
-	const double MapSize = ExtractTerrainDouble(Params, TEXT("map_size"), 17.28);
+	const double MapSize = Terrain::Number(Params, TEXT("map_size"), 17.28);
 
-	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
-	Body->SetNumberField(TEXT("lng"),      Lng);
-	Body->SetNumberField(TEXT("lat"),      Lat);
-	Body->SetNumberField(TEXT("map_size"), MapSize);
-
-	FString BodyStr;
-	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&BodyStr);
-	FJsonSerializer::Serialize(Body, Writer);
+	const FString BodyStr = Terrain::Serialize(Terrain::WaterBody(Params));
 
 	// Use a longer timeout — PBF tiles may be fetched across multiple HTTP round-trips
-	const FTerrainHttpResult HttpResult = TerrainHttpPost(TEXT("/api/terrain/water-features"), BodyStr, 45.0f);
+	const FTerrainHttpResult HttpResult = Terrain::TerrainHttpPost(TEXT("/api/terrain/water-features"), BodyStr, 45.0f);
 
 	if (HttpResult.bNoApiKey) // Read where the request starts
-		return BuildErrorJson(TEXT("NO_API_KEY"), NoApiKeyMessage());
+		return Terrain::Error(TEXT("NO_API_KEY"), NoApiKeyMessage());
 	if (!HttpResult.bSuccess)
-		return BuildErrorJson(TEXT("HTTP_ERROR"), HttpResult.ErrorMessage);
+		return Terrain::Error(TEXT("HTTP_ERROR"), HttpResult.ErrorMessage);
 
 	if (HttpResult.ResponseCode != 200)
 	{
 		TArray<uint8> ContentCopy = HttpResult.Content;
 		ContentCopy.Add(0);
 		const FString ErrBody = FString(UTF8_TO_TCHAR(reinterpret_cast<const char*>(ContentCopy.GetData())));
-		return BuildErrorJson(
+		return Terrain::Error(
 			FString::Printf(TEXT("HTTP_%d"), HttpResult.ResponseCode),
 			ErrBody.IsEmpty() ? FString::Printf(TEXT("Server returned %d"), HttpResult.ResponseCode) : ErrBody);
 	}
+
+	if (!HttpResult.HasContentType(TEXT("application/json")))
+		return Terrain::Error(TEXT("INVALID_RESPONSE"), TEXT("Expected JSON water features."));
 
 	// Parse the API response and inject UE5 world-space coordinates
 	TArray<uint8> ContentCopy = HttpResult.Content;
@@ -426,82 +503,36 @@ static FString ActionGetWaterFeatures(const TMap<FString, FString>& Params)
 	TSharedPtr<FJsonObject> ApiJson;
 	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonStr);
 	if (!FJsonSerializer::Deserialize(Reader, ApiJson) || !ApiJson.IsValid())
-		return BuildErrorJson(TEXT("PARSE_ERROR"), TEXT("Failed to parse server response."));
+		return Terrain::Error(TEXT("PARSE_ERROR"), TEXT("Failed to parse server response."));
 
-	// Inject ue5_points into each waterway
-	const TArray<TSharedPtr<FJsonValue>>* WaterwaysArray;
-	if (ApiJson->TryGetArrayField(TEXT("waterways"), WaterwaysArray))
+	// landscape_space=true: the landscape's own axes, the same conversion get_map_features uses, so water lies where an
+	// exact heightmap, its masks and its orthophoto put it. Default (false): the file every older build wrote.
+	const bool bLandscapeAxes = Terrain::Boolean(Params, TEXT("landscape_space"), false);
+	if (bLandscapeAxes)
 	{
-		for (const TSharedPtr<FJsonValue>& WwVal : *WaterwaysArray)
+		for (const TCHAR* Field : {TEXT("waterways"), TEXT("water_bodies")})
 		{
-			TSharedPtr<FJsonObject> Ww = WwVal->AsObject();
-			if (!Ww.IsValid()) continue;
-			const TArray<TSharedPtr<FJsonValue>>* PtsArray;
-			if (!Ww->TryGetArrayField(TEXT("points"), PtsArray)) continue;
-
-			TArray<TSharedPtr<FJsonValue>> UE5Pts;
-			UE5Pts.Reserve(PtsArray->Num());
-			for (const TSharedPtr<FJsonValue>& PtVal : *PtsArray)
+			const TArray<TSharedPtr<FJsonValue>>* Features;
+			if (!ApiJson->TryGetArrayField(Field, Features)) continue;
+			for (const TSharedPtr<FJsonValue>& Value : *Features)
 			{
-				TSharedPtr<FJsonObject> Pt = PtVal->AsObject();
-				if (!Pt.IsValid()) continue;
-				double PtLng = 0.0, PtLat = 0.0;
-				Pt->TryGetNumberField(TEXT("lng"), PtLng);
-				Pt->TryGetNumberField(TEXT("lat"), PtLat);
-				FVector V = TerrainLngLatToUE5(PtLng, PtLat, Lng, Lat);
-				TSharedRef<FJsonObject> UE5Pt = MakeShared<FJsonObject>();
-				UE5Pt->SetNumberField(TEXT("x"), V.X);
-				UE5Pt->SetNumberField(TEXT("y"), V.Y);
-				UE5Pt->SetNumberField(TEXT("z"), V.Z);
-				UE5Pts.Add(MakeShared<FJsonValueObject>(UE5Pt));
+				if (const TSharedPtr<FJsonObject> Feature = Value->AsObject())
+					Terrain::AddCoordinates(*Feature, Lng, Lat, FMath::Clamp(MapSize, 1.0, 100.0));
 			}
-			Ww->SetArrayField(TEXT("ue5_points"), UE5Pts);
 		}
 	}
-
-	// Inject ue5_rings into each water body
-	const TArray<TSharedPtr<FJsonValue>>* BodiesArray;
-	if (ApiJson->TryGetArrayField(TEXT("water_bodies"), BodiesArray))
+	else
 	{
-		for (const TSharedPtr<FJsonValue>& BdVal : *BodiesArray)
-		{
-			TSharedPtr<FJsonObject> Bd = BdVal->AsObject();
-			if (!Bd.IsValid()) continue;
-			const TArray<TSharedPtr<FJsonValue>>* RingsArray;
-			if (!Bd->TryGetArrayField(TEXT("rings"), RingsArray)) continue;
-
-			TArray<TSharedPtr<FJsonValue>> UE5Rings;
-			UE5Rings.Reserve(RingsArray->Num());
-			for (const TSharedPtr<FJsonValue>& RingVal : *RingsArray)
-			{
-				const TArray<TSharedPtr<FJsonValue>>* PtsArray;
-				if (!RingVal->TryGetArray(PtsArray)) continue;
-				TArray<TSharedPtr<FJsonValue>> UE5Ring;
-				UE5Ring.Reserve(PtsArray->Num());
-				for (const TSharedPtr<FJsonValue>& PtVal : *PtsArray)
-				{
-					TSharedPtr<FJsonObject> Pt = PtVal->AsObject();
-					if (!Pt.IsValid()) continue;
-					double PtLng = 0.0, PtLat = 0.0;
-					Pt->TryGetNumberField(TEXT("lng"), PtLng);
-					Pt->TryGetNumberField(TEXT("lat"), PtLat);
-					FVector V = TerrainLngLatToUE5(PtLng, PtLat, Lng, Lat);
-					TSharedRef<FJsonObject> UE5Pt = MakeShared<FJsonObject>();
-					UE5Pt->SetNumberField(TEXT("x"), V.X);
-					UE5Pt->SetNumberField(TEXT("y"), V.Y);
-					UE5Pt->SetNumberField(TEXT("z"), V.Z);
-					UE5Ring.Add(MakeShared<FJsonValueObject>(UE5Pt));
-				}
-				UE5Rings.Add(MakeShared<FJsonValueArray>(UE5Ring));
-			}
-			Bd->SetArrayField(TEXT("ue5_rings"), UE5Rings);
-		}
+		AddLegacyWaterCoordinates(*ApiJson, Lng, Lat);
 	}
 
-	ApiJson->SetStringField(TEXT("ue5_coordinate_note"),
-		TEXT("+X=East +Y=North, landscape center at world origin. "
-		     "If landscape actor is offset, add its Location from "
-		     "ULandscapeService.get_landscape_info() to each ue5_point/ue5_ring vertex."));
+	ApiJson->SetStringField(TEXT("ue5_coordinate_note"), bLandscapeAxes
+		? TEXT("+X=East +Y=South (north is negative Y, as on a landscape imported from the heightmap), landscape center at world origin. "
+		       "If landscape actor is offset, add its Location from "
+		       "ULandscapeService.get_landscape_info() to each ue5_point/ue5_ring vertex.")
+		: TEXT("+X=East +Y=North, landscape center at world origin. "
+		       "If landscape actor is offset, add its Location from "
+		       "ULandscapeService.get_landscape_info() to each ue5_point/ue5_ring vertex."));
 
 	// Serialize the full JSON (with injected UE5 coordinates)
 	FString FullJson;
@@ -511,12 +542,12 @@ static FString ActionGetWaterFeatures(const TMap<FString, FString>& Params)
 	}
 
 	// Save full JSON to file (same pattern as heightmap/map_image)
-	const FString SavePath = ExtractTerrainParam(Params, TEXT("save_path"));
+	const FString SavePath = Terrain::Param(Params, TEXT("save_path"));
 	const FString DefaultFilename = FString::Printf(TEXT("water_features_%.4f_%.4f_%gkm.json"), Lat, Lng, MapSize);
-	const FString FilePath = ResolveSavePath(SavePath, DefaultFilename);
+	const FString FilePath = Terrain::SavePath(SavePath, DefaultFilename);
 
-	if (!SaveTerrainText(FullJson, FilePath))
-		return BuildErrorJson(TEXT("SAVE_ERROR"), FString::Printf(TEXT("Failed to save water features to: %s"), *FilePath));
+	if (!Terrain::SaveText(FullJson, FilePath))
+		return Terrain::Error(TEXT("SAVE_ERROR"), FString::Printf(TEXT("Failed to save water features to: %s"), *FilePath));
 
 	// Build a compact summary to return (not the full JSON — that can be 200K+ tokens)
 	int32 NumWaterways = 0;
@@ -527,6 +558,7 @@ static FString ActionGetWaterFeatures(const TMap<FString, FString>& Params)
 	// Track class breakdown for waterways
 	TMap<FString, int32> WaterwayClassCounts;
 
+	const TArray<TSharedPtr<FJsonValue>>* WaterwaysArray;
 	TArray<TSharedPtr<FJsonValue>> WaterwaySummaries;
 	if (ApiJson->TryGetArrayField(TEXT("waterways"), WaterwaysArray))
 	{
@@ -556,6 +588,7 @@ static FString ActionGetWaterFeatures(const TMap<FString, FString>& Params)
 		}
 	}
 
+	const TArray<TSharedPtr<FJsonValue>>* BodiesArray;
 	TArray<TSharedPtr<FJsonValue>> BodySummaries;
 	if (ApiJson->TryGetArrayField(TEXT("water_bodies"), BodiesArray))
 	{
@@ -613,9 +646,12 @@ static FString ActionGetWaterFeatures(const TMap<FString, FString>& Params)
 			 "Water bodies use 'ue5_rings', waterways use 'ue5_points'. Both are origin-centered."),
 		*FilePath, NumWaterways, TotalWaterwayPoints, NumBodies, TotalBodyPoints));
 
-	Result->SetStringField(TEXT("ue5_coordinate_note"),
-		TEXT("COORDINATE SYSTEM: +X=East +Y=North, map center at world origin (0,0,0). "
-			 "All ue5_points and ue5_rings are in this origin-centered space."));
+	Result->SetStringField(TEXT("ue5_coordinate_note"), bLandscapeAxes
+		? TEXT("COORDINATE SYSTEM: +X=East +Y=South (north is negative Y), map center at world origin (0,0,0). "
+			   "All ue5_points and ue5_rings are in this origin-centered space, the one get_map_features uses.")
+		: TEXT("COORDINATE SYSTEM: +X=East +Y=North, map center at world origin (0,0,0). "
+			   "All ue5_points and ue5_rings are in this origin-centered space. "
+			   "On a landscape imported from the heightmap north is NEGATIVE Y: pass landscape_space=true for coordinates on the landscape's axes (+Y=South)."));
 
 	FString Out;
 	TSharedRef<TJsonWriter<>> OutWriter = TJsonWriterFactory<>::Create(&Out);
@@ -628,59 +664,20 @@ static FString ActionGetWaterFeatures(const TMap<FString, FString>& Params)
 // ---------------------------------------------------------------------------
 static FString ActionGenerateHeightmap(const TMap<FString, FString>& Params)
 {
-	const double Lng = ExtractTerrainDouble(Params, TEXT("lng"), 0.0);
-	const double Lat = ExtractTerrainDouble(Params, TEXT("lat"), 0.0);
-	if (Lat == 0.0 && Lng == 0.0 && ExtractTerrainParam(Params, TEXT("lat")).IsEmpty())
-		return BuildErrorJson(TEXT("MISSING_PARAMS"), TEXT("lat and lng are required."));
+	const double Lng = Terrain::Number(Params, TEXT("lng"), 0.0);
+	const double Lat = Terrain::Number(Params, TEXT("lat"), 0.0);
+	if (Lat == 0.0 && Lng == 0.0 && Terrain::Param(Params, TEXT("lat")).IsEmpty())
+		return Terrain::Error(TEXT("MISSING_PARAMS"), TEXT("lat and lng are required."));
 
-	const FString Format        = ExtractTerrainParam(Params, TEXT("format"), TEXT("png"));
-	const double MapSize        = ExtractTerrainDouble(Params, TEXT("map_size"),         17.28);
-	const double BaseLevel      = ExtractTerrainDouble(Params, TEXT("base_level"),        0.0);
-	const int32  HeightScale    = ExtractTerrainInt   (Params, TEXT("height_scale"),      100);
-	const int32  WaterDepth     = ExtractTerrainInt   (Params, TEXT("water_depth"),        40);
-	const int32  GravityCenter  = ExtractTerrainInt   (Params, TEXT("gravity_center"),      0);
-	const int32  LevelCorr      = ExtractTerrainInt   (Params, TEXT("level_correction"),    0);
-	const int32  BlurPasses     = ExtractTerrainInt   (Params, TEXT("blur_passes"),         10);
-	const int32  BlurPostPasses = ExtractTerrainInt   (Params, TEXT("blur_post_passes"),     2);
-	const bool   bSharpen       = ExtractTerrainBool  (Params, TEXT("sharpen"),            true);
-	const bool   bDrawStreams   = ExtractTerrainBool  (Params, TEXT("draw_streams"),       true);
-	const int32  StreamDepth    = ExtractTerrainInt   (Params, TEXT("stream_depth"),          7);
-	const int32  PlainsHeight   = ExtractTerrainInt   (Params, TEXT("plains_height"),       140);
-	const FString SavePath      = ExtractTerrainParam (Params, TEXT("save_path"));
-	const int32  Resolution     = ExtractTerrainInt   (Params, TEXT("resolution"),            0);
-
-	// Build JSON body
-	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
-	Body->SetNumberField(TEXT("lng"),              Lng);
-	Body->SetNumberField(TEXT("lat"),              Lat);
-	Body->SetStringField(TEXT("format"),           Format);
-	Body->SetNumberField(TEXT("map_size"),         MapSize);
-	Body->SetNumberField(TEXT("base_level"),       BaseLevel);
-	Body->SetNumberField(TEXT("height_scale"),     HeightScale);
-	Body->SetNumberField(TEXT("water_depth"),      WaterDepth);
-	Body->SetNumberField(TEXT("gravity_center"),   GravityCenter);
-	Body->SetNumberField(TEXT("level_correction"), LevelCorr);
-	Body->SetNumberField(TEXT("blur_passes"),      BlurPasses);
-	Body->SetNumberField(TEXT("blur_post_passes"), BlurPostPasses);
-	Body->SetBoolField  (TEXT("sharpen"),          bSharpen);
-	Body->SetBoolField  (TEXT("draw_streams"),     bDrawStreams);
-	Body->SetNumberField(TEXT("stream_depth"),     StreamDepth);
-	Body->SetNumberField(TEXT("plains_height"),    PlainsHeight);
-	if (Resolution > 0)
-	{
-		Body->SetNumberField(TEXT("resolution"), Resolution);
-	}
-
-	FString BodyStr;
-	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&BodyStr);
-	FJsonSerializer::Serialize(Body, Writer);
-
-	const FTerrainHttpResult HttpResult = TerrainHttpPost(TEXT("/api/terrain/heightmap"), BodyStr);
+	const FString Format = Terrain::Param(Params, TEXT("format"), TEXT("png"));
+	const FString SavePath = Terrain::Param(Params, TEXT("save_path"));
+	const FTerrainHttpResult HttpResult = Terrain::TerrainHttpPost(TEXT("/api/terrain/heightmap"),
+		Terrain::Serialize(Terrain::HeightBody(Params, false)));
 
 	if (HttpResult.bNoApiKey) // Read where the request starts
-		return BuildErrorJson(TEXT("NO_API_KEY"), NoApiKeyMessage());
+		return Terrain::Error(TEXT("NO_API_KEY"), NoApiKeyMessage());
 	if (!HttpResult.bSuccess)
-		return BuildErrorJson(TEXT("HTTP_ERROR"), HttpResult.ErrorMessage);
+		return Terrain::Error(TEXT("HTTP_ERROR"), HttpResult.ErrorMessage);
 
 	if (HttpResult.ResponseCode != 200)
 	{
@@ -691,19 +688,24 @@ static FString ActionGenerateHeightmap(const TMap<FString, FString>& Params)
 			ContentCopy.Add(0);
 			ErrMsg = FString(UTF8_TO_TCHAR(reinterpret_cast<const char*>(ContentCopy.GetData())));
 		}
-		return BuildErrorJson(
+		return Terrain::Error(
 			FString::Printf(TEXT("HTTP_%d"), HttpResult.ResponseCode),
 			ErrMsg.IsEmpty() ? FString::Printf(TEXT("Server returned %d"), HttpResult.ResponseCode) : ErrMsg
 		);
 	}
 
+	const TCHAR* Expected = Format == TEXT("raw") ? TEXT("application/octet-stream") :
+		(Format == TEXT("zip") ? TEXT("application/zip") : TEXT("image/png"));
+	if (!HttpResult.HasContentType(Expected) || HttpResult.Content.IsEmpty())
+		return Terrain::Error(TEXT("INVALID_RESPONSE"), TEXT("Unexpected heightmap response format."));
+
 	// Determine file extension
 	FString Ext = Format;
 	const FString DefaultFilename = FString::Printf(TEXT("heightmap_%.4f_%.4f.%s"), Lat, Lng, *Ext);
-	const FString FilePath = ResolveSavePath(SavePath, DefaultFilename);
+	const FString FilePath = Terrain::SavePath(SavePath, DefaultFilename);
 
-	if (!SaveTerrainBytes(HttpResult.Content, FilePath))
-		return BuildErrorJson(TEXT("SAVE_ERROR"), FString::Printf(TEXT("Failed to save to: %s"), *FilePath));
+	if (!Terrain::SaveBytes(HttpResult.Content, FilePath))
+		return Terrain::Error(TEXT("SAVE_ERROR"), FString::Printf(TEXT("Failed to save to: %s"), *FilePath));
 
 	// Build success response
 	TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
@@ -719,10 +721,12 @@ static FString ActionGenerateHeightmap(const TMap<FString, FString>& Params)
 	if (MaxH && !MaxH->IsEmpty()) Out->SetNumberField(TEXT("max_height_m"), FCString::Atod(**MaxH));
 	if (Size && !Size->IsEmpty()) Out->SetStringField(TEXT("dimensions"),   *Size);
 
+	const FString Alignment = HttpResult.Headers.FindRef(TEXT("X-Heightmap-Alignment"));
+	if (!Alignment.IsEmpty()) Out->SetStringField(TEXT("alignment"), Alignment);
 	Out->SetStringField(TEXT("message"), FString::Printf(
 		TEXT("Heightmap saved to %s. Import via Edit > Import Heightmap in the Landscape editor."), *FilePath));
 
-	return BuildSuccessJson(Out);
+	return Terrain::Serialize(Out);
 }
 
 // ---------------------------------------------------------------------------
@@ -730,38 +734,34 @@ static FString ActionGenerateHeightmap(const TMap<FString, FString>& Params)
 // ---------------------------------------------------------------------------
 static FString ActionPreviewElevation(const TMap<FString, FString>& Params)
 {
-	const double Lng = ExtractTerrainDouble(Params, TEXT("lng"), 0.0);
-	const double Lat = ExtractTerrainDouble(Params, TEXT("lat"), 0.0);
-	if (ExtractTerrainParam(Params, TEXT("lat")).IsEmpty())
-		return BuildErrorJson(TEXT("MISSING_PARAMS"), TEXT("lat and lng are required."));
-
-	const double MapSize = ExtractTerrainDouble(Params, TEXT("map_size"), 17.28);
-
-	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
-	Body->SetNumberField(TEXT("lng"),      Lng);
-	Body->SetNumberField(TEXT("lat"),      Lat);
-	Body->SetNumberField(TEXT("map_size"), MapSize);
-
-	FString BodyStr;
-	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&BodyStr);
-	FJsonSerializer::Serialize(Body, Writer);
-
-	const FTerrainHttpResult HttpResult = TerrainHttpPost(TEXT("/api/terrain/preview"), BodyStr);
+	if (Terrain::Param(Params, TEXT("lat")).IsEmpty())
+		return Terrain::Error(TEXT("MISSING_PARAMS"), TEXT("lat and lng are required."));
+	const FTerrainHttpResult HttpResult = Terrain::TerrainHttpPost(TEXT("/api/terrain/preview"), Terrain::Serialize(Terrain::PreviewBody(Params)));
 
 	if (HttpResult.bNoApiKey) // Read where the request starts
-		return BuildErrorJson(TEXT("NO_API_KEY"), NoApiKeyMessage());
+		return Terrain::Error(TEXT("NO_API_KEY"), NoApiKeyMessage());
 	if (!HttpResult.bSuccess)
-		return BuildErrorJson(TEXT("HTTP_ERROR"), HttpResult.ErrorMessage);
+		return Terrain::Error(TEXT("HTTP_ERROR"), HttpResult.ErrorMessage);
 
 	if (HttpResult.ResponseCode != 200)
-		return BuildErrorJson(
+		return Terrain::Error(
 			FString::Printf(TEXT("HTTP_%d"), HttpResult.ResponseCode),
 			FString::Printf(TEXT("Server returned %d"), HttpResult.ResponseCode));
 
-	// Pass through the JSON response from the server
+	if (!HttpResult.HasContentType(TEXT("application/json")))
+		return Terrain::Error(TEXT("INVALID_RESPONSE"), TEXT("Expected JSON elevation preview."));
+
+	// Preserve all response fields, including new fields added by the server.
 	TArray<uint8> ContentCopy = HttpResult.Content;
 	ContentCopy.Add(0);
-	return FString(UTF8_TO_TCHAR(reinterpret_cast<const char*>(ContentCopy.GetData())));
+	const FString Json(UTF8_TO_TCHAR(reinterpret_cast<const char*>(ContentCopy.GetData())));
+	const FString Alignment = HttpResult.Headers.FindRef(TEXT("X-Heightmap-Alignment"));
+	if (Alignment.IsEmpty()) return Json;
+	TSharedPtr<FJsonObject> Preview;
+	if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json), Preview) || !Preview)
+		return Terrain::Error(TEXT("PARSE_ERROR"), TEXT("Invalid elevation preview JSON."));
+	Preview->SetStringField(TEXT("alignment"), Alignment);
+	return Terrain::Serialize(Preview.ToSharedRef());
 }
 
 // ---------------------------------------------------------------------------
@@ -769,16 +769,16 @@ static FString ActionPreviewElevation(const TMap<FString, FString>& Params)
 // ---------------------------------------------------------------------------
 static FString ActionGetMapImage(const TMap<FString, FString>& Params)
 {
-	const double Lng     = ExtractTerrainDouble(Params, TEXT("lng"),      0.0);
-	const double Lat     = ExtractTerrainDouble(Params, TEXT("lat"),      0.0);
-	const double MapSize = ExtractTerrainDouble(Params, TEXT("map_size"), 17.28);
-	const FString Style  = ExtractTerrainParam (Params, TEXT("style"),    TEXT("satellite-v9"));
-	const int32  Width   = ExtractTerrainInt   (Params, TEXT("width"),    1280);
-	const int32  Height  = ExtractTerrainInt   (Params, TEXT("height"),   1280);
-	const FString SavePath = ExtractTerrainParam(Params, TEXT("save_path"));
+	const double Lng     = Terrain::Number(Params, TEXT("lng"),      0.0);
+	const double Lat     = Terrain::Number(Params, TEXT("lat"),      0.0);
+	const double MapSize = Terrain::Number(Params, TEXT("map_size"), 17.28);
+	const FString Style  = Terrain::Param(Params, TEXT("style"),    TEXT("satellite-v9"));
+	const int32  Width   = Terrain::Integer(Params, TEXT("width"),    1280);
+	const int32  Height  = Terrain::Integer(Params, TEXT("height"),   1280);
+	const FString SavePath = Terrain::Param(Params, TEXT("save_path"));
 
-	if (ExtractTerrainParam(Params, TEXT("lat")).IsEmpty())
-		return BuildErrorJson(TEXT("MISSING_PARAMS"), TEXT("lat and lng are required."));
+	if (Terrain::Param(Params, TEXT("lat")).IsEmpty())
+		return Terrain::Error(TEXT("MISSING_PARAMS"), TEXT("lat and lng are required."));
 
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
 	Body->SetNumberField(TEXT("lng"),      Lng);
@@ -792,24 +792,24 @@ static FString ActionGetMapImage(const TMap<FString, FString>& Params)
 	TSharedRef<TJsonWriter<>> BodyWriter = TJsonWriterFactory<>::Create(&BodyStr);
 	FJsonSerializer::Serialize(Body, BodyWriter);
 
-	const FTerrainHttpResult HttpResult = TerrainHttpPost(TEXT("/api/terrain/map-image"), BodyStr);
+	const FTerrainHttpResult HttpResult = Terrain::TerrainHttpPost(TEXT("/api/terrain/map-image"), BodyStr);
 
 	if (HttpResult.bNoApiKey) // Read where the request starts
-		return BuildErrorJson(TEXT("NO_API_KEY"), NoApiKeyMessage());
+		return Terrain::Error(TEXT("NO_API_KEY"), NoApiKeyMessage());
 	if (!HttpResult.bSuccess)
-		return BuildErrorJson(TEXT("HTTP_ERROR"), HttpResult.ErrorMessage);
+		return Terrain::Error(TEXT("HTTP_ERROR"), HttpResult.ErrorMessage);
 
 	if (HttpResult.ResponseCode != 200)
-		return BuildErrorJson(
+		return Terrain::Error(
 			FString::Printf(TEXT("HTTP_%d"), HttpResult.ResponseCode),
 			FString::Printf(TEXT("Server returned %d"), HttpResult.ResponseCode));
 
 	const FString StyleTag = Style.Replace(TEXT("-"), TEXT("_")).Replace(TEXT("."), TEXT("_"));
 	const FString DefaultFilename = FString::Printf(TEXT("map_%s_%.4f_%.4f.png"), *StyleTag, Lat, Lng);
-	const FString FilePath = ResolveSavePath(SavePath, DefaultFilename);
+	const FString FilePath = Terrain::SavePath(SavePath, DefaultFilename);
 
-	if (!SaveTerrainBytes(HttpResult.Content, FilePath))
-		return BuildErrorJson(TEXT("SAVE_ERROR"), FString::Printf(TEXT("Failed to save to: %s"), *FilePath));
+	if (!Terrain::SaveBytes(HttpResult.Content, FilePath))
+		return Terrain::Error(TEXT("SAVE_ERROR"), FString::Printf(TEXT("Failed to save to: %s"), *FilePath));
 
 	TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
 	Out->SetBoolField  (TEXT("success"),    true);
@@ -818,7 +818,7 @@ static FString ActionGetMapImage(const TMap<FString, FString>& Params)
 	Out->SetNumberField(TEXT("size_bytes"), HttpResult.Content.Num());
 	Out->SetStringField(TEXT("message"),    FString::Printf(TEXT("Map image saved to %s"), *FilePath));
 
-	return BuildSuccessJson(Out);
+	return Terrain::Serialize(Out);
 }
 
 // ---------------------------------------------------------------------------
@@ -829,7 +829,7 @@ static FString ActionListStyles()
 	const FTerrainHttpResult HttpResult = TerrainHttpGet(TEXT("/api/terrain/styles"));
 
 	if (!HttpResult.bSuccess || HttpResult.ResponseCode != 200)
-		return BuildErrorJson(TEXT("HTTP_ERROR"), TEXT("Failed to fetch styles list."));
+		return Terrain::Error(TEXT("HTTP_ERROR"), TEXT("Failed to fetch styles list."));
 
 	TArray<uint8> ContentCopy = HttpResult.Content;
 	ContentCopy.Add(0);
@@ -839,29 +839,54 @@ static FString ActionListStyles()
 // ---------------------------------------------------------------------------
 // Tool registration
 // ---------------------------------------------------------------------------
+static FString DispatchTerrainAction(const TMap<FString, FString>& Params)
+{
+	const FString Action = Terrain::Param(Params, TEXT("action")).ToLower().TrimStartAndEnd();
+
+	if (Action.IsEmpty())
+		return Terrain::Error(TEXT("MISSING_ACTION"),
+			TEXT("'action' is required. Options: generate_heightmap, preview_elevation, get_map_image, list_styles, get_water_features, get_map_features, get_feature_masks, get_ortho_image, generate_vista_heightmap"));
+
+	if (Action == TEXT("generate_heightmap"))  return ActionGenerateHeightmap(Params);
+	if (Action == TEXT("preview_elevation"))   return ActionPreviewElevation(Params);
+	if (Action == TEXT("get_map_image"))       return ActionGetMapImage(Params);
+	if (Action == TEXT("list_styles"))         return ActionListStyles();
+	if (Action == TEXT("get_water_features"))  return ActionGetWaterFeatures(Params);
+
+	if (Action == TEXT("get_map_features") || Action == TEXT("get_feature_masks") ||
+		Action == TEXT("get_ortho_image") || Action == TEXT("generate_vista_heightmap"))
+	{
+		if (Terrain::Param(Params, TEXT("lng")).IsEmpty() || Terrain::Param(Params, TEXT("lat")).IsEmpty())
+			return Terrain::Error(TEXT("MISSING_PARAMS"), TEXT("lat and lng are required."));
+		if (Action == TEXT("get_map_features")) return Terrain::GetMapFeatures(Params);
+		if (Action == TEXT("get_feature_masks")) return Terrain::GetFeatureMasks(Params);
+		if (Action == TEXT("get_ortho_image")) return Terrain::GetOrthoImage(Params);
+		return Terrain::GenerateVista(Params);
+	}
+
+	return Terrain::Error(TEXT("UNKNOWN_ACTION"),
+		FString::Printf(TEXT("Unknown action: '%s'. Valid: generate_heightmap, preview_elevation, get_map_image, list_styles, get_water_features, get_map_features, get_feature_masks, get_ortho_image, generate_vista_heightmap"), *Action));
+}
+
 REGISTER_VIBEUE_TOOL(terrain_data,
-	"Generate heightmaps, map images, and water feature data from real-world terrain. "
-	"Requires an active VibeUE API key. "
-	"Actions: generate_heightmap, preview_elevation, get_map_image, list_styles, get_water_features. "
-	"IMPORTANT: Use the 'resolution' parameter to match your landscape resolution. "
-	"Heightmap workflow: 1) preview_elevation for suggested settings (returns suggestedZScale, suggestedXYScales by resolution). "
-	"2) generate_heightmap with resolution matching your landscape. "
-	"3) Import via ULandscapeService.import_heightmap() (auto-creates a matching landscape if missing, but explicit create_landscape is recommended for real-world XY/Z scale control). "
-	"CRITICAL: Use suggestedXYScales[resolution] as the landscape X and Y scale — do NOT use the default 100. "
-	"Water workflow (after heightmap is imported): "
-	"1) get_water_features with the same lng/lat/map_size — saves JSON to Saved/Terrain/ and returns a summary with the file path. "
-	"2) Read the saved JSON file: json_str = open(file_path).read() "
-	"3) Water bodies use 'ue5_rings', waterways use 'ue5_points'. Both are origin-centered.",
+	"Fetch real-world terrain using one VibeUE API key. Preview elevation, generate an exact-centred heightmap, "
+	"download aligned orthophotos, canopy, masks and map vectors, fetch water geometry, or generate a vista backdrop. "
+	"get_map_image and list_styles provide quick reference maps. Use matching lng, lat and map_size. "
+	"Match resolution to the landscape. XY scale is 100000 * map_size / (resolution - 1) cm per quad, Z scale is 20000 / height_scale. "
+	"Files default to Saved/Terrain/. Vector summaries link to full geometry in origin-centred cm: get_map_features uses the landscape's axes (+X east, +Y south); "
+	"get_water_features does with landscape_space=true (its default keeps the older +Y north output). "
+	"exact_center=false gives the off-centre heightmap crop older builds returned. "
+	"Keep returned attribution and license with derived assets.",
 	"Terrain",
 	TOOL_PARAMS(
-		TOOL_PARAM("action",          "Action: generate_heightmap | preview_elevation | get_map_image | list_styles | get_water_features", "string", true),
+		TOOL_PARAM("action",          "Action: generate_heightmap | preview_elevation | get_map_image | list_styles | get_water_features | get_map_features | get_feature_masks | get_ortho_image | generate_vista_heightmap", "string", true),
 		TOOL_PARAM("lng",             "Longitude of center point (e.g. -122.4194 for San Francisco)", "number", false),
 		TOOL_PARAM("lat",             "Latitude of center point (e.g. 37.7749 for San Francisco)", "number", false),
-		TOOL_PARAM("map_size",        "Map size in km (default 17.28). Use the same value for heightmap and get_water_features.", "number", false),
-		TOOL_PARAM("format",          "Output format for generate_heightmap: png (default), raw, zip", "string", false),
-		TOOL_PARAM("resolution",      "Output resolution NxN pixels for generate_heightmap. MUST match landscape resolution. "
+		TOOL_PARAM("map_size",        "Map size in km (default 17.28). Use the same value for every action of one landscape (for a vista it is the inner, playable side).", "number", false),
+		TOOL_PARAM("format",          "Heightmap or vista output format: png (default), raw, zip", "string", false),
+		TOOL_PARAM("resolution",      "Samples per side for heightmap, vista or masks. Match the playable heightmap to its landscape. "
 		                               "Use ULandscapeService.calculate_landscape_resolution() to compute. "
-		                               "Common: 505 (8x8,63,1), 1009 (8x8,63,2 or 16x16,63,1), 1017 (8x8,127,1). Default: 1081", "number", false),
+		                               "Common: 505 (8x8,63,1), 1009 (8x8,63,2 or 16x16,63,1), 1017 (8x8,127,1). Default: 1081 for heightmaps and vista, 1009 for masks", "number", false),
 		TOOL_PARAM("base_level",      "Base elevation offset in meters (default 0; use preview_elevation for good value)", "number", false),
 		TOOL_PARAM("height_scale",    "Height scale percentage 1-250 (default 100; use preview_elevation for good value)", "number", false),
 		TOOL_PARAM("water_depth",     "Water depth in Cities: Skylines units (default 40)", "number", false),
@@ -870,33 +895,99 @@ REGISTER_VIBEUE_TOOL(terrain_data,
 		TOOL_PARAM("blur_passes",     "Smoothing passes for plains (default 10)", "number", false),
 		TOOL_PARAM("blur_post_passes","Post-sharpening passes (default 2)", "number", false),
 		TOOL_PARAM("sharpen",         "Apply sharpening kernel (default true)", "boolean", false),
-		TOOL_PARAM("draw_streams",    "Re-etch waterways after smoothing (default true)", "boolean", false),
+		TOOL_PARAM("draw_streams",    "Request stream processing (default true, reserved by the current encoder)", "boolean", false),
 		TOOL_PARAM("stream_depth",    "Stream depth in meters (default 7)", "number", false),
 		TOOL_PARAM("plains_height",   "Height threshold for plains smoothing in meters (default 140)", "number", false),
+		TOOL_PARAM("exact_center", "Exact geographic centre for preview and heightmap (default true; the reply says alignment exact). False selects the off-centre legacy crop older builds returned. Vista, masks, map features and orthophotos are always exact.", "boolean", false),
+		TOOL_PARAM("landscape_space", "get_water_features only. Default false: ue5_points / ue5_rings exactly as older builds wrote them (+X east, +Y NORTH: mirrored north-south on a landscape imported from the heightmap). True: the landscape's own axes (+X east, +Y south, north is negative Y), the convention get_map_features, the masks and the orthophoto use. Pass true whenever the water has to line up with the landscape.", "boolean", false),
+		TOOL_PARAM("min_spacing_m", "Minimum vertex spacing in metres for water and map features. Zero keeps full detail.", "number", false),
+		TOOL_PARAM("detail", "Water feature detail: standard (default) or high.", "string", false),
+		TOOL_PARAM("categories", "Comma list or string array: roads, tracks_paths, railways, buildings, parking, landcover, barriers, pois, water. Omit for server defaults.", "string_or_array", false),
+		TOOL_PARAM("max_features", "Map features per category (server default 5000).", "integer", false),
+		TOOL_PARAM("prefer", "Vector/mask source preference: auto (default), openstreetmap, tiles.", "string", false),
+		TOOL_PARAM("layers", "Mask layers as a comma list: surface, landcover, parking, road_distance (default all).", "string", false),
+		TOOL_PARAM("size", "Orthophoto pixels per side: 1024, 2048 (default), 4096, 8192.", "integer", false),
+		TOOL_PARAM("source", "Orthophoto source: auto (default), naip, mapbox.", "string", false),
+		TOOL_PARAM("band", "Orthophoto bands: rgb (default), canopy, both. Canopy requires NAIP.", "string", false),
+		TOOL_PARAM("vista_factor", "Outer/inner side ratio 2-16 (default 8), outer side capped at 100 km.", "number", false),
 		TOOL_PARAM("style",           "Map image style for get_map_image: satellite-v9, outdoors-v11, streets-v11, light-v10, dark-v10", "string", false),
-		TOOL_PARAM("save_path",       "File path to save output. Default: <ProjectDir>/Saved/Terrain/", "string", false)
+		TOOL_PARAM("save_path",       "Single-output file path for heightmap, map image, vectors or vista. Default: <ProjectDir>/Saved/Terrain/", "string", false)
 	),
-	{
-		const FString Action = ExtractTerrainParam(Params, TEXT("action")).ToLower().TrimStartAndEnd();
-
-		if (Action.IsEmpty())
-			return BuildErrorJson(TEXT("MISSING_ACTION"),
-				TEXT("'action' is required. Options: generate_heightmap, preview_elevation, get_map_image, list_styles, get_water_features"));
-
-		if (Action == TEXT("generate_heightmap"))  return ActionGenerateHeightmap(Params);
-		if (Action == TEXT("preview_elevation"))   return ActionPreviewElevation(Params);
-		if (Action == TEXT("get_map_image"))       return ActionGetMapImage(Params);
-		if (Action == TEXT("list_styles"))         return ActionListStyles();
-		if (Action == TEXT("get_water_features"))  return ActionGetWaterFeatures(Params);
-
-		return BuildErrorJson(TEXT("UNKNOWN_ACTION"),
-			FString::Printf(TEXT("Unknown action: '%s'. Valid: generate_heightmap, preview_elevation, get_map_image, list_styles, get_water_features"), *Action));
-	}
+	{ return DispatchTerrainAction(Params); }
 );
 
 #if WITH_AUTOMATION_TESTS
 #include "Misc/AutomationTest.h"
 #include "Async/TaskGraphInterfaces.h"
+
+FString Terrain::RunWithoutKey(const FParams& Params)
+{
+	check(IsInGameThread());
+	TGuardValue<bool> EmptyKey(GTerrainTestEmptyKey, true);
+	return DispatchTerrainAction(Params);
+}
+
+// get_water_features has two coordinate conventions: the older +Y north one (the default, which must stay what it
+// was) and the landscape's axes (landscape_space=true). The point is Enchanted Rock's summit, north-east of the centre.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeUETerrainDataWaterAxesTest, "VibeUE.TerrainData.WaterAxes",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVibeUETerrainDataWaterAxesTest::RunTest(const FString& Parameters)
+{
+	const TCHAR* Source = TEXT(R"({"waterways":[{"name":"","points":[{"lng":-98.818824,"lat":30.506464}]}],)")
+		TEXT(R"("water_bodies":[{"name":"","rings":[[{"lng":-98.818824,"lat":30.506464}]]}]})");
+	auto FirstPoint = [](const TSharedPtr<FJsonObject>& Json, bool bBody) -> TSharedPtr<FJsonObject>
+	{
+		const TArray<TSharedPtr<FJsonValue>>* Features = nullptr;
+		if (!Json->TryGetArrayField(bBody ? TEXT("water_bodies") : TEXT("waterways"), Features) || Features->Num() != 1) return nullptr;
+		const TSharedPtr<FJsonObject> Feature = (*Features)[0]->AsObject();
+		const TArray<TSharedPtr<FJsonValue>>* Points = nullptr;
+		if (!Feature || !Feature->TryGetArrayField(bBody ? TEXT("ue5_rings") : TEXT("ue5_points"), Points) || Points->Num() != 1) return nullptr;
+		if (bBody)
+		{
+			const TArray<TSharedPtr<FJsonValue>>* Ring = nullptr;
+			if (!(*Points)[0]->TryGetArray(Ring) || Ring->Num() != 1) return nullptr;
+			return (*Ring)[0]->AsObject();
+		}
+		return (*Points)[0]->AsObject();
+	};
+
+	TSharedPtr<FJsonObject> Legacy;
+	if (!TestTrue(TEXT("the sample parses"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Source), Legacy) && Legacy.IsValid()))
+	{
+		return false;
+	}
+	AddLegacyWaterCoordinates(*Legacy, -98.819936, 30.505025);
+	for (const bool bBody : {false, true})
+	{
+		const TSharedPtr<FJsonObject> Point = FirstPoint(Legacy, bBody);
+		if (!TestTrue(TEXT("legacy coordinates were written"), Point.IsValid())) return false;
+		// 0.001439 degrees of latitude x 111320 m, as a float: north is POSITIVE Y
+		TestEqual(TEXT("legacy Y is north-positive"), Point->GetNumberField(TEXT("y")), 16018.95, 0.01);
+		TestEqual(TEXT("legacy Y keeps its float rounding"), Point->GetNumberField(TEXT("y")),
+			static_cast<double>(static_cast<float>((30.506464 - 30.505025) * 111320.0 * 100.0)), 0.0);
+		TestEqual(TEXT("legacy X is east-positive"), Point->GetNumberField(TEXT("x")), 10665.37, 0.01);
+		TestEqual(TEXT("legacy Z"), Point->GetNumberField(TEXT("z")), 0.0, 0.0);
+	}
+
+	TSharedPtr<FJsonObject> Aligned;
+	if (!TestTrue(TEXT("the sample parses again"), FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Source), Aligned) && Aligned.IsValid()))
+	{
+		return false;
+	}
+	for (const TCHAR* Field : {TEXT("waterways"), TEXT("water_bodies")})
+	{
+		Terrain::AddCoordinates(*Aligned->GetArrayField(Field)[0]->AsObject(), -98.819936, 30.505025, 3.0);
+	}
+	for (const bool bBody : {false, true})
+	{
+		const TSharedPtr<FJsonObject> Point = FirstPoint(Aligned, bBody);
+		if (!TestTrue(TEXT("aligned coordinates were written"), Point.IsValid())) return false;
+		TestEqual(TEXT("aligned Y is south-positive (the contract's summit)"), Point->GetNumberField(TEXT("y")), -16018.99, 0.01);
+		TestEqual(TEXT("aligned X"), Point->GetNumberField(TEXT("x")), 10665.32, 0.01);
+	}
+	return true;
+}
 
 // The same late-completion hazard as deep_research (VibeUE.Research.TimeoutIsSafe): a timed-out request is cancelled,
 // its completion runs at a later HTTP tick, and it must write nothing the caller can see. Off the game thread, as the
@@ -909,7 +1000,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibeUETerrainDataTimeoutIsSafeTest, "VibeUE.Te
 bool FVibeUETerrainDataTimeoutIsSafeTest::RunTest(const FString& Parameters)
 {
 	// TEST-NET-1 (RFC 5737, documentation only, never a real host): the connection hangs, so the request times out.
-	// The request's own HTTP timeout is longer than the helper's (TerrainHttpTimeoutMargin), so the helper's wins.
+	// The request's own HTTP timeout is longer than the helper's (TransportGraceSeconds), so the helper's wins.
 	FTerrainHttpRequestSpec Spec;
 	Spec.Url = TEXT("http://192.0.2.1/");
 	Spec.TimeoutSeconds = 1.0f;

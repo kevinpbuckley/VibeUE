@@ -12,6 +12,7 @@
 #include "Misc/AutomationTest.h"
 #include "Misc/FileHelper.h"
 #include "HAL/FileManager.h"
+#include "IPythonScriptPlugin.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 
@@ -96,16 +97,26 @@ bool FWaitWorkflowScenario::Update()
 	static TMap<FString, double> Starts;
 	double& Start = Starts.FindOrAdd(Id, FPlatformTime::Seconds());
 	const TSharedPtr<FJsonObject> Report = ParseWorkflowJson(UWorkflowService::GetScenario(Id));
-	if (!Report.IsValid()) { Test->AddError(TEXT("scenario report is invalid")); Starts.Remove(Id); return true; }
-	const FString Status = Report->GetStringField(TEXT("status"));
-	if (Status == TEXT("running"))
+	if (!Report.IsValid())
+	{
+		Test->AddError(TEXT("scenario report is invalid"));
+		UWorkflowService::CancelScenario(Id);
+	}
+	else if (Report->GetStringField(TEXT("status")) == TEXT("running"))
 	{
 		if (FPlatformTime::Seconds() - Start < 10.0) { return false; }
-		Test->AddError(TEXT("scenario timed out")); UWorkflowService::CancelScenario(Id); Starts.Remove(Id); return true;
+		Test->AddError(TEXT("scenario timed out"));
+		UWorkflowService::CancelScenario(Id);
 	}
-	Test->TestEqual(TEXT("scenario terminal verdict"), Report->GetBoolField(TEXT("passed")), bExpectedPass);
-	Test->TestTrue(TEXT("teardown recorded"), Report->HasField(TEXT("teardownSucceeded")));
-	Starts.Remove(Id); return true;
+	else
+	{
+		Test->TestEqual(TEXT("scenario terminal verdict"), Report->GetBoolField(TEXT("passed")), bExpectedPass);
+		Test->TestTrue(TEXT("teardown recorded"), Report->HasField(TEXT("teardownSucceeded")));
+	}
+	Starts.Remove(Id);
+	const FString ReportPath = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("VibeUE/Scenarios"), Id + TEXT(".json"));
+	Test->TestTrue(TEXT("removed scratch scenario report"), IFileManager::Get().Delete(*ReportPath));
+	return true;
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWorkflowScenarioTest, "VibeUE.Workflow.Scenario.PassingAndFailing",
@@ -122,6 +133,47 @@ bool FWorkflowScenarioTest::RunTest(const FString&)
 	return true;
 }
 
+DEFINE_LATENT_AUTOMATION_COMMAND_TWO_PARAMETER(FClearWorkflowScenarioTestGlobal, FAutomationTestBase*, Test, FString, Name);
+bool FClearWorkflowScenarioTestGlobal::Update()
+{
+	FPythonCommandEx Cleanup;
+	Cleanup.ExecutionMode = EPythonCommandExecutionMode::ExecuteFile;
+	Cleanup.FileExecutionScope = EPythonFileExecutionScope::Public;
+	Cleanup.Command = FString::Printf(TEXT("globals().pop('%s', None)"), *Name);
+	IPythonScriptPlugin* Python = IPythonScriptPlugin::Get();
+	Test->TestTrue(TEXT("removed the scenario's shared Python state"), Python && Python->ExecPythonCommandEx(Cleanup));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWorkflowScenarioPythonWaitTest, "VibeUE.Workflow.Scenario.PythonAndWaitUntil",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FWorkflowScenarioPythonWaitTest::RunTest(const FString&)
+{
+	// python sets shared globals, wait_until polls across ticks until the condition holds
+	const FString StateName = TEXT("_vibeue_wait_") + FGuid::NewGuid().ToString(EGuidFormats::Digits);
+	const FString PassingSpec = TEXT(R"json({"name":"python wait pass","steps":[
+		{"action":"python","code":"# see foo.py\nSTATE = [__import__('time').monotonic(), 0]"},
+		{"action":"wait_until","expression":"__import__('time').monotonic() - STATE[0] > 0.2 # trailing comment","timeout_seconds":5,"poll_seconds":0.05},
+		{"action":"python","code":"STATE[1] += 1"},
+		{"action":"python_assert_number","expression":"STATE[1]","operator":"eq","expected":1}],"teardown":{"stop_pie":false}})json");
+	const auto Passing = ParseWorkflowJson(UWorkflowService::RunScenario(PassingSpec.Replace(TEXT("STATE"), *StateName)));
+	if (!TestTrue(TEXT("shared-state scenario queued"), Passing && Passing->HasField(TEXT("scenarioId")))) { return false; }
+	ADD_LATENT_AUTOMATION_COMMAND(FWaitWorkflowScenario(this, Passing->GetStringField(TEXT("scenarioId")), true));
+	ADD_LATENT_AUTOMATION_COMMAND(FClearWorkflowScenarioTestGlobal(this, StateName));
+	// The raising step logs its traceback through LogPython as an error; that is the expected outcome here.
+	AddExpectedError(TEXT("ValueError"), EAutomationExpectedErrorFlags::Contains, 0, /*bIsRegex*/ false);
+	AddExpectedError(TEXT("Traceback (most recent call last)"), EAutomationExpectedErrorFlags::Contains, 0, /*bIsRegex*/ false);
+	AddExpectedError(TEXT("File \"<string>\", line 1"), EAutomationExpectedErrorFlags::Contains, 0, /*bIsRegex*/ false);
+	const TSharedPtr<FJsonObject> Raising = ParseWorkflowJson(UWorkflowService::RunScenario(FString(R"json({"name":"python raises","steps":[)json"
+		R"json({"action":"python","code":"raise ValueError()"},{"action":"python_assert","expression":"1","expected":"1"}],"teardown":{"stop_pie":false}})json")));
+	const TSharedPtr<FJsonObject> TimingOut = ParseWorkflowJson(UWorkflowService::RunScenario(FString(R"json({"name":"wait_until timeout","steps":[)json"
+		R"json({"action":"wait_until","expression":"False","timeout_seconds":0.2},{"action":"python_assert","expression":"1","expected":"1"}],"teardown":{"stop_pie":false}})json")));
+	if (!TestTrue(TEXT("failure scenarios queued"), Raising && Raising->HasField(TEXT("scenarioId")) && TimingOut && TimingOut->HasField(TEXT("scenarioId")))) { return false; }
+	ADD_LATENT_AUTOMATION_COMMAND(FWaitWorkflowScenario(this, Raising->GetStringField(TEXT("scenarioId")), false));
+	ADD_LATENT_AUTOMATION_COMMAND(FWaitWorkflowScenario(this, TimingOut->GetStringField(TEXT("scenarioId")), false));
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWorkflowScenarioValidationTest, "VibeUE.Workflow.Scenario.RejectInvalidAssertions",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FWorkflowScenarioValidationTest::RunTest(const FString&)
@@ -135,12 +187,27 @@ bool FWorkflowScenarioValidationTest::RunTest(const FString&)
 		TEXT(R"({"steps":[{"action":"python_assert_number","expression":"1","operator":"eq","expected":1,"tolerance":-1}]})"),
 		TEXT(R"({"steps":[{"action":"python_assert_number","expression":"1","operator":"lt","expected":2,"tolerance":1}]})"),
 		TEXT(R"({"smoke":"yes","steps":[{"action":"wait"}]})"),
-		TEXT(R"({"smoke":true,"steps":[{"action":"wait"}],"dependencies":["Saved/NoSuchScenarioDependency"]})")
+		TEXT(R"({"smoke":true,"steps":[{"action":"wait"}],"dependencies":["Saved/NoSuchScenarioDependency"]})"),
+		TEXT(R"({"smoke":true,"steps":[{"action":"python"}]})"),
+		TEXT(R"({"smoke":true,"steps":[{"action":"python","code":"  "}]})"),
+		TEXT(R"({"smoke":true,"steps":[{"action":"wait_until"}]})")
 	};
 	for (const FString& Spec : Invalid)
 	{
 		const auto Result = ParseWorkflowJson(UWorkflowService::RunScenario(Spec));
 		TestTrue(TEXT("invalid scenario rejected before execution: ") + Spec, Result && !Result->GetBoolField(TEXT("success")) && !Result->HasField(TEXT("scenarioId")));
+	}
+	// The expression is harmless even if validation regresses. The shared guard still recognizes input().
+	for (const FString& UnsafeStep : {FString(TEXT(R"json({"action":"python","code":"False and input()"})json")),
+		FString(TEXT(R"json({"action":"wait_until","expression":"True or input()"})json"))})
+	{
+		const auto Refusal = ParseWorkflowJson(UWorkflowService::RunScenario(
+			TEXT("{\"smoke\":true,\"teardown\":{\"stop_pie\":false},\"steps\":[") + UnsafeStep + TEXT("]}")));
+		if (TestTrue(TEXT("unsafe step refused before queuing"), Refusal && !Refusal->GetBoolField(TEXT("success")) && !Refusal->HasField(TEXT("scenarioId"))))
+		{
+			TestEqual(TEXT("same diagnostic as the execution service"), Refusal->GetStringField(TEXT("error")),
+				FString(TEXT("Blocked unsafe Python code: input(). input() blocks the editor. Use a different approach for user interaction.")));
+		}
 	}
 	return true;
 }
