@@ -6,6 +6,8 @@
 #include "ToolsetRegistry/ToolsetDefinition.h"
 #include "UFoliageService.generated.h"
 
+struct FFoliageInstance;
+
 /**
  * Single foliage instance info (for queries and specific placement)
  */
@@ -38,6 +40,7 @@ struct FFoliageScatterResult
 	UPROPERTY(BlueprintReadWrite, Category = "Foliage")
 	bool bSuccess = false;
 
+	/** Instances the foliage actor(s) actually gained in this call (counted before and after, not assumed) */
 	UPROPERTY(BlueprintReadWrite, Category = "Foliage")
 	int32 InstancesAdded = 0;
 
@@ -136,7 +139,8 @@ struct FFoliageQueryResult
  *
  * Discovery:
  * - list_foliage_types: List all foliage types in the level with instance counts
- * - get_instance_count: Get instance count for a specific foliage type
+ * - get_instance_count: Get instance count for a specific foliage type (0 when none are placed; raises for a path
+ *   that is neither a StaticMesh nor a FoliageType)
  *
  * Foliage Type Management:
  * - create_foliage_type: Create a UFoliageType asset from a static mesh
@@ -146,6 +150,11 @@ struct FFoliageQueryResult
  * - scatter_foliage: Scatter instances in a circular region with Poisson disk sampling
  * - scatter_foliage_rect: Scatter instances in a rectangular region
  * - add_foliage_instances: Place instances at specific locations
+ * - add_foliage_instance_transforms: Place instances with exact per-instance transforms (non-uniform scale)
+ *
+ * Surface traces: by default a trace stops on the first WorldStatic blocker, so an invisible ceiling or blocking
+ * volume above the ground catches it. trace_landscape_only=True traces only landscapes (the named one for the
+ * scatter calls), trace_actor_name_or_label traces only that actor.
  *
  * Layer-Aware Placement:
  * - scatter_foliage_on_layer: Scatter only where a landscape paint layer is dominant
@@ -193,10 +202,12 @@ public:
 	static TArray<FVibeUEFoliageTypeInfo> ListFoliageTypes();
 
 	/**
-	 * Get instance count for a specific mesh or foliage type in the level.
+	 * Get instance count for a specific mesh or foliage type in the level (summed over every loaded foliage actor).
 	 *
 	 * @param MeshOrFoliageTypePath - Path to UStaticMesh or UFoliageType asset
-	 * @return Number of instances, or -1 if not found
+	 * @return Number of instances: 0 when the mesh / foliage type exists but has no instances in the level (never
+	 *         placed, or all removed). Raises a script error (Python exception, MCP tool error) and returns -1 when
+	 *         the path is neither a StaticMesh nor a FoliageType, or there is no editor world.
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Foliage")
 	static int32 GetInstanceCount(const FString& MeshOrFoliageTypePath);
@@ -253,6 +264,8 @@ public:
 	 * @param bRandomYaw - Apply random yaw rotation (default true)
 	 * @param Seed - Random seed for reproducibility (0 = random)
 	 * @param LandscapeNameOrLabel - Optional landscape to constrain placement to
+	 * @param bTraceLandscapeOnly - Trace only landscapes (only LandscapeNameOrLabel when it is given), so blocking
+	 *        volumes, invisible ceilings and meshes above the ground are ignored (default false: first WorldStatic hit)
 	 * @return Scatter result with instance counts
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Foliage")
@@ -267,7 +280,8 @@ public:
 		bool bAlignToNormal = true,
 		bool bRandomYaw = true,
 		int32 Seed = 0,
-		const FString& LandscapeNameOrLabel = TEXT(""));
+		const FString& LandscapeNameOrLabel = TEXT(""),
+		bool bTraceLandscapeOnly = false);
 
 	/**
 	 * Scatter foliage instances in a rectangular region.
@@ -284,6 +298,8 @@ public:
 	 * @param bRandomYaw - Apply random yaw rotation (default true)
 	 * @param Seed - Random seed for reproducibility (0 = random)
 	 * @param LandscapeNameOrLabel - Optional landscape to constrain placement to
+	 * @param bTraceLandscapeOnly - Trace only landscapes (only LandscapeNameOrLabel when it is given), so blocking
+	 *        volumes, invisible ceilings and meshes above the ground are ignored (default false: first WorldStatic hit)
 	 * @return Scatter result with instance counts
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Foliage")
@@ -299,7 +315,8 @@ public:
 		bool bAlignToNormal = true,
 		bool bRandomYaw = true,
 		int32 Seed = 0,
-		const FString& LandscapeNameOrLabel = TEXT(""));
+		const FString& LandscapeNameOrLabel = TEXT(""),
+		bool bTraceLandscapeOnly = false);
 
 	/**
 	 * Place individual foliage instances at specific locations.
@@ -311,6 +328,10 @@ public:
 	 * @param bAlignToNormal - Align to surface normal (default true)
 	 * @param bRandomYaw - Apply random yaw rotation (default true)
 	 * @param bTraceToSurface - Trace downward to find ground (default true)
+	 * @param bTraceLandscapeOnly - With bTraceToSurface: trace only landscapes, ignoring every other blocker
+	 *        (blocking volumes, invisible ceilings, meshes) above the ground (default false: first WorldStatic hit)
+	 * @param TraceActorNameOrLabel - With bTraceToSurface: trace only this actor (name or label), e.g. one landscape
+	 *        or one mesh actor. Unknown name = error, nothing placed.
 	 * @return Scatter result with instance counts
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Foliage")
@@ -321,7 +342,36 @@ public:
 		float MaxScale = 1.0f,
 		bool bAlignToNormal = true,
 		bool bRandomYaw = true,
-		bool bTraceToSurface = true);
+		bool bTraceToSurface = true,
+		bool bTraceLandscapeOnly = false,
+		const FString& TraceActorNameOrLabel = TEXT(""));
+
+	/**
+	 * Place foliage instances with exact per-instance transforms: location, rotation and (non-uniform) scale are
+	 * stored as given. Nothing random is applied (no random yaw, no scale range, no normal alignment, and the foliage
+	 * type's own placement settings are not applied either).
+	 *
+	 * @param MeshOrFoliageTypePath - Path to UStaticMesh or UFoliageType asset
+	 * @param Transforms - One world transform per instance
+	 * @param bSnapToSurface - Replace each Z with the surface found by a downward trace at the transform's XY
+	 *        (rotation and scale stay exactly as given); a transform whose trace finds nothing is rejected
+	 *        (default false: the transforms are used as they are)
+	 * @param bTraceLandscapeOnly - With bSnapToSurface: trace only landscapes (default false)
+	 * @param TraceActorNameOrLabel - With bSnapToSurface: trace only this actor (name or label)
+	 * @return Scatter result: instances_added is what the foliage actor(s) actually gained
+	 *
+	 * Python:
+	 *   t = [unreal.Transform(unreal.Vector(x, y, 0), unreal.Rotator(0, 0, yaw), unreal.Vector(r, r, h))
+	 *        for x, y, yaw, r, h in trees]
+	 *   res = unreal.FoliageService.add_foliage_instance_transforms("/Game/Foliage/FT_Oak", t, True, True)
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Foliage")
+	static FFoliageScatterResult AddFoliageInstanceTransforms(
+		const FString& MeshOrFoliageTypePath,
+		const TArray<FTransform>& Transforms,
+		bool bSnapToSurface = false,
+		bool bTraceLandscapeOnly = false,
+		const FString& TraceActorNameOrLabel = TEXT(""));
 
 	// =================================================================
 	// Layer-Aware Placement
@@ -342,6 +392,7 @@ public:
 	 * @param bAlignToNormal - Align to surface normal (default true)
 	 * @param bRandomYaw - Apply random yaw rotation (default true)
 	 * @param Seed - Random seed for reproducibility (0 = random)
+	 * @param bTraceLandscapeOnly - Trace only the named landscape, ignoring every other blocker above it (default false)
 	 * @return Scatter result with instance counts
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Foliage")
@@ -355,7 +406,8 @@ public:
 		float LayerWeightThreshold = 0.5f,
 		bool bAlignToNormal = true,
 		bool bRandomYaw = true,
-		int32 Seed = 0);
+		int32 Seed = 0,
+		bool bTraceLandscapeOnly = false);
 
 	// =================================================================
 	// Removal
@@ -444,6 +496,11 @@ private:
 	static bool TraceToSurface(
 		UWorld* World, float X, float Y,
 		FVector& OutLocation, FVector& OutNormal);
+	static int32 CountInstancesOf(UWorld* World, const FString& MeshOrFoliageTypePath);
+	static FFoliageScatterResult AddPreparedInstances(
+		const FString& MeshOrFoliageTypePath,
+		TFunctionRef<bool(UWorld*, TArray<FFoliageInstance>&, TArray<FVector2D>&, FFoliageScatterResult&)> BuildInstances,
+		const TCHAR* Caller);
 	static FFoliageScatterResult ScatterInternal(
 		const FString& MeshOrFoliageTypePath,
 		const TArray<FVector2D>& CandidatePositions,
@@ -453,5 +510,6 @@ private:
 		int32 Seed,
 		const FString& LandscapeNameOrLabel,
 		const FString& LayerName = TEXT(""),
-		float LayerWeightThreshold = 0.0f);
+		float LayerWeightThreshold = 0.0f,
+		bool bTraceLandscapeOnly = false);
 };

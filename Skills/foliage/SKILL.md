@@ -35,9 +35,16 @@ keywords:
 
 All placement methods require a valid `UStaticMesh` or `UFoliageType` asset path. Use `get_symbol('unreal.FoliageService')` to see available methods.
 
-### Surface Trace
+### Surface Trace: ignore invisible blockers with `trace_landscape_only`
 
 All scatter/add methods trace downward to find the ground surface. If no surface is hit (e.g., position is outside the landscape bounds), that instance is rejected. Check `instances_rejected` in the result.
+
+By default the trace stops on the **first WorldStatic blocker** from high above. In a level with an invisible ceiling,
+a blocking volume or any mesh over the play area, every instance lands ON that blocker (44,000 plants once stood on a
+level's ceiling slab). Pass `trace_landscape_only=True` (all four placement calls) to trace only landscapes (with the
+scatter calls, only `landscape_name_or_label` when it is given), or `trace_actor_name_or_label="<name or label>"`
+(`add_foliage_instances`, `add_foliage_instance_transforms`) to trace one actor only. An unknown actor name fails the
+call and places nothing. When you know the heights already, pass `trace_to_surface=False` with full positions.
 
 ### Foliage Type Auto-Creation
 
@@ -81,7 +88,9 @@ If you get `instances_added=0` with `instances_rejected ≈ 4× requested`, ever
 | `clear_all_foliage()` to clear one landscape | `clear_all_foliage()` removes ALL foliage from the ENTIRE level — use `remove_foliage_in_radius()` for targeted removal |
 | Manually scattering foliage on a cloned landscape | If source uses LandscapeGrassType (procedural), just copy paint layers — foliage auto-generates. Check `list_foliage_types()`: if 0, foliage is procedural. |
 | Forgetting to check `instances_rejected` | Always check — tells you how many failed surface trace or layer filter |
-| Expecting `get_instance_count()` == -1 after removing all instances | -1 means the type was **never** in the level. Once registered, the count is 0 after removal — the foliage type entry persists |
+| Treating `get_instance_count()` == -1 as "none placed" | Since #695 a known mesh / foliage type with no instances is **0** (never placed or all removed); a path that is not a StaticMesh or FoliageType RAISES (Python exception, MCP tool error). Use `has_foliage_instances()` for a yes/no that never raises |
+| `add_foliage_instances(..., trace_to_surface=True)` in a level with an invisible ceiling or blocking volume | add `trace_landscape_only=True` (or `trace_actor_name_or_label=`), or every instance stands on the blocker |
+| Calling `InstancedFoliageActor.add_instances` yourself for per-tree size / yaw | `add_foliage_instance_transforms(path, transforms)`: exact location, rotation and non-uniform scale per instance |
 | Expecting `list_foliage_types()` to shrink after `clear_all_foliage()` | Clearing removes **instances**, not type registrations — 0-instance entries remain listed. Filter on `ft.instance_count > 0` |
 | `FoliageService.set_foliage_type_property` / `get_foliage_type_property` / `foliage_type_exists` (gone) | Epic's `ObjectToolset.SetProperties` / `GetProperties` on the foliage type, with nested structs as nested JSON — `{"CullDistance": {"Max": 30000}}`, not a dotted path or UE import text; `AssetToolset.Exists` + `GetAssetClass` for existence (see Edit a Foliage Type below) |
 | Scattering "around the landscape at (0,0)" centered on (0,0) | Landscapes are corner-anchored: created at (0,0) the terrain spans +X/+Y only. Center the scatter on the landscape's actual center (`location + (resolution-1)*scale/2`) or most candidates miss the surface |
@@ -91,12 +100,12 @@ If you get `instances_added=0` with `instances_rejected ≈ 4× requested`, ever
 
 ## Return Types - EXACT Properties
 
-### FFoliageScatterResult (from scatter_foliage, scatter_foliage_rect, add_foliage_instances, scatter_foliage_on_layer)
+### FFoliageScatterResult (from scatter_foliage, scatter_foliage_rect, add_foliage_instances, add_foliage_instance_transforms, scatter_foliage_on_layer)
 
 | Property | Type | Description |
 |----------|------|-------------|
 | `success` | bool | Whether operation succeeded |
-| `instances_added` | int | Number of instances actually placed |
+| `instances_added` | int | Instances the foliage actor(s) actually gained (counted before and after) |
 | `instances_requested` | int | Number of instances requested |
 | `instances_rejected` | int | Number rejected (no surface, slope, layer weight) |
 | `error_message` | str | Error details if failed |
@@ -247,9 +256,31 @@ result = unreal.FoliageService.add_foliage_instances(
     max_scale=1.0,
     align_to_normal=True,
     random_yaw=True,
-    trace_to_surface=True
+    trace_to_surface=True,
+    trace_landscape_only=True     # ignore invisible ceilings / blocking volumes above the ground
 )
 ```
+
+### Exact Transforms (image-driven planting: size, height and yaw per tree)
+
+`add_foliage_instance_transforms` stores each transform as given: location, rotation and **non-uniform** scale. No
+random yaw, no scale range, no normal alignment, and the foliage type's own placement settings are not applied.
+`snap_to_surface=True` replaces only Z with the traced surface height (rotation and scale stay exact); combine it with
+`trace_landscape_only=True` so a ceiling or blocking volume cannot catch the trace.
+
+```python
+import unreal
+
+trees = [(1200.0, 3400.0, 35.0, 4.2, 9.5), (1850.0, 3010.0, 210.0, 3.1, 7.0)]   # x, y, yaw, crown scale, height scale
+transforms = [unreal.Transform(unreal.Vector(x, y, 0), unreal.Rotator(roll=0, pitch=0, yaw=yaw), unreal.Vector(c, c, h))
+              for x, y, yaw, c, h in trees]
+r = unreal.FoliageService.add_foliage_instance_transforms(
+    "/Game/Foliage/FT_Oak", transforms, snap_to_surface=True, trace_landscape_only=True)
+print(r.instances_added, r.instances_rejected, r.error_message)
+```
+
+Read them back with `get_foliage_in_radius(path, x, y, radius, max_results)`: `location`, `rotation` and `scale` come
+back as stored (a 1,000-instance round trip matched within 1e-3 cm and 1e-5 scale).
 
 ### Multi-Type Forest
 
@@ -280,7 +311,7 @@ types = unreal.FoliageService.list_foliage_types()
 for ft in types:
     print(f"{ft.foliage_type_name}: {ft.instance_count} instances ({ft.mesh_path})")
 
-# Get count for a specific type
+# Get count for a specific type: 0 when none are placed; raises for a path that is not a mesh / foliage type
 count = unreal.FoliageService.get_instance_count("/Game/Meshes/SM_Tree_01")
 print(f"Tree count: {count}")
 

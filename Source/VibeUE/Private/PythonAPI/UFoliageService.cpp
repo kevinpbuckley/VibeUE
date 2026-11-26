@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UFoliageService.h"
+#include "Utils/VibeUEToolError.h"
 #include "InstancedFoliageActor.h"
 #include "FoliageType.h"
 #include "FoliageType_InstancedStaticMesh.h"
@@ -684,6 +685,173 @@ namespace VibeUEFoliageWP
 	}
 }
 
+
+// =================================================================
+// Surface trace against chosen actors only (#695)
+// =================================================================
+// The default surface trace is one World->LineTraceSingleByChannel(ECC_WorldStatic) from Z = +100000 down: it stops on
+// the first blocker, so an invisible ceiling slab or a blocking volume over the play area catches every instance
+// (44,000 plants once stood on a level's ceiling). With a trace target the trace runs against the target's own
+// collision components only (UPrimitiveComponent::LineTraceComponent), so nothing else in the world can catch it.
+namespace VibeUEFoliageTrace
+{
+	struct FTraceTarget
+	{
+		bool bFiltered = false;
+		FString Description;
+		TArray<TWeakObjectPtr<UPrimitiveComponent>> Components;
+	};
+
+	bool MatchesNameOrLabel(const AActor* Actor, const FString& NameOrLabel)
+	{
+		return Actor->GetName().Equals(NameOrLabel, ESearchCase::IgnoreCase)
+			|| Actor->GetActorLabel().Equals(NameOrLabel, ESearchCase::IgnoreCase);
+	}
+
+	void AddCollisionComponents(AActor* Actor, FTraceTarget& Out)
+	{
+		TInlineComponentArray<UPrimitiveComponent*> Primitives(Actor);
+		for (UPrimitiveComponent* Primitive : Primitives)
+		{
+			if (Primitive && Primitive->IsRegistered() && Primitive->IsQueryCollisionEnabled())
+			{
+				Out.Components.Add(Primitive);
+			}
+		}
+	}
+
+	/**
+	 * Resolve what a surface trace may hit. Nothing asked for = unfiltered (the old first-WorldStatic-hit trace).
+	 * bLandscapeOnly: every landscape proxy (or only the proxies of LandscapeNameOrLabel when given);
+	 * ActorNameOrLabel: that actor only. False with OutError when the named actor / landscape is missing or has no
+	 * query collision to trace against.
+	 */
+	bool Resolve(UWorld* World, bool bLandscapeOnly, const FString& ActorNameOrLabel, const FString& LandscapeNameOrLabel,
+		FTraceTarget& Out, FString& OutError)
+	{
+		Out = FTraceTarget();
+		const FString ActorName = ActorNameOrLabel.TrimStartAndEnd();
+		if (!bLandscapeOnly && ActorName.IsEmpty())
+		{
+			return true;
+		}
+		Out.bFiltered = true;
+
+		if (!ActorName.IsEmpty())
+		{
+			AActor* Found = nullptr;
+			for (TActorIterator<AActor> It(World); It; ++It)
+			{
+				if (MatchesNameOrLabel(*It, ActorName))
+				{
+					Found = *It;
+					break;
+				}
+			}
+			if (!Found)
+			{
+				OutError = FString::Printf(TEXT("Trace actor '%s' not found in the level (name or label)"), *ActorName);
+				return false;
+			}
+			if (bLandscapeOnly && !Found->IsA<ALandscapeProxy>())
+			{
+				OutError = FString::Printf(TEXT("Trace actor '%s' is a %s, not a landscape, and landscape-only tracing was asked for"),
+					*ActorName, *Found->GetClass()->GetName());
+				return false;
+			}
+			// A landscape named by its ALandscape actor also owns streaming proxies (World Partition): trace them all
+			if (ALandscape* NamedLandscape = Cast<ALandscape>(Found))
+			{
+				for (TActorIterator<ALandscapeProxy> It(World); It; ++It)
+				{
+					if (It->GetLandscapeActor() == NamedLandscape)
+					{
+						AddCollisionComponents(*It, Out);
+					}
+				}
+			}
+			else
+			{
+				AddCollisionComponents(Found, Out);
+			}
+			Out.Description = FString::Printf(TEXT("actor '%s'"), *ActorName);
+		}
+		else
+		{
+			const FString LandscapeName = LandscapeNameOrLabel.TrimStartAndEnd();
+			int32 Proxies = 0;
+			for (TActorIterator<ALandscapeProxy> It(World); It; ++It)
+			{
+				ALandscapeProxy* Proxy = *It;
+				if (!LandscapeName.IsEmpty())
+				{
+					const ALandscape* Owner = Proxy->GetLandscapeActor();
+					if (!MatchesNameOrLabel(Proxy, LandscapeName) && !(Owner && MatchesNameOrLabel(Owner, LandscapeName)))
+					{
+						continue;
+					}
+				}
+				++Proxies;
+				AddCollisionComponents(Proxy, Out);
+			}
+			if (Proxies == 0)
+			{
+				OutError = LandscapeName.IsEmpty()
+					? FString(TEXT("Landscape-only tracing was asked for, but the level has no landscape"))
+					: FString::Printf(TEXT("Landscape-only tracing was asked for, but landscape '%s' is not in the level"), *LandscapeName);
+				return false;
+			}
+			Out.Description = LandscapeName.IsEmpty() ? FString(TEXT("landscapes")) : FString::Printf(TEXT("landscape '%s'"), *LandscapeName);
+		}
+
+		if (Out.Components.Num() == 0)
+		{
+			OutError = FString::Printf(TEXT("The trace target (%s) has no component with query collision to trace against"), *Out.Description);
+			return false;
+		}
+		return true;
+	}
+
+	/** Downward trace at (X, Y) against the target's components only; the highest surface wins. */
+	bool Trace(const FTraceTarget& Target, double X, double Y, FVector& OutLocation, FVector& OutNormal)
+	{
+		bool bHit = false;
+		double BestZ = -UE_BIG_NUMBER;
+		for (const TWeakObjectPtr<UPrimitiveComponent>& Weak : Target.Components)
+		{
+			UPrimitiveComponent* Component = Weak.Get();
+			if (!Component)
+			{
+				continue;
+			}
+			const FBox Box = Component->Bounds.GetBox();
+			if (!Box.IsValid || X < Box.Min.X - 1.0 || X > Box.Max.X + 1.0 || Y < Box.Min.Y - 1.0 || Y > Box.Max.Y + 1.0)
+			{
+				continue;
+			}
+			const FVector Start(X, Y, Box.Max.Z + 100.0);
+			const FVector End(X, Y, Box.Min.Z - 100.0);
+			FHitResult Hit;
+			FCollisionQueryParams Params(SCENE_QUERY_STAT(VibeUEFoliageSurfaceTrace), /*bTraceComplex*/ false);
+			bool bComponentHit = Component->LineTraceComponent(Hit, Start, End, Params);
+			if (!bComponentHit)
+			{
+				// A mesh with complex collision only has no simple shape to hit
+				Params.bTraceComplex = true;
+				bComponentHit = Component->LineTraceComponent(Hit, Start, End, Params);
+			}
+			if (bComponentHit && Hit.ImpactPoint.Z > BestZ)
+			{
+				BestZ = Hit.ImpactPoint.Z;
+				OutLocation = Hit.ImpactPoint;
+				OutNormal = Hit.ImpactNormal;
+				bHit = true;
+			}
+		}
+		return bHit;
+	}
+}
+
 // =================================================================
 // Helper Methods
 // =================================================================
@@ -857,7 +1025,8 @@ FFoliageScatterResult UFoliageService::ScatterInternal(
 	int32 Seed,
 	const FString& LandscapeNameOrLabel,
 	const FString& LayerName,
-	float LayerWeightThreshold)
+	float LayerWeightThreshold,
+	bool bTraceLandscapeOnly)
 {
 	FFoliageScatterResult Result;
 	Result.InstancesRequested = Count;
@@ -947,6 +1116,14 @@ FFoliageScatterResult UFoliageService::ScatterInternal(
 		}
 	}
 
+	// Only the landscape(s) when asked: blockers above the ground (an invisible ceiling) must not catch the trace
+	VibeUEFoliageTrace::FTraceTarget TraceTarget;
+	if (!VibeUEFoliageTrace::Resolve(World, bTraceLandscapeOnly, FString(), LandscapeNameOrLabel, TraceTarget, Result.ErrorMessage))
+	{
+		UE_LOG(LogTemp, Error, TEXT("UFoliageService::ScatterInternal: %s"), *Result.ErrorMessage);
+		return Result;
+	}
+
 	// Partitioned worlds open their transaction only after validation (see below), never cancelling one
 	FScopedTransaction Transaction(NSLOCTEXT("FoliageService", "ScatterFoliage", "Scatter Foliage"), !bPartitioned);
 	if (IFA) // null on partitioned worlds, the cell actors are modified when instances are added
@@ -971,7 +1148,10 @@ FFoliageScatterResult UFoliageService::ScatterInternal(
 		// Trace to surface
 		FVector HitLocation;
 		FVector HitNormal;
-		if (!TraceToSurface(World, Pos.X, Pos.Y, HitLocation, HitNormal))
+		const bool bSurfaceHit = TraceTarget.bFiltered
+			? VibeUEFoliageTrace::Trace(TraceTarget, Pos.X, Pos.Y, HitLocation, HitNormal)
+			: TraceToSurface(World, Pos.X, Pos.Y, HitLocation, HitNormal);
+		if (!bSurfaceHit)
 		{
 			Result.InstancesRejected++;
 			if (bPartitioned)
@@ -1072,8 +1252,9 @@ FFoliageScatterResult UFoliageService::ScatterInternal(
 			{
 				InstancePtrs.Add(&Inst);
 			}
+			const int32 CountBefore = FoliageInfo->Instances.Num();
 			FoliageInfo->AddInstances(FoliageType, InstancePtrs);
-			Result.InstancesAdded = NewInstances.Num();
+			Result.InstancesAdded = FoliageInfo->Instances.Num() - CountBefore;
 		}
 		else
 		{
@@ -1297,19 +1478,11 @@ TArray<FVibeUEFoliageTypeInfo> UFoliageService::ListFoliageTypes()
 	return Result;
 }
 
-int32 UFoliageService::GetInstanceCount(const FString& MeshOrFoliageTypePath)
+int32 UFoliageService::CountInstancesOf(UWorld* World, const FString& MeshOrFoliageTypePath)
 {
-	UWorld* World = GetEditorWorld();
-	if (!World)
-	{
-		return -1;
-	}
-
-	// On a partitioned world sum over every loaded cell actor (the first actor holding the type is
-	// only one cell there) and log the cells that are not loaded. -1 still means "not found in any loaded actor".
+	// Sum over every loaded foliage actor: one per level on a classic world, one per grid cell on a partitioned one
 	const bool bPartitioned = VibeUEFoliageWP::IsPartitioned(World);
-	int32 PartitionedTotal = -1;
-
+	int32 Total = 0;
 	for (TActorIterator<AInstancedFoliageActor> It(World); It; ++It)
 	{
 		AInstancedFoliageActor* IFA = *It;
@@ -1317,30 +1490,43 @@ int32 UFoliageService::GetInstanceCount(const FString& MeshOrFoliageTypePath)
 		{
 			continue;
 		}
-		UFoliageType* FT = FindFoliageTypeInIFA(MeshOrFoliageTypePath, IFA);
-		if (FT)
+		if (UFoliageType* FT = FindFoliageTypeInIFA(MeshOrFoliageTypePath, IFA))
 		{
-			const TMap<UFoliageType*, TUniqueObj<FFoliageInfo>>& FoliageInfos = IFA->GetFoliageInfos();
-			const TUniqueObj<FFoliageInfo>* FoundInfo = FoliageInfos.Find(FT);
-			if (FoundInfo)
+			if (const TUniqueObj<FFoliageInfo>* FoundInfo = IFA->GetFoliageInfos().Find(FT))
 			{
-				if (bPartitioned)
-				{
-					PartitionedTotal = FMath::Max(PartitionedTotal, 0) + FoundInfo->Get().Instances.Num();
-					continue;
-				}
-				return FoundInfo->Get().Instances.Num();
+				Total += FoundInfo->Get().Instances.Num();
 			}
 		}
 	}
+	return Total;
+}
 
-	if (bPartitioned)
+int32 UFoliageService::GetInstanceCount(const FString& MeshOrFoliageTypePath)
+{
+	UWorld* World = GetEditorWorld();
+	if (!World)
 	{
-		VibeUEFoliageWP::WarnAboutPartialView(World, TEXT("GetInstanceCount"));
-		return PartitionedTotal;
+		VibeUE::RaiseToolError(TEXT("GetInstanceCount"), TEXT("no editor world available"));
+		return -1;
 	}
 
-	return -1;
+	// A known source with no instances is 0, never -1 (-1 made "count + n" arithmetic silently wrong); a path that
+	// is neither a StaticMesh nor a FoliageType is an error, not an empty count.
+	UObject* Source = StaticLoadObject(UObject::StaticClass(), nullptr, *MeshOrFoliageTypePath, nullptr, LOAD_NoWarn | LOAD_Quiet);
+	if (!Cast<UStaticMesh>(Source) && !Cast<UFoliageType>(Source))
+	{
+		VibeUE::RaiseToolError(TEXT("GetInstanceCount"), Source
+			? FString::Printf(TEXT("'%s' is a %s, not a StaticMesh or FoliageType"), *MeshOrFoliageTypePath, *Source->GetClass()->GetName())
+			: FString::Printf(TEXT("no StaticMesh or FoliageType asset at '%s'"), *MeshOrFoliageTypePath));
+		return -1;
+	}
+
+	const int32 Total = CountInstancesOf(World, MeshOrFoliageTypePath);
+	if (VibeUEFoliageWP::IsPartitioned(World))
+	{
+		VibeUEFoliageWP::WarnAboutPartialView(World, TEXT("GetInstanceCount"));
+	}
+	return Total;
 }
 
 // =================================================================
@@ -1449,7 +1635,8 @@ FFoliageScatterResult UFoliageService::ScatterFoliage(
 	bool bAlignToNormal,
 	bool bRandomYaw,
 	int32 Seed,
-	const FString& LandscapeNameOrLabel)
+	const FString& LandscapeNameOrLabel,
+	bool bTraceLandscapeOnly)
 {
 	if (Count <= 0)
 	{
@@ -1490,7 +1677,7 @@ FFoliageScatterResult UFoliageService::ScatterFoliage(
 	}
 
 	return ScatterInternal(MeshOrFoliageTypePath, CircleSamples, Count,
-		MinScale, MaxScale, bAlignToNormal, bRandomYaw, Seed, LandscapeNameOrLabel);
+		MinScale, MaxScale, bAlignToNormal, bRandomYaw, Seed, LandscapeNameOrLabel, TEXT(""), 0.0f, bTraceLandscapeOnly);
 }
 
 FFoliageScatterResult UFoliageService::ScatterFoliageRect(
@@ -1505,7 +1692,8 @@ FFoliageScatterResult UFoliageService::ScatterFoliageRect(
 	bool bAlignToNormal,
 	bool bRandomYaw,
 	int32 Seed,
-	const FString& LandscapeNameOrLabel)
+	const FString& LandscapeNameOrLabel,
+	bool bTraceLandscapeOnly)
 {
 	if (Count <= 0)
 	{
@@ -1522,20 +1710,15 @@ FFoliageScatterResult UFoliageService::ScatterFoliageRect(
 		Count, RNG);
 
 	return ScatterInternal(MeshOrFoliageTypePath, Samples, Count,
-		MinScale, MaxScale, bAlignToNormal, bRandomYaw, Seed, LandscapeNameOrLabel);
+		MinScale, MaxScale, bAlignToNormal, bRandomYaw, Seed, LandscapeNameOrLabel, TEXT(""), 0.0f, bTraceLandscapeOnly);
 }
 
-FFoliageScatterResult UFoliageService::AddFoliageInstances(
+FFoliageScatterResult UFoliageService::AddPreparedInstances(
 	const FString& MeshOrFoliageTypePath,
-	const TArray<FVector>& Locations,
-	float MinScale,
-	float MaxScale,
-	bool bAlignToNormal,
-	bool bRandomYaw,
-	bool bTraceToSurface)
+	TFunctionRef<bool(UWorld*, TArray<FFoliageInstance>&, TArray<FVector2D>&, FFoliageScatterResult&)> BuildInstances,
+	const TCHAR* Caller)
 {
 	FFoliageScatterResult Result;
-	Result.InstancesRequested = Locations.Num();
 
 	UWorld* World = GetEditorWorld();
 	if (!World)
@@ -1555,7 +1738,7 @@ FFoliageScatterResult UFoliageService::AddFoliageInstances(
 	{
 		if (!VibeUEFoliageWP::ResolvePlacementFoliageType(World, MeshOrFoliageTypePath, PartitionedType, Result.ErrorMessage))
 		{
-			UE_LOG(LogTemp, Error, TEXT("UFoliageService::AddFoliageInstances: %s"), *Result.ErrorMessage);
+			UE_LOG(LogTemp, Error, TEXT("UFoliageService::%s: %s"), Caller, *Result.ErrorMessage);
 			return Result;
 		}
 	}
@@ -1576,65 +1759,13 @@ FFoliageScatterResult UFoliageService::AddFoliageInstances(
 		}
 	}
 
-	// Partitioned worlds open their transaction only after validation (see below), never cancelling one
-	FScopedTransaction Transaction(NSLOCTEXT("FoliageService", "AddFoliageInstances", "Add Foliage Instances"), !bPartitioned);
-	if (IFA) // null on partitioned worlds, the cell actors are modified when instances are added
-	{
-		IFA->Modify();
-	}
-
-	FRandomStream RNG(FMath::Rand());
+	// The instances are built before anything is modified: a refused trace target changes nothing
 	TArray<FFoliageInstance> NewInstances;
-	NewInstances.Reserve(Locations.Num());
 	TArray<FVector2D> TraceMisses; // checked against unloaded cells on partitioned worlds
-
-	for (const FVector& Location : Locations)
+	if (!BuildInstances(World, NewInstances, TraceMisses, Result))
 	{
-		FVector FinalLocation = Location;
-		FVector SurfaceNormal = FVector::UpVector;
-
-		if (bTraceToSurface)
-		{
-			FVector HitLocation, HitNormal;
-			if (TraceToSurface(World, Location.X, Location.Y, HitLocation, HitNormal))
-			{
-				FinalLocation = HitLocation;
-				SurfaceNormal = HitNormal;
-			}
-			else
-			{
-				Result.InstancesRejected++;
-				if (bPartitioned)
-				{
-					TraceMisses.Add(FVector2D(Location.X, Location.Y));
-				}
-				continue;
-			}
-		}
-
-		FFoliageInstance Instance;
-		Instance.Location = FinalLocation;
-
-		float Scale = RNG.FRandRange(MinScale, MaxScale);
-		Instance.DrawScale3D = FVector3f(Scale, Scale, Scale);
-
-		FRotator Rot = FRotator::ZeroRotator;
-		if (bRandomYaw)
-		{
-			Rot.Yaw = RNG.FRandRange(0.0f, 360.0f);
-		}
-		if (bAlignToNormal)
-		{
-			FQuat NormalQuat = FQuat::FindBetweenNormals(FVector::UpVector, SurfaceNormal);
-			FQuat YawQuat(FVector::UpVector, FMath::DegreesToRadians(Rot.Yaw));
-			Rot = (NormalQuat * YawQuat).Rotator();
-		}
-		Instance.Rotation = Rot;
-		Instance.PreAlignRotation = Instance.Rotation;
-		Instance.Flags = 0;
-		Instance.ZOffset = 0.0f;
-
-		NewInstances.Add(Instance);
+		UE_LOG(LogTemp, Error, TEXT("UFoliageService::%s: %s"), Caller, *Result.ErrorMessage);
+		return Result;
 	}
 
 	// Partitioned worlds add per grid cell. Validation runs first (the whole call fails, nothing
@@ -1645,7 +1776,7 @@ FFoliageScatterResult UFoliageService::AddFoliageInstances(
 	{
 		if (!VibeUEFoliageWP::ValidatePartitionedPlacement(World, NewInstances, TraceMisses, Result.ErrorMessage))
 		{
-			UE_LOG(LogTemp, Error, TEXT("UFoliageService::AddFoliageInstances: %s"), *Result.ErrorMessage);
+			UE_LOG(LogTemp, Error, TEXT("UFoliageService::%s: %s"), Caller, *Result.ErrorMessage);
 			return Result;
 		}
 
@@ -1654,38 +1785,187 @@ FFoliageScatterResult UFoliageService::AddFoliageInstances(
 			UFoliageType* PlacementType = VibeUEFoliageWP::FinalizePlacementFoliageType(PartitionedType, Result.ErrorMessage);
 			if (!PlacementType)
 			{
-				UE_LOG(LogTemp, Error, TEXT("UFoliageService::AddFoliageInstances: %s"), *Result.ErrorMessage);
+				UE_LOG(LogTemp, Error, TEXT("UFoliageService::%s: %s"), Caller, *Result.ErrorMessage);
 				return Result;
 			}
 
 			FScopedTransaction PartitionedTransaction(NSLOCTEXT("FoliageService", "AddFoliageInstances", "Add Foliage Instances"));
 			if (!VibeUEFoliageWP::ApplyPartitionedPlacement(World, PlacementType, NewInstances, Result.InstancesAdded, Result.ErrorMessage))
 			{
-				UE_LOG(LogTemp, Error, TEXT("UFoliageService::AddFoliageInstances: %s"), *Result.ErrorMessage);
+				UE_LOG(LogTemp, Error, TEXT("UFoliageService::%s: %s"), Caller, *Result.ErrorMessage);
 				return Result;
 			}
 		}
 	}
 	else if (NewInstances.Num() > 0)
 	{
+		FScopedTransaction Transaction(NSLOCTEXT("FoliageService", "AddFoliageInstances", "Add Foliage Instances"));
+		IFA->Modify();
 		FFoliageInfo* FoliageInfo = IFA->FindInfo(FoliageType);
-		if (FoliageInfo)
+		if (!FoliageInfo)
 		{
-			TArray<const FFoliageInstance*> InstancePtrs;
-			InstancePtrs.Reserve(NewInstances.Num());
-			for (const FFoliageInstance& Inst : NewInstances)
-			{
-				InstancePtrs.Add(&Inst);
-			}
-			FoliageInfo->AddInstances(FoliageType, InstancePtrs);
-			Result.InstancesAdded = NewInstances.Num();
+			Result.ErrorMessage = TEXT("Failed to find FoliageInfo after registering type");
+			return Result;
 		}
+		TArray<const FFoliageInstance*> InstancePtrs;
+		InstancePtrs.Reserve(NewInstances.Num());
+		for (const FFoliageInstance& Inst : NewInstances)
+		{
+			InstancePtrs.Add(&Inst);
+		}
+		// Count what the actor really gained instead of assuming every instance went in
+		const int32 CountBefore = FoliageInfo->Instances.Num();
+		FoliageInfo->AddInstances(FoliageType, InstancePtrs);
+		Result.InstancesAdded = FoliageInfo->Instances.Num() - CountBefore;
 	}
 
 	Result.bSuccess = true;
-	UE_LOG(LogTemp, Log, TEXT("UFoliageService::AddFoliageInstances: Placed %d/%d instances for '%s'"),
-		Result.InstancesAdded, Result.InstancesRequested, *MeshOrFoliageTypePath);
+	UE_LOG(LogTemp, Log, TEXT("UFoliageService::%s: Placed %d/%d instances (%d rejected) for '%s'"),
+		Caller, Result.InstancesAdded, Result.InstancesRequested, Result.InstancesRejected, *MeshOrFoliageTypePath);
 
+	return Result;
+}
+
+FFoliageScatterResult UFoliageService::AddFoliageInstances(
+	const FString& MeshOrFoliageTypePath,
+	const TArray<FVector>& Locations,
+	float MinScale,
+	float MaxScale,
+	bool bAlignToNormal,
+	bool bRandomYaw,
+	bool bTraceToSurface,
+	bool bTraceLandscapeOnly,
+	const FString& TraceActorNameOrLabel)
+{
+	FFoliageScatterResult Result = AddPreparedInstances(MeshOrFoliageTypePath,
+		[&](UWorld* World, TArray<FFoliageInstance>& NewInstances, TArray<FVector2D>& TraceMisses, FFoliageScatterResult& Out) -> bool
+		{
+			Out.InstancesRequested = Locations.Num();
+			VibeUEFoliageTrace::FTraceTarget TraceTarget;
+			if (bTraceToSurface && !VibeUEFoliageTrace::Resolve(World, bTraceLandscapeOnly, TraceActorNameOrLabel, FString(), TraceTarget, Out.ErrorMessage))
+			{
+				return false;
+			}
+
+			FRandomStream RNG(FMath::Rand());
+			NewInstances.Reserve(Locations.Num());
+			const bool bPartitioned = VibeUEFoliageWP::IsPartitioned(World);
+			for (const FVector& Location : Locations)
+			{
+				FVector FinalLocation = Location;
+				FVector SurfaceNormal = FVector::UpVector;
+
+				if (bTraceToSurface)
+				{
+					FVector HitLocation, HitNormal;
+					const bool bSurfaceHit = TraceTarget.bFiltered
+						? VibeUEFoliageTrace::Trace(TraceTarget, Location.X, Location.Y, HitLocation, HitNormal)
+						: TraceToSurface(World, Location.X, Location.Y, HitLocation, HitNormal);
+					if (bSurfaceHit)
+					{
+						FinalLocation = HitLocation;
+						SurfaceNormal = HitNormal;
+					}
+					else
+					{
+						Out.InstancesRejected++;
+						if (bPartitioned)
+						{
+							TraceMisses.Add(FVector2D(Location.X, Location.Y));
+						}
+						continue;
+					}
+				}
+
+				FFoliageInstance Instance;
+				Instance.Location = FinalLocation;
+
+				const float Scale = RNG.FRandRange(MinScale, MaxScale);
+				Instance.DrawScale3D = FVector3f(Scale, Scale, Scale);
+
+				FRotator Rot = FRotator::ZeroRotator;
+				if (bRandomYaw)
+				{
+					Rot.Yaw = RNG.FRandRange(0.0f, 360.0f);
+				}
+				if (bAlignToNormal)
+				{
+					FQuat NormalQuat = FQuat::FindBetweenNormals(FVector::UpVector, SurfaceNormal);
+					FQuat YawQuat(FVector::UpVector, FMath::DegreesToRadians(Rot.Yaw));
+					Rot = (NormalQuat * YawQuat).Rotator();
+				}
+				Instance.Rotation = Rot;
+				Instance.PreAlignRotation = Instance.Rotation;
+				Instance.Flags = 0;
+				Instance.ZOffset = 0.0f;
+
+				NewInstances.Add(Instance);
+			}
+			return true;
+		},
+		TEXT("AddFoliageInstances"));
+	Result.InstancesRequested = Locations.Num();
+	return Result;
+}
+
+FFoliageScatterResult UFoliageService::AddFoliageInstanceTransforms(
+	const FString& MeshOrFoliageTypePath,
+	const TArray<FTransform>& Transforms,
+	bool bSnapToSurface,
+	bool bTraceLandscapeOnly,
+	const FString& TraceActorNameOrLabel)
+{
+	FFoliageScatterResult Result = AddPreparedInstances(MeshOrFoliageTypePath,
+		[&](UWorld* World, TArray<FFoliageInstance>& NewInstances, TArray<FVector2D>& TraceMisses, FFoliageScatterResult& Out) -> bool
+		{
+			Out.InstancesRequested = Transforms.Num();
+			VibeUEFoliageTrace::FTraceTarget TraceTarget;
+			if (bSnapToSurface && !VibeUEFoliageTrace::Resolve(World, bTraceLandscapeOnly, TraceActorNameOrLabel, FString(), TraceTarget, Out.ErrorMessage))
+			{
+				return false;
+			}
+			if (!bSnapToSurface && (bTraceLandscapeOnly || !TraceActorNameOrLabel.TrimStartAndEnd().IsEmpty()))
+			{
+				UE_LOG(LogTemp, Warning, TEXT("UFoliageService::AddFoliageInstanceTransforms: trace options ignored, bSnapToSurface is false (the transforms are used as given)"));
+			}
+
+			NewInstances.Reserve(Transforms.Num());
+			const bool bPartitioned = VibeUEFoliageWP::IsPartitioned(World);
+			for (const FTransform& Transform : Transforms)
+			{
+				FVector Location = Transform.GetLocation();
+				if (bSnapToSurface)
+				{
+					FVector HitLocation, HitNormal;
+					const bool bSurfaceHit = TraceTarget.bFiltered
+						? VibeUEFoliageTrace::Trace(TraceTarget, Location.X, Location.Y, HitLocation, HitNormal)
+						: TraceToSurface(World, Location.X, Location.Y, HitLocation, HitNormal);
+					if (!bSurfaceHit)
+					{
+						Out.InstancesRejected++;
+						if (bPartitioned)
+						{
+							TraceMisses.Add(FVector2D(Location.X, Location.Y));
+						}
+						continue;
+					}
+					Location.Z = HitLocation.Z; // only the height comes from the surface
+				}
+
+				// Exactly as given: no random yaw, no scale range, no normal alignment
+				FFoliageInstance Instance;
+				Instance.Location = Location;
+				Instance.Rotation = Transform.GetRotation().Rotator();
+				Instance.PreAlignRotation = Instance.Rotation;
+				Instance.DrawScale3D = FVector3f(Transform.GetScale3D());
+				Instance.Flags = 0;
+				Instance.ZOffset = 0.0f;
+				NewInstances.Add(Instance);
+			}
+			return true;
+		},
+		TEXT("AddFoliageInstanceTransforms"));
+	Result.InstancesRequested = Transforms.Num();
 	return Result;
 }
 
@@ -1703,7 +1983,8 @@ FFoliageScatterResult UFoliageService::ScatterFoliageOnLayer(
 	float LayerWeightThreshold,
 	bool bAlignToNormal,
 	bool bRandomYaw,
-	int32 Seed)
+	int32 Seed,
+	bool bTraceLandscapeOnly)
 {
 	if (Count <= 0)
 	{
@@ -1776,7 +2057,7 @@ FFoliageScatterResult UFoliageService::ScatterFoliageOnLayer(
 
 	return ScatterInternal(MeshOrFoliageTypePath, Samples, Count,
 		MinScale, MaxScale, bAlignToNormal, bRandomYaw, Seed, LandscapeNameOrLabel,
-		LayerName, LayerWeightThreshold);
+		LayerName, LayerWeightThreshold, bTraceLandscapeOnly);
 }
 
 // =================================================================
@@ -2119,6 +2400,7 @@ FFoliageQueryResult UFoliageService::GetFoliageInRadius(
 
 bool UFoliageService::HasFoliageInstances(const FString& MeshOrFoliageTypePath)
 {
-	int32 Count = GetInstanceCount(MeshOrFoliageTypePath);
-	return Count > 0;
+	// Not GetInstanceCount: that raises for an unknown path, and "no instances" is the answer here
+	UWorld* World = GetEditorWorld();
+	return World && CountInstancesOf(World, MeshOrFoliageTypePath) > 0;
 }
