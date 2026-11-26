@@ -1,6 +1,6 @@
 ---
 name: return-types
-description: Exact property names for LandscapeService return types (LandscapeCreateResult, LandscapeInfo_Custom, LandscapeLayerInfo_Custom, LandscapeSplinePointInfo, LandscapeSplineSegmentInfo, LandscapeSplineMeshEntryInfo) and the create_landscape signature
+description: Exact property names for LandscapeService return types (LandscapeCreateResult, LandscapeInfo_Custom, LandscapeLayerInfo_Custom, LandscapeSplinePointInfo, LandscapeSplineSegmentInfo, LandscapeSplineMeshEntryInfo, HeightmapImportResult, HeightmapDiffResult) and the create_landscape signature
 ---
 
 # Return Types - EXACT Properties
@@ -17,6 +17,35 @@ description: Exact property names for LandscapeService return types (LandscapeCr
 | `error_message` | str | Error details if failed |
 
 **No other properties exist.** No `actor_path`, no `actor_name`.
+
+### HeightmapImportResult (from import_heightmap / import_heightmap_region)
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `success` | bool | Heights were written |
+| `resolution` | str | Landscape resolution, e.g. `"1009x1009"` (a string: split it for numbers) |
+| `error_message` | str | Error or refusal text |
+| `region` | str | Rectangle written, `"X1,Y1-X2,Y2"` inclusive vertex indices; `""` when nothing was written |
+| `edit_layer` | str | Edit layer written into (the active editing layer, else the bottom one) |
+| `refused` | bool | `expected_baseline` was given, the landscape differed from it, nothing was written |
+| `num_hand_edited_vertices` | int | Vertices in the rectangle that differ from the baseline |
+| `hand_edit_min_x` / `_min_y` / `_max_x` / `_max_y` | int | Their bounding box, `-1` when none |
+| `hand_edited_vertices` | list[HeightmapVertexDiff] | The vertices, at most 1000 (`hand_edits_truncated`) |
+| `num_hand_edits_kept` | int | With `keep_hand_edits=True`: vertices that kept the landscape's height |
+
+### HeightmapDiffResult (from diff_heightmap)
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `success`, `error_message`, `resolution`, `edit_layer` | | As above |
+| `num_vertices_compared` | int | Every vertex of the landscape |
+| `num_different` | int | 0 = the edit layer equals the file |
+| `min_x`, `min_y`, `max_x`, `max_y` | int | Bounding box of the differences, `-1` when none |
+| `max_abs_delta_cm` | float | Largest difference in world cm |
+| `vertices` | list[HeightmapVertexDiff] | Row order, at most `max_vertices` (`truncated`) |
+
+`HeightmapVertexDiff`: `x`, `y` (vertex indices), `landscape_value`, `file_value` (16-bit, 32768 = the landscape's
+Z), `landscape_height`, `file_height` (world Z, cm).
 
 ### LandscapeInfo_Custom (from get_landscape_info)
 

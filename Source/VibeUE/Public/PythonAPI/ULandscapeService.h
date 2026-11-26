@@ -334,6 +334,34 @@ struct FSplineCreateResult
 // Heightmap Import Data Structs
 // =========================================================================
 
+/** One landscape vertex whose height differs from a heightmap file */
+USTRUCT(BlueprintType)
+struct FHeightmapVertexDiff
+{
+	GENERATED_BODY()
+
+	/** Landscape vertex index (as in get_height_in_region) */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 X = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 Y = 0;
+
+	/** 16-bit heights (0-65535, 32768 = landscape Z) in the landscape and in the file */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 LandscapeValue = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 FileValue = 0;
+
+	/** The same as world-space Z (cm) */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	float LandscapeHeight = 0.0f;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	float FileHeight = 0.0f;
+};
+
 /** Result of importing a heightmap */
 USTRUCT(BlueprintType)
 struct FHeightmapImportResult
@@ -349,6 +377,98 @@ struct FHeightmapImportResult
 
 	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
 	FString ErrorMessage;
+
+	/** The rectangle written, in landscape vertex indices: "X1,Y1-X2,Y2" (inclusive). Empty when nothing was written. */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString Region;
+
+	/** The edit layer the heights went into (or would have): the active editing layer, else the bottom layer. */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString EditLayer;
+
+	/** True when ExpectedBaseline was given and the landscape differed from it, and nothing was written. */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	bool bRefused = false;
+
+	/** With ExpectedBaseline: vertices inside the written rectangle whose height differs from the baseline (hand edits). */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 NumHandEditedVertices = 0;
+
+	/** Bounding box of those vertices (landscape vertex indices, inclusive); -1 when there are none. */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 HandEditMinX = -1;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 HandEditMinY = -1;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 HandEditMaxX = -1;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 HandEditMaxY = -1;
+
+	/** The differing vertices, at most 1000 (see bHandEditsTruncated). */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	TArray<FHeightmapVertexDiff> HandEditedVertices;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	bool bHandEditsTruncated = false;
+
+	/** With bKeepHandEdits: how many hand-edited vertices kept the landscape's height instead of the file's. */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 NumHandEditsKept = 0;
+};
+
+/** Result of comparing a landscape's heights with a heightmap file (DiffHeightmap) */
+USTRUCT(BlueprintType)
+struct FHeightmapDiffResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	bool bSuccess = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString ErrorMessage;
+
+	/** Landscape (and file) resolution, e.g. "1009x1009" */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString Resolution;
+
+	/** The edit layer compared: the one ImportHeightmap writes into (the active editing layer, else the bottom layer). */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString EditLayer;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 NumVerticesCompared = 0;
+
+	/** Vertices whose 16-bit height differs between the landscape and the file. 0 = identical. */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 NumDifferent = 0;
+
+	/** Bounding box of the differing vertices (landscape vertex indices, inclusive); -1 when there are none. */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 MinX = -1;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 MinY = -1;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 MaxX = -1;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 MaxY = -1;
+
+	/** Largest |landscape - file| in world centimetres */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	float MaxAbsDeltaCm = 0.0f;
+
+	/** The differing vertices in row order, at most MaxVertices (see bTruncated) */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	TArray<FHeightmapVertexDiff> Vertices;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	bool bTruncated = false;
 };
 
 /** Dimensions of a heightmap file */
@@ -986,14 +1106,72 @@ public:
 	 * Resolution must still match exactly. This function does NOT resample; use
 	 * ResizeHeightmap first when needed.
 	 *
+	 * Guard against losing hand sculpting: pass ExpectedBaseline = the file of the last import (or the
+	 * export you started from). The landscape's heights are compared with it first; if any vertex differs
+	 * (someone sculpted since), nothing is written and the result has bRefused, NumHandEditedVertices,
+	 * the bounding box and the vertices. bKeepHandEdits = true imports anyway but keeps the landscape's
+	 * height at exactly those vertices (a merge). The compare reads the edit layer the import writes into
+	 * and never dirties the map. With no ExpectedBaseline the import behaves as it always did.
+	 *
 	 * @param LandscapeNameOrLabel - Name or label of the landscape
 	 * @param FilePath - Absolute path to the heightmap file
+	 * @param ExpectedBaseline - Optional absolute path of a full-size heightmap the landscape should still match
+	 * @param bKeepHandEdits - With ExpectedBaseline: keep differing vertices instead of refusing
 	 * @return Result with success status, resolution, and error message if failed
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
 	static FHeightmapImportResult ImportHeightmap(
 		const FString& LandscapeNameOrLabel,
-		const FString& FilePath);
+		const FString& FilePath,
+		const FString& ExpectedBaseline = TEXT(""),
+		bool bKeepHandEdits = false);
+
+	/**
+	 * Import a heightmap file into a rectangle of an existing landscape; nothing outside it changes.
+	 * Maps to action="import_heightmap_region"
+	 *
+	 * The file (16-bit PNG, or a RAW whose size is unambiguous) holds the rectangle's heights: its
+	 * width x height in vertices is written with its first pixel at landscape vertex (StartX, StartY),
+	 * the indices get_height_in_region uses. The rectangle must lie inside the landscape.
+	 * ExpectedBaseline / bKeepHandEdits work as in ImportHeightmap (the baseline is a FULL-size file;
+	 * only the vertices inside the rectangle are compared, since nothing else is written).
+	 *
+	 * @param LandscapeNameOrLabel - Name or label of the landscape
+	 * @param FilePath - Absolute path to the region's heightmap file
+	 * @param StartX - Landscape vertex X of the file's first column
+	 * @param StartY - Landscape vertex Y of the file's first row
+	 * @param ExpectedBaseline - Optional absolute path of a full-size heightmap the landscape should still match
+	 * @param bKeepHandEdits - With ExpectedBaseline: keep differing vertices instead of refusing
+	 * @return Result; Region names the rectangle written
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
+	static FHeightmapImportResult ImportHeightmapRegion(
+		const FString& LandscapeNameOrLabel,
+		const FString& FilePath,
+		int32 StartX,
+		int32 StartY,
+		const FString& ExpectedBaseline = TEXT(""),
+		bool bKeepHandEdits = false);
+
+	/**
+	 * Compare a landscape's heights with a full-size heightmap file, vertex by vertex, without changing anything.
+	 * Maps to action="diff_heightmap"
+	 *
+	 * Reads the edit layer ImportHeightmap writes into (the active editing layer, else the bottom layer) and
+	 * reports every vertex whose 16-bit height differs from the file: count, bounding box, largest difference
+	 * and the vertices themselves. Use it to see hand sculpting before an import. Read-only: does not dirty
+	 * the map or add an undo entry.
+	 *
+	 * @param LandscapeNameOrLabel - Name or label of the landscape
+	 * @param FilePath - Absolute path to a heightmap file of the landscape's resolution
+	 * @param MaxVertices - Most vertices to list (the count and bounding box always cover all of them)
+	 * @return The differences; NumDifferent 0 means identical
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Landscape")
+	static FHeightmapDiffResult DiffHeightmap(
+		const FString& LandscapeNameOrLabel,
+		const FString& FilePath,
+		int32 MaxVertices = 1000);
 
 	/**
 	 * Export a heightmap to a 16-bit PNG file by default (or RAW if a non-PNG extension is provided).
@@ -2330,6 +2508,10 @@ private:
 	static class ULandscapeInfo* GetLandscapeInfoForActor(class ALandscapeProxy* Landscape);
 	static void PopulateLandscapeInfo(class ALandscapeProxy* Landscape, FLandscapeInfo_Custom& OutInfo);
 	static void UpdateLandscapeAfterHeightEdit(class ALandscapeProxy* Landscape);
+	/** The write half of ImportHeightmap / ImportHeightmapRegion: the ExpectedBaseline guard (#703), then the heights into the edit layer. */
+	static bool WriteImportedHeights(class ALandscape* Landscape, class ULandscapeInfo* LandscapeInfo,
+		int32 X1, int32 Y1, int32 X2, int32 Y2, TArray<uint16>& Heights,
+		const FString& ExpectedBaseline, bool bKeepHandEdits, FHeightmapImportResult& Result);
 
 	// --- Write-audit instrumentation (issue B8) ---
 	/** Snapshot every proxy package sharing Landscape's GUID (dirty flag + file mtime/size) before a write. */

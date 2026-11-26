@@ -132,6 +132,54 @@ import unreal
 unreal.LandscapeService.export_heightmap("MyTerrain", "C:/Heightmaps/terrain_export.raw")
 ```
 
+Read-only: it does not dirty the map or add an undo entry.
+
+### Re-import without destroying hand sculpting
+
+A plain `import_heightmap` replaces every height of the edit layer it writes into. In a generated level that a
+person also sculpts by hand, keep the file of each import and pass it as `expected_baseline` to the next one:
+
+```python
+import unreal
+svc = unreal.LandscapeService
+
+# What changed by hand since the last import? (read-only: nothing is dirtied)
+d = svc.diff_heightmap("MyTerrain", "C:/Heightmaps/last_import.png")
+print(d.num_different, "vertices", (d.min_x, d.min_y, d.max_x, d.max_y), "max", d.max_abs_delta_cm, "cm", d.edit_layer)
+for v in d.vertices[:10]:
+    print(v.x, v.y, v.landscape_height, "file", v.file_height)
+
+# Guarded import: refuses, writing nothing, when the landscape differs from the baseline
+r = svc.import_heightmap("MyTerrain", "C:/Heightmaps/next.png", "C:/Heightmaps/last_import.png")
+if r.refused:
+    print(r.error_message)          # count, bounding box, largest difference
+    hand = [(v.x, v.y, v.landscape_value) for v in r.hand_edited_vertices]   # carry these into next.png, or:
+    r = svc.import_heightmap("MyTerrain", "C:/Heightmaps/next.png", "C:/Heightmaps/last_import.png", True)
+    print("kept", r.num_hand_edits_kept, "hand-edited vertices")   # merge: those vertices keep their height
+```
+
+- The compare reads the edit layer the import writes into (`edit_layer` in the result: the active editing
+  layer, else the bottom layer), not the merged view, so another layer's content (splines, water) is not a
+  "difference". A baseline made with `export_heightmap` (the merged view) only matches when that layer is the
+  only one with content; the safest baseline is the file you imported.
+- `keep_hand_edits=True` keeps each differing vertex as it is and imports everything else: a hand-raised vertex
+  among new file heights can leave a spike or a step. Carrying the edits into the file is cleaner.
+- Without `expected_baseline` the call behaves as before (no compare).
+
+### Import into a rectangle (partial edits)
+
+```python
+# region.png is W x H vertices; its first pixel lands on landscape vertex (start_x, start_y)
+r = svc.import_heightmap_region("MyTerrain", "C:/Heightmaps/region.png", 120, 340)
+print(r.success, r.region)          # e.g. "120,340-375,595" (inclusive vertex indices)
+# with the same guard: only the vertices inside the rectangle are compared (the baseline is a FULL-size file)
+r = svc.import_heightmap_region("MyTerrain", "C:/Heightmaps/region.png", 120, 340, "C:/Heightmaps/last_import.png")
+```
+
+Nothing outside the rectangle changes. The file must be a 16-bit PNG (a RAW file's size is ambiguous) and the
+rectangle must lie inside the landscape. Vertex indices are those of `get_height_in_region` (0 at the landscape's
+location corner, one per quad).
+
 ### Recreate Splines from One Landscape to Another
 
 ```python

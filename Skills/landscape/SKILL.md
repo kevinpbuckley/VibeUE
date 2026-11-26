@@ -87,6 +87,12 @@ Creating landscapes with many components is SLOW. Python execution has a 30-seco
 
 `import_heightmap()` requires the heightmap file resolution to **exactly match** the landscape resolution. **There is NO automatic scaling.** A size mismatch will fail or produce flat/corrupt terrain.
 
+**A plain import replaces every height of its edit layer, hand sculpting included.** When a person may have
+sculpted since your last import, pass that import's file as `expected_baseline`: the call refuses (writing nothing)
+and lists the vertices that differ; `keep_hand_edits=True` imports around them. `diff_heightmap(label, png)` shows
+them first; `import_heightmap_region(label, png, start_x, start_y)` writes only a rectangle. See
+workflows-creation.md "Re-import without destroying hand sculpting".
+
 If the target landscape label does not exist, `import_heightmap()` now auto-creates a matching landscape at world origin with default scale `(100,100,100)` before importing. For real-world terrain workflows, explicitly creating the landscape first is still recommended so you can control XY/Z scale.
 
 **Landscape resolution formula:** `Resolution = (ComponentCount × QuadsPerSection × SectionsPerComponent) + 1`
@@ -223,7 +229,7 @@ else:
 Every LandscapeService read leaves the map clean and adds nothing to the undo history: `get_height_at_location`,
 `get_height_in_region`, `get_layer_weights_at_location`, `get_weights_in_region`, `export_heightmap`,
 `export_weight_map`, `get_hole_at_location`, `analyze_terrain`, `get_slope_at_location`, `get_normal_at_location`,
-`get_slope_map`, `find_flat_areas`. So a dirty map after your reads means someone **wrote**:
+`get_slope_map`, `find_flat_areas`, `diff_heightmap`. So a dirty map after your reads means someone **wrote**:
 a person's unsaved edit or one of your own writes; do not save it without knowing which.
 
 (Before VibeUE 5-9 of 2026-11-25 each of these marked the map dirty and, in an `execute_python` script without a

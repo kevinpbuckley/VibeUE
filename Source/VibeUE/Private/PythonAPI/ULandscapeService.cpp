@@ -164,6 +164,14 @@ struct FLandscapeReadOnlyAccess
 		Edit.SetShouldDirtyPackage(false);
 	}
 
+	/** Reads the given edit layer's own heights instead of the merged view. */
+	FLandscapeReadOnlyAccess(ULandscapeInfo* InLandscapeInfo, const FGuid& InEditLayerGuid)
+		: UndoGuard(GUndo, nullptr)
+		, Edit(InLandscapeInfo, InEditLayerGuid, /*bInUploadTextureChangesToGPU=*/ false)
+	{
+		Edit.SetShouldDirtyPackage(false);
+	}
+
 	FLandscapeReadOnlyAccess(const FLandscapeReadOnlyAccess&) = delete;
 	FLandscapeReadOnlyAccess& operator=(const FLandscapeReadOnlyAccess&) = delete;
 
@@ -934,17 +942,317 @@ bool ULandscapeService::DeleteLandscape(const FString& LandscapeNameOrLabel, boo
 // Heightmap Operations
 // =================================================================
 
+namespace LandscapeHeightmapFiles
+{
+	static const ILandscapeHeightmapFileFormat* FormatFor(const FString& FilePath)
+	{
+		ILandscapeEditorModule& LandscapeEditorModule = FModuleManager::LoadModuleChecked<ILandscapeEditorModule>(TEXT("LandscapeEditor"));
+		return LandscapeEditorModule.GetHeightmapFormatByExtension(*FString::Printf(TEXT(".%s"), *FPaths::GetExtension(FilePath, false).ToLower()));
+	}
+
+	/**
+	 * Load a heightmap file of exactly Width x Height vertices through Unreal's native Landscape file format
+	 * importer (the stack the Landscape UI's Import uses for PNG / RAW); an extension with no registered format is
+	 * read as raw little-endian uint16.
+	 */
+	static bool Load(const FString& FilePath, int32 Width, int32 Height, TArray<uint16>& OutData, FString& OutError)
+	{
+		if (const ILandscapeHeightmapFileFormat* HeightmapFormat = FormatFor(FilePath))
+		{
+			const FLandscapeImportData<uint16> ImportData = HeightmapFormat->Import(*FilePath, FLandscapeFileResolution(Width, Height));
+			if (ImportData.ResultCode == ELandscapeImportResult::Error)
+			{
+				OutError = FString::Printf(TEXT("Native import failed for '%s': %s"), *FilePath, *ImportData.ErrorMessage.ToString());
+				return false;
+			}
+			if (ImportData.Data.Num() != Width * Height)
+			{
+				OutError = FString::Printf(TEXT("Heightmap size mismatch for '%s': expected %dx%d (%d samples) but the file has %d samples. "
+					"The heightmap file resolution must exactly match."), *FilePath, Width, Height, Width * Height, ImportData.Data.Num());
+				return false;
+			}
+			OutData = ImportData.Data;
+			return true;
+		}
+
+		TArray<uint8> FileData;
+		if (!FFileHelper::LoadFileToArray(FileData, *FilePath))
+		{
+			OutError = FString::Printf(TEXT("Failed to load RAW file '%s'"), *FilePath);
+			return false;
+		}
+		const int32 ExpectedBytes = Width * Height * sizeof(uint16);
+		if (FileData.Num() != ExpectedBytes)
+		{
+			OutError = FString::Printf(TEXT("RAW file size mismatch: expected %d bytes for %dx%d, got %d bytes. "
+				"The heightmap file resolution must exactly match."), ExpectedBytes, Width, Height, FileData.Num());
+			return false;
+		}
+		OutData.SetNumUninitialized(Width * Height);
+		FMemory::Memcpy(OutData.GetData(), FileData.GetData(), ExpectedBytes);
+		return true;
+	}
+
+	/** The size of a heightmap file whose size the file itself settles (a PNG, or a RAW with one possible resolution). */
+	static bool GetResolution(const FString& FilePath, int32& OutWidth, int32& OutHeight, FString& OutError)
+	{
+		const ILandscapeHeightmapFileFormat* HeightmapFormat = FormatFor(FilePath);
+		if (!HeightmapFormat)
+		{
+			OutError = FString::Printf(TEXT("No heightmap file format for '%s': use a 16-bit PNG"), *FilePath);
+			return false;
+		}
+		const FLandscapeFileInfo FileInfo = HeightmapFormat->Validate(*FilePath);
+		if (FileInfo.ResultCode == ELandscapeImportResult::Error)
+		{
+			OutError = FString::Printf(TEXT("Cannot read '%s': %s"), *FilePath, *FileInfo.ErrorMessage.ToString());
+			return false;
+		}
+		if (FileInfo.PossibleResolutions.Num() != 1)
+		{
+			OutError = FString::Printf(TEXT("The size of '%s' is ambiguous (%d possible resolutions, as a RAW file can be): use a 16-bit PNG"),
+				*FilePath, FileInfo.PossibleResolutions.Num());
+			return false;
+		}
+		OutWidth = (int32)FileInfo.PossibleResolutions[0].Width;
+		OutHeight = (int32)FileInfo.PossibleResolutions[0].Height;
+		return true;
+	}
+}
+
+/** Vertices of a landscape edit layer that differ from reference heights (#703). */
+struct FHeightmapCompare
+{
+	FString EditLayer;
+	int32 NumDifferent = 0;
+	FIntRect Bounds = FIntRect(-1, -1, -1, -1);
+	float MaxAbsDeltaCm = 0.0f;
+	TArray<FHeightmapVertexDiff> Vertices;   // the first MaxListed differing vertices, in row order
+	TArray<uint16> Current;                   // the layer's heights over the compared rectangle, row-major
+};
+
+static FString EditLayerNameOf(ALandscape* Landscape, const FGuid& LayerGuid)
+{
+	const ULandscapeEditLayerBase* Layer = Landscape ? Landscape->GetEditLayerConst(LayerGuid) : nullptr;
+	return Layer ? Layer->GetName().ToString() : FString();
+}
+
+/**
+ * Compare the heights of the edit layer import_heightmap writes into (ResolveEditLayerGuid), over the rectangle
+ * X1..X2 x Y1..Y2, with reference heights stored row-major from (RefOriginX, RefOriginY) with RefStride per row.
+ * Read-only (FLandscapeReadOnlyAccess): dirties nothing and records nothing.
+ */
+static void CompareLayerWithHeights(ALandscape* Landscape, ULandscapeInfo* LandscapeInfo,
+	int32 X1, int32 Y1, int32 X2, int32 Y2,
+	int32 RefOriginX, int32 RefOriginY, int32 RefStride, const TArray<uint16>& RefHeights,
+	int32 MaxListed, FHeightmapCompare& Out)
+{
+	const FGuid LayerGuid = ResolveEditLayerGuid(Landscape);
+	Out.EditLayer = EditLayerNameOf(Landscape, LayerGuid);
+
+	const int32 Width = X2 - X1 + 1;
+	const int32 Height = Y2 - Y1 + 1;
+	Out.Current.SetNumZeroed(Width * Height);
+	{
+		FLandscapeReadOnlyAccess Read(LandscapeInfo, LayerGuid);
+		int32 RX1 = X1, RY1 = Y1, RX2 = X2, RY2 = Y2;   // GetHeightData narrows these; the buffer keeps the original rect
+		Read.Edit.GetHeightData(RX1, RY1, RX2, RY2, Out.Current.GetData(), 0);
+	}
+
+	const double BaseZ = Landscape->GetActorLocation().Z;
+	const double ZScale = LANDSCAPE_ZSCALE * Landscape->GetActorScale3D().Z;
+	auto ToWorldZ = [BaseZ, ZScale](uint16 Value) { return static_cast<float>(BaseZ + (static_cast<double>(Value) - 32768.0) * ZScale); };
+
+	for (int32 Y = Y1; Y <= Y2; ++Y)
+	{
+		for (int32 X = X1; X <= X2; ++X)
+		{
+			const uint16 Current = Out.Current[(Y - Y1) * Width + (X - X1)];
+			const uint16 Reference = RefHeights[(Y - RefOriginY) * RefStride + (X - RefOriginX)];
+			if (Current == Reference)
+			{
+				continue;
+			}
+			if (Out.NumDifferent++ == 0)
+			{
+				Out.Bounds = FIntRect(X, Y, X, Y);
+			}
+			else
+			{
+				Out.Bounds.Min.X = FMath::Min(Out.Bounds.Min.X, X);
+				Out.Bounds.Min.Y = FMath::Min(Out.Bounds.Min.Y, Y);
+				Out.Bounds.Max.X = FMath::Max(Out.Bounds.Max.X, X);
+				Out.Bounds.Max.Y = FMath::Max(Out.Bounds.Max.Y, Y);
+			}
+			const float DeltaCm = FMath::Abs(ToWorldZ(Current) - ToWorldZ(Reference));
+			Out.MaxAbsDeltaCm = FMath::Max(Out.MaxAbsDeltaCm, DeltaCm);
+			if (Out.Vertices.Num() < MaxListed)
+			{
+				FHeightmapVertexDiff& Diff = Out.Vertices.AddDefaulted_GetRef();
+				Diff.X = X;
+				Diff.Y = Y;
+				Diff.LandscapeValue = Current;
+				Diff.FileValue = Reference;
+				Diff.LandscapeHeight = ToWorldZ(Current);
+				Diff.FileHeight = ToWorldZ(Reference);
+			}
+		}
+	}
+}
+
+/**
+ * The write half of import_heightmap / import_heightmap_region: the optional baseline guard (#703), then the heights
+ * into the edit layer through FHeightmapAccessor, exactly as the Landscape UI's Import button does
+ * (FEdModeLandscape::ImportHeightData -> FHeightmapAccessor<false>::SetData). Heights stay uint16: no float round trip.
+ * Returns false (Result.ErrorMessage set, nothing written) on a refusal or an error.
+ */
+bool ULandscapeService::WriteImportedHeights(ALandscape* Landscape, ULandscapeInfo* LandscapeInfo,
+	int32 X1, int32 Y1, int32 X2, int32 Y2, TArray<uint16>& Heights,
+	const FString& ExpectedBaseline, bool bKeepHandEdits, FHeightmapImportResult& Result)
+{
+	const FGuid EditLayerGuid = ResolveEditLayerGuid(Landscape);
+	Result.EditLayer = EditLayerNameOf(Landscape, EditLayerGuid);
+
+	if (!ExpectedBaseline.IsEmpty())
+	{
+		int32 MinX, MinY, MaxX, MaxY;
+		LandscapeInfo->GetLandscapeExtent(MinX, MinY, MaxX, MaxY);
+		const int32 FullX = MaxX - MinX + 1;
+		const int32 FullY = MaxY - MinY + 1;
+
+		TArray<uint16> Baseline;
+		FString BaselineError;
+		if (!LandscapeHeightmapFiles::Load(ExpectedBaseline, FullX, FullY, Baseline, BaselineError))
+		{
+			Result.ErrorMessage = TEXT("ExpectedBaseline: ") + BaselineError + TEXT(" (the baseline is a full-size heightmap of the landscape). Nothing was written.");
+			return false;
+		}
+
+		FHeightmapCompare Compare;
+		CompareLayerWithHeights(Landscape, LandscapeInfo, X1, Y1, X2, Y2, MinX, MinY, FullX, Baseline, 1000, Compare);
+		Result.NumHandEditedVertices = Compare.NumDifferent;
+		if (Compare.NumDifferent > 0)
+		{
+			Result.HandEditMinX = Compare.Bounds.Min.X;
+			Result.HandEditMinY = Compare.Bounds.Min.Y;
+			Result.HandEditMaxX = Compare.Bounds.Max.X;
+			Result.HandEditMaxY = Compare.Bounds.Max.Y;
+			Result.bHandEditsTruncated = Compare.NumDifferent > Compare.Vertices.Num();
+			Result.HandEditedVertices = Compare.Vertices;
+
+			if (!bKeepHandEdits)
+			{
+				Result.bRefused = true;
+				Result.ErrorMessage = FString::Printf(
+					TEXT("Refused: %d vertices of edit layer '%s' in %d,%d-%d,%d differ from the expected baseline (hand sculpting the file "
+						"does not know about?), bounding box %d,%d-%d,%d, largest difference %.1f cm. Nothing was written. "
+						"See HandEditedVertices; carry them into the file, or pass bKeepHandEdits to keep them."),
+					Compare.NumDifferent, *Result.EditLayer, X1, Y1, X2, Y2,
+					Compare.Bounds.Min.X, Compare.Bounds.Min.Y, Compare.Bounds.Max.X, Compare.Bounds.Max.Y, Compare.MaxAbsDeltaCm);
+				UE_LOG(LogTemp, Warning, TEXT("ULandscapeService import: %s"), *Result.ErrorMessage);
+				return false;
+			}
+
+			// Merge: every vertex that differs from the baseline keeps the landscape's own height.
+			const int32 Width = X2 - X1 + 1;
+			for (int32 Y = Y1; Y <= Y2; ++Y)
+			{
+				for (int32 X = X1; X <= X2; ++X)
+				{
+					const int32 Index = (Y - Y1) * Width + (X - X1);
+					if (Compare.Current[Index] != Baseline[(Y - MinY) * FullX + (X - MinX)])
+					{
+						Heights[Index] = Compare.Current[Index];
+						++Result.NumHandEditsKept;
+					}
+				}
+			}
+		}
+	}
+
+	// A vertex on a component border is stored twice, once in each component. FLandscapeEditDataInterface::SetHeightData
+	// picks components with CalcComponentIndicesNoOverlap, so when the rectangle STARTS on a border (or ends on one) only
+	// the component below / right of it gets the new value; the merge then keeps the other copy and the whole border
+	// row reads unchanged (seen: a region at y = 30 on 15-quad components kept its first row). Writing one more ring of
+	// vertices, with the layer's own current heights, brings both copies into the write. The ring's heights are unchanged.
+	int32 MinX, MinY, MaxX, MaxY;
+	LandscapeInfo->GetLandscapeExtent(MinX, MinY, MaxX, MaxY);
+	const int32 WX1 = FMath::Max(MinX, X1 - 1), WY1 = FMath::Max(MinY, Y1 - 1);
+	const int32 WX2 = FMath::Min(MaxX, X2 + 1), WY2 = FMath::Min(MaxY, Y2 + 1);
+	TArray<uint16> WriteHeights;
+	if (WX1 == X1 && WY1 == Y1 && WX2 == X2 && WY2 == Y2)
+	{
+		WriteHeights = MoveTemp(Heights);
+	}
+	else
+	{
+		WriteHeights.SetNumZeroed((WX2 - WX1 + 1) * (WY2 - WY1 + 1));
+		{
+			FLandscapeReadOnlyAccess Read(LandscapeInfo, EditLayerGuid);
+			int32 RX1 = WX1, RY1 = WY1, RX2 = WX2, RY2 = WY2;
+			Read.Edit.GetHeightData(RX1, RY1, RX2, RY2, WriteHeights.GetData(), 0);
+		}
+		const int32 Width = X2 - X1 + 1;
+		const int32 WriteWidth = WX2 - WX1 + 1;
+		for (int32 Y = Y1; Y <= Y2; ++Y)
+		{
+			FMemory::Memcpy(&WriteHeights[(Y - WY1) * WriteWidth + (X1 - WX1)], &Heights[(Y - Y1) * Width], Width * sizeof(uint16));
+		}
+	}
+
+	{
+		FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "ImportHeightmap", "Import Heightmap"));
+
+		FScopedSetLandscapeEditingLayer EditLayerScope(
+			Landscape,
+			EditLayerGuid,
+			[Landscape]()
+			{
+				if (Landscape)
+				{
+					Landscape->RequestLayersContentUpdate(ELandscapeLayerUpdateMode::Update_Heightmap_All);
+				}
+			});
+
+		FHeightmapAccessor<false> HeightmapAccessor(LandscapeInfo);
+		HeightmapAccessor.SetData(WX1, WY1, WX2, WY2, WriteHeights.GetData());
+		HeightmapAccessor.Flush();
+	}
+
+	// Only update heightmap — do NOT call ForceLayersFullUpdate() which would
+	// also resolve weightmap layers and potentially zero out paint weights.
+	Landscape->RequestLayersContentUpdate(ELandscapeLayerUpdateMode::Update_Heightmap_All);
+	UpdateLandscapeAfterHeightEdit(Landscape);
+
+	Result.bSuccess = true;
+	Result.Region = FString::Printf(TEXT("%d,%d-%d,%d"), X1, Y1, X2, Y2);
+	return true;
+}
+
 FHeightmapImportResult ULandscapeService::ImportHeightmap(
 	const FString& LandscapeNameOrLabel,
-	const FString& FilePath)
+	const FString& FilePath,
+	const FString& ExpectedBaseline,
+	bool bKeepHandEdits)
 {
 	FHeightmapImportResult Result;
+
+	if (bKeepHandEdits && ExpectedBaseline.IsEmpty())
+	{
+		Result.ErrorMessage = TEXT("bKeepHandEdits needs ExpectedBaseline: without a baseline there is nothing to tell hand edits apart from");
+		return Result;
+	}
 
 	bool bUnavailable = false;
 	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel, &bUnavailable);
 	if (bUnavailable)
 	{
 		Result.ErrorMessage = FString::Printf(TEXT("Landscape identifier '%s' is ambiguous or in an inactive level"), *LandscapeNameOrLabel);
+		return Result;
+	}
+	if (!Landscape && !ExpectedBaseline.IsEmpty())
+	{
+		Result.ErrorMessage = FString::Printf(TEXT("ExpectedBaseline was given but landscape '%s' does not exist; nothing to compare with"), *LandscapeNameOrLabel);
 		return Result;
 	}
 	if (!Landscape)
@@ -1074,97 +1382,133 @@ FHeightmapImportResult ULandscapeService::ImportHeightmap(
 		return Result;
 	}
 
-	int32 SizeX = MaxX - MinX + 1;
-	int32 SizeY = MaxY - MinY + 1;
-	int32 ExpectedBytes = SizeX * SizeY * sizeof(uint16);
+	const int32 SizeX = MaxX - MinX + 1;
+	const int32 SizeY = MaxY - MinY + 1;
 	Result.Resolution = FString::Printf(TEXT("%dx%d"), SizeX, SizeY);
 
-	// Load file data through Unreal's native Landscape file format importer
-	// (same import stack used by Landscape UI for PNG/RAW format handling).
 	TArray<uint16> ImportedHeightData;
-	const FString Extension = FPaths::GetExtension(FilePath, false).ToLower();
-	ILandscapeEditorModule& LandscapeEditorModule = FModuleManager::LoadModuleChecked<ILandscapeEditorModule>(TEXT("LandscapeEditor"));
-	const ILandscapeHeightmapFileFormat* HeightmapFormat = LandscapeEditorModule.GetHeightmapFormatByExtension(*FString::Printf(TEXT(".%s"), *Extension));
-
-	if (HeightmapFormat)
+	if (!LandscapeHeightmapFiles::Load(FilePath, SizeX, SizeY, ImportedHeightData, Result.ErrorMessage))
 	{
-		const FLandscapeImportData<uint16> ImportData = HeightmapFormat->Import(*FilePath, FLandscapeFileResolution(SizeX, SizeY));
-		if (ImportData.ResultCode == ELandscapeImportResult::Error)
-		{
-			Result.ErrorMessage = FString::Printf(TEXT("Native import failed for '%s': %s"),
-				*FilePath, *ImportData.ErrorMessage.ToString());
-			UE_LOG(LogTemp, Error, TEXT("ULandscapeService::ImportHeightmap: %s"), *Result.ErrorMessage);
-			return Result;
-		}
-
-		if (ImportData.Data.Num() != SizeX * SizeY)
-		{
-			Result.ErrorMessage = FString::Printf(TEXT("Heightmap size mismatch: landscape is %dx%d (%d samples) but file has %d samples. "
-				"The heightmap file resolution must exactly match the landscape resolution."),
-				SizeX, SizeY, SizeX * SizeY, ImportData.Data.Num());
-			UE_LOG(LogTemp, Error, TEXT("ULandscapeService::ImportHeightmap: %s"), *Result.ErrorMessage);
-			return Result;
-		}
-
-		ImportedHeightData = ImportData.Data;
-	}
-	else
-	{
-		TArray<uint8> FileData;
-		if (!FFileHelper::LoadFileToArray(FileData, *FilePath))
-		{
-			Result.ErrorMessage = FString::Printf(TEXT("Failed to load RAW file '%s'"), *FilePath);
-			UE_LOG(LogTemp, Error, TEXT("ULandscapeService::ImportHeightmap: %s"), *Result.ErrorMessage);
-			return Result;
-		}
-
-		if (FileData.Num() != ExpectedBytes)
-		{
-			Result.ErrorMessage = FString::Printf(TEXT("RAW file size mismatch: expected %d bytes for %dx%d landscape, got %d bytes. "
-				"The heightmap file resolution must exactly match the landscape resolution."),
-				ExpectedBytes, SizeX, SizeY, FileData.Num());
-			UE_LOG(LogTemp, Error, TEXT("ULandscapeService::ImportHeightmap: %s"), *Result.ErrorMessage);
-			return Result;
-		}
-
-		ImportedHeightData.SetNumUninitialized(SizeX * SizeY);
-		FMemory::Memcpy(ImportedHeightData.GetData(), FileData.GetData(), ExpectedBytes);
+		UE_LOG(LogTemp, Error, TEXT("ULandscapeService::ImportHeightmap: %s"), *Result.ErrorMessage);
+		return Result;
 	}
 
-	// Write the uint16 data directly to the landscape via FHeightmapAccessor,
-	// matching the exact path used by the Landscape editor UI Import button
-	// (FEdModeLandscape::ImportHeightData → FHeightmapAccessor<false>::SetData).
-	// We intentionally do NOT convert uint16→float→uint16 through SetHeightInRegion
-	// because the round-trip introduces floating-point precision errors.
+	if (!WriteImportedHeights(Landscape, LandscapeInfo, MinX, MinY, MaxX, MaxY, ImportedHeightData, ExpectedBaseline, bKeepHandEdits, Result))
 	{
-		FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "ImportHeightmap", "Import Heightmap"));
-
-		const FGuid EditLayerGuid = ResolveEditLayerGuid(Landscape);
-
-		FScopedSetLandscapeEditingLayer EditLayerScope(
-			Landscape,
-			EditLayerGuid,
-			[Landscape]()
-			{
-				if (Landscape)
-				{
-					Landscape->RequestLayersContentUpdate(ELandscapeLayerUpdateMode::Update_Heightmap_All);
-				}
-			});
-
-		FHeightmapAccessor<false> HeightmapAccessor(LandscapeInfo);
-		HeightmapAccessor.SetData(MinX, MinY, MaxX, MaxY, ImportedHeightData.GetData());
-		HeightmapAccessor.Flush();
+		return Result;
 	}
 
-	// Only update heightmap — do NOT call ForceLayersFullUpdate() which would
-	// also resolve weightmap layers and potentially zero out paint weights.
-	Landscape->RequestLayersContentUpdate(ELandscapeLayerUpdateMode::Update_Heightmap_All);
-	UpdateLandscapeAfterHeightEdit(Landscape);
+	UE_LOG(LogTemp, Log, TEXT("ULandscapeService::ImportHeightmap: Imported '%s' into '%s' (%dx%d)%s"),
+		*FilePath, *LandscapeNameOrLabel, SizeX, SizeY,
+		Result.NumHandEditsKept > 0 ? *FString::Printf(TEXT(", kept %d hand-edited vertices"), Result.NumHandEditsKept) : TEXT(""));
+	return Result;
+}
+
+FHeightmapImportResult ULandscapeService::ImportHeightmapRegion(
+	const FString& LandscapeNameOrLabel,
+	const FString& FilePath,
+	int32 StartX,
+	int32 StartY,
+	const FString& ExpectedBaseline,
+	bool bKeepHandEdits)
+{
+	FHeightmapImportResult Result;
+
+	if (bKeepHandEdits && ExpectedBaseline.IsEmpty())
+	{
+		Result.ErrorMessage = TEXT("bKeepHandEdits needs ExpectedBaseline: without a baseline there is nothing to tell hand edits apart from");
+		return Result;
+	}
+
+	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel, nullptr, &Result.ErrorMessage);
+	if (!Landscape)
+	{
+		if (Result.ErrorMessage.IsEmpty()) { Result.ErrorMessage = FString::Printf(TEXT("Landscape '%s' not found"), *LandscapeNameOrLabel); }
+		return Result;
+	}
+	ULandscapeInfo* LandscapeInfo = Landscape->GetLandscapeInfo();
+	int32 MinX, MinY, MaxX, MaxY;
+	if (!LandscapeInfo || !LandscapeInfo->GetLandscapeExtent(MinX, MinY, MaxX, MaxY))
+	{
+		Result.ErrorMessage = TEXT("Failed to get landscape extent");
+		return Result;
+	}
+	Result.Resolution = FString::Printf(TEXT("%dx%d"), MaxX - MinX + 1, MaxY - MinY + 1);
+
+	int32 FileWidth = 0, FileHeight = 0;
+	if (!LandscapeHeightmapFiles::GetResolution(FilePath, FileWidth, FileHeight, Result.ErrorMessage))
+	{
+		return Result;
+	}
+
+	const int32 X1 = StartX, Y1 = StartY, X2 = StartX + FileWidth - 1, Y2 = StartY + FileHeight - 1;
+	if (X1 < MinX || Y1 < MinY || X2 > MaxX || Y2 > MaxY)
+	{
+		Result.ErrorMessage = FString::Printf(TEXT("The %dx%d file at vertex (%d,%d) covers %d,%d-%d,%d, outside the landscape's %d,%d-%d,%d"),
+			FileWidth, FileHeight, StartX, StartY, X1, Y1, X2, Y2, MinX, MinY, MaxX, MaxY);
+		return Result;
+	}
+
+	TArray<uint16> RegionHeights;
+	if (!LandscapeHeightmapFiles::Load(FilePath, FileWidth, FileHeight, RegionHeights, Result.ErrorMessage))
+	{
+		return Result;
+	}
+
+	if (!WriteImportedHeights(Landscape, LandscapeInfo, X1, Y1, X2, Y2, RegionHeights, ExpectedBaseline, bKeepHandEdits, Result))
+	{
+		return Result;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("ULandscapeService::ImportHeightmapRegion: Imported '%s' into '%s' at %s"),
+		*FilePath, *LandscapeNameOrLabel, *Result.Region);
+	return Result;
+}
+
+FHeightmapDiffResult ULandscapeService::DiffHeightmap(
+	const FString& LandscapeNameOrLabel,
+	const FString& FilePath,
+	int32 MaxVertices)
+{
+	FHeightmapDiffResult Result;
+
+	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel, nullptr, &Result.ErrorMessage);
+	if (!Landscape)
+	{
+		if (Result.ErrorMessage.IsEmpty()) { Result.ErrorMessage = FString::Printf(TEXT("Landscape '%s' not found"), *LandscapeNameOrLabel); }
+		return Result;
+	}
+	ULandscapeInfo* LandscapeInfo = Landscape->GetLandscapeInfo();
+	int32 MinX, MinY, MaxX, MaxY;
+	if (!LandscapeInfo || !LandscapeInfo->GetLandscapeExtent(MinX, MinY, MaxX, MaxY))
+	{
+		Result.ErrorMessage = TEXT("Failed to get landscape extent");
+		return Result;
+	}
+	const int32 SizeX = MaxX - MinX + 1;
+	const int32 SizeY = MaxY - MinY + 1;
+	Result.Resolution = FString::Printf(TEXT("%dx%d"), SizeX, SizeY);
+
+	TArray<uint16> FileHeights;
+	if (!LandscapeHeightmapFiles::Load(FilePath, SizeX, SizeY, FileHeights, Result.ErrorMessage))
+	{
+		return Result;
+	}
+
+	FHeightmapCompare Compare;
+	CompareLayerWithHeights(Landscape, LandscapeInfo, MinX, MinY, MaxX, MaxY, MinX, MinY, SizeX, FileHeights, FMath::Max(0, MaxVertices), Compare);
 
 	Result.bSuccess = true;
-	UE_LOG(LogTemp, Log, TEXT("ULandscapeService::ImportHeightmap: Imported %s heightmap to '%s' (%dx%d)"),
-		*Extension.ToUpper(), *LandscapeNameOrLabel, SizeX, SizeY);
+	Result.EditLayer = Compare.EditLayer;
+	Result.NumVerticesCompared = SizeX * SizeY;
+	Result.NumDifferent = Compare.NumDifferent;
+	Result.MinX = Compare.Bounds.Min.X;
+	Result.MinY = Compare.Bounds.Min.Y;
+	Result.MaxX = Compare.Bounds.Max.X;
+	Result.MaxY = Compare.Bounds.Max.Y;
+	Result.MaxAbsDeltaCm = Compare.MaxAbsDeltaCm;
+	Result.Vertices = MoveTemp(Compare.Vertices);
+	Result.bTruncated = Compare.NumDifferent > Result.Vertices.Num();
 	return Result;
 }
 
