@@ -190,13 +190,61 @@ struct FLandscapeReadOnlyAccess
 };
 
 /**
+ * Write a rectangle of uint16 heights into the current editing layer, updating BOTH stored copies of every vertex on a
+ * component border (#717). Every height writer of this service goes through here.
+ *
+ * A vertex on a component border is stored once in each component that shares it. FHeightmapAccessor::SetData ->
+ * FLandscapeEditDataInterface::SetHeightData picks the components to write with CalcComponentIndicesNoOverlap, which
+ * leaves out the component above / left of the rectangle when the rectangle starts on a border, and the component
+ * below / right of it when it ends on one (a rectangle lying on a border gets one side only). That component's copy
+ * keeps the old height and the edit-layer merge keeps it, so the whole border row of the write never shows. The fix:
+ * write one more ring of vertices around the rectangle (clamped to the landscape), with the layer's own current
+ * heights, so the components on both sides of each border vertex are in the write. The ring's heights do not change;
+ * as edge vertices of the write, their normals are left as they were.
+ *
+ * Must run inside the caller's FScopedSetLandscapeEditingLayer: the ring is read from, and everything written to, the
+ * shared editing layer, exactly what FHeightmapAccessor uses.
+ */
+static void SetEditLayerHeights(ULandscapeInfo* LandscapeInfo, int32 X1, int32 Y1, int32 X2, int32 Y2, const uint16* HeightData)
+{
+	int32 MinX = X1, MinY = Y1, MaxX = X2, MaxY = Y2;
+	LandscapeInfo->GetLandscapeExtent(MinX, MinY, MaxX, MaxY);
+	const int32 WX1 = FMath::Max(MinX, X1 - 1), WY1 = FMath::Max(MinY, Y1 - 1);
+	const int32 WX2 = FMath::Min(MaxX, X2 + 1), WY2 = FMath::Min(MaxY, Y2 + 1);
+
+	TArray<uint16> Ringed;
+	const uint16* WriteData = HeightData;
+	if (WX1 != X1 || WY1 != Y1 || WX2 != X2 || WY2 != Y2)
+	{
+		const int32 Width = X2 - X1 + 1;
+		const int32 RingedWidth = WX2 - WX1 + 1;
+		Ringed.SetNumZeroed(RingedWidth * (WY2 - WY1 + 1));
+		{
+			// Destroyed before the accessor below locks the same textures for writing.
+			FLandscapeReadOnlyAccess Read(LandscapeInfo);
+			int32 RX1 = WX1, RY1 = WY1, RX2 = WX2, RY2 = WY2;   // GetHeightData narrows these; the buffer keeps the ringed rect
+			Read.Edit.GetHeightData(RX1, RY1, RX2, RY2, Ringed.GetData(), 0);
+		}
+		for (int32 Y = Y1; Y <= Y2; ++Y)
+		{
+			FMemory::Memcpy(&Ringed[(Y - WY1) * RingedWidth + (X1 - WX1)], &HeightData[(Y - Y1) * Width], Width * sizeof(uint16));
+		}
+		WriteData = Ringed.GetData();
+	}
+
+	FHeightmapAccessor<false> HeightmapAccessor(LandscapeInfo);
+	HeightmapAccessor.SetData(WX1, WY1, WX2, WY2, WriteData);
+	HeightmapAccessor.Flush();
+}
+
+/**
  * Write a rectangle of uint16 heights through the edit-layer system (issue #524).
  * FLandscapeEditDataInterface::SetHeightData bypasses edit layers: the heights reach the merged
  * runtime heightmap but the per-layer data keeps its old values, so the next layer-content
  * resolve (triggered by any layer-aware edit such as sculpt_at_location/flatten_at_location)
  * rebuilds the heightmap from layer data and silently reverts the edit in unpredictable,
  * component-sized chunks far from the later edit's brush. Every height writer must use this
- * helper (or an equivalent FScopedSetLandscapeEditingLayer + FHeightmapAccessor block).
+ * helper (or an equivalent FScopedSetLandscapeEditingLayer + SetEditLayerHeights block, never a bare FHeightmapAccessor: #717).
  * Any FLandscapeEditDataInterface used to read the source heights must be destroyed first.
  *
  * The HeightData rect passed here MUST have been read from the SAME edit layer via
@@ -220,9 +268,7 @@ static void WriteHeightsToEditLayer(ALandscape* Landscape, ULandscapeInfo* Lands
 			}
 		});
 
-	FHeightmapAccessor<false> HeightmapAccessor(LandscapeInfo);
-	HeightmapAccessor.SetData(MinX, MinY, MaxX, MaxY, HeightData);
-	HeightmapAccessor.Flush();
+	SetEditLayerHeights(LandscapeInfo, MinX, MinY, MaxX, MaxY, HeightData);
 } // ~FHeightmapAccessor: flushes and releases heightmap texture write lock
 
 /**
@@ -1179,36 +1225,6 @@ bool ULandscapeService::WriteImportedHeights(ALandscape* Landscape, ULandscapeIn
 		}
 	}
 
-	// A vertex on a component border is stored twice, once in each component. FLandscapeEditDataInterface::SetHeightData
-	// picks components with CalcComponentIndicesNoOverlap, so when the rectangle STARTS on a border (or ends on one) only
-	// the component below / right of it gets the new value; the merge then keeps the other copy and the whole border
-	// row reads unchanged (seen: a region at y = 30 on 15-quad components kept its first row). Writing one more ring of
-	// vertices, with the layer's own current heights, brings both copies into the write. The ring's heights are unchanged.
-	int32 MinX, MinY, MaxX, MaxY;
-	LandscapeInfo->GetLandscapeExtent(MinX, MinY, MaxX, MaxY);
-	const int32 WX1 = FMath::Max(MinX, X1 - 1), WY1 = FMath::Max(MinY, Y1 - 1);
-	const int32 WX2 = FMath::Min(MaxX, X2 + 1), WY2 = FMath::Min(MaxY, Y2 + 1);
-	TArray<uint16> WriteHeights;
-	if (WX1 == X1 && WY1 == Y1 && WX2 == X2 && WY2 == Y2)
-	{
-		WriteHeights = MoveTemp(Heights);
-	}
-	else
-	{
-		WriteHeights.SetNumZeroed((WX2 - WX1 + 1) * (WY2 - WY1 + 1));
-		{
-			FLandscapeReadOnlyAccess Read(LandscapeInfo, EditLayerGuid);
-			int32 RX1 = WX1, RY1 = WY1, RX2 = WX2, RY2 = WY2;
-			Read.Edit.GetHeightData(RX1, RY1, RX2, RY2, WriteHeights.GetData(), 0);
-		}
-		const int32 Width = X2 - X1 + 1;
-		const int32 WriteWidth = WX2 - WX1 + 1;
-		for (int32 Y = Y1; Y <= Y2; ++Y)
-		{
-			FMemory::Memcpy(&WriteHeights[(Y - WY1) * WriteWidth + (X1 - WX1)], &Heights[(Y - Y1) * Width], Width * sizeof(uint16));
-		}
-	}
-
 	{
 		FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "ImportHeightmap", "Import Heightmap"));
 
@@ -1223,9 +1239,7 @@ bool ULandscapeService::WriteImportedHeights(ALandscape* Landscape, ULandscapeIn
 				}
 			});
 
-		FHeightmapAccessor<false> HeightmapAccessor(LandscapeInfo);
-		HeightmapAccessor.SetData(WX1, WY1, WX2, WY2, WriteHeights.GetData());
-		HeightmapAccessor.Flush();
+		SetEditLayerHeights(LandscapeInfo, X1, Y1, X2, Y2, Heights.GetData());   // writes both copies of border vertices (#717)
 	}
 
 	// Only update heightmap — do NOT call ForceLayersFullUpdate() which would
@@ -2200,9 +2214,7 @@ bool ULandscapeService::SetHeightInRegion(
 				}
 			});
 
-		FHeightmapAccessor<false> HeightmapAccessor(LandscapeInfo);
-		HeightmapAccessor.SetData(StartX, StartY, EndX, EndY, HeightData.GetData());
-		HeightmapAccessor.Flush();
+		SetEditLayerHeights(LandscapeInfo, StartX, StartY, EndX, EndY, HeightData.GetData());
 	} // ~FHeightmapAccessor: flushes and releases heightmap texture write lock
 
 	// Only update heightmap — do NOT call ForceLayersFullUpdate() which would
@@ -2364,9 +2376,7 @@ bool ULandscapeService::SculptAtLocation(
 				}
 			});
 
-		FHeightmapAccessor<false> HeightmapAccessor(LandscapeInfo);
-		HeightmapAccessor.SetData(MinX, MinY, MaxX, MaxY, HeightData.GetData());
-		HeightmapAccessor.Flush();
+		SetEditLayerHeights(LandscapeInfo, MinX, MinY, MaxX, MaxY, HeightData.GetData());
 	} // ~FHeightmapAccessor: flushes and releases heightmap texture write lock
 
 	// Only update heightmap — do NOT call ForceLayersFullUpdate() which would
@@ -2488,9 +2498,7 @@ bool ULandscapeService::FlattenAtLocation(
 				}
 			});
 
-		FHeightmapAccessor<false> HeightmapAccessor(LandscapeInfo);
-		HeightmapAccessor.SetData(MinX, MinY, MaxX, MaxY, HeightData.GetData());
-		HeightmapAccessor.Flush();
+		SetEditLayerHeights(LandscapeInfo, MinX, MinY, MaxX, MaxY, HeightData.GetData());
 	} // ~FHeightmapAccessor: flushes and releases heightmap texture write lock
 
 	Landscape->RequestLayersContentUpdate(ELandscapeLayerUpdateMode::Update_Heightmap_All);
@@ -2628,9 +2636,7 @@ bool ULandscapeService::SmoothAtLocation(
 				}
 			});
 
-		FHeightmapAccessor<false> HeightmapAccessor(LandscapeInfo);
-		HeightmapAccessor.SetData(MinX, MinY, MaxX, MaxY, SmoothedData.GetData());
-		HeightmapAccessor.Flush();
+		SetEditLayerHeights(LandscapeInfo, MinX, MinY, MaxX, MaxY, SmoothedData.GetData());
 	} // ~FHeightmapAccessor: flushes and releases heightmap texture write lock
 
 	Landscape->RequestLayersContentUpdate(ELandscapeLayerUpdateMode::Update_Heightmap_All);
@@ -2785,9 +2791,7 @@ bool ULandscapeService::RaiseLowerRegion(
 				}
 			});
 
-		FHeightmapAccessor<false> HeightmapAccessor(LandscapeInfo);
-		HeightmapAccessor.SetData(MinX, MinY, MaxX, MaxY, HeightData.GetData());
-		HeightmapAccessor.Flush();
+		SetEditLayerHeights(LandscapeInfo, MinX, MinY, MaxX, MaxY, HeightData.GetData());
 	} // ~FHeightmapAccessor: flushes and releases heightmap texture write lock
 
 	Landscape->RequestLayersContentUpdate(ELandscapeLayerUpdateMode::Update_Heightmap_All);
@@ -6068,9 +6072,7 @@ namespace LandscapeServiceV3
 					}
 				});
 
-			FHeightmapAccessor<false> HeightmapAccessor(LInfo);
-			HeightmapAccessor.SetData(MinX, MinY, MaxX, MaxY, HeightData.GetData());
-			HeightmapAccessor.Flush();
+			SetEditLayerHeights(LInfo, MinX, MinY, MaxX, MaxY, HeightData.GetData());
 		} // ~FHeightmapAccessor: flushes and releases heightmap texture write lock
 
 		return true;
