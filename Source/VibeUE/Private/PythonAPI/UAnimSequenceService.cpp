@@ -504,7 +504,8 @@ FString UAnimSequenceService::CreateFromPose(
 	const FString& SavePath,
 	float Duration)
 {
-	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.create_from_pose");
+	// Allowed during PIE on purpose (#671): it creates a new asset through the PIE-safe loader, so no
+	// null-from-LoadAsset can make it overwrite anything; the #705 guard does not apply here.
 	// Validate inputs
 	if (SkeletonPath.IsEmpty())
 	{
@@ -599,7 +600,8 @@ FString UAnimSequenceService::CreateAnimSequence(
 	float FrameRate,
 	const TArray<FBoneTrackData>& BoneTracks)
 {
-	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.create_anim_sequence");
+	// Allowed during PIE on purpose (#671): it creates a new asset through the PIE-safe loader, so no
+	// null-from-LoadAsset can make it overwrite anything; the #705 guard does not apply here.
 	// Validate inputs
 	if (SkeletonPath.IsEmpty())
 	{

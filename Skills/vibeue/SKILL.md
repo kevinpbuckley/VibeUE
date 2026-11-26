@@ -384,7 +384,8 @@ with vibeue.gate_session(clients=3, net_mode="ListenServer"): ...               
   VibeUE's asset-writing service calls (create, add, set, remove, connect, compile ... on Blueprint, AnimGraph,
   AnimMontage, AnimSequence, Input, SoundCue, StateTree, Skeleton, UV mapping, landscape-material, material-node,
   Niagara scratch-pad, Mutable, BT / Blackboard / EQS repair and asset import / delete) refuse during PIE with one
-  message, "PIE_ACTIVE: <Service>.<call> refused: ... Stop PIE first"; their read-only calls keep working. Call
+  message, "PIE_ACTIVE: <Service>.<call> refused: ... Stop PIE first"; their read-only calls keep working, and
+  `AnimSequenceService.create_anim_sequence` / `create_from_pose` stay allowed (they only create new assets, #671). Call
   `vibeue.require_no_pie("what")` at the top of your own asset scripts, and read assets during PIE with
   `unreal.load_object(None, "/Game/Path/Asset.Asset")` or `unreal.load_asset`.
 - A Python traceback proves the MCP link is up; only "Unable to connect" / ECONNREFUSED means it is down.
