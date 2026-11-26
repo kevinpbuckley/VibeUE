@@ -172,7 +172,11 @@ Plugins/VibeUE/BuildAndLaunchGame.ps1                  # builds + launches the e
 Plugins/VibeUE/BuildAndLaunchGame.ps1 -StrictRebuild   # full recompile (warnings-as-errors)
 Plugins/VibeUE/BuildAndLaunchGame.ps1 -Map /Game/Maps/MyMap   # open a specific map (issue #554)
 Plugins/VibeUE/BuildAndLaunchGame.ps1 -AllUnrealProcesses      # also close other projects' editors (old behaviour)
+Plugins/VibeUE/BuildAndLaunchGame.ps1 -SkipBuild -Port 8011 -Muted -WaitForIdle   # second editor, silent, wait until idle
 ```
+A running editor of the project is asked to quit over MCP and exits by itself; if it has unsaved packages the
+script stops and lists them (`-Force` closes it anyway). Old logs move to `Saved/Logs/Previous`. Details and every
+switch: [Build & launch script](#️-build--launch-script).
 The Windows script closes only the editors of THIS project (their command line names its `.uproject`); an
 editor of another project on the same machine keeps running. Because UBT's Live Coding guard is keyed on the
 engine's `UnrealEditor.exe`, not the project, the script then builds with `-NoHotReloadFromIDE` so that
@@ -184,8 +188,10 @@ Plugins/VibeUE/BuildAndLaunchGame.sh --engine /path/to/UE5 --strict-rebuild
 Plugins/VibeUE/BuildAndLaunchGame.sh --engine /path/to/UE5 --map /Game/Maps/MyMap
 Plugins/VibeUE/BuildAndLaunchGame.sh --engine /path/to/UE5 --stop-editor   # close this project's editor without asking
 ```
-If an editor of this project is running, the shell script asks before closing it and refuses when there is no
-terminal to ask on (an agent, CI); `--stop-editor` gives that consent up front. A Blueprint-only project (no
+If an editor of this project is running, the shell script asks it over MCP (`curl`) to quit when nothing is
+unsaved and stops with the list when something is (`--force` closes it anyway). Only an editor that cannot be asked
+gets the old treatment: the script asks on a terminal and refuses when there is none (an agent, CI);
+`--stop-editor` gives that consent up front. A Blueprint-only project (no
 `Source/*Editor.Target.cs`) is built through the engine's `UnrealEditor` target with `-Project=`, which
 compiles the project's plugins, so it works with the Epic binary install as well as a source build.
 Then **Edit → Plugins** → enable **VibeUE** and restart. Its services, tools, and skills now register
@@ -286,11 +292,57 @@ VibeUE's skills route to**:
 
 ## 🛠️ Build & launch script
 
-`BuildAndLaunchGame.ps1` (project root or `Plugins/VibeUE/`) stops the running editor, builds, and
+`BuildAndLaunchGame.ps1` (project root or `Plugins/VibeUE/`) closes the running editor, builds, and
 relaunches:
 - `-StrictRebuild` — full plugin recompile under warnings-as-errors
 - `-Clean` — wipe intermediate/binaries first
 - `-SkipBuild` — relaunch only
+- `-Map /Game/Maps/MyMap` — open that level (the readiness signal's `currentMap` is checked against it)
+- `-Mode DebugGame` etc. — build configuration (default `Development`)
+- `-AllUnrealProcesses` — also close other projects' editors (by default only editors whose command line names
+  this `.uproject` are closed)
+
+**Closing the running editor.** Each editor of the project is asked over MCP (`execute_python`) for its unsaved
+packages. With none, it is told to quit (`unreal.SystemLibrary.quit_editor()`) and exits by itself: no kill, so its
+log is complete. With unsaved packages the script stops (exit 5) and lists them; save or discard them, or pass
+`-Force` to close it anyway and lose them. The script waits (`-QuitTimeoutSec`, default 120) while the editor runs a
+slow task or shows a modal dialog. The Python checks its own process id first, so a wrong port never closes another
+editor. An editor that cannot be asked (no MCP, wedged) gets the old main-window close, which lets the editor ask
+about unsaved work itself; if it is still running after 15 s the script refuses (exit 5) unless `-Force`, which
+kills it.
+
+**Logs.** The files in `Saved/Logs` (and `Saved/Logs/AgentConversations`) move to
+`Saved/Logs/Previous/<yyyyMMdd-HHmmss>/` instead of being deleted, so the log of a session that just crashed
+survives the relaunch; the newest `-LogGenerations` (default 5) folders are kept. `-KeepLogs` leaves `Saved/Logs`
+alone.
+
+**Port.** `-Port 8011` passes `-ModelContextProtocolPort=8011` to the editor and warns when the editor reports
+another port. A second editor on the machine needs its own port (every editor defaults to 8000).
+
+**Waiting.** `-WaitForReady` returns once VibeUE's readiness signal is written (exit 0; 2 timed out, 3 the editor
+exited first). It gives up only after `-ReadyTimeoutSec` (default 180) seconds WITHOUT a sign of life (the
+editor's CPU time, its log and its health file all unchanged), or after `-ReadyMaxSec` (default 3600) in all, so a
+cold start after a reboot is not reported as a failure. `-WaitForIdle` then also waits for the health file to show
+no slow task, no modal dialog, no shader jobs and no assets compiling (textures, meshes, distance fields, Lumen
+cards) on two heartbeats in a row (exit 6 after `-IdleTimeoutSec`, default 3600).
+
+**Muted.** `-Muted` mutes the editor's Windows audio session(s) through Core Audio (`ISimpleAudioVolume`), from a
+hidden watcher that keeps them muted for the editor's lifetime (log `Saved/VibeUE/audio-session-<pid>.log`). The
+engine still renders audio, so recording a submix and `au.DumpActiveSounds` keep working; only the speakers are
+silent. Windows remembers a session's mute per executable: after a `-Muted` run, an editor started from the same
+`UnrealEditor.exe` (any project, also from the launcher) starts muted too. The script records what it muted in
+`%LOCALAPPDATA%\VibeUE\muted-editor-executables.txt`, and its next launch without `-Muted` un-mutes the new editor
+once and clears the record; otherwise un-mute it in the Windows Volume Mixer.
+
+Exit codes: 0 done, 1 build or setup failure, 2 not ready in time, 3 the editor exited before it was ready, 4 invalid
+`-Map`, 5 refused to close a running editor, 6 not idle in time.
+
+`BuildAndLaunchGame.sh` (Linux, macOS) has the same behaviour with `--force`, `--port`, `--keep-logs`,
+`--log-generations`, `--wait-for-ready`, `--ready-timeout`, `--ready-max`, `--wait-for-idle`, `--idle-timeout`,
+`--quit-timeout` (`--help` lists them). It asks the editor over MCP with `curl`. `--muted` works on Linux through
+`pactl` (PulseAudio or PipeWire; their stream-restore remembers the mute per application too, handled the same way);
+macOS has no per-application mute, so there it only prints a note. Without `--wait-for-ready` the `.sh` still waits
+for the editor to exit, as before.
 
 ---
 

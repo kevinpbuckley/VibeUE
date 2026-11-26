@@ -144,7 +144,15 @@ pass to `get_symbol` before you write code.
 
 ## 3. Editor readiness and health
 
-`BuildAndLaunchGame.ps1` / `.sh` print `Editor-PID=<pid>`. Watch the filesystem for
+`BuildAndLaunchGame.ps1` / `.sh` (README "Build & launch script") ask a running editor of the project to quit over
+MCP and refuse with exit 5, listing the packages, when it has unsaved work (`-Force` / `--force` closes it anyway):
+save or discard first, never kill it yourself. Old logs move to `Saved/Logs/Previous/<timestamp>`, so the log of a
+crashed session is still there after a relaunch. `-Port <n>` gives the new editor its own MCP port, `-Muted` mutes
+its Windows audio session (in-engine recording still works), `-WaitForReady` waits for the signal below while the
+editor shows signs of life, and `-WaitForIdle` also waits until the health file reports no slow task, no shader jobs
+and no assets compiling.
+
+They print `Editor-PID=<pid>`. Watch the filesystem for
 `<ProjectDir>/Saved/VibeUE/Signals/editor-<pid>-true.json` (at most 180 s, without polling MCP); it is JSON
 written atomically: `signal`, `pid`, `createdUtc`, `sessionStartUtc`, `pluginVersion`, `currentMap`,
 `mcpPort`, `mcpListening`. It is re-published on every map open, so **gate world edits on `currentMap`** (a
@@ -158,9 +166,13 @@ waiting on a hanging call (Epic's MCP endpoint runs on the game thread with no r
 
 ```json
 {"signal":"health","pid":21044,"updatedUtc":"2026-11-14T17:09:00.000Z","sessionStartUtc":"...",
- "gameThreadStallSeconds":0.03,"mcpPort":8000,"mcpListening":true,
+ "gameThreadStallSeconds":0.03,"mcpPort":8000,"mcpListening":true,"shaderJobs":0,"assetCompilations":0,
  "slowTask":false,"slowTaskText":"","slowTaskSeconds":0,"modal":false,"modalTitle":"","modalSeconds":0}
 ```
+
+`shaderJobs` / `assetCompilations` (-1 until first sampled) count the shader compile jobs and the assets still
+compiling in the background (textures, meshes, distance fields, Lumen cards). Above 0 the editor answers calls, but
+captures show grey materials and frame timings mean nothing yet: wait for both to read 0.
 
 | Reading | Meaning | Do |
 |---|---|---|

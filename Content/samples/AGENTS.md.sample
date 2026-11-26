@@ -93,8 +93,11 @@ error. A pack's deeper pages are linked files: open them with your file-reading 
 - Rebuild and relaunch with `Plugins/VibeUE/BuildAndLaunchGame.ps1` (`.sh` on Linux/macOS), not a manual
   build. Pass **`-Map /Game/Maps/YourMap`** when the task targets a non-default level; without it the
   editor opens the project default map. `-SkipBuild` relaunches only, `-StrictRebuild` recompiles the
-  plugin under warnings-as-errors, `-Clean` wipes build artifacts (`--skip-build` etc. on the `.sh`). The `.sh` only closes a running
-  editor of this project when you pass `--stop-editor`; without a terminal it refuses instead of asking.
+  plugin under warnings-as-errors, `-Clean` wipes build artifacts (`--skip-build` etc. on the `.sh`). A running
+  editor of this project is asked over MCP to quit; **with unsaved packages the script stops (exit 5) and lists
+  them** - save or discard them, or pass `-Force` (they are lost). Old logs move to `Saved/Logs/Previous`.
+  `-Port <n>` for a second editor, `-Muted` for a silent run, `-WaitForReady` / `-WaitForIdle` to block until the
+  editor is ready / has compiled its shaders and assets.
 - C++ work is not done until a real build succeeded: `unreal.WorkflowService.get_environment()` reports
   the engine version and source path, the toolchain and `lastBuild.status`. Call it before claiming
   engine source or a compiler is missing.
