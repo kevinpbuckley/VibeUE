@@ -15,6 +15,7 @@
 
 #include "WorldPartition/WorldPartition.h"
 #include "Utils/VibeUEHealthSignal.h"
+#include "Utils/VibeUEPIEGuard.h"
 #include "ShaderCompiler.h"          // GShaderCompilingManager, for GetEditorBusyState
 #include "AssetCompilingManager.h"   // FAssetCompilingManager, for GetEditorBusyState
 
@@ -195,4 +196,14 @@ FVibeUEEditorBusyState UPythonTools::GetEditorBusyState()
 	State.AssetCompileJobs = FAssetCompilingManager::Get().GetNumRemainingAssets();
 	State.bIdle = !State.bSlowTask && !State.bModal && State.ShaderJobs == 0 && State.AssetCompileJobs == 0;
 	return State;
+}
+
+bool UPythonTools::IsPlaySessionRunning()
+{
+	return VibeUE::IsPlaySessionRunning();
+}
+
+FString UPythonTools::GetPIEWriteRefusal(const FString& Operation)
+{
+	return VibeUE::MakePIEWriteRefusal(Operation);
 }

@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UNiagaraScratchPadService.h"
+#include "Utils/VibeUEPIEGuard.h"
 
 #include "EditorAssetLibrary.h"
 #include "EdGraph/EdGraph.h"
@@ -57,7 +58,7 @@ namespace
 		{
 			return nullptr;
 		}
-		UObject* Loaded = UEditorAssetLibrary::LoadAsset(SystemPath);
+		UObject* Loaded = VibeUE::LoadAssetAnyState(SystemPath);
 		return Cast<UNiagaraSystem>(Loaded);
 	}
 
@@ -442,6 +443,7 @@ FNiagaraScratchResult UNiagaraScratchPadService::CreateScratchModule(
 	const FString& Stage,
 	const FString& DesiredName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("NiagaraScratchPadService.create_scratch_module");
 	FNiagaraScratchResult Result;
 	UNiagaraSystem* System = LoadSystem(SystemPath);
 	if (!System) { Result.Message = TEXT("System not found"); return Result; }
@@ -668,6 +670,7 @@ FNiagaraScratchResult UNiagaraScratchPadService::AddNode(
 	int32 PosX,
 	int32 PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("NiagaraScratchPadService.add_node");
 	FNiagaraScratchResult R;
 	UNiagaraSystem* System = LoadSystem(SystemPath);
 	if (!System) { R.Message = TEXT("System not found"); return R; }
@@ -731,6 +734,7 @@ FNiagaraScratchResult UNiagaraScratchPadService::AddOpNode(
 	int32 PosX,
 	int32 PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("NiagaraScratchPadService.add_op_node");
 	FNiagaraScratchResult R;
 	UNiagaraSystem* System = LoadSystem(SystemPath);
 	if (!System) { R.Message = TEXT("System not found"); return R; }
@@ -768,6 +772,7 @@ FNiagaraScratchResult UNiagaraScratchPadService::AddCustomHlslNode(
 	int32 PosX,
 	int32 PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("NiagaraScratchPadService.add_custom_hlsl_node");
 	FNiagaraScratchResult R;
 	UNiagaraSystem* System = LoadSystem(SystemPath);
 	if (!System) { R.Message = TEXT("System not found"); return R; }
@@ -800,6 +805,7 @@ bool UNiagaraScratchPadService::SetCustomHlslCode(
 	const FString& NodeId,
 	const FString& Code)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("NiagaraScratchPadService.set_custom_hlsl_code");
 	UNiagaraSystem* System = LoadSystem(SystemPath);
 	if (!System) return false;
 	FNiagaraEmitterHandle* Handle = FindEmitterHandle(System, EmitterName);
@@ -844,6 +850,7 @@ FNiagaraScratchResult UNiagaraScratchPadService::AddPin(
 	const FString& TypeName,
 	const FString& PinName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("NiagaraScratchPadService.add_pin");
 	FNiagaraScratchResult R;
 	UNiagaraSystem* System = LoadSystem(SystemPath);
 	if (!System) { R.Message = TEXT("System not found"); return R; }
@@ -913,6 +920,7 @@ bool UNiagaraScratchPadService::DeleteNode(
 	const FString& ModuleName,
 	const FString& NodeId)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("NiagaraScratchPadService.delete_node");
 	UNiagaraSystem* System = LoadSystem(SystemPath);
 	if (!System) return false;
 	FNiagaraEmitterHandle* Handle = FindEmitterHandle(System, EmitterName);
@@ -938,6 +946,7 @@ bool UNiagaraScratchPadService::SetNodePosition(
 	int32 PosX,
 	int32 PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("NiagaraScratchPadService.set_node_position");
 	UNiagaraSystem* System = LoadSystem(SystemPath);
 	if (!System) return false;
 	FNiagaraEmitterHandle* Handle = FindEmitterHandle(System, EmitterName);
@@ -966,6 +975,7 @@ bool UNiagaraScratchPadService::ConnectPins(
 	const FString& ToNodeId,
 	const FString& ToPin)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("NiagaraScratchPadService.connect_pins");
 	UNiagaraSystem* System = LoadSystem(SystemPath);
 	if (!System) return false;
 	FNiagaraEmitterHandle* Handle = FindEmitterHandle(System, EmitterName);
@@ -1002,6 +1012,7 @@ bool UNiagaraScratchPadService::DisconnectPin(
 	const FString& NodeId,
 	const FString& PinName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("NiagaraScratchPadService.disconnect_pin");
 	UNiagaraSystem* System = LoadSystem(SystemPath);
 	if (!System) return false;
 	FNiagaraEmitterHandle* Handle = FindEmitterHandle(System, EmitterName);
@@ -1070,6 +1081,7 @@ FNiagaraScratchResult UNiagaraScratchPadService::AddModuleInput(
 	const FString& InputName,
 	const FString& TypeName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("NiagaraScratchPadService.add_module_input");
 	FNiagaraScratchResult R;
 	UNiagaraSystem* System = LoadSystem(SystemPath);
 	if (!System) { R.Message = TEXT("System not found"); return R; }
@@ -1122,6 +1134,7 @@ FNiagaraScratchResult UNiagaraScratchPadService::AddModuleOutput(
 	const FString& OutputName,
 	const FString& TypeName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("NiagaraScratchPadService.add_module_output");
 	FNiagaraScratchResult R;
 	UNiagaraSystem* System = LoadSystem(SystemPath);
 	if (!System) { R.Message = TEXT("System not found"); return R; }
@@ -1275,6 +1288,7 @@ namespace
 
 bool UNiagaraScratchPadService::ApplyChanges(const FString& SystemPath)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("NiagaraScratchPadService.apply_changes");
 	UNiagaraSystem* System = LoadSystem(SystemPath);
 	if (!System) return false;
 

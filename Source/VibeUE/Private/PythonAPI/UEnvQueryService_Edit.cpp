@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UEnvQueryService.h"
+#include "Utils/VibeUEPIEGuard.h"
 
 #if WITH_VIBEUE_EQS
 
@@ -324,6 +325,7 @@ DEFINE_LOG_CATEGORY_STATIC(LogVibeEQSRepair, Log, All);
 
 FString UEnvQueryService::RepairGraphFromOptions(const FString& AssetPath)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("EnvQueryService.repair_graph_from_options");
 	if (AssetPath.IsEmpty())
 	{
 		return TEXT("AssetPath is empty");

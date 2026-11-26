@@ -338,6 +338,8 @@ with vibeue.gate_session(clients=3, net_mode="ListenServer"): ...               
   `editor_busy`: work that outlives a call, and waiting for compiles. Section 3.
 - `safe_load_level`, `safe_reload_level`, `python_holders_of_level`, `python_globals_holding`,
   `release_globals`: section 4.
+- `require_no_pie(operation)` raises `vibeue.PIEActiveError` ("PIE_ACTIVE: ... Stop PIE first") while PIE runs:
+  put it at the top of any script that imports, creates, edits or saves assets (section 8).
 - `set_prop_pie(obj, name, value)` writes without rerunning a live PIE actor's construction script;
   `get_prop(obj, name, default)` returns `default` on a protected property; `set_array_prop` copies, sets
   with notify and calls `modify()` (an in-place `append` marks nothing dirty).
@@ -377,6 +379,14 @@ with vibeue.gate_session(clients=3, net_mode="ListenServer"): ...               
 
 ## 8. Other gotchas
 
+- **No asset writes during PIE.** While PIE runs, `EditorAssetLibrary.load_asset` returns None: a script took
+  that for "missing", re-imported twelve textures over the real ones with default settings and left them dirty.
+  VibeUE's asset-writing service calls (create, add, set, remove, connect, compile ... on Blueprint, AnimGraph,
+  AnimMontage, AnimSequence, Input, SoundCue, StateTree, Skeleton, UV mapping, landscape-material, material-node,
+  Niagara scratch-pad, Mutable, BT / Blackboard / EQS repair and asset import / delete) refuse during PIE with one
+  message, "PIE_ACTIVE: <Service>.<call> refused: ... Stop PIE first"; their read-only calls keep working. Call
+  `vibeue.require_no_pie("what")` at the top of your own asset scripts, and read assets during PIE with
+  `unreal.load_object(None, "/Game/Path/Asset.Asset")` or `unreal.load_asset`.
 - A Python traceback proves the MCP link is up; only "Unable to connect" / ECONNREFUSED means it is down.
   A stuck call is usually a slow task or a modal: read the health file (section 3). The client timeout
   does not stop a script, and nothing records an abandoned run, so check the Output Log before re-running

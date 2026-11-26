@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UAnimGraphService.h"
+#include "Utils/VibeUEPIEGuard.h"
 #include "Utils/VibeUEToolError.h"
 
 #include "Animation/AnimBlueprint.h"
@@ -70,7 +71,7 @@ UAnimBlueprint* UAnimGraphService::LoadAnimBlueprint(const FString& AnimBlueprin
 		return nullptr;
 	}
 
-	UObject* LoadedObject = UEditorAssetLibrary::LoadAsset(AnimBlueprintPath);
+	UObject* LoadedObject = VibeUE::LoadAssetAnyState(AnimBlueprintPath);
 	if (!LoadedObject)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("UAnimGraphService::LoadAnimBlueprint: Failed to load: %s"), *AnimBlueprintPath);
@@ -915,7 +916,7 @@ bool UAnimGraphService::IsAnimBlueprint(const FString& AssetPath)
 		return false;
 	}
 
-	UObject* LoadedObject = UEditorAssetLibrary::LoadAsset(AssetPath);
+	UObject* LoadedObject = VibeUE::LoadAssetAnyState(AssetPath);
 	return Cast<UAnimBlueprint>(LoadedObject) != nullptr;
 }
 
@@ -925,6 +926,7 @@ bool UAnimGraphService::IsAnimBlueprint(const FString& AssetPath)
 
 FString UAnimGraphService::AddStateMachine(const FString& AnimBlueprintPath, const FString& MachineName, float PosX, float PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimGraphService.add_state_machine");
 	UAnimBlueprint* AnimBlueprint = LoadAnimBlueprint(AnimBlueprintPath);
 	if (!AnimBlueprint)
 	{
@@ -983,6 +985,7 @@ FString UAnimGraphService::AddStateMachine(const FString& AnimBlueprintPath, con
 FString UAnimGraphService::AddSequencePlayer(const FString& AnimBlueprintPath, const FString& GraphName, 
 	const FString& AnimSequencePath, float PosX, float PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimGraphService.add_sequence_player");
 	UAnimBlueprint* AnimBlueprint = LoadAnimBlueprint(AnimBlueprintPath);
 	if (!AnimBlueprint)
 	{
@@ -1011,7 +1014,7 @@ FString UAnimGraphService::AddSequencePlayer(const FString& AnimBlueprintPath, c
 	// Set animation sequence if provided
 	if (!AnimSequencePath.IsEmpty())
 	{
-		UAnimSequence* Sequence = Cast<UAnimSequence>(UEditorAssetLibrary::LoadAsset(AnimSequencePath));
+		UAnimSequence* Sequence = Cast<UAnimSequence>(VibeUE::LoadAssetAnyState(AnimSequencePath));
 		if (Sequence)
 		{
 			NewNode->Node.SetSequence(Sequence);
@@ -1032,6 +1035,7 @@ FString UAnimGraphService::AddSequencePlayer(const FString& AnimBlueprintPath, c
 FString UAnimGraphService::AddBlendSpacePlayer(const FString& AnimBlueprintPath, const FString& GraphName, 
 	const FString& BlendSpacePath, float PosX, float PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimGraphService.add_blend_space_player");
 	UAnimBlueprint* AnimBlueprint = LoadAnimBlueprint(AnimBlueprintPath);
 	if (!AnimBlueprint)
 	{
@@ -1060,7 +1064,7 @@ FString UAnimGraphService::AddBlendSpacePlayer(const FString& AnimBlueprintPath,
 	// Set blend space if provided
 	if (!BlendSpacePath.IsEmpty())
 	{
-		UBlendSpace* BlendSpace = Cast<UBlendSpace>(UEditorAssetLibrary::LoadAsset(BlendSpacePath));
+		UBlendSpace* BlendSpace = Cast<UBlendSpace>(VibeUE::LoadAssetAnyState(BlendSpacePath));
 		if (BlendSpace)
 		{
 			NewNode->Node.SetBlendSpace(BlendSpace);
@@ -1080,6 +1084,7 @@ FString UAnimGraphService::AddBlendSpacePlayer(const FString& AnimBlueprintPath,
 
 FString UAnimGraphService::AddBlendByBool(const FString& AnimBlueprintPath, const FString& GraphName, float PosX, float PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimGraphService.add_blend_by_bool");
 	UAnimBlueprint* AnimBlueprint = LoadAnimBlueprint(AnimBlueprintPath);
 	if (!AnimBlueprint)
 	{
@@ -1113,6 +1118,7 @@ FString UAnimGraphService::AddBlendByBool(const FString& AnimBlueprintPath, cons
 
 FString UAnimGraphService::AddBlendByInt(const FString& AnimBlueprintPath, const FString& GraphName, int32 NumPoses, float PosX, float PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimGraphService.add_blend_by_int");
 	UAnimBlueprint* AnimBlueprint = LoadAnimBlueprint(AnimBlueprintPath);
 	if (!AnimBlueprint)
 	{
@@ -1153,6 +1159,7 @@ FString UAnimGraphService::AddBlendByInt(const FString& AnimBlueprintPath, const
 
 FString UAnimGraphService::AddLayeredBlend(const FString& AnimBlueprintPath, const FString& GraphName, float PosX, float PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimGraphService.add_layered_blend");
 	UAnimBlueprint* AnimBlueprint = LoadAnimBlueprint(AnimBlueprintPath);
 	if (!AnimBlueprint)
 	{
@@ -1187,6 +1194,7 @@ FString UAnimGraphService::AddLayeredBlend(const FString& AnimBlueprintPath, con
 FString UAnimGraphService::AddSlotNode(const FString& AnimBlueprintPath, const FString& GraphName, 
 	const FString& SlotName, float PosX, float PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimGraphService.add_slot_node");
 	UAnimBlueprint* AnimBlueprint = LoadAnimBlueprint(AnimBlueprintPath);
 	if (!AnimBlueprint)
 	{
@@ -1222,6 +1230,7 @@ FString UAnimGraphService::AddSlotNode(const FString& AnimBlueprintPath, const F
 FString UAnimGraphService::AddSaveCachedPose(const FString& AnimBlueprintPath, const FString& GraphName, 
 	const FString& CacheName, float PosX, float PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimGraphService.add_save_cached_pose");
 	UAnimBlueprint* AnimBlueprint = LoadAnimBlueprint(AnimBlueprintPath);
 	if (!AnimBlueprint)
 	{
@@ -1257,6 +1266,7 @@ FString UAnimGraphService::AddSaveCachedPose(const FString& AnimBlueprintPath, c
 FString UAnimGraphService::AddUseCachedPose(const FString& AnimBlueprintPath, const FString& GraphName, 
 	const FString& CacheName, float PosX, float PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimGraphService.add_use_cached_pose");
 	UAnimBlueprint* AnimBlueprint = LoadAnimBlueprint(AnimBlueprintPath);
 	if (!AnimBlueprint)
 	{
@@ -1323,6 +1333,7 @@ FString UAnimGraphService::AddUseCachedPose(const FString& AnimBlueprintPath, co
 FString UAnimGraphService::AddState(const FString& AnimBlueprintPath, const FString& StateMachineName, 
 	const FString& StateName, float PosX, float PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimGraphService.add_state");
 	UAnimBlueprint* AnimBlueprint = LoadAnimBlueprint(AnimBlueprintPath);
 	if (!AnimBlueprint)
 	{
@@ -1377,6 +1388,7 @@ FString UAnimGraphService::AddState(const FString& AnimBlueprintPath, const FStr
 FString UAnimGraphService::AddConduit(const FString& AnimBlueprintPath, const FString& StateMachineName, 
 	const FString& ConduitName, float PosX, float PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimGraphService.add_conduit");
 	UAnimBlueprint* AnimBlueprint = LoadAnimBlueprint(AnimBlueprintPath);
 	if (!AnimBlueprint)
 	{
@@ -1431,6 +1443,7 @@ FString UAnimGraphService::AddConduit(const FString& AnimBlueprintPath, const FS
 FString UAnimGraphService::AddTransition(const FString& AnimBlueprintPath, const FString& StateMachineName, 
 	const FString& SourceStateName, const FString& DestStateName, float BlendDuration)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimGraphService.add_transition");
 	UAnimBlueprint* AnimBlueprint = LoadAnimBlueprint(AnimBlueprintPath);
 	if (!AnimBlueprint)
 	{
@@ -1514,6 +1527,7 @@ FString UAnimGraphService::AddTransition(const FString& AnimBlueprintPath, const
 bool UAnimGraphService::RemoveState(const FString& AnimBlueprintPath, const FString& StateMachineName, 
 	const FString& StateName, bool bRemoveTransitions)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimGraphService.remove_state");
 	UAnimBlueprint* AnimBlueprint = LoadAnimBlueprint(AnimBlueprintPath);
 	if (!AnimBlueprint)
 	{
@@ -1569,6 +1583,7 @@ bool UAnimGraphService::RemoveState(const FString& AnimBlueprintPath, const FStr
 bool UAnimGraphService::RemoveTransition(const FString& AnimBlueprintPath, const FString& StateMachineName, 
 	const FString& SourceStateName, const FString& DestStateName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimGraphService.remove_transition");
 	UAnimBlueprint* AnimBlueprint = LoadAnimBlueprint(AnimBlueprintPath);
 	if (!AnimBlueprint)
 	{
@@ -1606,6 +1621,7 @@ bool UAnimGraphService::RemoveTransition(const FString& AnimBlueprintPath, const
 bool UAnimGraphService::ConnectAnimNodes(const FString& AnimBlueprintPath, const FString& GraphName, 
 	const FString& SourceNodeId, const FString& SourcePinName, const FString& TargetNodeId, const FString& TargetPinName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimGraphService.connect_anim_nodes");
 	UAnimBlueprint* AnimBlueprint = LoadAnimBlueprint(AnimBlueprintPath);
 	if (!AnimBlueprint)
 	{
@@ -1728,6 +1744,7 @@ bool UAnimGraphService::ConnectAnimNodes(const FString& AnimBlueprintPath, const
 bool UAnimGraphService::ConnectToOutputPose(const FString& AnimBlueprintPath, const FString& GraphName, 
 	const FString& SourceNodeId, const FString& SourcePinName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimGraphService.connect_to_output_pose");
 	FString OutputNodeId = GetOutputPoseNodeId(AnimBlueprintPath, GraphName);
 	if (OutputNodeId.IsEmpty())
 	{
@@ -1741,6 +1758,7 @@ bool UAnimGraphService::ConnectToOutputPose(const FString& AnimBlueprintPath, co
 bool UAnimGraphService::DisconnectAnimNode(const FString& AnimBlueprintPath, const FString& GraphName, 
 	const FString& NodeId, const FString& PinName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimGraphService.disconnect_anim_node");
 	UAnimBlueprint* AnimBlueprint = LoadAnimBlueprint(AnimBlueprintPath);
 	if (!AnimBlueprint)
 	{
@@ -1822,6 +1840,7 @@ FString UAnimGraphService::GetOutputPoseNodeId(const FString& AnimBlueprintPath,
 bool UAnimGraphService::SetSequencePlayerAsset(const FString& AnimBlueprintPath, const FString& GraphName, 
 	const FString& NodeId, const FString& AnimSequencePath)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimGraphService.set_sequence_player_asset");
 	UAnimBlueprint* AnimBlueprint = LoadAnimBlueprint(AnimBlueprintPath);
 	if (!AnimBlueprint)
 	{
@@ -1858,7 +1877,7 @@ bool UAnimGraphService::SetSequencePlayerAsset(const FString& AnimBlueprintPath,
 	}
 
 	// Load sequence
-	UAnimSequence* Sequence = Cast<UAnimSequence>(UEditorAssetLibrary::LoadAsset(AnimSequencePath));
+	UAnimSequence* Sequence = Cast<UAnimSequence>(VibeUE::LoadAssetAnyState(AnimSequencePath));
 	if (!Sequence)
 	{
 		UE_LOG(LogTemp, Error, TEXT("SetSequencePlayerAsset: Could not load sequence '%s'"), *AnimSequencePath);
@@ -1875,6 +1894,7 @@ bool UAnimGraphService::SetSequencePlayerAsset(const FString& AnimBlueprintPath,
 bool UAnimGraphService::SetBlendSpaceAsset(const FString& AnimBlueprintPath, const FString& GraphName, 
 	const FString& NodeId, const FString& BlendSpacePath)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimGraphService.set_blend_space_asset");
 	UAnimBlueprint* AnimBlueprint = LoadAnimBlueprint(AnimBlueprintPath);
 	if (!AnimBlueprint)
 	{
@@ -1911,7 +1931,7 @@ bool UAnimGraphService::SetBlendSpaceAsset(const FString& AnimBlueprintPath, con
 	}
 
 	// Load blend space
-	UBlendSpace* BlendSpace = Cast<UBlendSpace>(UEditorAssetLibrary::LoadAsset(BlendSpacePath));
+	UBlendSpace* BlendSpace = Cast<UBlendSpace>(VibeUE::LoadAssetAnyState(BlendSpacePath));
 	if (!BlendSpace)
 	{
 		UE_LOG(LogTemp, Error, TEXT("SetBlendSpaceAsset: Could not load blend space '%s'"), *BlendSpacePath);
@@ -1985,6 +2005,7 @@ FString UAnimGraphService::GetNodeAnimationAsset(const FString& AnimBlueprintPat
 FString UAnimGraphService::AddTwoBoneIKNode(const FString& AnimBlueprintPath, const FString& GraphName, 
 	float PosX, float PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimGraphService.add_two_bone_ik_node");
 	UAnimBlueprint* AnimBlueprint = LoadAnimBlueprint(AnimBlueprintPath);
 	if (!AnimBlueprint)
 	{
@@ -2019,6 +2040,7 @@ FString UAnimGraphService::AddTwoBoneIKNode(const FString& AnimBlueprintPath, co
 FString UAnimGraphService::AddModifyBoneNode(const FString& AnimBlueprintPath, const FString& GraphName, 
 	const FString& BoneName, float PosX, float PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimGraphService.add_modify_bone_node");
 	UAnimBlueprint* AnimBlueprint = LoadAnimBlueprint(AnimBlueprintPath);
 	if (!AnimBlueprint)
 	{
@@ -2343,6 +2365,7 @@ void UAnimGraphService::DescribeTransitionRule(UAnimStateTransitionNode* Transit
 
 bool UAnimGraphService::SetEntryState(const FString& AnimBlueprintPath, const FString& StateMachineName, const FString& StateName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimGraphService.set_entry_state");
 	UAnimBlueprint* AnimBlueprint = LoadAnimBlueprint(AnimBlueprintPath);
 	if (!AnimBlueprint)
 	{
@@ -2389,6 +2412,7 @@ bool UAnimGraphService::SetEntryState(const FString& AnimBlueprintPath, const FS
 bool UAnimGraphService::SetTransitionPriority(const FString& AnimBlueprintPath, const FString& StateMachineName,
 	const FString& SourceStateName, const FString& DestStateName, int32 Priority)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimGraphService.set_transition_priority");
 	UAnimBlueprint* AnimBlueprint = nullptr;
 	UAnimStateTransitionNode* Transition = ResolveTransition(AnimBlueprintPath, StateMachineName, SourceStateName, DestStateName, AnimBlueprint);
 	if (!Transition || !AnimBlueprint)
@@ -2406,6 +2430,7 @@ bool UAnimGraphService::SetTransitionPriority(const FString& AnimBlueprintPath, 
 bool UAnimGraphService::SetTransitionBlend(const FString& AnimBlueprintPath, const FString& StateMachineName,
 	const FString& SourceStateName, const FString& DestStateName, float BlendDuration, const FString& BlendMode)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimGraphService.set_transition_blend");
 	UAnimBlueprint* AnimBlueprint = nullptr;
 	UAnimStateTransitionNode* Transition = ResolveTransition(AnimBlueprintPath, StateMachineName, SourceStateName, DestStateName, AnimBlueprint);
 	if (!Transition || !AnimBlueprint)
@@ -2428,6 +2453,7 @@ bool UAnimGraphService::SetTransitionBlend(const FString& AnimBlueprintPath, con
 bool UAnimGraphService::SetTransitionRuleFromBool(const FString& AnimBlueprintPath, const FString& StateMachineName,
 	const FString& SourceStateName, const FString& DestStateName, const FString& BoolVariableName, bool bInvert)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimGraphService.set_transition_rule_from_bool");
 	UAnimBlueprint* AnimBlueprint = nullptr;
 	UAnimStateTransitionNode* Transition = ResolveTransition(AnimBlueprintPath, StateMachineName, SourceStateName, DestStateName, AnimBlueprint);
 	if (!Transition || !AnimBlueprint)
@@ -2511,6 +2537,7 @@ bool UAnimGraphService::SetTransitionRuleFromBool(const FString& AnimBlueprintPa
 bool UAnimGraphService::SetTransitionRuleComparison(const FString& AnimBlueprintPath, const FString& StateMachineName,
 	const FString& SourceStateName, const FString& DestStateName, const FString& FloatVariableName, const FString& Comparison, float Threshold)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimGraphService.set_transition_rule_comparison");
 	const FString FnName = ComparisonToFunctionName(Comparison);
 	if (FnName.IsEmpty())
 	{
@@ -2599,6 +2626,7 @@ bool UAnimGraphService::SetTransitionRuleComparison(const FString& AnimBlueprint
 bool UAnimGraphService::SetTransitionRuleAutomatic(const FString& AnimBlueprintPath, const FString& StateMachineName,
 	const FString& SourceStateName, const FString& DestStateName, float TriggerTime)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimGraphService.set_transition_rule_automatic");
 	UAnimBlueprint* AnimBlueprint = nullptr;
 	UAnimStateTransitionNode* Transition = ResolveTransition(AnimBlueprintPath, StateMachineName, SourceStateName, DestStateName, AnimBlueprint);
 	if (!Transition || !AnimBlueprint)
@@ -2619,6 +2647,7 @@ bool UAnimGraphService::SetTransitionRuleAutomatic(const FString& AnimBlueprintP
 bool UAnimGraphService::ClearTransitionRule(const FString& AnimBlueprintPath, const FString& StateMachineName,
 	const FString& SourceStateName, const FString& DestStateName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimGraphService.clear_transition_rule");
 	UAnimBlueprint* AnimBlueprint = nullptr;
 	UAnimStateTransitionNode* Transition = ResolveTransition(AnimBlueprintPath, StateMachineName, SourceStateName, DestStateName, AnimBlueprint);
 	if (!Transition || !AnimBlueprint)
@@ -2640,6 +2669,7 @@ bool UAnimGraphService::ClearTransitionRule(const FString& AnimBlueprintPath, co
 FString UAnimGraphService::SetStateAnimation(const FString& AnimBlueprintPath, const FString& StateMachineName,
 	const FString& StateName, const FString& AnimSequencePath, bool bLoop, float PlayRate)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimGraphService.set_state_animation");
 	UAnimBlueprint* AnimBlueprint = LoadAnimBlueprint(AnimBlueprintPath);
 	if (!AnimBlueprint)
 	{
@@ -2667,7 +2697,7 @@ FString UAnimGraphService::SetStateAnimation(const FString& AnimBlueprintPath, c
 		return FString();
 	}
 
-	UAnimSequence* Sequence = Cast<UAnimSequence>(UEditorAssetLibrary::LoadAsset(AnimSequencePath));
+	UAnimSequence* Sequence = Cast<UAnimSequence>(VibeUE::LoadAssetAnyState(AnimSequencePath));
 	if (!Sequence)
 	{
 		UE_LOG(LogTemp, Error, TEXT("SetStateAnimation: could not load sequence '%s'"), *AnimSequencePath);
@@ -2734,6 +2764,7 @@ FString UAnimGraphService::SetStateAnimation(const FString& AnimBlueprintPath, c
 FString UAnimGraphService::BuildStateMachine(const FString& AnimBlueprintPath, const FString& StateMachineName,
 	const FString& SpecJson, float PosX, float PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimGraphService.build_state_machine");
 	TArray<FString> Errors;
 	int32 StatesCreated = 0;
 	int32 TransitionsCreated = 0;

@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UAssetDiscoveryService.h"
+#include "Utils/VibeUEPIEGuard.h"
 #include "Utils/VibeUEToolError.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
@@ -189,6 +190,7 @@ FString UAssetDiscoveryService::ImportAsset(
 	const FString& AssetName,
 	FString& OutError)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AssetDiscoveryService.import_asset");
 	OutError.Empty();
 
 	if (SourceFilePath.IsEmpty() || DestinationFolder.IsEmpty())
@@ -303,6 +305,7 @@ FString UAssetDiscoveryService::ImportAsset(
 
 FFreshMeshImportResult UAssetDiscoveryService::ImportMeshIntoFreshFolder(const FString& SourceFilePath, const FString& DestinationFolder)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AssetDiscoveryService.import_mesh_into_fresh_folder");
 	FFreshMeshImportResult Result;
 	FString Folder = DestinationFolder;
 	Folder.RemoveFromEnd(TEXT("/"));
@@ -404,6 +407,7 @@ bool UAssetDiscoveryService::ReimportAsset(
 	FString& OutSourceFileUsed,
 	FString& OutError)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AssetDiscoveryService.reimport_asset");
 	OutSourceFileUsed.Empty();
 	OutError.Empty();
 
@@ -419,7 +423,7 @@ bool UAssetDiscoveryService::ReimportAsset(
 		return false;
 	}
 
-	UObject* Asset = UEditorAssetLibrary::LoadAsset(AssetPath);
+	UObject* Asset = VibeUE::LoadAssetAnyState(AssetPath);
 	if (!Asset)
 	{
 		OutError = FString::Printf(TEXT("Asset was not found or could not be loaded: %s"), *AssetPath);
@@ -598,11 +602,7 @@ namespace VibeUETextureExport
 				return Found;
 			}
 		}
-		if (UEditorAssetLibrary::DoesAssetExist(AssetPath))
-		{
-			return UEditorAssetLibrary::LoadAsset(AssetPath);
-		}
-		return nullptr;
+		return VibeUE::LoadAssetAnyState(AssetPath);   // PIE-safe (#705)
 	}
 }
 
@@ -764,7 +764,7 @@ namespace VibeUEMeshSummary
 FVibeUEMeshSummary UAssetDiscoveryService::MeshSummary(const FString& MeshPath)
 {
 	FVibeUEMeshSummary Summary;
-	UObject* Loaded = UEditorAssetLibrary::DoesAssetExist(MeshPath) ? UEditorAssetLibrary::LoadAsset(MeshPath) : nullptr;
+	UObject* Loaded = VibeUE::LoadAssetAnyState(MeshPath);   // PIE-safe (#705)
 	UStaticMesh* Mesh = Cast<UStaticMesh>(Loaded);
 	if (!Mesh)
 	{
@@ -858,6 +858,7 @@ FString UAssetDiscoveryService::ExportTexture(const FString& AssetPath, const FS
 
 FUnattendedDeleteResult UAssetDiscoveryService::DeleteAssetUnattended(const FString& AssetPath, bool bForceEvenIfReferenced)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AssetDiscoveryService.delete_asset_unattended");
 	FUnattendedDeleteResult Result;
 	if (AssetPath.IsEmpty())
 	{
@@ -900,7 +901,7 @@ FUnattendedDeleteResult UAssetDiscoveryService::DeleteAssetUnattended(const FStr
 			Result.Referencers.Add(ReferencerString);
 		}
 	}
-	UObject* Asset = UEditorAssetLibrary::LoadAsset(AssetPath);
+	UObject* Asset = VibeUE::LoadAssetAnyState(AssetPath);
 	if (!Asset)
 	{
 		Result.ErrorMessage = FString::Printf(TEXT("Failed to load asset: %s"), *AssetPath);

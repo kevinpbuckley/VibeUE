@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UNiagaraEmitterService.h"
+#include "Utils/VibeUEPIEGuard.h"
 #include "NiagaraSystem.h"
 #include "NiagaraEmitter.h"
 #include "NiagaraEmitterHandle.h"
@@ -43,7 +44,7 @@ UNiagaraSystem* UNiagaraEmitterService::LoadNiagaraSystem(const FString& SystemP
 		return nullptr;
 	}
 
-	UObject* LoadedObject = UEditorAssetLibrary::LoadAsset(SystemPath);
+	UObject* LoadedObject = VibeUE::LoadAssetAnyState(SystemPath);
 	if (!LoadedObject)
 	{
 		return nullptr;
@@ -346,6 +347,7 @@ bool UNiagaraEmitterService::ShiftColorHue(
 	float HueShiftDegrees,
 	const FString& ModuleName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("NiagaraEmitterService.shift_color_hue");
 	UNiagaraSystem* System = LoadNiagaraSystem(SystemPath);
 	if (!System)
 	{

@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UCustomizableObjectService.h"
+#include "Utils/VibeUEPIEGuard.h"
 
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetToolsModule.h"
@@ -102,6 +103,7 @@ bool UCustomizableObjectService::IsMutableAvailable()
 
 FVibeCOEditResult UCustomizableObjectService::CreateCustomizableObject(const FString& AssetPath)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("CustomizableObjectService.create_customizable_object");
 	FVibeCOEditResult Result;
 	Result.Error = VibeCO::CheckAvailable();
 	if (Result.Error.IsEmpty())

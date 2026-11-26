@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UAnimMontageService.h"
+#include "Utils/VibeUEPIEGuard.h"
 #include "Utils/VibeUEToolError.h"
 
 #include "Animation/AnimMontage.h"
@@ -57,7 +58,7 @@ UAnimMontage* UAnimMontageService::LoadMontage(const FString& MontagePath)
 		return nullptr;
 	}
 
-	UObject* LoadedObject = UEditorAssetLibrary::LoadAsset(MontagePath);
+	UObject* LoadedObject = VibeUE::LoadAssetAnyState(MontagePath);
 	if (!LoadedObject)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("UAnimMontageService::LoadMontage: Failed to load: %s"), *MontagePath);
@@ -272,7 +273,7 @@ TArray<FMontageInfo> UAnimMontageService::FindMontagesUsingAnimation(const FStri
 {
 	TArray<FMontageInfo> Results;
 
-	UAnimSequence* AnimSeq = Cast<UAnimSequence>(UEditorAssetLibrary::LoadAsset(AnimSequencePath));
+	UAnimSequence* AnimSeq = Cast<UAnimSequence>(VibeUE::LoadAssetAnyState(AnimSequencePath));
 	if (!AnimSeq) return Results;
 
 	TArray<FMontageInfo> AllMontages = ListMontages();
@@ -403,6 +404,7 @@ bool UAnimMontageService::AddSection(
 	const FString& SectionName,
 	float StartTime)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimMontageService.add_section");
 	UAnimMontage* Montage = LoadMontage(MontagePath);
 	if (!Montage)
 	{
@@ -441,6 +443,7 @@ bool UAnimMontageService::AddSection(
 
 bool UAnimMontageService::RemoveSection(const FString& MontagePath, const FString& SectionName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimMontageService.remove_section");
 	UAnimMontage* Montage = LoadMontage(MontagePath);
 	if (!Montage) return false;
 
@@ -474,6 +477,7 @@ bool UAnimMontageService::RenameSection(
 	const FString& OldName,
 	const FString& NewName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimMontageService.rename_section");
 	UAnimMontage* Montage = LoadMontage(MontagePath);
 	if (!Montage) return false;
 
@@ -508,6 +512,7 @@ bool UAnimMontageService::SetSectionStartTime(
 	const FString& SectionName,
 	float NewStartTime)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimMontageService.set_section_start_time");
 	UAnimMontage* Montage = LoadMontage(MontagePath);
 	if (!Montage) return false;
 
@@ -569,6 +574,7 @@ bool UAnimMontageService::SetNextSection(
 	const FString& SectionName,
 	const FString& NextSectionName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimMontageService.set_next_section");
 	UAnimMontage* Montage = LoadMontage(MontagePath);
 	if (!Montage) return false;
 
@@ -609,6 +615,7 @@ bool UAnimMontageService::SetSectionLoop(
 	const FString& SectionName,
 	bool bLoop)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimMontageService.set_section_loop");
 	if (bLoop)
 	{
 		return SetNextSection(MontagePath, SectionName, SectionName);
@@ -643,6 +650,7 @@ TArray<FSectionLink> UAnimMontageService::GetAllSectionLinks(const FString& Mont
 
 bool UAnimMontageService::ClearSectionLink(const FString& MontagePath, const FString& SectionName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimMontageService.clear_section_link");
 	return SetNextSection(MontagePath, SectionName, TEXT(""));
 }
 
@@ -708,6 +716,7 @@ bool UAnimMontageService::GetSlotTrackInfo(
 
 int32 UAnimMontageService::AddSlotTrack(const FString& MontagePath, const FString& SlotName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimMontageService.add_slot_track");
 	UAnimMontage* Montage = LoadMontage(MontagePath);
 	if (!Montage) return -1;
 
@@ -724,6 +733,7 @@ int32 UAnimMontageService::AddSlotTrack(const FString& MontagePath, const FStrin
 
 bool UAnimMontageService::RemoveSlotTrack(const FString& MontagePath, int32 TrackIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimMontageService.remove_slot_track");
 	UAnimMontage* Montage = LoadMontage(MontagePath);
 	if (!Montage) return false;
 
@@ -752,6 +762,7 @@ bool UAnimMontageService::SetSlotName(
 	int32 TrackIndex,
 	const FString& NewSlotName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimMontageService.set_slot_name");
 	UAnimMontage* Montage = LoadMontage(MontagePath);
 	if (!Montage) return false;
 
@@ -860,6 +871,7 @@ int32 UAnimMontageService::AddAnimSegment(
 	float StartTime,
 	float PlayRate)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimMontageService.add_anim_segment");
 	UAnimMontage* Montage = LoadMontage(MontagePath);
 	if (!Montage) return -1;
 
@@ -869,7 +881,7 @@ int32 UAnimMontageService::AddAnimSegment(
 		return -1;
 	}
 
-	UAnimSequence* AnimSeq = Cast<UAnimSequence>(UEditorAssetLibrary::LoadAsset(AnimSequencePath));
+	UAnimSequence* AnimSeq = Cast<UAnimSequence>(VibeUE::LoadAssetAnyState(AnimSequencePath));
 	if (!AnimSeq)
 	{
 		UE_LOG(LogTemp, Error, TEXT("UAnimMontageService::AddAnimSegment: Failed to load animation '%s'"), *AnimSequencePath);
@@ -914,6 +926,7 @@ bool UAnimMontageService::RemoveAnimSegment(
 	int32 TrackIndex,
 	int32 SegmentIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimMontageService.remove_anim_segment");
 	UAnimMontage* Montage = LoadMontage(MontagePath);
 	if (!Montage) return false;
 
@@ -944,6 +957,7 @@ bool UAnimMontageService::SetSegmentStartTime(
 	int32 SegmentIndex,
 	float NewStartTime)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimMontageService.set_segment_start_time");
 	UAnimMontage* Montage = LoadMontage(MontagePath);
 	if (!Montage) return false;
 
@@ -962,6 +976,7 @@ bool UAnimMontageService::SetSegmentPlayRate(
 	int32 SegmentIndex,
 	float PlayRate)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimMontageService.set_segment_play_rate");
 	UAnimMontage* Montage = LoadMontage(MontagePath);
 	if (!Montage) return false;
 
@@ -980,6 +995,7 @@ bool UAnimMontageService::SetSegmentStartPosition(
 	int32 SegmentIndex,
 	float AnimStartPos)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimMontageService.set_segment_start_position");
 	UAnimMontage* Montage = LoadMontage(MontagePath);
 	if (!Montage) return false;
 
@@ -998,6 +1014,7 @@ bool UAnimMontageService::SetSegmentEndPosition(
 	int32 SegmentIndex,
 	float AnimEndPos)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimMontageService.set_segment_end_position");
 	UAnimMontage* Montage = LoadMontage(MontagePath);
 	if (!Montage) return false;
 
@@ -1016,6 +1033,7 @@ bool UAnimMontageService::SetSegmentLoopCount(
 	int32 SegmentIndex,
 	int32 LoopCount)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimMontageService.set_segment_loop_count");
 	UAnimMontage* Montage = LoadMontage(MontagePath);
 	if (!Montage) return false;
 
@@ -1080,6 +1098,7 @@ int32 UAnimMontageService::AddNotify(
 	float TriggerTime,
 	const FString& NotifyName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimMontageService.add_notify");
 	UAnimMontage* Montage = LoadMontage(MontagePath);
 	if (!Montage) return -1;
 
@@ -1130,6 +1149,7 @@ int32 UAnimMontageService::AddNotifyState(
 	float Duration,
 	const FString& NotifyName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimMontageService.add_notify_state");
 	UAnimMontage* Montage = LoadMontage(MontagePath);
 	if (!Montage) return -1;
 
@@ -1176,6 +1196,7 @@ int32 UAnimMontageService::AddNotifyState(
 
 bool UAnimMontageService::RemoveNotify(const FString& MontagePath, int32 NotifyIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimMontageService.remove_notify");
 	UAnimMontage* Montage = LoadMontage(MontagePath);
 	if (!Montage) return false;
 
@@ -1199,6 +1220,7 @@ bool UAnimMontageService::SetNotifyTriggerTime(
 	int32 NotifyIndex,
 	float NewTime)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimMontageService.set_notify_trigger_time");
 	UAnimMontage* Montage = LoadMontage(MontagePath);
 	if (!Montage) return false;
 
@@ -1218,6 +1240,7 @@ bool UAnimMontageService::SetNotifyLinkToSection(
 	int32 NotifyIndex,
 	const FString& SectionName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimMontageService.set_notify_link_to_section");
 	UAnimMontage* Montage = LoadMontage(MontagePath);
 	if (!Montage) return false;
 
@@ -1289,6 +1312,7 @@ int32 UAnimMontageService::AddBranchingPoint(
 	const FString& NotifyName,
 	float TriggerTime)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimMontageService.add_branching_point");
 	UAnimMontage* Montage = LoadMontage(MontagePath);
 	if (!Montage) return -1;
 
@@ -1324,6 +1348,7 @@ int32 UAnimMontageService::AddBranchingPoint(
 
 bool UAnimMontageService::RemoveBranchingPoint(const FString& MontagePath, int32 Index)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimMontageService.remove_branching_point");
 	UAnimMontage* Montage = LoadMontage(MontagePath);
 	if (!Montage) return false;
 
@@ -1376,6 +1401,7 @@ bool UAnimMontageService::GetEnableRootMotionTranslation(const FString& MontageP
 
 bool UAnimMontageService::SetEnableRootMotionTranslation(const FString& MontagePath, bool bEnable)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimMontageService.set_enable_root_motion_translation");
 	UAnimMontage* Montage = LoadMontage(MontagePath);
 	if (!Montage) return false;
 
@@ -1396,6 +1422,7 @@ bool UAnimMontageService::GetEnableRootMotionRotation(const FString& MontagePath
 
 bool UAnimMontageService::SetEnableRootMotionRotation(const FString& MontagePath, bool bEnable)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimMontageService.set_enable_root_motion_rotation");
 	UAnimMontage* Montage = LoadMontage(MontagePath);
 	if (!Montage) return false;
 
@@ -1447,8 +1474,9 @@ FString UAnimMontageService::CreateMontageFromAnimation(
 	const FString& DestPath,
 	const FString& MontageName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimMontageService.create_montage_from_animation");
 	// Load animation sequence
-	UAnimSequence* AnimSeq = Cast<UAnimSequence>(UEditorAssetLibrary::LoadAsset(AnimSequencePath));
+	UAnimSequence* AnimSeq = Cast<UAnimSequence>(VibeUE::LoadAssetAnyState(AnimSequencePath));
 	if (!AnimSeq)
 	{
 		UE_LOG(LogTemp, Error, TEXT("UAnimMontageService::CreateMontageFromAnimation: Failed to load animation '%s'"),
@@ -1517,8 +1545,9 @@ FString UAnimMontageService::CreateEmptyMontage(
 	const FString& DestPath,
 	const FString& MontageName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimMontageService.create_empty_montage");
 	// Load skeleton
-	USkeleton* Skeleton = Cast<USkeleton>(UEditorAssetLibrary::LoadAsset(SkeletonPath));
+	USkeleton* Skeleton = Cast<USkeleton>(VibeUE::LoadAssetAnyState(SkeletonPath));
 	if (!Skeleton)
 	{
 		UE_LOG(LogTemp, Error, TEXT("UAnimMontageService::CreateEmptyMontage: Failed to load skeleton '%s'"),

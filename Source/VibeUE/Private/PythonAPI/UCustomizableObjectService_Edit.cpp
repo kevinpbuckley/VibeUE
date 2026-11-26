@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UCustomizableObjectService.h"
+#include "Utils/VibeUEPIEGuard.h"
 
 #include "CustomizableObjectServiceInternal.h"
 #include "Dom/JsonObject.h"
@@ -64,6 +65,7 @@ namespace
 FVibeCOEditResult UCustomizableObjectService::AddNode(const FString& AssetPath, const FString& NodeClass,
 	int32 PosX, int32 PosY, const FString& PropertiesJson)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("CustomizableObjectService.add_node");
 	FVibeCOEditResult Result;
 	UObject* Object = nullptr;
 	UEdGraph* Graph = nullptr;
@@ -136,6 +138,7 @@ FVibeCOEditResult UCustomizableObjectService::AddNode(const FString& AssetPath, 
 
 FVibeCOEditResult UCustomizableObjectService::RemoveNode(const FString& AssetPath, const FString& NodeId)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("CustomizableObjectService.remove_node");
 	FVibeCOEditResult Result;
 	UObject* Object = nullptr;
 	UEdGraph* Graph = nullptr;
@@ -180,6 +183,7 @@ FVibeCOEditResult UCustomizableObjectService::RemoveNode(const FString& AssetPat
 FVibeCOEditResult UCustomizableObjectService::SetNodePosition(const FString& AssetPath, const FString& NodeId,
 	int32 PosX, int32 PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("CustomizableObjectService.set_node_position");
 	FVibeCOEditResult Result;
 	UObject* Object = nullptr;
 	UEdGraph* Graph = nullptr;
@@ -208,6 +212,7 @@ FVibeCOEditResult UCustomizableObjectService::SetNodePosition(const FString& Ass
 FVibeCOEditResult UCustomizableObjectService::ConnectPins(const FString& AssetPath, const FString& FromNodeId,
 	const FString& FromPin, const FString& ToNodeId, const FString& ToPin)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("CustomizableObjectService.connect_pins");
 	FVibeCOEditResult Result;
 	UObject* Object = nullptr;
 	UEdGraph* Graph = nullptr;
@@ -311,6 +316,7 @@ FVibeCOEditResult UCustomizableObjectService::ConnectPins(const FString& AssetPa
 FVibeCOEditResult UCustomizableObjectService::DisconnectPins(const FString& AssetPath, const FString& NodeId,
 	const FString& PinName, const FString& OtherNodeId, const FString& OtherPin)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("CustomizableObjectService.disconnect_pins");
 	FVibeCOEditResult Result;
 	UObject* Object = nullptr;
 	UEdGraph* Graph = nullptr;
@@ -387,6 +393,7 @@ FVibeCOEditResult UCustomizableObjectService::DisconnectPins(const FString& Asse
 FVibeCOEditResult UCustomizableObjectService::SetNodeProperty(const FString& AssetPath, const FString& NodeId,
 	const FString& PropertyName, const FString& Value)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("CustomizableObjectService.set_node_property");
 	FVibeCOEditResult Result;
 	UObject* Object = nullptr;
 	UEdGraph* Graph = nullptr;
@@ -435,6 +442,7 @@ FVibeCOEditResult UCustomizableObjectService::SetNodeProperty(const FString& Ass
 
 FVibeCOEditResult UCustomizableObjectService::RefreshNode(const FString& AssetPath, const FString& NodeId)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("CustomizableObjectService.refresh_node");
 	FVibeCOEditResult Result;
 	UObject* Object = nullptr;
 	UEdGraph* Graph = nullptr;
@@ -463,6 +471,7 @@ FVibeCOEditResult UCustomizableObjectService::RefreshNode(const FString& AssetPa
 FVibeCOEditResult UCustomizableObjectService::SetParentObject(const FString& ChildAssetPath,
 	const FString& ParentAssetPath, const FString& GroupNodeId)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("CustomizableObjectService.set_parent_object");
 	FVibeCOEditResult Result;
 	UObject* Child = nullptr;
 	UEdGraph* ChildGraph = nullptr;
@@ -546,6 +555,7 @@ FVibeCOEditResult UCustomizableObjectService::SetParentObject(const FString& Chi
 FVibeCOCompileResult UCustomizableObjectService::CompileObject(const FString& AssetPath,
 	const FString& OptimizationLevel, const FString& TextureCompression)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("CustomizableObjectService.compile_object");
 	FVibeCOCompileResult Result;
 	Result.State = TEXT("Failed");
 	UObject* Object = nullptr;

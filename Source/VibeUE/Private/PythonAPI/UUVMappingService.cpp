@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UUVMappingService.h"
+#include "Utils/VibeUEPIEGuard.h"
 #include "Utils/VibeUEToolError.h"
 
 #include "Engine/StaticMesh.h"
@@ -53,19 +54,19 @@ FUVMappingResult UUVMappingService::MakeSuccess(const FString& MeshPath, const F
 
 UStaticMesh* UUVMappingService::LoadStaticMeshAsset(const FString& MeshPath)
 {
-	UObject* Loaded = UEditorAssetLibrary::LoadAsset(MeshPath);
+	UObject* Loaded = VibeUE::LoadAssetAnyState(MeshPath);
 	return Cast<UStaticMesh>(Loaded);
 }
 
 USkeletalMesh* UUVMappingService::LoadSkeletalMeshAsset(const FString& MeshPath)
 {
-	UObject* Loaded = UEditorAssetLibrary::LoadAsset(MeshPath);
+	UObject* Loaded = VibeUE::LoadAssetAnyState(MeshPath);
 	return Cast<USkeletalMesh>(Loaded);
 }
 
 bool UUVMappingService::IsStaticMeshPath(const FString& MeshPath)
 {
-	UObject* Loaded = UEditorAssetLibrary::LoadAsset(MeshPath);
+	UObject* Loaded = VibeUE::LoadAssetAnyState(MeshPath);
 	return Loaded != nullptr && Loaded->IsA<UStaticMesh>();
 }
 
@@ -400,6 +401,7 @@ bool UUVMappingService::GetUVHealth(const FString& MeshPath, FUVHealthReport& Ou
 
 FUVMappingResult UUVMappingService::AddUVChannel(const FString& MeshPath, int32 LODIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("UVMappingService.add_uv_channel");
 	UStaticMesh* StaticMesh = LoadStaticMeshAsset(MeshPath);
 	if (!StaticMesh) return MakeFailure(MeshPath, TEXT("StaticMesh not found"));
 
@@ -423,6 +425,7 @@ FUVMappingResult UUVMappingService::RemoveUVChannel(
 	int32 LODIndex,
 	int32 ChannelIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("UVMappingService.remove_uv_channel");
 	if (ChannelIndex == 0)
 	{
 		return MakeFailure(MeshPath, TEXT("UV channel 0 cannot be removed"));
@@ -461,6 +464,7 @@ FUVMappingResult UUVMappingService::CopyUVChannel(
 	int32 SourceChannel,
 	int32 DestChannel)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("UVMappingService.copy_uv_channel");
 	UStaticMesh* StaticMesh = LoadStaticMeshAsset(MeshPath);
 	if (!StaticMesh) return MakeFailure(MeshPath, TEXT("StaticMesh not found"));
 
@@ -502,6 +506,7 @@ FUVMappingResult UUVMappingService::SetUVChannelCount(
 	int32 LODIndex,
 	int32 Count)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("UVMappingService.set_uv_channel_count");
 	if (Count < 1) return MakeFailure(MeshPath, TEXT("Count must be >= 1"));
 	if (Count > MAX_MESH_TEXTURE_COORDS_MD)
 	{
@@ -538,6 +543,7 @@ FUVMappingResult UUVMappingService::GenerateLightmapUVs(
 	int32 DestUVIndex,
 	float MinChartSpacingPercent)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("UVMappingService.generate_lightmap_u_vs");
 	UStaticMesh* StaticMesh = LoadStaticMeshAsset(MeshPath);
 	if (!StaticMesh) return MakeFailure(MeshPath, TEXT("StaticMesh not found"));
 	if (StaticMesh->GetNumSourceModels() == 0)
@@ -575,6 +581,7 @@ FUVMappingResult UUVMappingService::AutoUnwrapUVs(
 	const FString& ProjectionType,
 	float HardAngleThreshold)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("UVMappingService.auto_unwrap_u_vs");
 	UStaticMesh* StaticMesh = LoadStaticMeshAsset(MeshPath);
 	if (!StaticMesh) return MakeFailure(MeshPath, TEXT("StaticMesh not found"));
 
@@ -646,6 +653,7 @@ FUVMappingResult UUVMappingService::PackUVs(
 	int32 ChannelIndex,
 	float PaddingPercent)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("UVMappingService.pack_u_vs");
 	UStaticMesh* StaticMesh = LoadStaticMeshAsset(MeshPath);
 	if (!StaticMesh) return MakeFailure(MeshPath, TEXT("StaticMesh not found"));
 
@@ -708,6 +716,7 @@ FUVMappingResult UUVMappingService::TransformUVs(
 	float RotationDegrees,
 	float OffsetU, float OffsetV)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("UVMappingService.transform_u_vs");
 	UStaticMesh* StaticMesh = LoadStaticMeshAsset(MeshPath);
 	if (!StaticMesh) return MakeFailure(MeshPath, TEXT("StaticMesh not found"));
 
@@ -751,6 +760,7 @@ FUVMappingResult UUVMappingService::FlipUVs(
 	int32 ChannelIndex,
 	bool bFlipU, bool bFlipV)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("UVMappingService.flip_u_vs");
 	if (!bFlipU && !bFlipV)
 	{
 		return MakeSuccess(MeshPath, TEXT("No flip requested"));
@@ -850,6 +860,7 @@ FUVMappingResult UUVMappingService::TransformUVsByNormal(
 	float RotationDegrees,
 	float OffsetU, float OffsetV)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("UVMappingService.transform_u_vs_by_normal");
 	UStaticMesh* StaticMesh = LoadStaticMeshAsset(MeshPath);
 	if (!StaticMesh) return MakeFailure(MeshPath, TEXT("StaticMesh not found"));
 
@@ -929,6 +940,7 @@ FUVMappingResult UUVMappingService::TransformUVsByPolygonGroup(
 	float RotationDegrees,
 	float OffsetU, float OffsetV)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("UVMappingService.transform_u_vs_by_polygon_group");
 	if (PolygonGroupName.IsEmpty())
 	{
 		return MakeFailure(MeshPath, TEXT("PolygonGroupName must not be empty"));
@@ -1233,6 +1245,7 @@ FUVMappingResult UUVMappingService::TransformUVIsland(
 	float RotationDegrees,
 	float OffsetU, float OffsetV)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("UVMappingService.transform_uv_island");
 	UStaticMesh* StaticMesh = LoadStaticMeshAsset(MeshPath);
 	if (!StaticMesh) return MakeFailure(MeshPath, TEXT("StaticMesh not found"));
 
@@ -1310,6 +1323,7 @@ FUVMappingResult UUVMappingService::SetLightmapSettings(
 	int32 LightMapResolution,
 	bool bGenerateLightmapUVs)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("UVMappingService.set_lightmap_settings");
 	UStaticMesh* StaticMesh = LoadStaticMeshAsset(MeshPath);
 	if (!StaticMesh) return MakeFailure(MeshPath, TEXT("StaticMesh not found"));
 	if (StaticMesh->GetNumSourceModels() == 0)

@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UBlueprintService.h"
+#include "Utils/VibeUEPIEGuard.h"
 #include "Utils/VibeUEToolError.h"
 #include "PythonAPI/BlueprintTypeParser.h"
 #include "Engine/CollisionProfile.h"     // Custom collision channel names (set_collision_settings)
@@ -520,7 +521,7 @@ namespace
 			{
 				PackagePath.LeftInline(DotIdx);
 			}
-			if (UObject* Loaded = UEditorAssetLibrary::LoadAsset(PackagePath))
+			if (UObject* Loaded = VibeUE::LoadAssetAnyState(PackagePath))
 			{
 				if (UBlueprint* BP = Cast<UBlueprint>(Loaded))
 				{
@@ -1104,17 +1105,9 @@ UBlueprint* UBlueprintService::LoadBlueprint(const FString& BlueprintPath)
 		return nullptr;
 	}
 
-	// BlueprintService edits are unsafe under Play-In-Editor, so refuse every load while PIE runs:
-	// log a fixed PIE_ACTIVE: prefix naming the Blueprint path and return nullptr (LoadBlueprint is
-	// the shared choke point every BlueprintService entry point funnels through). The early return
-	// matters for subobject (":") paths: UEditorAssetLibrary::LoadAsset already refuses during PIE,
-	// but StaticLoadObject below does not, so without it a Level Blueprint path would still resolve
-	// and be edited while the log claimed the call was refused.
-	if (GEditor && GEditor->PlayWorld)
-	{
-		UE_LOG(LogTemp, Error, TEXT("PIE_ACTIVE: LoadBlueprint refused '%s' — a Play-In-Editor session is running; stop PIE before using BlueprintService."), *BlueprintPath);
-		return nullptr;
-	}
+	// Loads work during PIE (#705): every BlueprintService entry point that WRITES refuses at its top while PIE
+	// runs (VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE), so the read-only ones (get_timelines, analyze_graph_layout) can
+	// load through the PIE-safe resolver below.
 
 	// Subobject paths (":" present) don't load through the asset library — resolve them
 	// directly. Covers explicit LevelScriptBlueprint paths like
@@ -1124,7 +1117,7 @@ UBlueprint* UBlueprintService::LoadBlueprint(const FString& BlueprintPath)
 		return Cast<UBlueprint>(StaticLoadObject(UObject::StaticClass(), nullptr, *BlueprintPath));
 	}
 
-	UObject* LoadedObject = UEditorAssetLibrary::LoadAsset(BlueprintPath);
+	UObject* LoadedObject = VibeUE::LoadAssetAnyState(BlueprintPath);
 	if (UBlueprint* Blueprint = Cast<UBlueprint>(LoadedObject))
 	{
 		return Blueprint;
@@ -1293,6 +1286,7 @@ namespace
 
 bool UBlueprintService::CreateMacroGraph(const FString& BlueprintPath, const FString& MacroName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("BlueprintService.create_macro_graph");
 	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
 	if (!Blueprint)
 	{
@@ -1658,6 +1652,7 @@ FString UBlueprintService::AddTimeline(
 	float PosY,
 	bool bReplaceExisting)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("BlueprintService.add_timeline");
 	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
 	if (!Blueprint)
 	{
@@ -1752,6 +1747,7 @@ bool UBlueprintService::AddTimelineFloatTrack(
 	const FString& TimelineName,
 	const FString& TrackName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("BlueprintService.add_timeline_float_track");
 	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
 	if (!Blueprint)
 	{
@@ -1820,6 +1816,7 @@ bool UBlueprintService::AddTimelineFloatKey(
 	float Value,
 	const FString& InterpMode)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("BlueprintService.add_timeline_float_key");
 	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
 	if (!Blueprint)
 	{
@@ -1939,6 +1936,7 @@ static void VibeUE_FinishTrackAdd(UBlueprint* Blueprint, UTimelineTemplate* Temp
 
 bool UBlueprintService::AddTimelineVectorTrack(const FString& BlueprintPath, const FString& TimelineName, const FString& TrackName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("BlueprintService.add_timeline_vector_track");
 	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
 	if (!Blueprint) { UE_LOG(LogTemp, Error, TEXT("AddTimelineVectorTrack: Failed to load blueprint: %s"), *BlueprintPath); return false; }
 	FName TrackFName; UK2Node_Timeline* Node = nullptr;
@@ -1956,6 +1954,7 @@ bool UBlueprintService::AddTimelineVectorTrack(const FString& BlueprintPath, con
 
 bool UBlueprintService::AddTimelineColorTrack(const FString& BlueprintPath, const FString& TimelineName, const FString& TrackName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("BlueprintService.add_timeline_color_track");
 	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
 	if (!Blueprint) { UE_LOG(LogTemp, Error, TEXT("AddTimelineColorTrack: Failed to load blueprint: %s"), *BlueprintPath); return false; }
 	FName TrackFName; UK2Node_Timeline* Node = nullptr;
@@ -1973,6 +1972,7 @@ bool UBlueprintService::AddTimelineColorTrack(const FString& BlueprintPath, cons
 
 bool UBlueprintService::AddTimelineEventTrack(const FString& BlueprintPath, const FString& TimelineName, const FString& TrackName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("BlueprintService.add_timeline_event_track");
 	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
 	if (!Blueprint) { UE_LOG(LogTemp, Error, TEXT("AddTimelineEventTrack: Failed to load blueprint: %s"), *BlueprintPath); return false; }
 	FName TrackFName; UK2Node_Timeline* Node = nullptr;
@@ -1991,6 +1991,7 @@ bool UBlueprintService::AddTimelineEventTrack(const FString& BlueprintPath, cons
 
 bool UBlueprintService::RemoveTimelineTrack(const FString& BlueprintPath, const FString& TimelineName, const FString& TrackName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("BlueprintService.remove_timeline_track");
 	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
 	if (!Blueprint) { UE_LOG(LogTemp, Error, TEXT("RemoveTimelineTrack: Failed to load blueprint: %s"), *BlueprintPath); return false; }
 	FString Error;
@@ -2030,6 +2031,7 @@ bool UBlueprintService::RemoveTimelineTrack(const FString& BlueprintPath, const 
 
 bool UBlueprintService::RenameTimelineTrack(const FString& BlueprintPath, const FString& TimelineName, const FString& OldTrackName, const FString& NewTrackName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("BlueprintService.rename_timeline_track");
 	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
 	if (!Blueprint) { UE_LOG(LogTemp, Error, TEXT("RenameTimelineTrack: Failed to load blueprint: %s"), *BlueprintPath); return false; }
 	FString Error;
@@ -2074,6 +2076,7 @@ bool UBlueprintService::RenameTimelineTrack(const FString& BlueprintPath, const 
 
 bool UBlueprintService::AddTimelineVectorKey(const FString& BlueprintPath, const FString& TimelineName, const FString& TrackName, float Time, float X, float Y, float Z, const FString& InterpMode)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("BlueprintService.add_timeline_vector_key");
 	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
 	if (!Blueprint) { UE_LOG(LogTemp, Error, TEXT("AddTimelineVectorKey: Failed to load blueprint: %s"), *BlueprintPath); return false; }
 	FString Error;
@@ -2099,6 +2102,7 @@ bool UBlueprintService::AddTimelineVectorKey(const FString& BlueprintPath, const
 
 bool UBlueprintService::AddTimelineColorKey(const FString& BlueprintPath, const FString& TimelineName, const FString& TrackName, float Time, float R, float G, float B, float A, const FString& InterpMode)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("BlueprintService.add_timeline_color_key");
 	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
 	if (!Blueprint) { UE_LOG(LogTemp, Error, TEXT("AddTimelineColorKey: Failed to load blueprint: %s"), *BlueprintPath); return false; }
 	FString Error;
@@ -2124,6 +2128,7 @@ bool UBlueprintService::AddTimelineColorKey(const FString& BlueprintPath, const 
 
 bool UBlueprintService::AddTimelineEventKey(const FString& BlueprintPath, const FString& TimelineName, const FString& TrackName, float Time)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("BlueprintService.add_timeline_event_key");
 	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
 	if (!Blueprint) { UE_LOG(LogTemp, Error, TEXT("AddTimelineEventKey: Failed to load blueprint: %s"), *BlueprintPath); return false; }
 	FString Error;
@@ -2148,6 +2153,7 @@ bool UBlueprintService::AddTimelineEventKey(const FString& BlueprintPath, const 
 
 bool UBlueprintService::RemoveTimelineKey(const FString& BlueprintPath, const FString& TimelineName, const FString& TrackName, float Time, float Tolerance)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("BlueprintService.remove_timeline_key");
 	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
 	if (!Blueprint) { UE_LOG(LogTemp, Error, TEXT("RemoveTimelineKey: Failed to load blueprint: %s"), *BlueprintPath); return false; }
 	FString Error;
@@ -2184,6 +2190,7 @@ bool UBlueprintService::RemoveTimelineKey(const FString& BlueprintPath, const FS
 
 bool UBlueprintService::ClearTimelineTrackKeys(const FString& BlueprintPath, const FString& TimelineName, const FString& TrackName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("BlueprintService.clear_timeline_track_keys");
 	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
 	if (!Blueprint) { UE_LOG(LogTemp, Error, TEXT("ClearTimelineTrackKeys: Failed to load blueprint: %s"), *BlueprintPath); return false; }
 	FString Error;
@@ -2205,6 +2212,7 @@ bool UBlueprintService::ClearTimelineTrackKeys(const FString& BlueprintPath, con
 bool UBlueprintService::ModifyTimeline(const FString& BlueprintPath, const FString& TimelineName, const FString& NewName,
 	float Length, int32 UseLastKeyFrame, int32 AutoPlay, int32 Loop, int32 Replicated, int32 IgnoreTimeDilation)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("BlueprintService.modify_timeline");
 	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
 	if (!Blueprint) { UE_LOG(LogTemp, Error, TEXT("ModifyTimeline: Failed to load blueprint: %s"), *BlueprintPath); return false; }
 	FString Error;
@@ -2265,6 +2273,7 @@ bool UBlueprintService::ModifyTimeline(const FString& BlueprintPath, const FStri
 
 bool UBlueprintService::RemoveTimeline(const FString& BlueprintPath, const FString& TimelineName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("BlueprintService.remove_timeline");
 	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
 	if (!Blueprint) { UE_LOG(LogTemp, Error, TEXT("RemoveTimeline: Failed to load blueprint: %s"), *BlueprintPath); return false; }
 	FString Error;
@@ -3226,7 +3235,7 @@ UEdGraphNode* UBlueprintService::CreateNodeFromDesc(
 			return nullptr;
 		}
 
-		UInputAction* InputAction = Cast<UInputAction>(UEditorAssetLibrary::LoadAsset(*ActionPath));
+		UInputAction* InputAction = Cast<UInputAction>(VibeUE::LoadAssetAnyState(*ActionPath));
 		if (!InputAction)
 		{
 			OutError = FString::Printf(TEXT("Node '%s': Failed to load Input Action '%s'"), *Desc.Ref, **ActionPath);

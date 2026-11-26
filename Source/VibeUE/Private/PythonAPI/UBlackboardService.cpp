@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UBlackboardService.h"
+#include "Utils/VibeUEPIEGuard.h"
 
 #include "BehaviorTree/BehaviorTree.h"
 #include "BehaviorTree/BTCompositeNode.h"
@@ -510,6 +511,7 @@ TArray<FString> UBlackboardService::FindBlackboardKeyReferences(const FString& A
 TArray<FString> UBlackboardService::RenameBlackboardKey(const FString& AssetPath, const FString& OldName,
 	const FString& NewName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("BlackboardService.rename_blackboard_key");
 	// A rejected rename and a successful-but-unreferenced rename both have "nothing to report",
 	// which would otherwise both come back as an empty array. To keep the two distinguishable
 	// without changing the return type, a rejection returns a single sentinel entry prefixed

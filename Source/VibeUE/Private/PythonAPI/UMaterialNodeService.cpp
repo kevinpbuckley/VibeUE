@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UMaterialNodeService.h"
+#include "Utils/VibeUEPIEGuard.h"
 #include "Core/JsonValueHelper.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialInstance.h"
@@ -164,7 +165,7 @@ FVibeUEMaterialInstanceOverrides UMaterialNodeService::MaterialInstanceOverrides
 {
 	FVibeUEMaterialInstanceOverrides Result;
 
-	UObject* Loaded = UEditorAssetLibrary::DoesAssetExist(MaterialInstancePath) ? UEditorAssetLibrary::LoadAsset(MaterialInstancePath) : nullptr;
+	UObject* Loaded = VibeUE::LoadAssetAnyState(MaterialInstancePath);   // PIE-safe (#705)
 	UMaterialInstance* Instance = Cast<UMaterialInstance>(Loaded);
 	if (!Instance)
 	{
@@ -224,7 +225,7 @@ FVibeUEMaterialInstanceOverrides UMaterialNodeService::MaterialInstanceOverrides
 
 UMaterial* UMaterialNodeService::LoadMaterialAsset(const FString& MaterialPath)
 {
-	UObject* LoadedObject = UEditorAssetLibrary::LoadAsset(MaterialPath);
+	UObject* LoadedObject = VibeUE::LoadAssetAnyState(MaterialPath);
 	if (!LoadedObject)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("UMaterialNodeService: Failed to load material: %s"), *MaterialPath);
@@ -616,6 +617,7 @@ FMaterialExpressionInfo UMaterialNodeService::CreateFunctionCall(
 	int32 PosX,
 	int32 PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("MaterialNodeService.create_function_call");
 	UMaterial* Material = LoadMaterialAsset(MaterialPath);
 	if (!Material)
 	{
@@ -627,7 +629,7 @@ FMaterialExpressionInfo UMaterialNodeService::CreateFunctionCall(
 	if (!Function)
 	{
 		// Try with explicit class
-		UObject* LoadedObj = UEditorAssetLibrary::LoadAsset(FunctionPath);
+		UObject* LoadedObj = VibeUE::LoadAssetAnyState(FunctionPath);
 		Function = Cast<UMaterialFunction>(LoadedObj);
 	}
 	if (!Function)
@@ -665,6 +667,7 @@ FMaterialExpressionInfo UMaterialNodeService::CreateCollectionParameter(
 	int32 PosX,
 	int32 PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("MaterialNodeService.create_collection_parameter");
 	UMaterial* Material = LoadMaterialAsset(MaterialPath);
 	if (!Material)
 	{
@@ -675,7 +678,7 @@ FMaterialExpressionInfo UMaterialNodeService::CreateCollectionParameter(
 	UMaterialParameterCollection* Collection = LoadObject<UMaterialParameterCollection>(nullptr, *CollectionPath);
 	if (!Collection)
 	{
-		UObject* LoadedObj = UEditorAssetLibrary::LoadAsset(CollectionPath);
+		UObject* LoadedObj = VibeUE::LoadAssetAnyState(CollectionPath);
 		Collection = Cast<UMaterialParameterCollection>(LoadedObj);
 	}
 	if (!Collection)
@@ -800,7 +803,7 @@ FMaterialExpressionInfo UMaterialNodeService::CreateCollectionParameter(
 
 UMaterialFunction* UMaterialNodeService::LoadMaterialFunctionAsset(const FString& FunctionPath)
 {
-	UObject* LoadedObj = UEditorAssetLibrary::LoadAsset(FunctionPath);
+	UObject* LoadedObj = VibeUE::LoadAssetAnyState(FunctionPath);
 	if (!LoadedObj)
 	{
 		// Try direct load

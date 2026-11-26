@@ -142,8 +142,9 @@ settings the trigger's Details panel shows can be set: runtime state such as `He
 the property's `ClampMin`/`ClampMax` is refused with the allowed range (`hold_time_threshold`
 must be >= 0). An unknown name, a refused setting or a bad value fails the call and adds
 nothing. `add_action_trigger` puts the trigger on the Input Action itself, so it applies to
-every mapping of the action; it returns `PIE_ACTIVE` while a play session runs (stop PIE
-first). Neither saves the asset, and a running PIE session keeps its copy of the triggers:
+every mapping of the action. Like every InputService call that writes an asset it refuses while a
+play session runs: it raises "PIE_ACTIVE: InputService.add_action_trigger refused: ... Stop PIE first"
+(the read-only `get_*` calls keep working). Neither saves the asset, and a running PIE session keeps its copy of the triggers:
 restart PIE to see a change.
 
 ```python

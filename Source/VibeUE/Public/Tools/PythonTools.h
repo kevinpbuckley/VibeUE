@@ -146,4 +146,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category="VibeUE|Python", meta=(AICallable))
 	static FVibeUEEditorBusyState GetEditorBusyState();
 
+	/**
+	 * True while a Play-In-Editor (or Simulate) session runs. VibeUE's asset-writing services refuse during PIE with
+	 * one message ("PIE_ACTIVE: ... Stop PIE first ..."); vibeue.require_no_pie() raises the same refusal in a script. (#705)
+	 */
+	UFUNCTION(BlueprintCallable, Category="VibeUE|Python", meta=(AICallable))
+	static bool IsPlaySessionRunning();
+
+	/** The refusal text VibeUE's asset-writing services give while PIE runs, for Operation (e.g. "BlueprintService.add_timeline"). (#705) */
+	UFUNCTION(BlueprintCallable, Category="VibeUE|Python")
+	static FString GetPIEWriteRefusal(const FString& Operation);
+
 };

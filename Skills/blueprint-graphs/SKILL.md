@@ -111,11 +111,12 @@ node  = vibeue.exec_tool(BT, "CreateNode",
                          {"graph": graph, "typeId": "Development|PrintString", "pos": [400, 0]})
 ```
 
-### ⚠️ Nothing works during Play-In-Editor
+### ⚠️ No Blueprint edits during Play-In-Editor
 
-Every `BlueprintService` entry point **refuses** while a PIE session is running and logs it with a
-`PIE_ACTIVE:` prefix; the return is a `False` / empty string / empty array. Asset writes during PIE
-are unsafe anyway. Check this first when a call returns nothing unexpectedly:
+Every `BlueprintService` call that changes a Blueprint **refuses** while a PIE session is running: it raises
+"PIE_ACTIVE: BlueprintService.<call> refused: ... Stop PIE first" (a Python exception, an MCP error
+result), as every VibeUE asset-writing service does. The read-only calls (`get_timelines`,
+`analyze_graph_layout`) work during PIE. Check first, or call `vibeue.require_no_pie("blueprint edit")`:
 
 ```python
 les = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)

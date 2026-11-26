@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/ULandscapeMaterialService.h"
+#include "Utils/VibeUEPIEGuard.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialInterface.h"
 #include "Materials/MaterialExpression.h"
@@ -42,7 +43,7 @@
 
 UMaterial* ULandscapeMaterialService::LoadMaterialAsset(const FString& MaterialPath)
 {
-	UObject* LoadedObject = UEditorAssetLibrary::LoadAsset(MaterialPath);
+	UObject* LoadedObject = VibeUE::LoadAssetAnyState(MaterialPath);
 	if (!LoadedObject)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("ULandscapeMaterialService: Failed to load material: %s"), *MaterialPath);
@@ -138,6 +139,7 @@ FLandscapeMaterialCreateResult ULandscapeMaterialService::CreateLandscapeMateria
 	const FString& MaterialName,
 	const FString& DestinationPath)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("LandscapeMaterialService.create_landscape_material");
 	FLandscapeMaterialCreateResult Result;
 
 	if (MaterialName.IsEmpty())
@@ -190,6 +192,7 @@ FLandscapeLayerBlendInfo ULandscapeMaterialService::CreateLayerBlendNode(
 	int32 PosX,
 	int32 PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("LandscapeMaterialService.create_layer_blend_node");
 	FLandscapeLayerBlendInfo Result;
 
 	UMaterial* Material = LoadMaterialAsset(MaterialPath);
@@ -224,6 +227,7 @@ FLandscapeLayerBlendInfo ULandscapeMaterialService::CreateLayerBlendNodeWithLaye
 	int32 PosX,
 	int32 PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("LandscapeMaterialService.create_layer_blend_node_with_layers");
 	FLandscapeLayerBlendInfo Result;
 
 	UMaterial* Material = LoadMaterialAsset(MaterialPath);
@@ -296,6 +300,7 @@ bool ULandscapeMaterialService::AddLayerToBlendNode(
 	const FString& LayerName,
 	const FString& BlendType)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("LandscapeMaterialService.add_layer_to_blend_node");
 	UMaterial* Material = LoadMaterialAsset(MaterialPath);
 	if (!Material)
 	{
@@ -352,6 +357,7 @@ bool ULandscapeMaterialService::RemoveLayerFromBlendNode(
 	const FString& BlendNodeId,
 	const FString& LayerName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("LandscapeMaterialService.remove_layer_from_blend_node");
 	UMaterial* Material = LoadMaterialAsset(MaterialPath);
 	if (!Material)
 	{
@@ -451,6 +457,7 @@ bool ULandscapeMaterialService::ConnectToLayerInput(
 	const FString& LayerName,
 	const FString& InputType)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("LandscapeMaterialService.connect_to_layer_input");
 	UMaterial* Material = LoadMaterialAsset(MaterialPath);
 	if (!Material)
 	{
@@ -564,6 +571,7 @@ FString ULandscapeMaterialService::CreateLayerCoordsNode(
 	int32 PosX,
 	int32 PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("LandscapeMaterialService.create_layer_coords_node");
 	UMaterial* Material = LoadMaterialAsset(MaterialPath);
 	if (!Material)
 	{
@@ -605,6 +613,7 @@ FString ULandscapeMaterialService::CreateLayerSampleNode(
 	int32 PosX,
 	int32 PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("LandscapeMaterialService.create_layer_sample_node");
 	UMaterial* Material = LoadMaterialAsset(MaterialPath);
 	if (!Material)
 	{
@@ -646,6 +655,7 @@ FString ULandscapeMaterialService::CreateGrassOutput(
 	int32 PosX,
 	int32 PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("LandscapeMaterialService.create_grass_output");
 	UMaterial* Material = LoadMaterialAsset(MaterialPath);
 	if (!Material)
 	{
@@ -675,7 +685,7 @@ FString ULandscapeMaterialService::CreateGrassOutput(
 			NewInput.Name = FName(*Pair.Key);
 
 			// Load grass type asset
-			UObject* LoadedObj = UEditorAssetLibrary::LoadAsset(Pair.Value);
+			UObject* LoadedObj = VibeUE::LoadAssetAnyState(Pair.Value);
 			ULandscapeGrassType* GrassType = Cast<ULandscapeGrassType>(LoadedObj);
 			if (GrassType)
 			{
@@ -706,6 +716,7 @@ FLandscapeLayerInfoCreateResult ULandscapeMaterialService::CreateLayerInfoObject
 	const FString& DestinationPath,
 	bool bIsWeightBlended)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("LandscapeMaterialService.create_layer_info_object");
 	FLandscapeLayerInfoCreateResult Result;
 
 	if (LayerName.IsEmpty())
@@ -723,7 +734,7 @@ FLandscapeLayerInfoCreateResult ULandscapeMaterialService::CreateLayerInfoObject
 	if (UEditorAssetLibrary::DoesAssetExist(FullAssetPath))
 	{
 		// Layer info already exists - return it as success
-		UObject* ExistingObj = UEditorAssetLibrary::LoadAsset(FullAssetPath);
+		UObject* ExistingObj = VibeUE::LoadAssetAnyState(FullAssetPath);
 		ULandscapeLayerInfoObject* ExistingInfo = Cast<ULandscapeLayerInfoObject>(ExistingObj);
 		if (ExistingInfo)
 		{
@@ -796,6 +807,7 @@ bool ULandscapeMaterialService::AssignMaterialToLandscape(
 	const FString& MaterialPath,
 	const TMap<FString, FString>& LayerInfoPaths)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("LandscapeMaterialService.assign_material_to_landscape");
 	UWorld* World = nullptr;
 	if (GEditor)
 	{
@@ -827,7 +839,7 @@ bool ULandscapeMaterialService::AssignMaterialToLandscape(
 	}
 
 	// Load material
-	UObject* MatObj = UEditorAssetLibrary::LoadAsset(MaterialPath);
+	UObject* MatObj = VibeUE::LoadAssetAnyState(MaterialPath);
 	UMaterialInterface* Material = Cast<UMaterialInterface>(MatObj);
 	if (!Material)
 	{
@@ -859,7 +871,7 @@ bool ULandscapeMaterialService::AssignMaterialToLandscape(
 	int32 FailedLayers = 0;
 	for (const auto& Pair : LayerInfoPaths)
 	{
-		UObject* LayerObj = UEditorAssetLibrary::LoadAsset(Pair.Value);
+		UObject* LayerObj = VibeUE::LoadAssetAnyState(Pair.Value);
 		ULandscapeLayerInfoObject* LayerInfoObj = Cast<ULandscapeLayerInfoObject>(LayerObj);
 		if (LayerInfoObj)
 		{
@@ -965,6 +977,7 @@ bool ULandscapeMaterialService::SetupLayerTextures(
 	const FString& RoughnessTexturePath,
 	float TextureTilingScale)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("LandscapeMaterialService.setup_layer_textures");
 	UMaterial* Material = LoadMaterialAsset(MaterialPath);
 	if (!Material)
 	{
@@ -1015,7 +1028,7 @@ bool ULandscapeMaterialService::SetupLayerTextures(
 	}
 
 	// Load and create diffuse texture sample
-	UObject* DiffuseObj = UEditorAssetLibrary::LoadAsset(DiffuseTexturePath);
+	UObject* DiffuseObj = VibeUE::LoadAssetAnyState(DiffuseTexturePath);
 	UTexture* DiffuseTexture = Cast<UTexture>(DiffuseObj);
 	if (!DiffuseTexture)
 	{
@@ -1067,7 +1080,7 @@ bool ULandscapeMaterialService::SetupLayerTextures(
 	// Optionally create normal map texture sample
 	if (!NormalTexturePath.IsEmpty())
 	{
-		UObject* NormalObj = UEditorAssetLibrary::LoadAsset(NormalTexturePath);
+		UObject* NormalObj = VibeUE::LoadAssetAnyState(NormalTexturePath);
 		UTexture* NormalTexture = Cast<UTexture>(NormalObj);
 		if (NormalTexture)
 		{
@@ -1112,6 +1125,7 @@ FString ULandscapeMaterialService::CreateLayerWeightNode(
 	int32 PosX,
 	int32 PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("LandscapeMaterialService.create_layer_weight_node");
 	UMaterial* Material = LoadMaterialAsset(MaterialPath);
 	if (!Material)
 	{
@@ -1155,6 +1169,7 @@ FString ULandscapeMaterialService::CreateHeightMaskNode(
 	int32 PosX,
 	int32 PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("LandscapeMaterialService.create_height_mask_node");
 	UMaterial* Material = LoadMaterialAsset(MaterialPath);
 	if (!Material)
 	{
@@ -1222,6 +1237,7 @@ FString ULandscapeMaterialService::CreateSlopeMaskNode(
 	int32 PosX,
 	int32 PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("LandscapeMaterialService.create_slope_mask_node");
 	UMaterial* Material = LoadMaterialAsset(MaterialPath);
 	if (!Material)
 	{
@@ -1310,6 +1326,7 @@ bool ULandscapeMaterialService::SetupHeightSlopeBlend(
 	float SlopeThreshold,
 	float SlopeBlend)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("LandscapeMaterialService.setup_height_slope_blend");
 	if (HeightLayerName.IsEmpty() && SlopeLayerName.IsEmpty())
 	{
 		UE_LOG(LogTemp, Error, TEXT("ULandscapeMaterialService::SetupHeightSlopeBlend: HeightLayerName and SlopeLayerName are both empty — nothing to do"));
@@ -1486,6 +1503,7 @@ FLandscapeAutoMaterialResult ULandscapeMaterialService::CreateAutoMaterial(
 	float SlopeThreshold,
 	float SlopeBlend)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("LandscapeMaterialService.create_auto_material");
 	FLandscapeAutoMaterialResult Result;
 
 	if (MaterialName.IsEmpty() || MaterialPath.IsEmpty())
@@ -1570,7 +1588,7 @@ FLandscapeAutoMaterialResult ULandscapeMaterialService::CreateAutoMaterial(
 		// Create diffuse/albedo texture sampler
 		if (!AutoLayer.DiffuseTexturePath.IsEmpty())
 		{
-			UTexture* DiffuseTex = Cast<UTexture>(UEditorAssetLibrary::LoadAsset(AutoLayer.DiffuseTexturePath));
+			UTexture* DiffuseTex = Cast<UTexture>(VibeUE::LoadAssetAnyState(AutoLayer.DiffuseTexturePath));
 			if (DiffuseTex)
 			{
 				UMaterialExpressionTextureSample* DiffuseSampler = Cast<UMaterialExpressionTextureSample>(
@@ -1597,7 +1615,7 @@ FLandscapeAutoMaterialResult ULandscapeMaterialService::CreateAutoMaterial(
 		// Create normal texture sampler
 		if (!AutoLayer.NormalTexturePath.IsEmpty())
 		{
-			UTexture* NormalTex = Cast<UTexture>(UEditorAssetLibrary::LoadAsset(AutoLayer.NormalTexturePath));
+			UTexture* NormalTex = Cast<UTexture>(VibeUE::LoadAssetAnyState(AutoLayer.NormalTexturePath));
 			if (NormalTex)
 			{
 				UMaterialExpressionTextureSample* NormalSampler = Cast<UMaterialExpressionTextureSample>(

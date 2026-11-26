@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UWidgetService.h"
+#include "Utils/VibeUEPIEGuard.h"
 #include "WidgetBlueprint.h"
 #include "EditorAssetLibrary.h"
 #include "AssetRegistry/AssetRegistryModule.h"
@@ -1218,7 +1219,7 @@ namespace
 
 UWidgetBlueprint* UWidgetService::LoadWidgetBlueprint(const FString& WidgetPath)
 {
-	UWidgetBlueprint* WidgetBP = Cast<UWidgetBlueprint>(UEditorAssetLibrary::LoadAsset(WidgetPath));
+	UWidgetBlueprint* WidgetBP = Cast<UWidgetBlueprint>(VibeUE::LoadAssetAnyState(WidgetPath));
 	if (!WidgetBP)
 	{
 		// UEditorAssetLibrary::LoadAsset returns null during PIE (CheckIfInEditorAndPIE guard), so
@@ -1382,6 +1383,7 @@ bool UWidgetService::BindEvent(
 	const FString& EventName,
 	const FString& FunctionName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("WidgetService.bind_event");
 	UWidgetBlueprint* WidgetBP = LoadWidgetBlueprint(WidgetPath);
 	if (!WidgetBP)
 	{
@@ -1608,7 +1610,7 @@ UClass* UWidgetService::FindViewModelClass(const FString& ClassName)
 			PathToLoad = PathToLoad.Left(DotIndex);
 		}
 
-		UObject* LoadedObj = UEditorAssetLibrary::LoadAsset(PathToLoad);
+		UObject* LoadedObj = VibeUE::LoadAssetAnyState(PathToLoad);
 		if (UBlueprint* BP = Cast<UBlueprint>(LoadedObj))
 		{
 			if (BP->GeneratedClass && BP->GeneratedClass->IsChildOf(UMVVMViewModelBase::StaticClass()))
@@ -1697,6 +1699,7 @@ bool UWidgetService::RemoveViewModel(
 	const FString& WidgetPath,
 	const FString& ViewModelName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("WidgetService.remove_view_model");
 	UWidgetBlueprint* WidgetBP = LoadWidgetBlueprint(WidgetPath);
 	if (!WidgetBP)
 	{

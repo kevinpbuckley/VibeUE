@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/URuntimeVirtualTextureService.h"
+#include "Utils/VibeUEPIEGuard.h"
 #include "VT/RuntimeVirtualTexture.h"
 #include "Components/RuntimeVirtualTextureComponent.h"
 #include "VT/RuntimeVirtualTextureVolume.h"
@@ -24,7 +25,7 @@
 
 URuntimeVirtualTexture* URuntimeVirtualTextureService::LoadRVTAsset(const FString& AssetPath)
 {
-	UObject* LoadedObj = UEditorAssetLibrary::LoadAsset(AssetPath);
+	UObject* LoadedObj = VibeUE::LoadAssetAnyState(AssetPath);
 	if (!LoadedObj)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("URuntimeVirtualTextureService: Failed to load RVT: %s"), *AssetPath);
@@ -56,6 +57,7 @@ FRVTCreateResult URuntimeVirtualTextureService::CreateRuntimeVirtualTexture(
 	bool bContinuousUpdate,
 	bool bSinglePhysicalSpace)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("RuntimeVirtualTextureService.create_runtime_virtual_texture");
 	FRVTCreateResult Result;
 
 	if (AssetName.IsEmpty())
@@ -258,6 +260,7 @@ FRVTVolumeResult URuntimeVirtualTextureService::CreateRVTVolume(
 	const FString& RVTAssetPath,
 	const FString& VolumeName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("RuntimeVirtualTextureService.create_rvt_volume");
 	FRVTVolumeResult Result;
 
 	// Get world

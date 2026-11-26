@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/USkeletonService.h"
+#include "Utils/VibeUEPIEGuard.h"
 #include "Utils/VibeUEToolError.h"
 #include "PythonAPI/UAnimSequenceService.h"
 
@@ -90,7 +91,7 @@ USkeleton* USkeletonService::LoadSkeleton(const FString& SkeletonPath)
 	}
 
 	UE_LOG(LogTemp, Log, TEXT("USkeletonService::LoadSkeleton: Loading asset: %s"), *SkeletonPath);
-	UObject* LoadedObject = UEditorAssetLibrary::LoadAsset(SkeletonPath);
+	UObject* LoadedObject = VibeUE::LoadAssetAnyState(SkeletonPath);
 	if (!LoadedObject)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("USkeletonService::LoadSkeleton: Failed to load: %s"), *SkeletonPath);
@@ -116,7 +117,7 @@ USkeletalMesh* USkeletonService::LoadSkeletalMesh(const FString& SkeletalMeshPat
 	}
 
 	UE_LOG(LogTemp, Log, TEXT("USkeletonService::LoadSkeletalMesh: Loading asset: %s"), *SkeletalMeshPath);
-	UObject* LoadedObject = UEditorAssetLibrary::LoadAsset(SkeletalMeshPath);
+	UObject* LoadedObject = VibeUE::LoadAssetAnyState(SkeletalMeshPath);
 	if (!LoadedObject)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("USkeletonService::LoadSkeletalMesh: Failed to load: %s"), *SkeletalMeshPath);
@@ -137,7 +138,7 @@ USkeleton* USkeletonService::GetSkeletonFromAsset(const FString& AssetPath)
 {
 	// Try loading as Skeleton first
 	UE_LOG(LogTemp, Log, TEXT("USkeletonService::GetSkeletonFromAsset: Loading asset: %s"), *AssetPath);
-	UObject* LoadedObject = UEditorAssetLibrary::LoadAsset(AssetPath);
+	UObject* LoadedObject = VibeUE::LoadAssetAnyState(AssetPath);
 	if (!LoadedObject)
 	{
 		return nullptr;
@@ -163,7 +164,7 @@ USkeleton* USkeletonService::GetSkeletonFromAsset(const FString& AssetPath)
 const FReferenceSkeleton* USkeletonService::GetReferenceSkeleton(const FString& AssetPath)
 {
 	UE_LOG(LogTemp, Log, TEXT("USkeletonService::GetReferenceSkeleton: Loading asset: %s"), *AssetPath);
-	UObject* LoadedObject = UEditorAssetLibrary::LoadAsset(AssetPath);
+	UObject* LoadedObject = VibeUE::LoadAssetAnyState(AssetPath);
 	if (!LoadedObject)
 	{
 		return nullptr;
@@ -344,6 +345,7 @@ FTransform USkeletonService::GetBoneTransform(const FString& AssetPath, const FS
 
 bool USkeletonService::AddBone(const FString& SkeletalMeshPath, const FString& BoneName, const FString& ParentBoneName, const FTransform& LocalTransform)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SkeletonService.add_bone");
 	{
 		FString ProtectReason;
 		if (IsProtectedSkeletonForStructureEdit(LoadSkeletalMesh(SkeletalMeshPath), ProtectReason))
@@ -365,6 +367,7 @@ bool USkeletonService::AddBone(const FString& SkeletalMeshPath, const FString& B
 
 bool USkeletonService::RemoveBone(const FString& SkeletalMeshPath, const FString& BoneName, bool bRemoveChildren)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SkeletonService.remove_bone");
 	{
 		FString ProtectReason;
 		if (IsProtectedSkeletonForStructureEdit(LoadSkeletalMesh(SkeletalMeshPath), ProtectReason))
@@ -386,6 +389,7 @@ bool USkeletonService::RemoveBone(const FString& SkeletalMeshPath, const FString
 
 bool USkeletonService::RenameBone(const FString& SkeletalMeshPath, const FString& OldBoneName, const FString& NewBoneName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SkeletonService.rename_bone");
 	{
 		FString ProtectReason;
 		if (IsProtectedSkeletonForStructureEdit(LoadSkeletalMesh(SkeletalMeshPath), ProtectReason))
@@ -407,6 +411,7 @@ bool USkeletonService::RenameBone(const FString& SkeletalMeshPath, const FString
 
 bool USkeletonService::ReparentBone(const FString& SkeletalMeshPath, const FString& BoneName, const FString& NewParentName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SkeletonService.reparent_bone");
 	// NOTE: Using SkeletonModifier->ParentBone() causes hierarchy incompatibility
 	// during commit, which triggers a modal dialog that blocks the game thread.
 	// Instead, we implement reparenting as: remove bone+descendants, add bone with new parent, add descendants back.
@@ -502,6 +507,7 @@ bool USkeletonService::ReparentBone(const FString& SkeletalMeshPath, const FStri
 
 bool USkeletonService::SetBoneTransform(const FString& SkeletalMeshPath, const FString& BoneName, const FTransform& NewTransform, bool bMoveChildren)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SkeletonService.set_bone_transform");
 	USkeletonModifier* Modifier = GetSkeletonModifier(SkeletalMeshPath);
 	if (!Modifier)
 	{
@@ -514,6 +520,7 @@ bool USkeletonService::SetBoneTransform(const FString& SkeletalMeshPath, const F
 
 bool USkeletonService::CommitBoneChanges(const FString& SkeletalMeshPath, bool bForce)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SkeletonService.commit_bone_changes");
 	USkeletonModifier* Modifier = GetSkeletonModifier(SkeletalMeshPath);
 	if (!Modifier)
 	{
@@ -566,6 +573,7 @@ bool USkeletonService::CommitBoneChanges(const FString& SkeletalMeshPath, bool b
 
 bool USkeletonService::SetBoneRetargetingMode(const FString& SkeletonPath, const FString& BoneName, const FString& Mode)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SkeletonService.set_bone_retargeting_mode");
 	USkeleton* Skeleton = LoadSkeleton(SkeletonPath);
 	if (!Skeleton)
 	{
@@ -623,6 +631,7 @@ TArray<FCurveMetaInfo> USkeletonService::ListCurveMetaData(const FString& Skelet
 
 bool USkeletonService::AddCurveMetaData(const FString& SkeletonPath, const FString& CurveName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SkeletonService.add_curve_meta_data");
 	USkeleton* Skeleton = LoadSkeleton(SkeletonPath);
 	if (!Skeleton)
 	{
@@ -637,6 +646,7 @@ bool USkeletonService::AddCurveMetaData(const FString& SkeletonPath, const FStri
 
 bool USkeletonService::RemoveCurveMetaData(const FString& SkeletonPath, const FString& CurveName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SkeletonService.remove_curve_meta_data");
 	USkeleton* Skeleton = LoadSkeleton(SkeletonPath);
 	if (!Skeleton)
 	{
@@ -651,6 +661,7 @@ bool USkeletonService::RemoveCurveMetaData(const FString& SkeletonPath, const FS
 
 bool USkeletonService::RenameCurveMetaData(const FString& SkeletonPath, const FString& OldName, const FString& NewName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SkeletonService.rename_curve_meta_data");
 	USkeleton* Skeleton = LoadSkeleton(SkeletonPath);
 	if (!Skeleton)
 	{
@@ -665,6 +676,7 @@ bool USkeletonService::RenameCurveMetaData(const FString& SkeletonPath, const FS
 
 bool USkeletonService::SetCurveMorphTarget(const FString& SkeletonPath, const FString& CurveName, bool bIsMorphTarget)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SkeletonService.set_curve_morph_target");
 	USkeleton* Skeleton = LoadSkeleton(SkeletonPath);
 	if (!Skeleton)
 	{
@@ -686,6 +698,7 @@ bool USkeletonService::SetCurveMorphTarget(const FString& SkeletonPath, const FS
 
 bool USkeletonService::SetCurveMaterial(const FString& SkeletonPath, const FString& CurveName, bool bIsMaterial)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SkeletonService.set_curve_material");
 	USkeleton* Skeleton = LoadSkeleton(SkeletonPath);
 	if (!Skeleton)
 	{
@@ -765,6 +778,7 @@ bool USkeletonService::GetBlendProfile(const FString& SkeletonPath, const FStrin
 
 bool USkeletonService::CreateBlendProfile(const FString& SkeletonPath, const FString& ProfileName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SkeletonService.create_blend_profile");
 	USkeleton* Skeleton = LoadSkeleton(SkeletonPath);
 	if (!Skeleton)
 	{
@@ -789,6 +803,7 @@ bool USkeletonService::CreateBlendProfile(const FString& SkeletonPath, const FSt
 
 bool USkeletonService::SetBlendProfileBone(const FString& SkeletonPath, const FString& ProfileName, const FString& BoneName, float BlendScale)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SkeletonService.set_blend_profile_bone");
 	USkeleton* Skeleton = LoadSkeleton(SkeletonPath);
 	if (!Skeleton)
 	{
@@ -837,6 +852,7 @@ static TMap<FString, FLearnedConstraintsInfo> CachedLearnedConstraints;
 
 bool USkeletonService::CreateSkeletonProfile(const FString& SkeletonPath, FSkeletonProfile& OutProfile)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SkeletonService.create_skeleton_profile");
 	USkeleton* Skeleton = LoadSkeleton(SkeletonPath);
 	if (!Skeleton)
 	{
@@ -952,6 +968,7 @@ bool USkeletonService::LearnFromAnimations(
 	int32 SamplesPerAnimation,
 	FLearnedConstraintsInfo& OutConstraints)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SkeletonService.learn_from_animations");
 	// Validate skeleton first
 	USkeleton* Skeleton = LoadSkeleton(SkeletonPath);
 	if (!Skeleton || !IsValid(Skeleton))
@@ -1179,6 +1196,7 @@ bool USkeletonService::LearnFromAnimationReferences(const FString& SkeletonPath,
 	const TArray<FString>& AnimationPaths, int32 SamplesPerAnimation,
 	FLearnedConstraintsInfo& OutConstraints)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SkeletonService.learn_from_animation_references");
 	OutConstraints = FLearnedConstraintsInfo();
 	USkeleton* Skeleton = LoadSkeleton(SkeletonPath);
 	if (!Skeleton || AnimationPaths.IsEmpty() || AnimationPaths.Num() > 32
@@ -1265,6 +1283,7 @@ bool USkeletonService::SetBoneConstraints(
 	bool bIsHinge,
 	int32 HingeAxis)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SkeletonService.set_bone_constraints");
 	// Ensure profile exists
 	if (!CachedSkeletonProfiles.Contains(SkeletonPath))
 	{

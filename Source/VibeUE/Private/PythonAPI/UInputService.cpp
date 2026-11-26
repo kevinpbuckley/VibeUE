@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UInputService.h"
+#include "Utils/VibeUEPIEGuard.h"
 #include "Utils/VibeUEToolError.h"
 #include "EditorAssetLibrary.h"
 #include "AssetRegistry/AssetRegistryModule.h"
@@ -181,7 +182,7 @@ namespace VibeUEInputTriggers
 
 UInputAction* UInputService::LoadInputAction(const FString& ActionPath)
 {
-	UInputAction* Action = Cast<UInputAction>(UEditorAssetLibrary::LoadAsset(ActionPath));
+	UInputAction* Action = Cast<UInputAction>(VibeUE::LoadAssetAnyState(ActionPath));
 	if (!Action)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("UInputService: Failed to load Input Action: %s"), *ActionPath);
@@ -191,7 +192,7 @@ UInputAction* UInputService::LoadInputAction(const FString& ActionPath)
 
 UInputMappingContext* UInputService::LoadMappingContext(const FString& ContextPath)
 {
-	UInputMappingContext* Context = Cast<UInputMappingContext>(UEditorAssetLibrary::LoadAsset(ContextPath));
+	UInputMappingContext* Context = Cast<UInputMappingContext>(VibeUE::LoadAssetAnyState(ContextPath));
 	if (!Context)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("UInputService: Failed to load Mapping Context: %s"), *ContextPath);
@@ -324,6 +325,7 @@ FInputCreateResult UInputService::CreateAction(
 	const FString& AssetPath,
 	const FString& ValueType)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("InputService.create_action");
 	FInputCreateResult Result;
 
 	FString BasePath;
@@ -395,6 +397,7 @@ FInputCreateResult UInputService::CreateMappingContext(
 	const FString& AssetPath,
 	int32 Priority)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("InputService.create_mapping_context");
 	FInputCreateResult Result;
 
 	FString BasePath;
@@ -505,6 +508,7 @@ bool UInputService::AddKeyMapping(
 	const FString& ActionPath,
 	const FString& KeyName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("InputService.add_key_mapping");
 	UInputMappingContext* MappingContext = LoadMappingContext(ContextPath);
 	if (!MappingContext)
 	{
@@ -544,6 +548,7 @@ bool UInputService::AddKeyMapping(
 
 bool UInputService::RemoveMapping(const FString& ContextPath, int32 MappingIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("InputService.remove_mapping");
 	UInputMappingContext* MappingContext = LoadMappingContext(ContextPath);
 	if (!MappingContext)
 	{
@@ -601,6 +606,7 @@ bool UInputService::AddModifier(
 	int32 MappingIndex,
 	const FString& ModifierType)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("InputService.add_modifier");
 	UInputMappingContext* MappingContext = LoadMappingContext(ContextPath);
 	if (!MappingContext)
 	{
@@ -660,6 +666,7 @@ bool UInputService::RemoveModifier(
 	int32 MappingIndex,
 	int32 ModifierIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("InputService.remove_modifier");
 	UInputMappingContext* MappingContext = LoadMappingContext(ContextPath);
 	if (!MappingContext)
 	{
@@ -756,6 +763,7 @@ bool UInputService::AddTrigger(
 	const FString& TriggerType,
 	const FString& PropertiesJson)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("InputService.add_trigger");
 	UInputMappingContext* MappingContext = LoadMappingContext(ContextPath);
 	if (!MappingContext)
 	{
@@ -803,6 +811,7 @@ FString UInputService::AddActionTrigger(
 	const FString& TriggerType,
 	const FString& PropertiesJson)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("InputService.add_action_trigger");
 	// An Input Action's own triggers apply to every mapping of the action.
 	auto Fail = [](const TCHAR* Code, const FString& Message)
 	{
@@ -866,6 +875,7 @@ bool UInputService::RemoveTrigger(
 	int32 MappingIndex,
 	int32 TriggerIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("InputService.remove_trigger");
 	UInputMappingContext* MappingContext = LoadMappingContext(ContextPath);
 	if (!MappingContext)
 	{

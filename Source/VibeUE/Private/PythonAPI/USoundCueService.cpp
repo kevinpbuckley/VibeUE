@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/USoundCueService.h"
+#include "Utils/VibeUEPIEGuard.h"
 
 // SoundCue.h declares an override of the deprecated
 // Audio::ILegacyParameterTransmitter::GetReferencedObjects, which trips C4996
@@ -57,7 +58,7 @@ USoundCue* USoundCueService::LoadSoundCue(const FString& AssetPath)
 		return nullptr;
 	}
 
-	UObject* Loaded = UEditorAssetLibrary::LoadAsset(AssetPath);
+	UObject* Loaded = VibeUE::LoadAssetAnyState(AssetPath);
 	if (!Loaded)
 	{
 		UE_LOG(LogSoundCueService, Warning, TEXT("LoadSoundCue: failed to load '%s'"), *AssetPath);
@@ -81,7 +82,7 @@ USoundWave* USoundCueService::LoadSoundWave(const FString& AssetPath)
 		return nullptr;
 	}
 
-	UObject* Loaded = UEditorAssetLibrary::LoadAsset(AssetPath);
+	UObject* Loaded = VibeUE::LoadAssetAnyState(AssetPath);
 	if (!Loaded)
 	{
 		UE_LOG(LogSoundCueService, Warning, TEXT("LoadSoundWave: failed to load '%s'"), *AssetPath);
@@ -143,6 +144,7 @@ USoundCueGraphNode* USoundCueService::GetGraphNodeAtIndex(USoundCue* SoundCue, i
 
 FSoundCueResult USoundCueService::CreateSoundCue(const FString& AssetPath, const FString& SoundWavePath)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SoundCueService.create_sound_cue");
 	FSoundCueResult Result;
 
 	if (AssetPath.IsEmpty())
@@ -338,6 +340,7 @@ TArray<FSoundCueNodeInfo> USoundCueService::ListNodes(const FString& AssetPath)
 FSoundCueResult USoundCueService::AddWavePlayerNode(
 	const FString& AssetPath, const FString& SoundWavePath, float PosX, float PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SoundCueService.add_wave_player_node");
 	FSoundCueResult Result;
 
 	USoundCue* SoundCue = LoadSoundCue(AssetPath);
@@ -399,6 +402,7 @@ FSoundCueResult USoundCueService::AddWavePlayerNode(
 
 FSoundCueResult USoundCueService::AddRandomNode(const FString& AssetPath, float PosX, float PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SoundCueService.add_random_node");
 	FSoundCueResult Result;
 
 	USoundCue* SoundCue = LoadSoundCue(AssetPath);
@@ -445,6 +449,7 @@ FSoundCueResult USoundCueService::AddRandomNode(const FString& AssetPath, float 
 
 FSoundCueResult USoundCueService::AddMixerNode(const FString& AssetPath, int32 NumInputs, float PosX, float PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SoundCueService.add_mixer_node");
 	FSoundCueResult Result;
 
 	USoundCue* SoundCue = LoadSoundCue(AssetPath);
@@ -506,6 +511,7 @@ FSoundCueResult USoundCueService::AddMixerNode(const FString& AssetPath, int32 N
 
 FSoundCueResult USoundCueService::AddModulatorNode(const FString& AssetPath, float PosX, float PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SoundCueService.add_modulator_node");
 	FSoundCueResult Result;
 
 	USoundCue* SoundCue = LoadSoundCue(AssetPath);
@@ -552,6 +558,7 @@ FSoundCueResult USoundCueService::AddModulatorNode(const FString& AssetPath, flo
 
 FSoundCueResult USoundCueService::AddAttenuationNode(const FString& AssetPath, float PosX, float PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SoundCueService.add_attenuation_node");
 	FSoundCueResult Result;
 
 	USoundCue* SoundCue = LoadSoundCue(AssetPath);
@@ -598,6 +605,7 @@ FSoundCueResult USoundCueService::AddAttenuationNode(const FString& AssetPath, f
 
 FSoundCueResult USoundCueService::AddLoopingNode(const FString& AssetPath, float PosX, float PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SoundCueService.add_looping_node");
 	FSoundCueResult Result;
 
 	USoundCue* SoundCue = LoadSoundCue(AssetPath);
@@ -644,6 +652,7 @@ FSoundCueResult USoundCueService::AddLoopingNode(const FString& AssetPath, float
 
 FSoundCueResult USoundCueService::AddConcatenatorNode(const FString& AssetPath, int32 NumInputs, float PosX, float PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SoundCueService.add_concatenator_node");
 	FSoundCueResult Result;
 
 	USoundCue* SoundCue = LoadSoundCue(AssetPath);
@@ -703,6 +712,7 @@ FSoundCueResult USoundCueService::AddConcatenatorNode(const FString& AssetPath, 
 
 FSoundCueResult USoundCueService::AddDelayNode(const FString& AssetPath, float PosX, float PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SoundCueService.add_delay_node");
 	FSoundCueResult Result;
 
 	USoundCue* SoundCue = LoadSoundCue(AssetPath);
@@ -761,6 +771,7 @@ static void AddPinsAndCompile(USoundCue* SoundCue, USoundCueGraphNode* GraphNode
 FSoundCueResult USoundCueService::AddSwitchNode(
 	const FString& AssetPath, int32 NumInputs, float PosX, float PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SoundCueService.add_switch_node");
 	FSoundCueResult Result;
 	USoundCue* SoundCue = LoadSoundCue(AssetPath);
 	if (!SoundCue) { Result.Message = FString::Printf(TEXT("Could not load '%s'"), *AssetPath); return Result; }
@@ -787,6 +798,7 @@ FSoundCueResult USoundCueService::AddSwitchNode(
 
 FSoundCueResult USoundCueService::AddEnveloperNode(const FString& AssetPath, float PosX, float PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SoundCueService.add_enveloper_node");
 	FSoundCueResult Result;
 	USoundCue* SoundCue = LoadSoundCue(AssetPath);
 	if (!SoundCue) { Result.Message = FString::Printf(TEXT("Could not load '%s'"), *AssetPath); return Result; }
@@ -812,6 +824,7 @@ FSoundCueResult USoundCueService::AddEnveloperNode(const FString& AssetPath, flo
 FSoundCueResult USoundCueService::AddDistanceCrossFadeNode(
 	const FString& AssetPath, int32 NumInputs, float PosX, float PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SoundCueService.add_distance_cross_fade_node");
 	FSoundCueResult Result;
 	USoundCue* SoundCue = LoadSoundCue(AssetPath);
 	if (!SoundCue) { Result.Message = FString::Printf(TEXT("Could not load '%s'"), *AssetPath); return Result; }
@@ -840,6 +853,7 @@ FSoundCueResult USoundCueService::AddDistanceCrossFadeNode(
 FSoundCueResult USoundCueService::AddBranchNode(
 	const FString& AssetPath, float PosX, float PosY, const FString& BoolParameterName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SoundCueService.add_branch_node");
 	FSoundCueResult Result;
 	USoundCue* SoundCue = LoadSoundCue(AssetPath);
 	if (!SoundCue) { Result.Message = FString::Printf(TEXT("Could not load '%s'"), *AssetPath); return Result; }
@@ -872,6 +886,7 @@ FSoundCueResult USoundCueService::AddBranchNode(
 FSoundCueResult USoundCueService::AddParamCrossFadeNode(
 	const FString& AssetPath, int32 NumInputs, float PosX, float PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SoundCueService.add_param_cross_fade_node");
 	FSoundCueResult Result;
 	USoundCue* SoundCue = LoadSoundCue(AssetPath);
 	if (!SoundCue) { Result.Message = FString::Printf(TEXT("Could not load '%s'"), *AssetPath); return Result; }
@@ -898,6 +913,7 @@ FSoundCueResult USoundCueService::AddParamCrossFadeNode(
 
 FSoundCueResult USoundCueService::AddQualityLevelNode(const FString& AssetPath, float PosX, float PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SoundCueService.add_quality_level_node");
 	FSoundCueResult Result;
 	USoundCue* SoundCue = LoadSoundCue(AssetPath);
 	if (!SoundCue) { Result.Message = FString::Printf(TEXT("Could not load '%s'"), *AssetPath); return Result; }
@@ -928,6 +944,7 @@ FSoundCueResult USoundCueService::AddQualityLevelNode(const FString& AssetPath, 
 
 bool USoundCueService::MoveNode(const FString& AssetPath, int32 NodeIndex, float PosX, float PosY)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SoundCueService.move_node");
 	USoundCue* SoundCue = LoadSoundCue(AssetPath);
 	if (!SoundCue) { return false; }
 
@@ -950,6 +967,7 @@ bool USoundCueService::MoveNode(const FString& AssetPath, int32 NodeIndex, float
 
 bool USoundCueService::RemoveNode(const FString& AssetPath, int32 NodeIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SoundCueService.remove_node");
 	USoundCue* SoundCue = LoadSoundCue(AssetPath);
 	if (!SoundCue)
 	{
@@ -990,6 +1008,7 @@ bool USoundCueService::RemoveNode(const FString& AssetPath, int32 NodeIndex)
 
 bool USoundCueService::DisconnectNode(const FString& AssetPath, int32 NodeIndex, int32 InputSlot)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SoundCueService.disconnect_node");
 	USoundCue* SoundCue = LoadSoundCue(AssetPath);
 	if (!SoundCue)
 	{
@@ -1027,6 +1046,7 @@ bool USoundCueService::DisconnectNode(const FString& AssetPath, int32 NodeIndex,
 bool USoundCueService::ConnectNodes(
 	const FString& AssetPath, int32 ParentIndex, int32 ChildIndex, int32 InputSlot)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SoundCueService.connect_nodes");
 	USoundCue* SoundCue = LoadSoundCue(AssetPath);
 	if (!SoundCue)
 	{
@@ -1114,6 +1134,7 @@ bool USoundCueService::ConnectNodes(
 
 bool USoundCueService::SetRootNode(const FString& AssetPath, int32 NodeIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SoundCueService.set_root_node");
 	USoundCue* SoundCue = LoadSoundCue(AssetPath);
 	if (!SoundCue)
 	{
@@ -1160,6 +1181,7 @@ bool USoundCueService::SetRootNode(const FString& AssetPath, int32 NodeIndex)
 bool USoundCueService::SetWavePlayerAsset(
 	const FString& AssetPath, int32 NodeIndex, const FString& SoundWavePath)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SoundCueService.set_wave_player_asset");
 	USoundCue* SoundCue = LoadSoundCue(AssetPath);
 	if (!SoundCue)
 	{
@@ -1233,6 +1255,7 @@ bool USoundCueService::SetNodeProperty(
 	const FString& AssetPath, int32 NodeIndex,
 	const FString& PropertyName, const FString& Value)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("SoundCueService.set_node_property");
 	USoundCue* SoundCue = LoadSoundCue(AssetPath);
 	if (!SoundCue)
 	{

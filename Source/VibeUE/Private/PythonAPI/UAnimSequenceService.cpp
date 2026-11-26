@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UAnimSequenceService.h"
+#include "Utils/VibeUEPIEGuard.h"
 #include "Utils/VibeUEToolError.h"
 #include "PythonAPI/USkeletonService.h"
 
@@ -45,27 +46,8 @@
 
 UObject* UAnimSequenceService::LoadAssetAnyState(const FString& AssetPath)
 {
-	if (AssetPath.IsEmpty())
-	{
-		return nullptr;
-	}
-
-	// "/Game/A/B" -> "/Game/A/B.B" so FSoftObjectPath can resolve it
-	FString ObjectPath = AssetPath;
-	if (!ObjectPath.Contains(TEXT(".")))
-	{
-		ObjectPath += TEXT(".") + FPackageName::GetShortName(ObjectPath);
-	}
-
-	// UEditorAssetLibrary::LoadAsset refuses to work while PIE is active (#671);
-	// resolving through FSoftObjectPath works in any editor state.
-	FSoftObjectPath SoftPath(ObjectPath);
-	UObject* Loaded = SoftPath.ResolveObject();
-	if (!Loaded)
-	{
-		Loaded = SoftPath.TryLoad();
-	}
-	return Loaded;
+	// The shared PIE-safe resolver (#671), used by every asset service since #705.
+	return VibeUE::LoadAssetAnyState(AssetPath);
 }
 
 UAnimSequence* UAnimSequenceService::LoadAnimSequence(const FString& AnimPath)
@@ -522,6 +504,7 @@ FString UAnimSequenceService::CreateFromPose(
 	const FString& SavePath,
 	float Duration)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.create_from_pose");
 	// Validate inputs
 	if (SkeletonPath.IsEmpty())
 	{
@@ -616,6 +599,7 @@ FString UAnimSequenceService::CreateAnimSequence(
 	float FrameRate,
 	const TArray<FBoneTrackData>& BoneTracks)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.create_anim_sequence");
 	// Validate inputs
 	if (SkeletonPath.IsEmpty())
 	{
@@ -939,6 +923,7 @@ int32 UAnimSequenceService::GetAnimationFrameCount(const FString& AnimPath)
 
 bool UAnimSequenceService::SetAnimationFrameRate(const FString& AnimPath, float NewFrameRate)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.set_animation_frame_rate");
 	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
 	if (!AnimSeq)
 	{
@@ -1344,6 +1329,7 @@ bool UAnimSequenceService::AddCurve(
 	const FString& CurveName,
 	bool bIsMorphTarget)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.add_curve");
 	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
 	if (!AnimSeq)
 	{
@@ -1370,6 +1356,7 @@ bool UAnimSequenceService::RemoveCurve(
 	const FString& AnimPath,
 	const FString& CurveName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.remove_curve");
 	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
 	if (!AnimSeq)
 	{
@@ -1394,6 +1381,7 @@ bool UAnimSequenceService::SetCurveKeys(
 	const FString& CurveName,
 	const TArray<FCurveKeyframe>& Keys)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.set_curve_keys");
 	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
 	if (!AnimSeq)
 	{
@@ -1433,6 +1421,7 @@ bool UAnimSequenceService::AddCurveKey(
 	float Time,
 	float Value)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.add_curve_key");
 	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
 	if (!AnimSeq)
 	{
@@ -1613,6 +1602,7 @@ int32 UAnimSequenceService::AddNotify(
 	float TriggerTime,
 	const FString& NotifyName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.add_notify");
 	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
 	if (!AnimSeq)
 	{
@@ -1704,6 +1694,7 @@ int32 UAnimSequenceService::AddNotifyState(
 	float Duration,
 	const FString& NotifyName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.add_notify_state");
 	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
 	if (!AnimSeq)
 	{
@@ -1775,6 +1766,7 @@ int32 UAnimSequenceService::AddNotifyState(
 
 bool UAnimSequenceService::RemoveNotify(const FString& AnimPath, int32 NotifyIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.remove_notify");
 	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
 	if (!AnimSeq)
 	{
@@ -1800,6 +1792,7 @@ bool UAnimSequenceService::SetNotifyTriggerTime(
 	int32 NotifyIndex,
 	float NewTime)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.set_notify_trigger_time");
 	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
 	if (!AnimSeq)
 	{
@@ -1827,6 +1820,7 @@ bool UAnimSequenceService::SetNotifyDuration(
 	int32 NotifyIndex,
 	float NewDuration)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.set_notify_duration");
 	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
 	if (!AnimSeq)
 	{
@@ -1859,6 +1853,7 @@ bool UAnimSequenceService::SetNotifyTrack(
 	int32 NotifyIndex,
 	int32 TrackIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.set_notify_track");
 	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
 	if (!AnimSeq)
 	{
@@ -1883,6 +1878,7 @@ bool UAnimSequenceService::SetNotifyName(
 	int32 NotifyIndex,
 	const FString& NewName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.set_notify_name");
 	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
 	if (!AnimSeq)
 	{
@@ -1923,6 +1919,7 @@ bool UAnimSequenceService::SetNotifyColor(
 	int32 NotifyIndex,
 	FLinearColor NewColor)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.set_notify_color");
 	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
 	if (!AnimSeq)
 	{
@@ -1947,6 +1944,7 @@ bool UAnimSequenceService::SetNotifyTriggerChance(
 	int32 NotifyIndex,
 	float TriggerChance)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.set_notify_trigger_chance");
 	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
 	if (!AnimSeq)
 	{
@@ -1971,6 +1969,7 @@ bool UAnimSequenceService::SetNotifyTriggerOnServer(
 	int32 NotifyIndex,
 	bool bTriggerOnServer)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.set_notify_trigger_on_server");
 	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
 	if (!AnimSeq)
 	{
@@ -1995,6 +1994,7 @@ bool UAnimSequenceService::SetNotifyTriggerOnFollower(
 	int32 NotifyIndex,
 	bool bTriggerOnFollower)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.set_notify_trigger_on_follower");
 	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
 	if (!AnimSeq)
 	{
@@ -2019,6 +2019,7 @@ bool UAnimSequenceService::SetNotifyTriggerWeightThreshold(
 	int32 NotifyIndex,
 	float WeightThreshold)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.set_notify_trigger_weight_threshold");
 	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
 	if (!AnimSeq)
 	{
@@ -2044,6 +2045,7 @@ bool UAnimSequenceService::SetNotifyLODFilter(
 	const FString& FilterType,
 	int32 FilterLOD)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.set_notify_lod_filter");
 	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
 	if (!AnimSeq)
 	{
@@ -2124,6 +2126,7 @@ int32 UAnimSequenceService::AddNotifyTrack(
 	const FString& AnimPath,
 	const FString& TrackName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.add_notify_track");
 	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
 	if (!AnimSeq)
 	{
@@ -2154,6 +2157,7 @@ bool UAnimSequenceService::RenameNotifyTrack(
 	int32 TrackIndex,
 	const FString& NewName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.rename_notify_track");
 	// In UE 5.7, notify tracks don't have editable names - they're just indexed.
 	// This operation is not supported in the current engine version.
 	UE_LOG(LogTemp, Warning, TEXT("UAnimSequenceService::RenameNotifyTrack: Notify tracks in UE 5.7 are implicitly named by index. Custom names are not supported."));
@@ -2164,6 +2168,7 @@ bool UAnimSequenceService::RemoveNotifyTrack(
 	const FString& AnimPath,
 	int32 TrackIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.remove_notify_track");
 	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
 	if (!AnimSeq)
 	{
@@ -2234,6 +2239,7 @@ bool UAnimSequenceService::AddSyncMarker(
 	const FString& MarkerName,
 	float Time)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.add_sync_marker");
 	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
 	if (!AnimSeq)
 	{
@@ -2264,6 +2270,7 @@ bool UAnimSequenceService::RemoveSyncMarker(
 	const FString& MarkerName,
 	float Time)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.remove_sync_marker");
 	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
 	if (!AnimSeq)
 	{
@@ -2300,6 +2307,7 @@ bool UAnimSequenceService::SetSyncMarkerTime(
 	int32 MarkerIndex,
 	float NewTime)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.set_sync_marker_time");
 	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
 	if (!AnimSeq)
 	{
@@ -2331,6 +2339,7 @@ bool UAnimSequenceService::SetSyncMarkerTimeByName(
 	float CurrentTime,
 	float NewTime)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.set_sync_marker_time_by_name");
 	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
 	if (!AnimSeq)
 	{
@@ -2401,6 +2410,7 @@ bool UAnimSequenceService::GetCompressionInfo(
 
 bool UAnimSequenceService::CompressAnimation(const FString& AnimPath)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.compress_animation");
 	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
 	if (!AnimSeq)
 	{
@@ -2869,6 +2879,7 @@ bool UAnimSequenceService::BakePreviewToKeyframes(
 	const FString& InterpMode,
 	FAnimationEditResult& OutResult)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.bake_preview_to_keyframes");
 	OutResult.bSuccess = false;
 
 	if (!ActivePreviews.Contains(AnimPath))
@@ -2973,6 +2984,7 @@ bool UAnimSequenceService::ApplyBoneRotation(
 	bool bIsDelta,
 	FAnimationEditResult& OutResult)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.apply_bone_rotation");
 	OutResult.bSuccess = false;
 
 	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
@@ -3074,6 +3086,7 @@ bool UAnimSequenceService::CopyPose(
 	const TArray<FString>& BoneFilter,
 	FAnimationEditResult& OutResult)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.copy_pose");
 	OutResult.bSuccess = false;
 
 	UAnimSequence* SrcAnim = LoadAnimSequence(SrcAnimPath);
@@ -3185,6 +3198,7 @@ bool UAnimSequenceService::MirrorPose(
 	const FString& MirrorAxis,
 	FAnimationEditResult& OutResult)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.mirror_pose");
 	OutResult.bSuccess = false;
 
 	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
@@ -3724,6 +3738,7 @@ FAnimationEditResult UAnimSequenceService::ApplyHandPose(
 	const FString& PoseName,
 	float Alpha)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("AnimSequenceService.apply_hand_pose");
 	FAnimationEditResult OutResult;
 	OutResult.bSuccess = false;
 

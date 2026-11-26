@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UStateTreeService.h"
+#include "Utils/VibeUEPIEGuard.h"
 
 #include "EditorAssetLibrary.h"
 #include "AssetRegistry/AssetRegistryModule.h"
@@ -70,7 +71,7 @@ static UStateTree* LoadStateTree(const FString& AssetPath)
 	}
 
 	// Fall back to loading from disk
-	UObject* Obj = UEditorAssetLibrary::LoadAsset(AssetPath);
+	UObject* Obj = VibeUE::LoadAssetAnyState(AssetPath);
 	return Cast<UStateTree>(Obj);
 }
 
@@ -917,7 +918,7 @@ static UClass* ResolveActorClassPath(const FString& ActorClassPath)
 		BlueprintAssetPath = BlueprintAssetPath.Left(DotIdx);
 	}
 
-	if (UObject* LoadedAsset = UEditorAssetLibrary::LoadAsset(BlueprintAssetPath))
+	if (UObject* LoadedAsset = VibeUE::LoadAssetAnyState(BlueprintAssetPath))
 	{
 		if (UBlueprint* Blueprint = Cast<UBlueprint>(LoadedAsset))
 		{
@@ -1123,7 +1124,7 @@ static UClass* TryResolveBlueprintTaskClassFromAssetPath(const FString& AssetPat
 		return nullptr;
 	}
 
-	if (UObject* LoadedAsset = UEditorAssetLibrary::LoadAsset(AssetPath))
+	if (UObject* LoadedAsset = VibeUE::LoadAssetAnyState(AssetPath))
 	{
 		if (UBlueprint* Blueprint = Cast<UBlueprint>(LoadedAsset))
 		{
@@ -1388,7 +1389,7 @@ static UClass* TryResolveBlueprintEvaluatorClassFromObjectPath(const FString& Ob
 static UClass* TryResolveBlueprintEvaluatorClassFromAssetPath(const FString& AssetPath, FString& OutError)
 {
 	if (AssetPath.IsEmpty()) { return nullptr; }
-	if (UObject* LoadedAsset = UEditorAssetLibrary::LoadAsset(AssetPath))
+	if (UObject* LoadedAsset = VibeUE::LoadAssetAnyState(AssetPath))
 	{
 		if (UBlueprint* Blueprint = Cast<UBlueprint>(LoadedAsset))
 		{
@@ -2542,6 +2543,7 @@ TArray<FString> UStateTreeService::GetAvailableEvaluatorTypes()
 
 bool UStateTreeService::CreateStateTree(const FString& AssetPath, const FString& SchemaClassName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.create_state_tree");
 	if (AssetPath.IsEmpty())
 	{
 		UE_LOG(LogStateTreeService, Warning, TEXT("CreateStateTree: AssetPath is empty"));
@@ -2641,6 +2643,7 @@ bool UStateTreeService::CreateStateTree(const FString& AssetPath, const FString&
 bool UStateTreeService::SetStateThemeColor(const FString& AssetPath, const FString& StatePath,
 	const FString& ColorName, const FLinearColor& Color)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.set_state_theme_color");
 	if (ColorName.IsEmpty())
 	{
 		UE_LOG(LogStateTreeService, Warning, TEXT("SetStateThemeColor: ColorName is empty"));
@@ -2698,6 +2701,7 @@ bool UStateTreeService::SetStateThemeColor(const FString& AssetPath, const FStri
 
 bool UStateTreeService::RenameThemeColor(const FString& AssetPath, const FString& OldColorName, const FString& NewColorName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.rename_theme_color");
 	if (OldColorName.IsEmpty() || NewColorName.IsEmpty())
 	{
 		UE_LOG(LogStateTreeService, Warning, TEXT("RenameThemeColor: OldColorName and NewColorName must not be empty"));
@@ -2803,6 +2807,7 @@ TArray<FStateTreeThemeColorInfo> UStateTreeService::GetThemeColors(const FString
 
 bool UStateTreeService::SetStateExpanded(const FString& AssetPath, const FString& StatePath, bool bExpanded)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.set_state_expanded");
 	UStateTree* StateTree = LoadStateTree(AssetPath);
 	if (!StateTree)
 	{
@@ -2906,6 +2911,7 @@ bool UStateTreeService::SelectState(const FString& AssetPath, const FString& Sta
 bool UStateTreeService::AddOrUpdateRootParameter(const FString& AssetPath, const FString& Name,
 	const FString& Type, const FString& DefaultValue)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.add_or_update_root_parameter");
 	if (Name.IsEmpty())
 	{
 		UE_LOG(LogStateTreeService, Warning, TEXT("AddOrUpdateRootParameter: Name is empty"));
@@ -2950,6 +2956,7 @@ bool UStateTreeService::AddOrUpdateRootParameter(const FString& AssetPath, const
 
 bool UStateTreeService::RemoveRootParameter(const FString& AssetPath, const FString& Name)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.remove_root_parameter");
 	if (Name.IsEmpty())
 	{
 		UE_LOG(LogStateTreeService, Warning, TEXT("RemoveRootParameter: Name is empty"));
@@ -2987,6 +2994,7 @@ bool UStateTreeService::RemoveRootParameter(const FString& AssetPath, const FStr
 
 bool UStateTreeService::RenameRootParameter(const FString& AssetPath, const FString& OldName, const FString& NewName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.rename_root_parameter");
 	if (OldName.IsEmpty() || NewName.IsEmpty())
 	{
 		UE_LOG(LogStateTreeService, Warning, TEXT("RenameRootParameter: OldName and NewName must not be empty"));
@@ -3069,6 +3077,7 @@ namespace
 bool UStateTreeService::SetComponentParameterOverride(const FString& ActorNameOrLabel,
 	const FString& ParameterName, const FString& Value)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.set_component_parameter_override");
 	if (ParameterName.IsEmpty())
 	{
 		UE_LOG(LogStateTreeService, Warning, TEXT("SetComponentParameterOverride: ParameterName is empty"));
@@ -3211,6 +3220,7 @@ bool UStateTreeService::BindConsiderationPropertyToContext(const FString& AssetP
 	const FString& ConsiderationStructName, const FString& ConsiderationPropertyPath,
 	const FString& ContextName, const FString& ContextPropertyPath, int32 MatchIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.bind_consideration_property_to_context");
 	if (ConsiderationPropertyPath.IsEmpty())
 	{
 		UE_LOG(LogStateTreeService, Warning, TEXT("BindConsiderationPropertyToContext: ConsiderationPropertyPath is required"));
@@ -3276,6 +3286,7 @@ bool UStateTreeService::BindConsiderationPropertyToRootParameter(const FString& 
 	const FString& ConsiderationStructName, const FString& ConsiderationPropertyPath,
 	const FString& ParameterPath, int32 MatchIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.bind_consideration_property_to_root_parameter");
 	if (ConsiderationPropertyPath.IsEmpty() || ParameterPath.IsEmpty())
 	{
 		UE_LOG(LogStateTreeService, Warning, TEXT("BindConsiderationPropertyToRootParameter: ConsiderationPropertyPath and ParameterPath are required"));
@@ -3331,6 +3342,7 @@ bool UStateTreeService::BindConsiderationPropertyToRootParameter(const FString& 
 bool UStateTreeService::UnbindConsiderationProperty(const FString& AssetPath, const FString& StatePath,
 	const FString& ConsiderationStructName, const FString& ConsiderationPropertyPath, int32 MatchIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.unbind_consideration_property");
 	if (ConsiderationPropertyPath.IsEmpty())
 	{
 		UE_LOG(LogStateTreeService, Warning, TEXT("UnbindConsiderationProperty: ConsiderationPropertyPath is required"));
@@ -3385,6 +3397,7 @@ bool UStateTreeService::UnbindConsiderationProperty(const FString& AssetPath, co
 bool UStateTreeService::SetTaskConsideredForCompletion(const FString& AssetPath, const FString& StatePath,
 	const FString& TaskStructName, int32 TaskMatchIndex, bool bConsideredForCompletion)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.set_task_considered_for_completion");
 	UStateTree* StateTree = LoadStateTree(AssetPath);
 	if (!StateTree) { return false; }
 
@@ -3428,6 +3441,7 @@ bool UStateTreeService::SetTaskConsideredForCompletion(const FString& AssetPath,
 bool UStateTreeService::BindTransitionToDelegate(const FString& AssetPath, const FString& StatePath,
 	int32 TransitionIndex, const FString& TaskStructName, const FString& DispatcherPropertyName, int32 TaskMatchIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.bind_transition_to_delegate");
 	if (DispatcherPropertyName.IsEmpty())
 	{
 		UE_LOG(LogStateTreeService, Warning, TEXT("BindTransitionToDelegate: DispatcherPropertyName is required"));
@@ -3501,6 +3515,7 @@ bool UStateTreeService::BindTransitionToDelegate(const FString& AssetPath, const
 
 bool UStateTreeService::MoveTransition(const FString& AssetPath, const FString& StatePath, int32 FromIndex, int32 ToIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.move_transition");
 	UStateTree* StateTree = LoadStateTree(AssetPath);
 	if (!StateTree) { return false; }
 
@@ -3544,6 +3559,7 @@ bool UStateTreeService::MoveTransition(const FString& AssetPath, const FString& 
 bool UStateTreeService::SetTaskEnabled(const FString& AssetPath, const FString& StatePath,
 	const FString& TaskStructName, int32 TaskMatchIndex, bool bEnabled)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.set_task_enabled");
 	UStateTree* StateTree = LoadStateTree(AssetPath);
 	if (!StateTree) { return false; }
 
@@ -3584,6 +3600,7 @@ bool UStateTreeService::SetTaskEnabled(const FString& AssetPath, const FString& 
 bool UStateTreeService::BindTaskPropertyToRootParameter(const FString& AssetPath, const FString& StatePath,
 	const FString& TaskStructName, const FString& TaskPropertyPath, const FString& ParameterPath, int32 TaskMatchIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.bind_task_property_to_root_parameter");
 	if (TaskPropertyPath.IsEmpty() || ParameterPath.IsEmpty())
 	{
 		UE_LOG(LogStateTreeService, Warning, TEXT("BindTaskPropertyToRootParameter: TaskPropertyPath and ParameterPath are required"));
@@ -3645,6 +3662,7 @@ bool UStateTreeService::BindTaskPropertyToContext(const FString& AssetPath, cons
 	const FString& TaskStructName, const FString& TaskPropertyPath, const FString& ContextName,
 	const FString& ContextPropertyPath, int32 TaskMatchIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.bind_task_property_to_context");
 	if (TaskPropertyPath.IsEmpty())
 	{
 		UE_LOG(LogStateTreeService, Warning, TEXT("BindTaskPropertyToContext: TaskPropertyPath is required"));
@@ -3733,6 +3751,7 @@ bool UStateTreeService::BindTaskPropertyToGlobalTaskProperty(const FString& Asse
 	const FString& GlobalTaskStructName, const FString& GlobalTaskPropertyPath,
 	int32 TaskMatchIndex, int32 GlobalTaskMatchIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.bind_task_property_to_global_task_property");
 	if (TaskPropertyPath.IsEmpty() || GlobalTaskPropertyPath.IsEmpty())
 	{
 		UE_LOG(LogStateTreeService, Warning,
@@ -3807,6 +3826,7 @@ bool UStateTreeService::BindTaskPropertyToEvaluatorProperty(const FString& Asset
 	const FString& EvaluatorStructName, const FString& EvaluatorPropertyPath,
 	int32 TaskMatchIndex, int32 EvaluatorMatchIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.bind_task_property_to_evaluator_property");
 	if (TaskPropertyPath.IsEmpty() || EvaluatorPropertyPath.IsEmpty())
 	{
 		UE_LOG(LogStateTreeService, Warning,
@@ -3879,6 +3899,7 @@ bool UStateTreeService::BindTaskPropertyToEvaluatorProperty(const FString& Asset
 bool UStateTreeService::UnbindTaskProperty(const FString& AssetPath, const FString& StatePath,
 	const FString& TaskStructName, const FString& TaskPropertyPath, int32 TaskMatchIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.unbind_task_property");
 	if (TaskPropertyPath.IsEmpty())
 	{
 		UE_LOG(LogStateTreeService, Warning, TEXT("UnbindTaskProperty: TaskPropertyPath is required"));
@@ -3969,6 +3990,7 @@ bool UStateTreeService::BindEnterConditionPropertyToContext(const FString& Asset
 	const FString& ConditionStructName, const FString& ConditionPropertyPath, const FString& ContextName,
 	const FString& ContextPropertyPath, int32 ConditionMatchIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.bind_enter_condition_property_to_context");
 	if (ConditionPropertyPath.IsEmpty())
 	{
 		UE_LOG(LogStateTreeService, Warning, TEXT("BindEnterConditionPropertyToContext: ConditionPropertyPath is required"));
@@ -4040,6 +4062,7 @@ bool UStateTreeService::BindEnterConditionPropertyToGlobalTaskProperty(const FSt
 	const FString& GlobalTaskStructName, const FString& GlobalTaskPropertyPath,
 	int32 ConditionMatchIndex, int32 GlobalTaskMatchIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.bind_enter_condition_property_to_global_task_property");
 	if (ConditionPropertyPath.IsEmpty() || GlobalTaskPropertyPath.IsEmpty())
 	{
 		UE_LOG(LogStateTreeService, Warning,
@@ -4114,6 +4137,7 @@ bool UStateTreeService::BindEnterConditionPropertyToEvaluatorProperty(const FStr
 	const FString& EvaluatorStructName, const FString& EvaluatorPropertyPath,
 	int32 ConditionMatchIndex, int32 EvaluatorMatchIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.bind_enter_condition_property_to_evaluator_property");
 	if (ConditionPropertyPath.IsEmpty() || EvaluatorPropertyPath.IsEmpty())
 	{
 		UE_LOG(LogStateTreeService, Warning,
@@ -4186,6 +4210,7 @@ bool UStateTreeService::BindEnterConditionPropertyToEvaluatorProperty(const FStr
 bool UStateTreeService::BindEnterConditionPropertyToRootParameter(const FString& AssetPath, const FString& StatePath,
 	const FString& ConditionStructName, const FString& ConditionPropertyPath, const FString& ParameterPath, int32 ConditionMatchIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.bind_enter_condition_property_to_root_parameter");
 	if (ConditionPropertyPath.IsEmpty() || ParameterPath.IsEmpty())
 	{
 		UE_LOG(LogStateTreeService, Warning, TEXT("BindEnterConditionPropertyToRootParameter: ConditionPropertyPath and ParameterPath are required"));
@@ -4246,6 +4271,7 @@ bool UStateTreeService::BindEnterConditionPropertyToRootParameter(const FString&
 bool UStateTreeService::UnbindEnterConditionProperty(const FString& AssetPath, const FString& StatePath,
 	const FString& ConditionStructName, const FString& ConditionPropertyPath, int32 ConditionMatchIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.unbind_enter_condition_property");
 	if (ConditionPropertyPath.IsEmpty())
 	{
 		UE_LOG(LogStateTreeService, Warning, TEXT("UnbindEnterConditionProperty: ConditionPropertyPath is required"));
@@ -4305,6 +4331,7 @@ bool UStateTreeService::UnbindEnterConditionProperty(const FString& AssetPath, c
 bool UStateTreeService::AddTransitionCondition(const FString& AssetPath, const FString& StatePath,
 	int32 TransitionIndex, const FString& ConditionStructName)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.add_transition_condition");
 	UStateTree* StateTree = LoadStateTree(AssetPath);
 	if (!StateTree) { return false; }
 
@@ -4437,6 +4464,7 @@ bool UStateTreeService::SetTransitionConditionPropertyValue(const FString& Asset
 	int32 TransitionIndex, const FString& ConditionStructName, const FString& PropertyPath,
 	const FString& Value, int32 ConditionMatchIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.set_transition_condition_property_value");
 	UStateTree* StateTree = LoadStateTree(AssetPath);
 	if (!StateTree) { return false; }
 
@@ -4483,6 +4511,7 @@ bool UStateTreeService::BindTransitionConditionPropertyToContext(const FString& 
 	int32 TransitionIndex, const FString& ConditionStructName, const FString& ConditionPropertyPath,
 	const FString& ContextName, const FString& ContextPropertyPath, int32 ConditionMatchIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.bind_transition_condition_property_to_context");
 	if (ConditionPropertyPath.IsEmpty())
 	{
 		UE_LOG(LogStateTreeService, Warning, TEXT("BindTransitionConditionPropertyToContext: ConditionPropertyPath is required"));
@@ -4554,6 +4583,7 @@ bool UStateTreeService::BindTransitionConditionPropertyToEvaluatorProperty(const
 	int32 TransitionIndex, const FString& ConditionStructName, const FString& ConditionPropertyPath,
 	const FString& EvaluatorStructName, const FString& EvaluatorPropertyPath, int32 ConditionMatchIndex, int32 EvaluatorMatchIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.bind_transition_condition_property_to_evaluator_property");
 	if (ConditionPropertyPath.IsEmpty() || EvaluatorPropertyPath.IsEmpty())
 	{
 		UE_LOG(LogStateTreeService, Warning,
@@ -4628,6 +4658,7 @@ bool UStateTreeService::BindTransitionConditionPropertyToEventPayload(const FStr
 	int32 TransitionIndex, const FString& ConditionStructName, const FString& ConditionPropertyPath,
 	const FString& PayloadPropertyPath, int32 ConditionMatchIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.bind_transition_condition_property_to_event_payload");
 	if (ConditionPropertyPath.IsEmpty())
 	{
 		UE_LOG(LogStateTreeService, Warning, TEXT("BindTransitionConditionPropertyToEventPayload: ConditionPropertyPath is required"));
@@ -4717,6 +4748,7 @@ bool UStateTreeService::UnbindTransitionConditionProperty(const FString& AssetPa
 	int32 TransitionIndex, const FString& ConditionStructName, const FString& ConditionPropertyPath,
 	int32 ConditionMatchIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.unbind_transition_condition_property");
 	if (ConditionPropertyPath.IsEmpty())
 	{
 		UE_LOG(LogStateTreeService, Warning, TEXT("UnbindTransitionConditionProperty: ConditionPropertyPath is required"));
@@ -4780,6 +4812,7 @@ bool UStateTreeService::UnbindTransitionConditionProperty(const FString& AssetPa
 bool UStateTreeService::BindEvaluatorPropertyToRootParameter(const FString& AssetPath, const FString& EvaluatorStructName,
 	const FString& EvaluatorPropertyPath, const FString& ParameterPath, int32 MatchIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.bind_evaluator_property_to_root_parameter");
 	if (EvaluatorPropertyPath.IsEmpty() || ParameterPath.IsEmpty())
 	{
 		UE_LOG(LogStateTreeService, Warning, TEXT("BindEvaluatorPropertyToRootParameter: EvaluatorPropertyPath and ParameterPath are required"));
@@ -4833,6 +4866,7 @@ bool UStateTreeService::BindEvaluatorPropertyToRootParameter(const FString& Asse
 bool UStateTreeService::BindEvaluatorPropertyToContext(const FString& AssetPath, const FString& EvaluatorStructName,
 	const FString& EvaluatorPropertyPath, const FString& ContextName, const FString& ContextPropertyPath, int32 MatchIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.bind_evaluator_property_to_context");
 	if (EvaluatorPropertyPath.IsEmpty())
 	{
 		UE_LOG(LogStateTreeService, Warning, TEXT("BindEvaluatorPropertyToContext: EvaluatorPropertyPath is required"));
@@ -4912,6 +4946,7 @@ bool UStateTreeService::BindEvaluatorPropertyToContext(const FString& AssetPath,
 bool UStateTreeService::UnbindEvaluatorProperty(const FString& AssetPath, const FString& EvaluatorStructName,
 	const FString& EvaluatorPropertyPath, int32 MatchIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.unbind_evaluator_property");
 	if (EvaluatorPropertyPath.IsEmpty())
 	{
 		UE_LOG(LogStateTreeService, Warning, TEXT("UnbindEvaluatorProperty: EvaluatorPropertyPath is required"));
@@ -4964,6 +4999,7 @@ bool UStateTreeService::UnbindEvaluatorProperty(const FString& AssetPath, const 
 bool UStateTreeService::BindGlobalTaskPropertyToRootParameter(const FString& AssetPath, const FString& TaskStructName,
 	const FString& TaskPropertyPath, const FString& ParameterPath, int32 MatchIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.bind_global_task_property_to_root_parameter");
 	if (TaskPropertyPath.IsEmpty() || ParameterPath.IsEmpty())
 	{
 		UE_LOG(LogStateTreeService, Warning, TEXT("BindGlobalTaskPropertyToRootParameter: TaskPropertyPath and ParameterPath are required"));
@@ -5017,6 +5053,7 @@ bool UStateTreeService::BindGlobalTaskPropertyToRootParameter(const FString& Ass
 bool UStateTreeService::BindGlobalTaskPropertyToContext(const FString& AssetPath, const FString& TaskStructName,
 	const FString& TaskPropertyPath, const FString& ContextName, const FString& ContextPropertyPath, int32 MatchIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.bind_global_task_property_to_context");
 	if (TaskPropertyPath.IsEmpty())
 	{
 		UE_LOG(LogStateTreeService, Warning, TEXT("BindGlobalTaskPropertyToContext: TaskPropertyPath is required"));
@@ -5096,6 +5133,7 @@ bool UStateTreeService::BindGlobalTaskPropertyToContext(const FString& AssetPath
 bool UStateTreeService::UnbindGlobalTaskProperty(const FString& AssetPath, const FString& TaskStructName,
 	const FString& TaskPropertyPath, int32 MatchIndex)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("StateTreeService.unbind_global_task_property");
 	if (TaskPropertyPath.IsEmpty())
 	{
 		UE_LOG(LogStateTreeService, Warning, TEXT("UnbindGlobalTaskProperty: TaskPropertyPath is required"));

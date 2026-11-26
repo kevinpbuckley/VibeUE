@@ -125,11 +125,13 @@ an instance. A Blueprint's class is `/Game/Dir/BP_X.BP_X_C`, distinct from the a
 
 VibeUE's own `unreal.BlueprintService.*` methods are unaffected: they take plain string paths.
 
-### ⚠️ Nothing works during Play-In-Editor
+### ⚠️ No Blueprint edits during Play-In-Editor
 
-Every `BlueprintService` entry point **refuses** while a PIE session is running and logs it with a
-`PIE_ACTIVE:` prefix. Asset writes during PIE are unsafe anyway, and editor-world edits issued
-immediately after stopping PIE can silently no-op — let the editor settle before editing.
+Every `BlueprintService` call that changes a Blueprint **refuses** while a PIE session is running: it raises
+"PIE_ACTIVE: BlueprintService.<call> refused: ... Stop PIE first", the one refusal every VibeUE
+asset-writing service gives (`vibeue.require_no_pie()` raises the same in a script). Read-only calls keep
+working. Editor-world edits issued immediately after stopping PIE can silently no-op — let the editor
+settle before editing.
 
 ```python
 les = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)

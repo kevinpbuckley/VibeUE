@@ -46,6 +46,8 @@ Also provides (agent helpers for PIE, async tools, and asset GC):
 - safe_reload_level(confirm_discard=True) / python_holders_of_level() — reload the open map from disk
   without the "World Memory Leaks" fatal: refuses PIE, a /Temp level, the person's unsaved edits, other
   resident maps; drops or purges the Python references into the map first. (#702)
+- require_no_pie(operation) — raise PIEActiveError ("PIE_ACTIVE: ... Stop PIE first") while PIE runs, the
+  refusal VibeUE's asset-writing services give; put it at the top of asset-writing scripts. (#705)
 - pie_session() / capture_game() / game_world() — `async with vibeue.pie_session(1280, 720) as s:`
   sets throttling, the PIE window size (in both places it must go), starts PIE, waits for the player
   controller and hides screen messages, and restores all of it on exit; `await
@@ -1543,6 +1545,47 @@ def safe_reload_level(*, confirm_discard: bool = False, force: bool = False) -> 
     return {"reloaded": bool(loaded), "level": level, "discarded": discarded, "released": released,
             "purged": purged, "resident_maps": [str(m) for m in unreal.PythonTools.get_resident_maps()],
             "level_dirty": level in _dirty_map_package_names()}
+
+
+# --- Refusing asset writes during PIE (issue #705) --------------------------------------------
+#
+# During PIE, EditorAssetLibrary.load_asset returns None. An import script took that for "asset missing",
+# re-imported twelve textures over the existing ones with default settings and left them dirty; others
+# failed later with "'NoneType' object has no attribute ...". VibeUE's own asset-writing services refuse
+# during PIE with one message (C++: VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE at the top of each writing
+# function; their read-only calls keep working). require_no_pie() gives a script the same refusal.
+
+
+class PIEActiveError(RuntimeError):
+    """require_no_pie() refused: a Play-In-Editor session is running."""
+
+
+def require_no_pie(operation: str = "this script") -> None:
+    """Raise PIEActiveError ("PIE_ACTIVE: <operation> refused: ... Stop PIE first ...") while PIE runs.
+
+    Put it at the top of any script or helper that creates, imports, edits or saves assets:
+
+        import vibeue
+        vibeue.require_no_pie("texture import")
+        # ... load_asset / import / save ...
+
+    The text is the one VibeUE's services use (unreal.PythonTools.get_pie_write_refusal). Read-only work
+    does not need it; for reads during PIE use unreal.load_object(None, "/Game/Path/Asset.Asset") or
+    unreal.load_asset, not EditorAssetLibrary.load_asset.
+    """
+    running = False
+    try:
+        running = bool(unreal.PythonTools.is_play_session_running())
+    except Exception:
+        running = _pie_running()
+    if not running:
+        return
+    try:
+        message = unreal.PythonTools.get_pie_write_refusal(str(operation))
+    except Exception:
+        message = ("PIE_ACTIVE: {} refused: a Play-In-Editor session is running. Stop PIE first "
+                   "(EditorToolset.EditorAppToolset.StopPIE), then call again.".format(operation))
+    raise PIEActiveError(message)
 
 
 # --- Non-blocking waits (gate harnesses) -----------------------------------------------------

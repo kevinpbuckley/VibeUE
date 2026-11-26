@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UBehaviorTreeService.h"
+#include "Utils/VibeUEPIEGuard.h"
 
 #include "AIGraphNode.h"
 #include "AssetRegistry/ARFilter.h"
@@ -133,6 +134,7 @@ namespace
 }
 FString UBehaviorTreeService::RepairGraphFromRuntimeTree(const FString& AssetPath)
 {
+	VIBEUE_REFUSE_ASSET_WRITE_DURING_PIE("BehaviorTreeService.repair_graph_from_runtime_tree");
 	// The eligibility facts are captured BEFORE OpenWriteGuard, because the guard runs EnsureGraph,
 	// and for an asset with no graph at all EnsureGraph creates one and reconstructs it as a side
 	// effect (OnCreated -> SpawnMissingNodes). Judging "is there anything to repair" after that
