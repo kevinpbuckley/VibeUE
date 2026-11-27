@@ -30,27 +30,42 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogPythonTools, Log, All);
 
-TArray<FString> UPythonTools::GetResidentMapWorlds()
+// A map opened as an ASSET (unreal.load_asset("/Game/Maps/Foo"), EditorAssetLibrary.load_asset,
+// find_object, ...) stays resident afterwards. Opening that map later makes the engine's own
+// "old level package cleaned up?" check fail unless the editor releases it first
+// (HostReleasesResidentMaps). That check is a fatal, not a warning:
+//
+//   EditorServer.cpp:2544  World Memory Leaks: N leaks objects and packages
+//   LogEditorServer: Error: Old level package /Game/Maps/Foo not cleaned up by garbage collection
+//
+// The crash therefore lands minutes later, on whoever opens it next, with nothing in the
+// message pointing at the script that actually caused it. Listing the stragglers in the reply of
+// the run that created them turns that into an immediate, attributable warning.
+//
+// One walk fills both lists, so the inventory (Resident) and the load guard (LevelLoadRisks) describe
+// the same editor state. LevelLoadRisks leaves out the open level's streaming sublevels: each is a
+// separate map package that is resident by design, and a level change unloads it with its persistent
+// world. Warning about one would fire after every run on any map that has sublevels.
+static void CollectResidentMapWorlds(TArray<FString>& Resident, TArray<FString>& LevelLoadRisks)
 {
-	// A map opened as an ASSET (unreal.load_asset("/Game/Maps/Foo"), EditorAssetLibrary.load_asset,
-	// find_object, ...) stays resident afterwards. Opening that map later makes the engine's own
-	// "old level package cleaned up?" check fail unless the editor releases it first
-	// (HostReleasesResidentMaps). That check is a fatal, not a warning:
-	//
-	//   EditorServer.cpp:2544  World Memory Leaks: N leaks objects and packages
-	//   LogEditorServer: Error: Old level package /Game/Maps/Foo not cleaned up by garbage collection
-	//
-	// The crash therefore lands minutes later, on whoever opens it next, with nothing in the
-	// message pointing at the script that actually caused it. Listing the stragglers in the reply of
-	// the run that created them turns that into an immediate, attributable warning.
-	TArray<FString> Resident;
-
 	if (!GEditor)
 	{
-		return Resident;
+		return;
 	}
 
 	const UWorld* EditorWorld = GEditor->GetEditorWorldContext().World();
+	TSet<const UWorld*> StreamingWorlds;
+	if (EditorWorld)
+	{
+		for (const ULevelStreaming* Streaming : EditorWorld->GetStreamingLevels())
+		{
+			const ULevel* Loaded = Streaming ? Streaming->GetLoadedLevel() : nullptr;
+			if (Loaded)
+			{
+				StreamingWorlds.Add(Loaded->GetTypedOuter<UWorld>());
+			}
+		}
+	}
 
 	for (TObjectIterator<UWorld> It; It; ++It)
 	{
@@ -78,9 +93,22 @@ TArray<FString> UPythonTools::GetResidentMapWorlds()
 			continue;
 		}
 
-		Resident.AddUnique(World->GetPathName());
+		const FString Path = World->GetPathName();
+		Resident.Add(Path);
+		// A streamed level unloads with its owning editor world. During streaming its
+		// ownership can already be established even when the streaming entry has no loaded level.
+		const bool bOwnedByEditor = EditorWorld && World->PersistentLevel && World->PersistentLevel->OwningWorld == EditorWorld;
+		if (!bOwnedByEditor && !StreamingWorlds.Contains(World))
+		{
+			LevelLoadRisks.Add(Path);
+		}
 	}
+}
 
+TArray<FString> UPythonTools::GetResidentMapWorlds()
+{
+	TArray<FString> Resident, LevelLoadRisks;
+	CollectResidentMapWorlds(Resident, LevelLoadRisks);
 	return Resident;
 }
 
@@ -100,37 +128,9 @@ bool UPythonTools::HostReleasesResidentMaps()
 
 TArray<FString> UPythonTools::GetResidentMaps()
 {
-	// Narrower than the resident_maps reply field (which keeps GetResidentMapWorlds' rule unchanged):
-	// a legacy streaming sublevel of the open map is a separate map package that is resident by design,
-	// and the level change unloads it with its persistent world. Reporting it here would make
-	// vibeue.safe_load_level refuse forever on any map that has sublevels.
-	TArray<FString> Resident = GetResidentMapWorlds();
-	const UWorld* EditorWorld = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
-	if (!EditorWorld || Resident.Num() == 0)
-	{
-		return Resident;
-	}
-
-	TSet<FString> Sublevels;
-	for (const ULevelStreaming* Streaming : EditorWorld->GetStreamingLevels())
-	{
-		const ULevel* Loaded = Streaming ? Streaming->GetLoadedLevel() : nullptr;
-		const UWorld* SublevelWorld = Loaded ? Loaded->GetTypedOuter<UWorld>() : nullptr;
-		if (SublevelWorld && SublevelWorld != EditorWorld)
-		{
-			Sublevels.Add(SublevelWorld->GetPathName());
-		}
-	}
-	for (TObjectIterator<UWorld> It; It; ++It)
-	{
-		const UWorld* World = *It;
-		if (World && World != EditorWorld && World->PersistentLevel && World->PersistentLevel->OwningWorld == EditorWorld)
-		{
-			Sublevels.Add(World->GetPathName());
-		}
-	}
-	Resident.RemoveAll([&Sublevels](const FString& Path) { return Sublevels.Contains(Path); });
-	return Resident;
+	TArray<FString> Resident, LevelLoadRisks;
+	CollectResidentMapWorlds(Resident, LevelLoadRisks);
+	return LevelLoadRisks;
 }
 
 TArray<FString> UPythonTools::GetDirtyPackages(bool bIncludeMaps)
@@ -572,27 +572,26 @@ static FString FinishPythonRun(const FPythonRunContext& Run, const TResult<FPyth
 		UPythonTools::ComputeDirtyPackageDelta(Run.DirtyBeforeRun, UPythonTools::GetDirtyPackages(/*bIncludeMaps=*/true), DirtiedPackageNames, CleanedPackageNames);
 	}
 
-	// Maps this run has left resident (see GetResidentMapWorlds). Computed here, BEFORE the error
+	// Maps this run has left resident (see CollectResidentMapWorlds). Computed here, BEFORE the error
 	// branch, because the run that strands a map is frequently the same run that raised - that was
 	// the shape of the crash this check exists to prevent - so the failing reply must carry it too.
-	const TArray<FString> ResidentMaps = UPythonTools::GetResidentMapWorlds();
-	if (ResidentMaps.Num() > 0 && UPythonTools::HostReleasesResidentMaps()) // the host releases them
+	// Only the risk list drives the log line: a streaming sublevel of the open level is no straggler.
+	TArray<FString> ResidentMaps, LevelLoadRiskMaps;
+	CollectResidentMapWorlds(ResidentMaps, LevelLoadRiskMaps);
+	if (LevelLoadRiskMaps.Num() > 0 && UPythonTools::HostReleasesResidentMaps())
 	{
 		UE_LOG(LogPythonTools, Display,
 			TEXT("RESIDENT_MAPS: %d map(s) other than the open level are loaded in memory (%s). This editor releases them before the next level load ")
 			TEXT("through LoadMap (load_level, load_map, File > Open, the Content Browser), and refuses that load, saying why in its log, when one ")
 			TEXT("has unsaved changes it would lose or stop at, or something outside Python holds one it must release. A raw MAP LOAD console command skips the release."),
-			ResidentMaps.Num(), *FString::Join(ResidentMaps, TEXT(", ")));
+			LevelLoadRiskMaps.Num(), *FString::Join(LevelLoadRiskMaps, TEXT(", ")));
 	}
-	else if (ResidentMaps.Num() > 0)
+	else if (LevelLoadRiskMaps.Num() > 0)
 	{
 		UE_LOG(LogPythonTools, Warning,
-			TEXT("RESIDENT_MAPS: %d map(s) other than the open level are loaded in memory (%s). Loading any level while they are resident ")
-			TEXT("fails the engine's stale-world check and TAKES THE EDITOR DOWN (EditorServer.cpp 'World Memory Leaks'). A map package loads ")
-			TEXT("RF_Standalone, and neither collect_garbage() nor EditorLoadingAndSavingUtils.unload_packages() releases it (both verified) - ")
-			TEXT("so RESTART THE EDITOR before the next level change, and do not open a map as an asset: read map metadata from the asset ")
-			TEXT("registry, and change level with LevelEditorSubsystem.load_level."),
-			ResidentMaps.Num(), *FString::Join(ResidentMaps, TEXT(", ")));
+			TEXT("RESIDENT_MAPS: %d independent map(s) are loaded in memory (%s). A level load can fail Unreal's fatal 'World Memory Leaks' check ")
+			TEXT("if a world or package cannot be released. Use vibeue.safe_load_level for a guarded load."),
+			LevelLoadRiskMaps.Num(), *FString::Join(LevelLoadRiskMaps, TEXT(", ")));
 	}
 
 	if (Result.IsError())
@@ -613,6 +612,7 @@ static FString FinishPythonRun(const FPythonRunContext& Run, const TResult<FPyth
 		ErrorObj->SetStringField(TEXT("error_message"), Result.GetErrorMessage());
 		AddSaveInfo(Run, ErrorObj);
 		SetStringArrayField(ErrorObj, TEXT("resident_maps"), ResidentMaps);
+		SetStringArrayField(ErrorObj, TEXT("level_load_risk_maps"), LevelLoadRiskMaps);
 		SetStringArrayField(ErrorObj, TEXT("dirtied_packages"), DirtiedPackageNames);
 		SetStringArrayField(ErrorObj, TEXT("cleaned_packages"), CleanedPackageNames);
 		return SerializeReply(ErrorObj);
@@ -626,7 +626,8 @@ static FString FinishPythonRun(const FPythonRunContext& Run, const TResult<FPyth
 	Value.bAutoSave = Run.bAutoSaveRan;
 	Value.AutoSaveNote = Run.AutoSaveNote;
 	Value.SavedPackages = Run.SavedPackageNames;
-	Value.ResidentMaps = ResidentMaps;
+	Value.ResidentMaps = MoveTemp(ResidentMaps);
+	Value.LevelLoadRiskMaps = MoveTemp(LevelLoadRiskMaps);
 	Value.DirtiedPackages = DirtiedPackageNames;
 	Value.CleanedPackages = CleanedPackageNames;
 	return UPythonTools::ConvertExecutionResultToJson(Value);
@@ -1050,14 +1051,8 @@ FString UPythonTools::ConvertExecutionResultToJson(const VibeUE::FPythonExecutio
 	JsonObj->SetBoolField(TEXT("auto_save"), Result.bAutoSave);
 	JsonObj->SetStringField(TEXT("auto_save_note"), Result.AutoSaveNote);
 
-	// Maps left loaded in memory besides the open level. Non-empty means the NEXT level load will
-	// fatal the editor on the engine's stale-world check, so this is a hard warning, not trivia.
-	TArray<TSharedPtr<FJsonValue>> ResidentArray;
-	for (const FString& MapPath : Result.ResidentMaps)
-	{
-		ResidentArray.Add(MakeShared<FJsonValueString>(MapPath));
-	}
-	JsonObj->SetArrayField(TEXT("resident_maps"), ResidentArray);
+	SetStringArrayField(JsonObj, TEXT("resident_maps"), Result.ResidentMaps);
+	SetStringArrayField(JsonObj, TEXT("level_load_risk_maps"), Result.LevelLoadRiskMaps);
 	TArray<TSharedPtr<FJsonValue>> SavedArray;
 	for (const FString& Name : Result.SavedPackages)
 	{

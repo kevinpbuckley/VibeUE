@@ -6,6 +6,7 @@
 
 #include "Tools/PythonTools.h"
 #include "Tools/PythonExecutionService.h"
+#include "Engine/Level.h"
 #include "Engine/World.h"
 #include "UObject/Package.h"
 #include "Misc/ScopeExit.h"
@@ -421,6 +422,89 @@ bool FVibePythonResidentMapsInEveryReplyTest::RunTest(const FString&)
 			TestFalse(TEXT("after release: the probe is no longer listed"), Listed.Contains(ProbePath));
 		}
 	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVibePythonResidentMapRiskReportTest, "VibeUE.Python.ResidentMapRiskReport",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVibePythonResidentMapRiskReportTest::RunTest(const FString&)
+{
+	UWorld* EditorWorld = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+	if (!TestNotNull(TEXT("an editor world is available"), EditorWorld))
+	{
+		return false;
+	}
+
+	const TArray<FString> InitialRisks = UPythonTools::GetResidentMaps();
+	const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
+	auto MakeWorld = [&Suffix](const TCHAR* Prefix)
+	{
+		const FString Name = FString(Prefix) + Suffix;
+		UPackage* Package = CreatePackage(*(FString(TEXT("/Game/__VibeUETest/")) + Name));
+		return NewObject<UWorld>(Package, *Name, RF_Public | RF_Standalone);
+	};
+
+	// Model a streamed package's vestigial world. Set the ownership on the fixture level only.
+	UWorld* Streamed = MakeWorld(TEXT("W_Streamed_"));
+	Streamed->WorldType = EWorldType::Inactive;
+	Streamed->PersistentLevel = NewObject<ULevel>(Streamed, NAME_None, RF_Transient);
+	Streamed->PersistentLevel->OwningWorld = EditorWorld;
+	UWorld* Straggler = nullptr;
+	ON_SCOPE_EXIT
+	{
+		Streamed->PersistentLevel->OwningWorld = nullptr;
+		Streamed->PersistentLevel = nullptr;
+		for (UWorld* World : {Streamed, Straggler})
+		{
+			if (World)
+			{
+				World->ClearFlags(RF_Public | RF_Standalone);
+				World->MarkAsGarbage();
+			}
+		}
+	};
+
+	// Each mixed run reports the independent world. A streamed-only run must emit no risk warning.
+	if (!UPythonTools::HostReleasesResidentMaps())
+	{
+		AddExpectedMessagePlain(TEXT("LogPythonTools: RESIDENT_MAPS:"), ELogVerbosity::Warning,
+			EAutomationExpectedMessageFlags::Contains, InitialRisks.IsEmpty() ? 2 : 3);
+	}
+	auto CheckReply = [&](const TCHAR* Code, bool bExpectSuccess)
+	{
+		const TSharedPtr<FJsonObject> Reply = RunPythonNoSave(Code);
+		if (!TestTrue(TEXT("Python reply parses"), Reply.IsValid()))
+		{
+			return;
+		}
+		TestEqual(TEXT("script success"), Reply->GetBoolField(TEXT("success")), bExpectSuccess);
+		TArray<FString> Inventory, Risks;
+		TestTrue(TEXT("resident inventory is present"), ReadReplyStringList(Reply, TEXT("resident_maps"), Inventory));
+		TestTrue(TEXT("risk list is present"), ReadReplyStringList(Reply, TEXT("level_load_risk_maps"), Risks));
+		for (const FString& Risk : Risks)
+		{
+			TestTrue(TEXT("every risk is in the inventory"), Inventory.Contains(Risk));
+		}
+		TestTrue(TEXT("streamed world remains in the inventory"), Inventory.Contains(Streamed->GetPathName()));
+		TestFalse(TEXT("streamed world is excluded from risk"), Risks.Contains(Streamed->GetPathName()));
+		if (Straggler)
+		{
+			TestTrue(TEXT("straggler is in the inventory"), Inventory.Contains(Straggler->GetPathName()));
+			TestTrue(TEXT("straggler is reported as a risk"), Risks.Contains(Straggler->GetPathName()));
+		}
+		else
+		{
+			TestEqual(TEXT("the streamed world adds no risk"), Risks.Num(), InitialRisks.Num());
+		}
+	};
+
+	CheckReply(TEXT("pass\n"), true);
+	Straggler = MakeWorld(TEXT("W_Straggler_"));
+	Straggler->WorldType = EWorldType::Inactive;
+	CheckReply(TEXT("pass\n"), true);
+	AddExpectedErrorPlain(TEXT("LogPython:"), EAutomationExpectedErrorFlags::Contains, 0);
+	CheckReply(TEXT("raise RuntimeError('VibeUEIntentionalResidentMapFailure')\n"), false);
 	return true;
 }
 

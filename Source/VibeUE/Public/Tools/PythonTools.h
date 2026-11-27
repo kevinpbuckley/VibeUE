@@ -163,12 +163,11 @@ public:
 
 	/**
 	 * Map worlds currently resident besides the open level, as full object paths, readable from inside a
-	 * script. Same rule as the resident_maps reply field EXCEPT that worlds which are streaming sublevels
-	 * of the open level are left out here (a level change unloads them with it, so they are not
-	 * stragglers). The reply field keeps upstream's broader rule.
+	 * script. Matches the level_load_risk_maps reply field. The broader resident_maps inventory also
+	 * includes the open level's streaming sublevels, which unload with it.
 	 *
-	 * Opening one of them FATALS the editor unless it is released first;
-	 * vibeue.safe_load_level() checks this before it loads anything, unless HostReleasesResidentMaps().
+	 * A package that cannot be released can trigger Unreal's fatal world-leak check.
+	 * vibeue.safe_load_level() checks this list before loading, unless HostReleasesResidentMaps().
 	 *
 	 * @return Full object paths of the resident map worlds (e.g. "/Game/Maps/Foo.Foo"); empty when none.
 	 *
