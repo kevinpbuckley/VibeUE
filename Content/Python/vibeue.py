@@ -594,8 +594,8 @@ def _map_package_name(path):
 def safe_load_level(level_path, *, allow_resident_target=False):
     """Load a level with LevelEditorSubsystem.load_level, refusing when that would crash the editor.
 
-    Reads unreal.PythonTools.get_resident_maps() (map worlds resident besides the open level: the
-    resident_maps reply list minus streaming sublevels of the open level, which a level change unloads
+    Reads unreal.PythonTools.get_resident_maps() (the level_load_risk_maps reply list: map worlds
+    resident besides the open level and its streaming sublevels, which a level change unloads
     with it) and raises LevelLoadRefused, loading
     nothing, when:
       - any resident map is NOT the target (that is the fatal "World Memory Leaks" shape); the

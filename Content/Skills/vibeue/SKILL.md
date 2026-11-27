@@ -244,8 +244,16 @@ types not measured).
 so the warning arrives with its cause:
 
 ```json
-"resident_maps": ["/Game/Maps/Foo.Foo"]
+"resident_maps": ["/Game/Maps/Foo.Foo"],
+"level_load_risk_maps": ["/Game/Maps/Foo.Foo"]
 ```
+
+`level_load_risk_maps` is the list to act on, and the only one the `RESIDENT_MAPS` log line names.
+`resident_maps` is the wider inventory: it also lists the open level's streaming sublevels, which are
+separate map packages that unload with the open level. A map with an always-loaded sublevel shows
+that sublevel in `resident_maps` and nothing in `level_load_risk_maps`. The risk list goes by
+streaming ownership alone: it does not show a Python variable or other outside reference that holds a
+sublevel.
 
 **In an editor that releases them** (`unreal.PythonTools.host_releases_resident_maps()` is true: the
 host project sets the console variable `VibeUE.HostReleasesResidentMaps`, and the `RESIDENT_MAPS` log
@@ -262,8 +270,8 @@ releases the map once nothing holds it (measured in a UE 5.8 host, plain and Wor
 delete the Python variables that hold it first (`vibeue.python_globals_holding(path)` and
 `vibeue.release_globals(names)` find and drop the direct ones; `collect_garbage()` alone does not
 release it). Change level with `vibeue.safe_load_level(path)`: it reads
-`unreal.PythonTools.get_resident_maps()` (the `resident_maps` list minus streaming sublevels of the
-open level) and raises `vibeue.LevelLoadRefused`, loading nothing, while any map other than the open
+`unreal.PythonTools.get_resident_maps()` (the same paths as `level_load_risk_maps`) and raises
+`vibeue.LevelLoadRefused`, loading nothing, while any map other than the open
 level is resident, when the target itself is resident (unless `allow_resident_target=True`), or when
 the registry has no map at that path; otherwise it calls
 `unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).load_level(path)` and returns its bool.
@@ -275,7 +283,7 @@ ar = unreal.AssetRegistryHelpers.get_asset_registry()
 maps = ar.get_assets_by_path("/Game/Maps", recursive=True)
 ```
 
-The open level is never reported - only stragglers.
+The open level is never reported, and `level_load_risk_maps` holds only stragglers.
 
 ## Tools â€” what each is for
 
