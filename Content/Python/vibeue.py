@@ -628,7 +628,7 @@ def safe_load_level(level_path, *, allow_resident_target=False):
     if others:
         raise LevelLoadRefused(
             "safe_load_level: refusing to load '{}': {} map(s) other than the open level are resident "
-            "({}). Loading any level now FATALS the editor (World Memory Leaks). {}".format(
+            "({}). A level load can fail Unreal's fatal World Memory Leaks check if one cannot be released. {}".format(
                 target_pkg, len(others), ", ".join(others), release))
     if resident and not allow_resident_target:
         raise LevelLoadRefused(
